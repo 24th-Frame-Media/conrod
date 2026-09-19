@@ -1,0 +1,901 @@
+{
+ "acceptable_make": [
+  {
+   "make": null,
+   "out": null,
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "make": "",
+   "out": null,
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "make": "Ford",
+   "out": "Ford",
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "make": "ford",
+   "out": "ford",
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "make": "Holden",
+   "out": null,
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "make": "Falcon",
+   "out": "Falcon",
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    }
+   ]
+  }
+ ],
+ "acceptable_model": [
+  {
+   "model": null,
+   "out": null,
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Holden",
+     "model": "Commodore VE",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "model": "",
+   "out": null,
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Holden",
+     "model": "Commodore VE",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "model": "Falcon FG",
+   "out": "Falcon FG",
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Holden",
+     "model": "Commodore VE",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "model": "Falcon MkII",
+   "out": "Falcon",
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Holden",
+     "model": "Commodore VE",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "model": "FG GT",
+   "out": "FG GT",
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Holden",
+     "model": "Commodore VE",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "model": "Commodore VX",
+   "out": "Commodore",
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Holden",
+     "model": "Commodore VE",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "model": "X-Trail",
+   "out": null,
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon GT",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Holden",
+     "model": "Commodore VE",
+     "stated": false
+    }
+   ]
+  }
+ ],
+ "cache_key": [
+  {
+   "out": "4x Ford Falcon\n3x Holden Commodore",
+   "readings": [
+    {
+     "count": 4,
+     "make": "Ford",
+     "model": "Falcon",
+     "stated": true
+    },
+    {
+     "count": 3,
+     "make": "Holden",
+     "model": "Commodore",
+     "stated": true
+    }
+   ]
+  },
+  {
+   "out": "",
+   "readings": []
+  }
+ ],
+ "key": [
+  {
+   "a": "Jaguar XJS",
+   "b": "Jaguar XJ-S",
+   "key_a": "jaguarxjs",
+   "key_b": "jaguarxjs"
+  },
+  {
+   "a": "MINI Cooper S",
+   "b": "Mini Cooper-S",
+   "key_a": "minicoopers",
+   "key_b": "minicoopers"
+  },
+  {
+   "a": "Toyota Hilux",
+   "b": "Toyota HiLux",
+   "key_a": "toyotahilux",
+   "key_b": "toyotahilux"
+  },
+  {
+   "a": "",
+   "b": "",
+   "key_a": "",
+   "key_b": ""
+  },
+  {
+   "a": "XJ6",
+   "b": "XJS",
+   "key_a": "xj6",
+   "key_b": "xjs"
+  }
+ ],
+ "majority_settles": 0.7,
+ "observed": [
+  {
+   "out": "jaguar xjs | jaguar xj-s | nissan fairlady z",
+   "readings": [
+    {
+     "count": 1,
+     "make": "Jaguar",
+     "model": "XJS",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Jaguar",
+     "model": "XJ-S",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Nissan",
+     "model": "Fairlady Z",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "out": "ford falcon fg",
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "out": "",
+   "readings": []
+  }
+ ],
+ "plurality_make": [
+  {
+   "out": "Jaguar",
+   "readings": [
+    {
+     "count": 4,
+     "make": "Jaguar",
+     "model": "XJS",
+     "stated": true
+    },
+    {
+     "count": 2,
+     "make": "Jaguar",
+     "model": "XJ-S",
+     "stated": true
+    },
+    {
+     "count": 3,
+     "make": "Nissan",
+     "model": "Fairlady Z",
+     "stated": true
+    }
+   ]
+  },
+  {
+   "out": null,
+   "readings": [
+    {
+     "count": 3,
+     "make": "Ford",
+     "model": "Falcon",
+     "stated": true
+    },
+    {
+     "count": 3,
+     "make": "Holden",
+     "model": "Commodore",
+     "stated": true
+    }
+   ]
+  },
+  {
+   "out": null,
+   "readings": [
+    {
+     "count": 2,
+     "make": "",
+     "model": "Falcon FG",
+     "stated": false
+    }
+   ]
+  },
+  {
+   "out": "Ford",
+   "readings": [
+    {
+     "count": 2,
+     "make": "",
+     "model": "Falcon FG",
+     "stated": true
+    }
+   ]
+  },
+  {
+   "out": "Ford",
+   "readings": [
+    {
+     "count": 2,
+     "make": "",
+     "model": "Falcon FG",
+     "stated": true
+    },
+    {
+     "count": 1,
+     "make": "",
+     "model": "Fairmont",
+     "stated": true
+    }
+   ]
+  },
+  {
+   "out": null,
+   "readings": []
+  }
+ ],
+ "readings_from": [
+  {
+   "out": [],
+   "texts": []
+  },
+  {
+   "out": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon",
+     "stated": false
+    }
+   ],
+   "texts": [
+    "Ford Falcon"
+   ]
+  },
+  {
+   "out": [
+    {
+     "count": 1,
+     "make": "Holden",
+     "model": "",
+     "stated": false
+    }
+   ],
+   "texts": [
+    "Holden"
+   ]
+  },
+  {
+   "out": [
+    {
+     "count": 1,
+     "make": "",
+     "model": "",
+     "stated": false
+    }
+   ],
+   "texts": [
+    ""
+   ]
+  },
+  {
+   "out": [
+    {
+     "count": 1,
+     "make": "",
+     "model": " spaced out  ",
+     "stated": false
+    }
+   ],
+   "texts": [
+    "  spaced out  "
+   ]
+  },
+  {
+   "out": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 1,
+     "make": "Holden",
+     "model": "",
+     "stated": false
+    }
+   ],
+   "texts": [
+    "Ford Falcon FG",
+    "Holden"
+   ]
+  }
+ ],
+ "readings_of": [
+  {
+   "members": [],
+   "out": []
+  },
+  {
+   "members": [
+    {
+     "make": "Ford",
+     "model": "Falcon FG"
+    }
+   ],
+   "out": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": true
+    }
+   ]
+  },
+  {
+   "members": [
+    {
+     "own_make": "Ford",
+     "own_model": "Falcon FG"
+    },
+    {
+     "make": "Ford",
+     "model": "Falcon FG"
+    },
+    {
+     "make": "Holden",
+     "model": "Commodore VE"
+    }
+   ],
+   "out": [
+    {
+     "count": 2,
+     "make": "Ford",
+     "model": "Falcon FG",
+     "stated": true
+    },
+    {
+     "count": 1,
+     "make": "Holden",
+     "model": "Commodore VE",
+     "stated": true
+    }
+   ]
+  },
+  {
+   "members": [
+    {
+     "make": "Holden",
+     "model": "Holden Commodore"
+    }
+   ],
+   "out": [
+    {
+     "count": 1,
+     "make": "",
+     "model": "Holden Commodore",
+     "stated": true
+    }
+   ]
+  },
+  {
+   "members": [
+    {
+     "make": "",
+     "model": ""
+    },
+    {}
+   ],
+   "out": []
+  },
+  {
+   "members": [
+    {
+     "make": "Nissan",
+     "model": "Skyline R34",
+     "own_make": null,
+     "own_model": ""
+    }
+   ],
+   "out": [
+    {
+     "count": 1,
+     "make": "Nissan",
+     "model": "Skyline R34",
+     "stated": true
+    }
+   ]
+  },
+  {
+   "members": [
+    {
+     "make": "Jaguar",
+     "model": "XJS"
+    },
+    {
+     "make": "Jaguar",
+     "model": "XJ-S"
+    },
+    {
+     "make": "jaguar",
+     "model": "xj s"
+    }
+   ],
+   "out": [
+    {
+     "count": 3,
+     "make": "Jaguar",
+     "model": "XJS",
+     "stated": true
+    }
+   ]
+  }
+ ],
+ "reconcile": [
+  {
+   "make": "Jaguar",
+   "make_in": "Nissan",
+   "model": "XJS",
+   "model_in": "Fairlady Z",
+   "readings": [
+    {
+     "count": 4,
+     "make": "Jaguar",
+     "model": "XJS",
+     "stated": true
+    },
+    {
+     "count": 2,
+     "make": "Jaguar",
+     "model": "XJ-S",
+     "stated": true
+    },
+    {
+     "count": 3,
+     "make": "Nissan",
+     "model": "Fairlady Z",
+     "stated": true
+    }
+   ],
+   "rejected": [
+    "Nissan Fairlady Z"
+   ]
+  },
+  {
+   "make": "Jaguar",
+   "make_in": "Nissan",
+   "model": "XJS",
+   "model_in": null,
+   "readings": [
+    {
+     "count": 4,
+     "make": "Jaguar",
+     "model": "XJS",
+     "stated": true
+    },
+    {
+     "count": 2,
+     "make": "Jaguar",
+     "model": "XJ-S",
+     "stated": true
+    },
+    {
+     "count": 3,
+     "make": "Nissan",
+     "model": "Fairlady Z",
+     "stated": true
+    }
+   ],
+   "rejected": [
+    "Nissan None"
+   ]
+  },
+  {
+   "make": "Ford",
+   "make_in": "Ford",
+   "model": "Falcon XE",
+   "model_in": "Falcon XE MkII",
+   "readings": [
+    {
+     "count": 3,
+     "make": "Ford",
+     "model": "Falcon XE",
+     "stated": true
+    },
+    {
+     "count": 2,
+     "make": "Ford",
+     "model": "Falcon",
+     "stated": true
+    },
+    {
+     "count": 2,
+     "make": "Ford",
+     "model": "Cortina",
+     "stated": true
+    }
+   ],
+   "rejected": [
+    "Falcon XE MkII"
+   ]
+  },
+  {
+   "make": null,
+   "make_in": null,
+   "model": null,
+   "model_in": "Made Up Model",
+   "readings": [
+    {
+     "count": 3,
+     "make": "Ford",
+     "model": "Falcon XE",
+     "stated": true
+    },
+    {
+     "count": 2,
+     "make": "Ford",
+     "model": "Falcon",
+     "stated": true
+    },
+    {
+     "count": 2,
+     "make": "Ford",
+     "model": "Cortina",
+     "stated": true
+    }
+   ],
+   "rejected": [
+    "Made Up Model"
+   ]
+  },
+  {
+   "make": "Ford",
+   "make_in": "Ford",
+   "model": "Falcon",
+   "model_in": "Falcon",
+   "readings": [
+    {
+     "count": 3,
+     "make": "",
+     "model": "Falcon",
+     "stated": false
+    },
+    {
+     "count": 2,
+     "make": "",
+     "model": "Falcon GT",
+     "stated": false
+    }
+   ],
+   "rejected": []
+  },
+  {
+   "make": "Holden",
+   "make_in": "Holden",
+   "model": "Commodore",
+   "model_in": "Holden Commodore VE",
+   "readings": [
+    {
+     "count": 2,
+     "make": "Holden",
+     "model": "Commodore VC",
+     "stated": true
+    },
+    {
+     "count": 2,
+     "make": "Holden",
+     "model": "Commodore VX",
+     "stated": true
+    }
+   ],
+   "rejected": [
+    "Holden Commodore VE"
+   ]
+  }
+ ],
+ "settle_without_model": [
+  {
+   "make": null,
+   "model": null,
+   "readings": [],
+   "rejected": []
+  },
+  {
+   "make": null,
+   "model": null,
+   "readings": [
+    {
+     "count": 1,
+     "make": "Ford",
+     "model": "Falcon",
+     "stated": true
+    }
+   ],
+   "rejected": []
+  },
+  {
+   "make": "Ford",
+   "model": "Falcon",
+   "readings": [
+    {
+     "count": 8,
+     "make": "Ford",
+     "model": "Falcon",
+     "stated": true
+    },
+    {
+     "count": 2,
+     "make": "Holden",
+     "model": "Commodore",
+     "stated": true
+    }
+   ],
+   "rejected": []
+  },
+  {
+   "make": "Ford",
+   "model": "Falcon FG",
+   "readings": [
+    {
+     "count": 7,
+     "make": "",
+     "model": "Falcon FG",
+     "stated": false
+    },
+    {
+     "count": 3,
+     "make": "Holden",
+     "model": "Commodore",
+     "stated": true
+    }
+   ],
+   "rejected": []
+  },
+  {
+   "make": "Ford",
+   "model": null,
+   "readings": [
+    {
+     "count": 8,
+     "make": "Ford",
+     "model": "",
+     "stated": true
+    },
+    {
+     "count": 2,
+     "make": "Holden",
+     "model": "Commodore",
+     "stated": true
+    }
+   ],
+   "rejected": []
+  }
+ ]
+}

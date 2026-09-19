@@ -23,8 +23,23 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from conrod import bursts, framing, keywords, marques, sharp_model, sharpness, taste  # noqa: E402
-from conrod.analyze import VehicleAnalysis  # noqa: E402
+from conrod import (  # noqa: E402
+    bursts,
+    culling,
+    framing,
+    keywords,
+    marques,
+    normalise,
+    ocr,
+    registry,
+    sharp_model,
+    sharpness,
+    taste,
+    vlm_providers,
+)
+from conrod.analyze import VehicleAnalysis, _corroborated, _merge_number  # noqa: E402
+from conrod.config import Settings  # noqa: E402
+from conrod.grouping import _near_plate  # noqa: E402
 from conrod.mapping import NumberMap  # noqa: E402
 
 OUT = ROOT / "rust" / "fixtures"
@@ -395,6 +410,396 @@ def sharpness_local(jobs=(38, 39), count=200) -> None:
     print(f"rust/fixtures/sharpness_local.json  {len(cases)} real crops (local-only)")
 
 
+def _reading_dict(r) -> dict:
+    return {"make": r.make, "model": r.model, "count": r.count, "stated": r.stated}
+
+
+def normalise_cases() -> dict:
+    """`conrod/normalise.py`. `canonical()` itself is not ported (it makes a
+    real HTTP call), but everything pure it does is exercised here: the
+    too-few/clear-majority shortcut is real `canonical()` with no client at
+    all, since both return before a request is ever built; the checking-back
+    of a model's answer is real `canonical()` with `vlm_providers.ollama_request`
+    faked to return that answer, so the exact post-processing code path runs."""
+    from unittest import mock
+
+    from conrod.normalise import Reading
+
+    settings = Settings()
+
+    texts_cases = [[], ["Ford Falcon"], ["Holden"], [""], ["  spaced out  "],
+                   ["Ford Falcon FG", "Holden"]]
+    readings_from_out = [{"texts": t, "out": [_reading_dict(r) for r in normalise.readings_from(t)]}
+                         for t in texts_cases]
+
+    members_cases = [
+        [],
+        [{"make": "Ford", "model": "Falcon FG"}],
+        [{"own_make": "Ford", "own_model": "Falcon FG"}, {"make": "Ford", "model": "Falcon FG"},
+         {"make": "Holden", "model": "Commodore VE"}],
+        [{"make": "Holden", "model": "Holden Commodore"}],
+        [{"make": "", "model": ""}, {}],
+        [{"own_make": None, "make": "Nissan", "own_model": "", "model": "Skyline R34"}],
+        [{"make": "Jaguar", "model": "XJS"}, {"make": "Jaguar", "model": "XJ-S"},
+         {"make": "jaguar", "model": "xj s"}],
+    ]
+    readings_of_out = [{"members": m, "out": [_reading_dict(r) for r in normalise.readings_of(m)]}
+                       for m in members_cases]
+
+    key_pairs = [("Jaguar XJS", "Jaguar XJ-S"), ("MINI Cooper S", "Mini Cooper-S"),
+                 ("Toyota Hilux", "Toyota HiLux"), ("", ""), ("XJ6", "XJS")]
+    key_out = [{"a": a, "b": b, "key_a": normalise._key(a), "key_b": normalise._key(b)}
+              for a, b in key_pairs]
+
+    reading_lists = [
+        normalise.readings_from(["Jaguar XJS", "Jaguar XJ-S", "Nissan Fairlady Z"]),
+        normalise.readings_from(["Ford Falcon FG"]),
+        [],
+    ]
+    observed_out = [{"readings": [_reading_dict(r) for r in rl], "out": normalise._observed(rl)}
+                    for rl in reading_lists]
+
+    plurality_inputs = [
+        [Reading("Jaguar", "XJS", 4), Reading("Jaguar", "XJ-S", 2), Reading("Nissan", "Fairlady Z", 3)],
+        [Reading("Ford", "Falcon", 3), Reading("Holden", "Commodore", 3)],
+        [Reading("", "Falcon FG", 2, stated=False)],
+        [Reading("", "Falcon FG", 2)],
+        [Reading("", "Falcon FG", 2), Reading("", "Fairmont", 1)],
+        [],
+    ]
+    plurality_out = [{"readings": [_reading_dict(r) for r in rs],
+                      "out": normalise._plurality_make(rs)} for rs in plurality_inputs]
+
+    am_readings = normalise.readings_from(["Ford Falcon FG", "Ford Falcon GT"])
+    acceptable_make_out = [
+        {"make": m, "readings": [_reading_dict(r) for r in am_readings],
+         "out": normalise._acceptable_make(m, am_readings)}
+        for m in (None, "", "Ford", "ford", "Holden", "Falcon")
+    ]
+    amod_readings = normalise.readings_from(["Ford Falcon FG", "Ford Falcon GT", "Holden Commodore VE"])
+    acceptable_model_out = [
+        {"model": m, "readings": [_reading_dict(r) for r in amod_readings],
+         "out": normalise._acceptable_model(m, amod_readings)}
+        for m in (None, "", "Falcon FG", "Falcon MkII", "FG GT", "Commodore VX", "X-Trail")
+    ]
+
+    # settle_without_model: too few, or a clear majority -- canonical() returns
+    # before it ever builds a request, so calling it with no client is safe.
+    settle_inputs = [
+        [],
+        [Reading("Ford", "Falcon", 1)],
+        [Reading("Ford", "Falcon", 8), Reading("Holden", "Commodore", 2)],
+        [Reading("", "Falcon FG", 7, stated=False), Reading("Holden", "Commodore", 3)],
+        [Reading("Ford", "", 8), Reading("Holden", "Commodore", 2)],
+    ]
+    settle_out = []
+    for readings in settle_inputs:
+        out = normalise.canonical(readings, settings)
+        settle_out.append({
+            "readings": [_reading_dict(r) for r in readings],
+            "make": out.make, "model": out.model, "rejected": out.rejected,
+        })
+
+    # cache_key: the literal formula canonical() builds its cache key with.
+    cache_key_inputs = [
+        [Reading("Ford", "Falcon", 4), Reading("Holden", "Commodore", 3)],
+        [],
+    ]
+    cache_key_out = [{"readings": [_reading_dict(r) for r in rs],
+                      "out": "\n".join(f"{r.count}x {r.text}" for r in rs)}
+                     for rs in cache_key_inputs]
+
+    # reconcile: readings that do NOT settle without a model, with the
+    # model's answer faked so the real post-processing code runs.
+    class FakeResp:
+        def __init__(self, body):
+            self._body = body
+
+        def json(self):
+            return {"response": json.dumps(self._body)}
+
+    def with_answer(readings, make, model):
+        body = {"make": make, "model": model, "colour": None, "confident": True}
+        with mock.patch.object(vlm_providers, "ollama_request", return_value=FakeResp(body)):
+            return normalise.canonical(readings, settings)
+
+    reconcile_cases = [
+        ([Reading("Jaguar", "XJS", 4), Reading("Jaguar", "XJ-S", 2),
+          Reading("Nissan", "Fairlady Z", 3)], "Nissan", "Fairlady Z"),
+        ([Reading("Jaguar", "XJS", 4), Reading("Jaguar", "XJ-S", 2),
+          Reading("Nissan", "Fairlady Z", 3)], "Nissan", None),
+        ([Reading("Ford", "Falcon XE", 3), Reading("Ford", "Falcon", 2),
+          Reading("Ford", "Cortina", 2)], "Ford", "Falcon XE MkII"),
+        ([Reading("Ford", "Falcon XE", 3), Reading("Ford", "Falcon", 2),
+          Reading("Ford", "Cortina", 2)], None, "Made Up Model"),
+        ([Reading("", "Falcon", 3, stated=False), Reading("", "Falcon GT", 2, stated=False)],
+         "Ford", "Falcon"),
+        ([Reading("Holden", "Commodore VC", 2), Reading("Holden", "Commodore VX", 2)],
+         "Holden", "Holden Commodore VE"),
+    ]
+    reconcile_out = []
+    for readings, make, model in reconcile_cases:
+        out = with_answer(readings, make, model)
+        reconcile_out.append({
+            "readings": [_reading_dict(r) for r in readings], "make_in": make, "model_in": model,
+            "make": out.make, "model": out.model, "rejected": out.rejected,
+        })
+
+    return {
+        "readings_from": readings_from_out, "readings_of": readings_of_out,
+        "key": key_out, "observed": observed_out, "plurality_make": plurality_out,
+        "acceptable_make": acceptable_make_out, "acceptable_model": acceptable_model_out,
+        "settle_without_model": settle_out, "cache_key": cache_key_out,
+        "reconcile": reconcile_out, "majority_settles": normalise.MAJORITY_SETTLES,
+    }
+
+
+def registry_cases() -> dict:
+    """`conrod/registry.py`. `load`/`remember`/`seed`/`count`/`forget` touch
+    SQLite and are not ported; `to_csv`/`from_csv` are exercised end to end
+    against a real in-memory database so the fixture proves the pure
+    parse/merge/format split matches, without the Rust side touching SQL."""
+    import sqlite3
+
+    from conrod import store
+
+    plate_out = [{"plate": p, "out": registry.normalise(p)}
+                for p in (None, "", "39432j", "39432-J", "39432 J", "ABC 123!",
+                         "  ab12cd  ", "abc-123-xyz")]
+
+    near_plate_out = [{"a": a, "b": b, "out": _near_plate(a, b)}
+                      for a, b in (("43111J", "73111J"), ("ABC123", "ABD123"), ("AB", "ABC"),
+                                  ("11111", "11111"), ("0Q1", "0O1"), ("VVV", "YVV"),
+                                  ("AAAA", "BBBB"), ("A", "A"))]
+
+    known = {
+        "ABC123": {"make": "Ford", "model": "Falcon FG", "colour": "Blue", "body_type": None,
+                   "team": "", "sponsors": ["Red Bull", "Ampol"], "race_number": "88"},
+        "XYZ999": {"make": None, "model": None, "colour": None, "body_type": None,
+                   "team": None, "sponsors": [], "race_number": None},
+    }
+    fill_analyses = [
+        {"plate": "abc-123"},
+        {"plate": "ABC123", "make": "Holden"},
+        {"plate": "ABC123", "sponsors": []},
+        {"plate": "ABC123", "sponsors": ["Castrol"]},
+        {"plate": "xyz999"},
+        {"plate": "unknown-plate"},
+        {},
+    ]
+    fill_out = []
+    for raw in fill_analyses:
+        a = VehicleAnalysis.from_json(json.dumps(raw))
+        filled = registry.fill(a, known)
+        fill_out.append({"analysis": raw, "known": known, "filled": filled, "result": a.to_dict()})
+    a = VehicleAnalysis.from_json(json.dumps({"plate": "ABC123"}))
+    fill_out.append({"analysis": {"plate": "ABC123"}, "known": {},
+                     "filled": registry.fill(a, {}), "result": a.to_dict()})
+
+    def row(plate, group_key=None):
+        return {"plate": plate, "group_key": group_key}
+
+    members_a = [
+        (row("43111J", 1), {"make": "Ford", "model": "Falcon FG", "colour": "Blue",
+                            "body_type": "Sedan", "team": "Team A", "race_number": "5",
+                            "sponsors": ["Red Bull", "red bull", "Ampol"]}),
+        (row("73111J", 1), {"make": "Ford", "model": "Falcon FG", "colour": "blue",
+                            "body_type": "Sedan", "team": "Team A", "race_number": "5",
+                            "sponsors": ["Ampol"]}),
+        (row("43111J", 1), {"make": "Ford", "colour": "Blue", "sponsors": []}),
+    ]
+    members_b = [(row(None, 2), {"make": "Holden"}), (row("", 2), {"make": "Holden"})]
+    members_c = [
+        (row("EVL54L", 3), {"group_make": "Ford", "group_model": "Falcon", "colour": "Red"}),
+        (row("270SUS", 3), {"colour": "Red"}),
+        (row("54L", 3), {"colour": "red"}),
+    ]
+    members_d = [(row("ABC111", 4), {"group_make": "", "make": "Holden"})]
+    members_e = [
+        (row("QWE111", 5), {"group_make": "Ford", "group_model": "", "colour": "Green"}),
+        (row("QWE111", 5), {"colour": "Green"}),
+    ]
+
+    agreed_out = []
+    for members in (members_a, members_b, members_c, members_d, members_e, []):
+        result = registry._agreed(members)
+        agreed_out.append({
+            "members": [{"row": r, "parsed": p} for r, p in members],
+            "out": None if result is None else result.__dict__,
+        })
+
+    majority_out = []
+    for members, field in ((members_a, "colour"), (members_a, "sponsors"), (members_a, "team"),
+                           (members_c, "colour"), (members_a, "race_number"), ([], "make")):
+        majority_out.append({
+            "members": [{"row": r, "parsed": p} for r, p in members],
+            "field": field, "out": registry._majority(members, field),
+        })
+
+    split_out = [{"value": v, "out": registry._split(v)}
+                for v in (None, "", "a, b ,c", ["x", "y"], "single", 0, False, "  ,  ")]
+    text_out = [{"value": v, "out": registry._text(v)}
+               for v in (None, "", "  hi  ", ["a", " b ", ""], [], 0, False, 5, ["x", "y", "z"])]
+
+    # to_csv / from_csv, end to end against a real database.
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(store.SCHEMA)
+    conn.row_factory = sqlite3.Row
+    seed_rows = [
+        ("ABC123", "Ford", "Falcon FG", "Blue", "Sedan", "Team A", "Red Bull, Ampol", "5"),
+        ("XYZ999", None, None, None, None, None, None, None),
+    ]
+    for plate, *fields in seed_rows:
+        conn.execute(
+            "INSERT INTO known_vehicles (plate, make, model, colour, body_type, team, "
+            "sponsors, race_number, updated_at) VALUES (?,?,?,?,?,?,?,?,0)",
+            (plate, *fields))
+    conn.commit()
+    initial_csv = registry.to_csv(conn)
+
+    csv_in = (
+        "plate,make,model,colour,body_type,team,sponsors,race_number\n"
+        "abc-123,,Falcon FG MkII,,,,,\n"
+        "NEW001,Holden,Commodore,Red,,,Castrol,7\n"
+        ",Nobody,,,,,,\n"
+        "xyz999,Nissan,Skyline,,,,,\n"
+    )
+    from_csv_result = registry.from_csv(conn, csv_in)
+    csv_out = registry.to_csv(conn)
+
+    try:
+        registry.from_csv(conn, "driver,team\nA,B\n")
+        bad_column_error = False
+    except ValueError:
+        bad_column_error = True
+    try:
+        registry.from_csv(conn, "")
+        empty_error = False
+    except ValueError:
+        empty_error = True
+    conn.close()
+
+    return {
+        "normalise": plate_out, "near_plate": near_plate_out, "fill": fill_out,
+        "agreed": agreed_out, "majority": majority_out, "split": split_out, "text": text_out,
+        "seed_rows": seed_rows, "initial_csv": initial_csv, "csv_in": csv_in,
+        "from_csv_written": from_csv_result["written"], "from_csv_skipped": from_csv_result["skipped"],
+        "csv_out": csv_out, "bad_column_error": bad_column_error, "empty_error": empty_error,
+    }
+
+
+def culling_cases() -> dict:
+    """`conrod/culling.py`. `read_culls`/`filter_frames` do exiftool IO and
+    are not ported; their pure logic is `Cull.passes` (already exercised
+    below) plus the tag-row -> `Cull` conversion, which is tested through
+    the real `read_culls` with exiftool faked out -- every path here is a
+    `.jpg`, so the sidecar-preference file check `read_culls` also does
+    never fires and no real files are needed."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    class FakeTool:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def read_tags(self, paths, _tags):
+            out = []
+            for p, row in zip(paths, self.rows):
+                r = dict(row)
+                r["SourceFile"] = str(p)
+                out.append(r)
+            return out
+
+    tag_rows = [
+        {},
+        {"Rating": "3"},
+        {"Rating": 3},
+        {"Rating": "3.9"},
+        {"Rating": "-1"},
+        {"Rating": -2},
+        {"XMP:Rating": "4"},
+        {"Rating": None, "XMP:Rating": "2"},
+        {"Rating": "abc"},
+        {"Rating": [1, 2]},
+        {"Rating": True},
+        {"Rating": "2", "Label": "Green"},
+        {"Rating": "2", "Label": ""},
+        {"Rating": "2", "Label": None},
+        {"Label": "Blue"},
+        {"Rating": "0"},
+        {"Rating": "-1", "Label": 5},
+    ]
+    paths = [Path(f"frame_{i}.jpg") for i in range(len(tag_rows))]
+    culls = culling.read_culls(paths, FakeTool(tag_rows))
+    read_culls_out = [{"row": row, "rating": culls[p].rating, "label": culls[p].label,
+                       "rejected": culls[p].rejected} for p, row in zip(paths, tag_rows)]
+
+    sidecar_images = ["a/IMG_0001.CR3", "b/photo.jpg", "no_ext_file", "a.b.c.CR2", "UPPER.JPG"]
+    sidecar_out = [{"image": s, "sidecar": str(culling.sidecar_for(Path(s)))}
+                  for s in sidecar_images]
+
+    culls_to_test = [culling.Cull(), culling.Cull(rating=3), culling.Cull(rating=1),
+                     culling.Cull(rejected=True), culling.Cull(rating=2, label="Green"),
+                     culling.Cull(rating=0, label="")]
+    settings_variants = [
+        {"skip_rejected": True, "min_rating": 0, "require_label": ""},
+        {"skip_rejected": False, "min_rating": 0, "require_label": ""},
+        {"skip_rejected": True, "min_rating": 3, "require_label": ""},
+        {"skip_rejected": True, "min_rating": 0, "require_label": "green"},
+        {"skip_rejected": True, "min_rating": 0, "require_label": "Blue"},
+        {"skip_rejected": False, "min_rating": 2, "require_label": " Green "},
+    ]
+    passes_out = []
+    for cull in culls_to_test:
+        for sv in settings_variants:
+            ok, reason = cull.passes(SimpleNamespace(**sv))
+            passes_out.append({
+                "cull": {"rating": cull.rating, "label": cull.label, "rejected": cull.rejected},
+                "settings": sv, "ok": ok, "reason": reason,
+            })
+
+    return {"read_culls": read_culls_out, "sidecar": sidecar_out, "passes": passes_out,
+            "rejected_const": culling.REJECTED}
+
+
+def merge_cases() -> dict:
+    """`conrod/analyze.py`'s `_merge_number` and `_corroborated`."""
+    settings = Settings()
+
+    ocr_readings = [
+        ocr.Reading(None, 0.0),
+        ocr.Reading("88", 0.9),
+        ocr.Reading("7", 0.5),
+        ocr.Reading("07", 0.95, "roundel"),
+        ocr.Reading("12", 0.79),
+        ocr.Reading("12", 0.80),
+        ocr.Reading("", 0.9),
+        ocr.Reading("5", 0.9, ""),
+    ]
+    vlm_numbers = [None, "88", "7", "9", "07", ""]
+    merge_number_out = []
+    for r in ocr_readings:
+        for v in vlm_numbers:
+            out = _merge_number(r, v, settings)
+            merge_number_out.append({
+                "ocr": {"number": r.number, "confidence": r.confidence, "source": r.source},
+                "vlm_number": v, "out": list(out),
+            })
+
+    claims = [None, "", "Triple Eight Race Engineering", "Racing Team", "Nosso",
+              "Repco Team", "  ", "T8", "AB", "Éclair Motorsport"]
+    evidences = [[], ["Nos8e", "No886"], ["REPCO", "Castrol"], ["TRIPLE", "EIGHT", "ENGINEERING"],
+                ["random", "text", "here"], ["eclair"]]
+    corroborated_out = []
+    for claim in claims:
+        for ev in evidences:
+            corroborated_out.append({"claim": claim, "evidence": ev,
+                                     "out": _corroborated(claim, ev)})
+
+    return {"merge_number": merge_number_out, "corroborated": corroborated_out,
+            "ocr_accept_confidence": settings.ocr_accept_confidence}
+
+
 def main() -> None:
     if "--local" in sys.argv:
         sharpness_local()
@@ -406,6 +811,10 @@ def main() -> None:
     write("marques", marques_cases())
     write("mapping", mapping_cases())
     write("keywords", keywords_cases())
+    write("normalise", normalise_cases())
+    write("registry", registry_cases())
+    write("culling", culling_cases())
+    write("merge", merge_cases())
 
 
 if __name__ == "__main__":

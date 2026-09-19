@@ -1,0 +1,1044 @@
+{
+ "agreed": [
+  {
+   "members": [
+    {
+     "parsed": {
+      "body_type": "Sedan",
+      "colour": "Blue",
+      "make": "Ford",
+      "model": "Falcon FG",
+      "race_number": "5",
+      "sponsors": [
+       "Red Bull",
+       "red bull",
+       "Ampol"
+      ],
+      "team": "Team A"
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "43111J"
+     }
+    },
+    {
+     "parsed": {
+      "body_type": "Sedan",
+      "colour": "blue",
+      "make": "Ford",
+      "model": "Falcon FG",
+      "race_number": "5",
+      "sponsors": [
+       "Ampol"
+      ],
+      "team": "Team A"
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "73111J"
+     }
+    },
+    {
+     "parsed": {
+      "colour": "Blue",
+      "make": "Ford",
+      "sponsors": []
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "43111J"
+     }
+    }
+   ],
+   "out": {
+    "aliases": [
+     "73111J"
+    ],
+    "body_type": "Sedan",
+    "colour": "Blue",
+    "make": "Ford",
+    "model": null,
+    "plate": "43111J",
+    "race_number": "5",
+    "sponsors": [
+     "Ampol",
+     "Red Bull",
+     "red bull"
+    ],
+    "team": "Team A"
+   }
+  },
+  {
+   "members": [
+    {
+     "parsed": {
+      "make": "Holden"
+     },
+     "row": {
+      "group_key": 2,
+      "plate": null
+     }
+    },
+    {
+     "parsed": {
+      "make": "Holden"
+     },
+     "row": {
+      "group_key": 2,
+      "plate": ""
+     }
+    }
+   ],
+   "out": null
+  },
+  {
+   "members": [
+    {
+     "parsed": {
+      "colour": "Red",
+      "group_make": "Ford",
+      "group_model": "Falcon"
+     },
+     "row": {
+      "group_key": 3,
+      "plate": "EVL54L"
+     }
+    },
+    {
+     "parsed": {
+      "colour": "Red"
+     },
+     "row": {
+      "group_key": 3,
+      "plate": "270SUS"
+     }
+    },
+    {
+     "parsed": {
+      "colour": "red"
+     },
+     "row": {
+      "group_key": 3,
+      "plate": "54L"
+     }
+    }
+   ],
+   "out": {
+    "aliases": [],
+    "body_type": null,
+    "colour": "Red",
+    "make": "Ford",
+    "model": "Falcon",
+    "plate": "EVL54L",
+    "race_number": null,
+    "sponsors": null,
+    "team": null
+   }
+  },
+  {
+   "members": [
+    {
+     "parsed": {
+      "group_make": "",
+      "make": "Holden"
+     },
+     "row": {
+      "group_key": 4,
+      "plate": "ABC111"
+     }
+    }
+   ],
+   "out": {
+    "aliases": [],
+    "body_type": null,
+    "colour": null,
+    "make": "Holden",
+    "model": null,
+    "plate": "ABC111",
+    "race_number": null,
+    "sponsors": null,
+    "team": null
+   }
+  },
+  {
+   "members": [
+    {
+     "parsed": {
+      "colour": "Green",
+      "group_make": "Ford",
+      "group_model": ""
+     },
+     "row": {
+      "group_key": 5,
+      "plate": "QWE111"
+     }
+    },
+    {
+     "parsed": {
+      "colour": "Green"
+     },
+     "row": {
+      "group_key": 5,
+      "plate": "QWE111"
+     }
+    }
+   ],
+   "out": {
+    "aliases": [],
+    "body_type": null,
+    "colour": "Green",
+    "make": "Ford",
+    "model": "",
+    "plate": "QWE111",
+    "race_number": null,
+    "sponsors": null,
+    "team": null
+   }
+  },
+  {
+   "members": [],
+   "out": null
+  }
+ ],
+ "bad_column_error": true,
+ "csv_in": "plate,make,model,colour,body_type,team,sponsors,race_number\nabc-123,,Falcon FG MkII,,,,,\nNEW001,Holden,Commodore,Red,,,Castrol,7\n,Nobody,,,,,,\nxyz999,Nissan,Skyline,,,,,\n",
+ "csv_out": "plate,make,model,colour,body_type,team,sponsors,race_number\nABC123,Ford,Falcon FG MkII,Blue,Sedan,Team A,\"Red Bull, Ampol\",5\nNEW001,Holden,Commodore,Red,,,Castrol,7\nXYZ999,Nissan,Skyline,,,,,\n",
+ "empty_error": true,
+ "fill": [
+  {
+   "analysis": {
+    "plate": "abc-123"
+   },
+   "filled": true,
+   "known": {
+    "ABC123": {
+     "body_type": null,
+     "colour": "Blue",
+     "make": "Ford",
+     "model": "Falcon FG",
+     "race_number": "88",
+     "sponsors": [
+      "Red Bull",
+      "Ampol"
+     ],
+     "team": ""
+    },
+    "XYZ999": {
+     "body_type": null,
+     "colour": null,
+     "make": null,
+     "model": null,
+     "race_number": null,
+     "sponsors": [],
+     "team": null
+    }
+   },
+   "result": {
+    "body_type": null,
+    "colour": "Blue",
+    "is_bike": false,
+    "is_competition": false,
+    "kind": "car",
+    "make": "Ford",
+    "model": "Falcon FG",
+    "number_conf": 0.0,
+    "number_source": null,
+    "plate": "abc-123",
+    "plate_conf": 0.0,
+    "plate_state": null,
+    "race_number": "88",
+    "sponsors": [
+     "Red Bull",
+     "Ampol"
+    ],
+    "team": null,
+    "team_corroborated": false,
+    "text": [],
+    "vlm_conf": 0.0
+   }
+  },
+  {
+   "analysis": {
+    "make": "Holden",
+    "plate": "ABC123"
+   },
+   "filled": true,
+   "known": {
+    "ABC123": {
+     "body_type": null,
+     "colour": "Blue",
+     "make": "Ford",
+     "model": "Falcon FG",
+     "race_number": "88",
+     "sponsors": [
+      "Red Bull",
+      "Ampol"
+     ],
+     "team": ""
+    },
+    "XYZ999": {
+     "body_type": null,
+     "colour": null,
+     "make": null,
+     "model": null,
+     "race_number": null,
+     "sponsors": [],
+     "team": null
+    }
+   },
+   "result": {
+    "body_type": null,
+    "colour": "Blue",
+    "is_bike": false,
+    "is_competition": false,
+    "kind": "car",
+    "make": "Holden",
+    "model": "Falcon FG",
+    "number_conf": 0.0,
+    "number_source": null,
+    "plate": "ABC123",
+    "plate_conf": 0.0,
+    "plate_state": null,
+    "race_number": "88",
+    "sponsors": [
+     "Red Bull",
+     "Ampol"
+    ],
+    "team": null,
+    "team_corroborated": false,
+    "text": [],
+    "vlm_conf": 0.0
+   }
+  },
+  {
+   "analysis": {
+    "plate": "ABC123",
+    "sponsors": []
+   },
+   "filled": true,
+   "known": {
+    "ABC123": {
+     "body_type": null,
+     "colour": "Blue",
+     "make": "Ford",
+     "model": "Falcon FG",
+     "race_number": "88",
+     "sponsors": [
+      "Red Bull",
+      "Ampol"
+     ],
+     "team": ""
+    },
+    "XYZ999": {
+     "body_type": null,
+     "colour": null,
+     "make": null,
+     "model": null,
+     "race_number": null,
+     "sponsors": [],
+     "team": null
+    }
+   },
+   "result": {
+    "body_type": null,
+    "colour": "Blue",
+    "is_bike": false,
+    "is_competition": false,
+    "kind": "car",
+    "make": "Ford",
+    "model": "Falcon FG",
+    "number_conf": 0.0,
+    "number_source": null,
+    "plate": "ABC123",
+    "plate_conf": 0.0,
+    "plate_state": null,
+    "race_number": "88",
+    "sponsors": [
+     "Red Bull",
+     "Ampol"
+    ],
+    "team": null,
+    "team_corroborated": false,
+    "text": [],
+    "vlm_conf": 0.0
+   }
+  },
+  {
+   "analysis": {
+    "plate": "ABC123",
+    "sponsors": [
+     "Castrol"
+    ]
+   },
+   "filled": true,
+   "known": {
+    "ABC123": {
+     "body_type": null,
+     "colour": "Blue",
+     "make": "Ford",
+     "model": "Falcon FG",
+     "race_number": "88",
+     "sponsors": [
+      "Red Bull",
+      "Ampol"
+     ],
+     "team": ""
+    },
+    "XYZ999": {
+     "body_type": null,
+     "colour": null,
+     "make": null,
+     "model": null,
+     "race_number": null,
+     "sponsors": [],
+     "team": null
+    }
+   },
+   "result": {
+    "body_type": null,
+    "colour": "Blue",
+    "is_bike": false,
+    "is_competition": false,
+    "kind": "car",
+    "make": "Ford",
+    "model": "Falcon FG",
+    "number_conf": 0.0,
+    "number_source": null,
+    "plate": "ABC123",
+    "plate_conf": 0.0,
+    "plate_state": null,
+    "race_number": "88",
+    "sponsors": [
+     "Castrol"
+    ],
+    "team": null,
+    "team_corroborated": false,
+    "text": [],
+    "vlm_conf": 0.0
+   }
+  },
+  {
+   "analysis": {
+    "plate": "xyz999"
+   },
+   "filled": false,
+   "known": {
+    "ABC123": {
+     "body_type": null,
+     "colour": "Blue",
+     "make": "Ford",
+     "model": "Falcon FG",
+     "race_number": "88",
+     "sponsors": [
+      "Red Bull",
+      "Ampol"
+     ],
+     "team": ""
+    },
+    "XYZ999": {
+     "body_type": null,
+     "colour": null,
+     "make": null,
+     "model": null,
+     "race_number": null,
+     "sponsors": [],
+     "team": null
+    }
+   },
+   "result": {
+    "body_type": null,
+    "colour": null,
+    "is_bike": false,
+    "is_competition": false,
+    "kind": "car",
+    "make": null,
+    "model": null,
+    "number_conf": 0.0,
+    "number_source": null,
+    "plate": "xyz999",
+    "plate_conf": 0.0,
+    "plate_state": null,
+    "race_number": null,
+    "sponsors": [],
+    "team": null,
+    "team_corroborated": false,
+    "text": [],
+    "vlm_conf": 0.0
+   }
+  },
+  {
+   "analysis": {
+    "plate": "unknown-plate"
+   },
+   "filled": false,
+   "known": {
+    "ABC123": {
+     "body_type": null,
+     "colour": "Blue",
+     "make": "Ford",
+     "model": "Falcon FG",
+     "race_number": "88",
+     "sponsors": [
+      "Red Bull",
+      "Ampol"
+     ],
+     "team": ""
+    },
+    "XYZ999": {
+     "body_type": null,
+     "colour": null,
+     "make": null,
+     "model": null,
+     "race_number": null,
+     "sponsors": [],
+     "team": null
+    }
+   },
+   "result": {
+    "body_type": null,
+    "colour": null,
+    "is_bike": false,
+    "is_competition": false,
+    "kind": "car",
+    "make": null,
+    "model": null,
+    "number_conf": 0.0,
+    "number_source": null,
+    "plate": "unknown-plate",
+    "plate_conf": 0.0,
+    "plate_state": null,
+    "race_number": null,
+    "sponsors": [],
+    "team": null,
+    "team_corroborated": false,
+    "text": [],
+    "vlm_conf": 0.0
+   }
+  },
+  {
+   "analysis": {},
+   "filled": false,
+   "known": {
+    "ABC123": {
+     "body_type": null,
+     "colour": "Blue",
+     "make": "Ford",
+     "model": "Falcon FG",
+     "race_number": "88",
+     "sponsors": [
+      "Red Bull",
+      "Ampol"
+     ],
+     "team": ""
+    },
+    "XYZ999": {
+     "body_type": null,
+     "colour": null,
+     "make": null,
+     "model": null,
+     "race_number": null,
+     "sponsors": [],
+     "team": null
+    }
+   },
+   "result": {
+    "body_type": null,
+    "colour": null,
+    "is_bike": false,
+    "is_competition": false,
+    "kind": "car",
+    "make": null,
+    "model": null,
+    "number_conf": 0.0,
+    "number_source": null,
+    "plate": null,
+    "plate_conf": 0.0,
+    "plate_state": null,
+    "race_number": null,
+    "sponsors": [],
+    "team": null,
+    "team_corroborated": false,
+    "text": [],
+    "vlm_conf": 0.0
+   }
+  },
+  {
+   "analysis": {
+    "plate": "ABC123"
+   },
+   "filled": false,
+   "known": {},
+   "result": {
+    "body_type": null,
+    "colour": null,
+    "is_bike": false,
+    "is_competition": false,
+    "kind": "car",
+    "make": null,
+    "model": null,
+    "number_conf": 0.0,
+    "number_source": null,
+    "plate": "ABC123",
+    "plate_conf": 0.0,
+    "plate_state": null,
+    "race_number": null,
+    "sponsors": [],
+    "team": null,
+    "team_corroborated": false,
+    "text": [],
+    "vlm_conf": 0.0
+   }
+  }
+ ],
+ "from_csv_skipped": 1,
+ "from_csv_written": 3,
+ "initial_csv": "plate,make,model,colour,body_type,team,sponsors,race_number\nABC123,Ford,Falcon FG,Blue,Sedan,Team A,\"Red Bull, Ampol\",5\nXYZ999,,,,,,,\n",
+ "majority": [
+  {
+   "field": "colour",
+   "members": [
+    {
+     "parsed": {
+      "body_type": "Sedan",
+      "colour": "Blue",
+      "make": "Ford",
+      "model": "Falcon FG",
+      "race_number": "5",
+      "sponsors": [
+       "Red Bull",
+       "red bull",
+       "Ampol"
+      ],
+      "team": "Team A"
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "43111J"
+     }
+    },
+    {
+     "parsed": {
+      "body_type": "Sedan",
+      "colour": "blue",
+      "make": "Ford",
+      "model": "Falcon FG",
+      "race_number": "5",
+      "sponsors": [
+       "Ampol"
+      ],
+      "team": "Team A"
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "73111J"
+     }
+    },
+    {
+     "parsed": {
+      "colour": "Blue",
+      "make": "Ford",
+      "sponsors": []
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "43111J"
+     }
+    }
+   ],
+   "out": "Blue"
+  },
+  {
+   "field": "sponsors",
+   "members": [
+    {
+     "parsed": {
+      "body_type": "Sedan",
+      "colour": "Blue",
+      "make": "Ford",
+      "model": "Falcon FG",
+      "race_number": "5",
+      "sponsors": [
+       "Red Bull",
+       "red bull",
+       "Ampol"
+      ],
+      "team": "Team A"
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "43111J"
+     }
+    },
+    {
+     "parsed": {
+      "body_type": "Sedan",
+      "colour": "blue",
+      "make": "Ford",
+      "model": "Falcon FG",
+      "race_number": "5",
+      "sponsors": [
+       "Ampol"
+      ],
+      "team": "Team A"
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "73111J"
+     }
+    },
+    {
+     "parsed": {
+      "colour": "Blue",
+      "make": "Ford",
+      "sponsors": []
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "43111J"
+     }
+    }
+   ],
+   "out": [
+    "Ampol",
+    "Red Bull",
+    "red bull"
+   ]
+  },
+  {
+   "field": "team",
+   "members": [
+    {
+     "parsed": {
+      "body_type": "Sedan",
+      "colour": "Blue",
+      "make": "Ford",
+      "model": "Falcon FG",
+      "race_number": "5",
+      "sponsors": [
+       "Red Bull",
+       "red bull",
+       "Ampol"
+      ],
+      "team": "Team A"
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "43111J"
+     }
+    },
+    {
+     "parsed": {
+      "body_type": "Sedan",
+      "colour": "blue",
+      "make": "Ford",
+      "model": "Falcon FG",
+      "race_number": "5",
+      "sponsors": [
+       "Ampol"
+      ],
+      "team": "Team A"
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "73111J"
+     }
+    },
+    {
+     "parsed": {
+      "colour": "Blue",
+      "make": "Ford",
+      "sponsors": []
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "43111J"
+     }
+    }
+   ],
+   "out": "Team A"
+  },
+  {
+   "field": "colour",
+   "members": [
+    {
+     "parsed": {
+      "colour": "Red",
+      "group_make": "Ford",
+      "group_model": "Falcon"
+     },
+     "row": {
+      "group_key": 3,
+      "plate": "EVL54L"
+     }
+    },
+    {
+     "parsed": {
+      "colour": "Red"
+     },
+     "row": {
+      "group_key": 3,
+      "plate": "270SUS"
+     }
+    },
+    {
+     "parsed": {
+      "colour": "red"
+     },
+     "row": {
+      "group_key": 3,
+      "plate": "54L"
+     }
+    }
+   ],
+   "out": "Red"
+  },
+  {
+   "field": "race_number",
+   "members": [
+    {
+     "parsed": {
+      "body_type": "Sedan",
+      "colour": "Blue",
+      "make": "Ford",
+      "model": "Falcon FG",
+      "race_number": "5",
+      "sponsors": [
+       "Red Bull",
+       "red bull",
+       "Ampol"
+      ],
+      "team": "Team A"
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "43111J"
+     }
+    },
+    {
+     "parsed": {
+      "body_type": "Sedan",
+      "colour": "blue",
+      "make": "Ford",
+      "model": "Falcon FG",
+      "race_number": "5",
+      "sponsors": [
+       "Ampol"
+      ],
+      "team": "Team A"
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "73111J"
+     }
+    },
+    {
+     "parsed": {
+      "colour": "Blue",
+      "make": "Ford",
+      "sponsors": []
+     },
+     "row": {
+      "group_key": 1,
+      "plate": "43111J"
+     }
+    }
+   ],
+   "out": "5"
+  },
+  {
+   "field": "make",
+   "members": [],
+   "out": null
+  }
+ ],
+ "near_plate": [
+  {
+   "a": "43111J",
+   "b": "73111J",
+   "out": true
+  },
+  {
+   "a": "ABC123",
+   "b": "ABD123",
+   "out": false
+  },
+  {
+   "a": "AB",
+   "b": "ABC",
+   "out": false
+  },
+  {
+   "a": "11111",
+   "b": "11111",
+   "out": false
+  },
+  {
+   "a": "0Q1",
+   "b": "0O1",
+   "out": true
+  },
+  {
+   "a": "VVV",
+   "b": "YVV",
+   "out": true
+  },
+  {
+   "a": "AAAA",
+   "b": "BBBB",
+   "out": false
+  },
+  {
+   "a": "A",
+   "b": "A",
+   "out": false
+  }
+ ],
+ "normalise": [
+  {
+   "out": "",
+   "plate": null
+  },
+  {
+   "out": "",
+   "plate": ""
+  },
+  {
+   "out": "39432J",
+   "plate": "39432j"
+  },
+  {
+   "out": "39432J",
+   "plate": "39432-J"
+  },
+  {
+   "out": "39432J",
+   "plate": "39432 J"
+  },
+  {
+   "out": "ABC123",
+   "plate": "ABC 123!"
+  },
+  {
+   "out": "AB12CD",
+   "plate": "  ab12cd  "
+  },
+  {
+   "out": "ABC123XYZ",
+   "plate": "abc-123-xyz"
+  }
+ ],
+ "seed_rows": [
+  [
+   "ABC123",
+   "Ford",
+   "Falcon FG",
+   "Blue",
+   "Sedan",
+   "Team A",
+   "Red Bull, Ampol",
+   "5"
+  ],
+  [
+   "XYZ999",
+   null,
+   null,
+   null,
+   null,
+   null,
+   null,
+   null
+  ]
+ ],
+ "split": [
+  {
+   "out": [],
+   "value": null
+  },
+  {
+   "out": [],
+   "value": ""
+  },
+  {
+   "out": [
+    "a",
+    "b",
+    "c"
+   ],
+   "value": "a, b ,c"
+  },
+  {
+   "out": [
+    "x",
+    "y"
+   ],
+   "value": [
+    "x",
+    "y"
+   ]
+  },
+  {
+   "out": [
+    "single"
+   ],
+   "value": "single"
+  },
+  {
+   "out": [],
+   "value": 0
+  },
+  {
+   "out": [],
+   "value": false
+  },
+  {
+   "out": [],
+   "value": "  ,  "
+  }
+ ],
+ "text": [
+  {
+   "out": null,
+   "value": null
+  },
+  {
+   "out": null,
+   "value": ""
+  },
+  {
+   "out": "hi",
+   "value": "  hi  "
+  },
+  {
+   "out": "a, b",
+   "value": [
+    "a",
+    " b ",
+    ""
+   ]
+  },
+  {
+   "out": null,
+   "value": []
+  },
+  {
+   "out": "0",
+   "value": 0
+  },
+  {
+   "out": "False",
+   "value": false
+  },
+  {
+   "out": "5",
+   "value": 5
+  },
+  {
+   "out": "x, y, z",
+   "value": [
+    "x",
+    "y",
+    "z"
+   ]
+  }
+ ]
+}
