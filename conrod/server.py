@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from . import keywords as keywords_mod
 from . import exif, pipeline, setup_check, store, vlm, watch
+from . import sharp_model
 from . import sharpness as sharpness_mod
 from .analyze import VehicleAnalysis
 from .config import (CACHE_DIR, DATA_ROOT, DEFAULTS, IMAGE_SUFFIXES,
@@ -2153,7 +2154,11 @@ def pick_of_pass(job_id: int) -> dict:
     return pipeline.pick_of_pass(job_id, _state["settings"])
 
 
-@app.post("/api/detections/{det_id}")
+# ":int" is not decoration. Without it this route also matches
+# /api/detections/bulk, which is declared further down, and answers 422
+# "not a valid integer" -- so the two bulk buttons in Review (set a number,
+# reject) failed every time and nothing tested them.
+@app.post("/api/detections/{det_id:int}")
 def update_detection(det_id: int, body: DetectionUpdate) -> dict:
     settings: Settings = _state["settings"]
     with store.session() as conn:
@@ -2314,6 +2319,148 @@ def _thumbnail(path: Path, width: int) -> Path:
         return thumb
     except Exception:
         return path
+
+
+# --- sharpness training ------------------------------------------------------
+#
+# The Train screen asks how sharp the subject of a crop is, one to five, and
+# whether it is a pan. Those ratings fit a small model (sharp_model.py) that
+# then takes over the sharpness score for every scan and re-measure, so the
+# cull ends up judging the way its owner does.
+
+# Every slice of the measured range, for pans and for everything else. Asked in
+# random order, so the borderline frames come up as often as the obvious ones.
+_TRAIN_SLICES = [(pan, k / 10, (k + 1) / 10 + (0.01 if k == 9 else 0.0))
+                 for pan in (0, 1) for k in range(10)]
+
+
+class TrainingLabel(BaseModel):
+    det: int
+    # 1-5 of the subject, or 0 for "cannot tell", which is remembered so the
+    # frame is not offered again but is never learned from.
+    stars: int = Field(ge=0, le=5)
+    pan: bool = False
+
+
+def _training_state(conn) -> dict:
+    counts = store.sharpness_label_counts(conn)
+    model = sharp_model.current()
+    return {
+        "rated": sum(n for stars, n in counts.items() if stars > 0),
+        "unsure": counts.get(0, 0),
+        "by_stars": {str(k): counts.get(k, 0) for k in range(1, 6)},
+        "needed": sharp_model.MIN_LABELS,
+        "model": ({"trained_on": model.get("trained_on")} if model else None),
+    }
+
+
+@app.get("/api/training")
+def training_status() -> dict:
+    with store.session() as conn:
+        return _training_state(conn)
+
+
+@app.get("/api/training/next")
+def training_next(job: int | None = None) -> dict:
+    """The next crop to rate, from a randomly chosen slice of the range."""
+    import random
+
+    with store.session() as conn:
+        slices = _TRAIN_SLICES[:]
+        random.shuffle(slices)
+        for pan, low, high in slices:
+            row = store.next_to_rate(conn, pan=pan, low=low, high=high, job_id=job)
+            if row and Path(row["crop_path"]).exists():
+                box = (row["x1"], row["y1"], row["x2"], row["y2"])
+                cx1, cy1, cx2, cy2 = pipeline.crop_box_for(
+                    row["preview_path"], box, _state["settings"])
+                w, h = (cx2 - cx1) or 1.0, (cy2 - cy1) or 1.0
+                return {"det": row["id"], "state": _training_state(conn),
+                        "box": [(box[0] - cx1) / w, (box[1] - cy1) / h,
+                                (box[2] - cx1) / w, (box[3] - cy1) / h]}
+        return {"det": None, "state": _training_state(conn)}
+
+
+@app.post("/api/training/label")
+def training_label(body: TrainingLabel) -> dict:
+    with store.session() as conn:
+        row = conn.execute(
+            """SELECT d.crop_path, d.x1, d.y1, d.x2, d.y2, i.path AS frame,
+                      i.preview_path
+                 FROM detections d JOIN images i ON i.id = d.image_id
+                WHERE d.id = ?""", (body.det,)).fetchone()
+        if not row:
+            raise HTTPException(404, "no such detection")
+        box = (row["x1"], row["y1"], row["x2"], row["y2"])
+
+        focus = None
+        if body.stars:
+            # Measured now, by the same call a scan makes, so what is stored
+            # against the rating is exactly what the model will be handed.
+            focus = pipeline._focus_of(
+                row["crop_path"], _state["settings"], box=box,
+                crop_box=pipeline.crop_box_for(row["preview_path"], box,
+                                               _state["settings"]))
+        usable = bool(focus and focus.features)
+        store.add_sharpness_label(
+            conn, row["frame"], box,
+            stars=body.stars if usable or not body.stars else 0,
+            pan=body.pan, heur_pan=bool(focus and focus.panning),
+            features=focus.features if usable else (),
+            version=sharp_model.FEATURE_VERSION)
+        return {"stored": usable or not body.stars, "state": _training_state(conn)}
+
+
+@app.post("/api/training/undo")
+def training_undo() -> dict:
+    with store.session() as conn:
+        store.undo_sharpness_label(conn)
+        return _training_state(conn)
+
+
+@app.post("/api/training/train")
+def training_train() -> dict:
+    """Fit the model to every rating so far and say how well it does.
+
+    The figure worth quoting is agreement with ratings the fit never saw, next
+    to what the hand-built measure manages on the same frames. A model that
+    does not beat it is not switched on: fitting is cheap and a worse cull is
+    not a thing to do to someone quietly.
+    """
+    with store.session() as conn:
+        rows = store.sharpness_labels(conn, sharp_model.FEATURE_VERSION)
+    if len(rows) < sharp_model.MIN_LABELS:
+        raise HTTPException(
+            400, f"{sharp_model.MIN_LABELS} ratings are needed before Conrod can "
+                 f"learn from them, and there are {len(rows)}.")
+    vectors = [json.loads(r["features"]) for r in rows]
+    stars = [r["stars"] for r in rows]
+    # Feature 0 is the hand-built score, so what the measure would have said
+    # about each of these frames is already in the row.
+    baseline = [sharpness_mod.stars_for(v[0]) for v in vectors]
+    score = sharp_model.agreement(vectors, stars, baseline)
+    model = sharp_model.fit(vectors, stars)
+    if not score or not model:
+        raise HTTPException(400, "Those ratings are too alike to learn from. "
+                                 "Rate a spread, from soft to sharp.")
+    better = score["model"]["mean_error"] < score["measure"]["mean_error"]
+    if better:
+        sharp_model.save(model)
+
+    pans = [(bool(r["pan"]), bool(r["heur_pan"])) for r in rows]
+    tp = sum(a and b for a, b in pans)
+    fp = sum((not a) and b for a, b in pans)
+    fn = sum(a and (not b) for a, b in pans)
+    return {**score, "active": better,
+            "pans": {"rated": sum(a for a, _ in pans), "caught": tp,
+                     "missed": fn, "false": fp}}
+
+
+@app.delete("/api/training/model")
+def training_forget() -> dict:
+    sharp_model.forget()
+    with store.session() as conn:
+        return _training_state(conn)
 
 
 @app.get("/api/crop/{det_id}")

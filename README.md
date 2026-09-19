@@ -58,6 +58,12 @@ it beats anything read off the car's own panels.
   skipped by default, and a minimum star rating or colour label can be
   required. Ratings are read from the `.xmp` sidecar first and the file
   second, the order Lightroom and Bridge write them.
+- **Trainable sharpness.** The Train tab shows crops and asks how sharp the
+  car is, 1-5 (judge the car, not the background; a crisp car on a streaked
+  pan is a 5). After about 60 ratings, *Learn from my ratings* fits a small
+  model, checks it against ratings it hasn't seen, and only switches it on if
+  it beats the built-in measure. It then scores every new scan; re-measure an
+  album to apply it to old ones.
 - **Canon-first.** Tested throughout on `.cr3`/`.cr2`. `.jpg`/`.jpeg` are
   fully supported. Other RAW (`.crw`, `.arw`, `.raf`, `.orf`, `.rw2`, `.dng`)
   is accepted but unverified; `.nef` is not supported. Open an issue with a

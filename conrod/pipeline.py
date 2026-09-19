@@ -573,7 +573,7 @@ def rescore(job_id: int | None, settings: Settings, *,
     conn = store.connect()
     try:
         rows = [dict(r) for r in conn.execute(
-            f"""SELECT d.id, d.crop_path, d.x1, d.y1, d.x2, d.y2
+            f"""SELECT d.id, d.crop_path, d.x1, d.y1, d.x2, d.y2, i.preview_path
                   FROM detections d JOIN images i ON i.id = d.image_id
                  {where} {'AND' if where else 'WHERE'} d.crop_path IS NOT NULL""",
             args)]
@@ -584,14 +584,10 @@ def rescore(job_id: int | None, settings: Settings, *,
         for row in rows:
             if should_stop and should_stop():
                 break
-            width = row["x2"] - row["x1"]
-            height = row["y2"] - row["y1"]
-            pad = settings.crop_padding
-            crop_box = (row["x1"] - width * pad, row["y1"] - height * pad,
-                        row["x2"] + width * pad, row["y2"] + height * pad)
-            focus = _focus_of(row["crop_path"], settings,
-                              box=(row["x1"], row["y1"], row["x2"], row["y2"]),
-                              crop_box=crop_box)
+            box = (row["x1"], row["y1"], row["x2"], row["y2"])
+            focus = _focus_of(row["crop_path"], settings, box=box,
+                              crop_box=crop_box_for(row["preview_path"], box,
+                                                    settings))
             done += 1
             if not focus:
                 continue
@@ -1221,6 +1217,25 @@ def _cull_reason(focus, edges) -> str:
     if focus.partly_sharp and focus.sharp_end != "even":
         return f"soft overall, though the {focus.sharp_end} is sharper"
     return "too blurred to identify"
+
+
+def crop_box_for(preview_path, box, settings):
+    """The region a crop was cut from, worked out the way the scan worked it out.
+
+    Padding alone is not enough: a vehicle filling most of the frame is cut
+    from the whole frame (see detect.expand_box), and a subject box placed
+    inside a crop that is not what it was cut from lands in the wrong place --
+    so a re-measure and a rating given by hand would each be reading a
+    different part of the picture from the one the scan measured.
+    """
+    try:
+        with Image.open(preview_path) as frame:
+            width, height = frame.size
+        return detect_mod.expand_box(tuple(box), width, height, settings)
+    except Exception:
+        x1, y1, x2, y2 = box
+        pad_x, pad_y = (x2 - x1) * settings.crop_padding, (y2 - y1) * settings.crop_padding
+        return (x1 - pad_x, y1 - pad_y, x2 + pad_x, y2 + pad_y)
 
 
 def _focus_of(crop_path, settings, box=None, crop_box=None):
