@@ -44,7 +44,10 @@ class WaitingOutALimit(unittest.TestCase):
         calls = [_response(429, {"retry-after": "7"}), _response(200)]
         vlm_providers._send(MagicMock(side_effect=lambda: calls.pop(0)),
                             Settings(), "Anthropic")
-        self.assertTrue(any(abs(s - 7) < 0.01 for s in self.slept), self.slept)
+        # The wait is counted from when the answer arrived, so a slow runner
+        # sleeps a little under 7 -- 6.984 on one CI machine. Anything near 7
+        # is obeying; what this guards against is ignoring the header.
+        self.assertTrue(any(abs(s - 7) < 0.1 for s in self.slept), self.slept)
 
     def test_a_guessed_wait_is_never_unbounded(self) -> None:
         """Our own backoff is capped. A provider's retry-after is not.
