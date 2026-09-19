@@ -899,7 +899,6 @@ fn strings(v: &Value) -> Vec<String> {
 // --- registry --------------------------------------------------------------
 
 use conrod_core::registry::{self, KnownVehicle, Member, Row};
-use std::collections::HashMap;
 
 fn known_vehicle_from_json(v: &Value) -> KnownVehicle {
     KnownVehicle {
