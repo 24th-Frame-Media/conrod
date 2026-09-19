@@ -4,7 +4,7 @@
 //! regenerating them means the two implementations have diverged.
 
 use conrod_core::{framing, ridge};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::fs;
 use std::path::Path;
 
@@ -372,6 +372,369 @@ fn keywords_and_titles_match_python() {
         keywords::caption_for(&analyses),
         frame["caption"].as_str().unwrap()
     );
+}
+
+// --- grouping ------------------------------------------------------------------
+
+use conrod_core::grouping;
+use std::collections::{HashMap, HashSet};
+
+fn strvec(v: &Value) -> Vec<String> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap().to_string())
+        .collect()
+}
+
+fn strset(v: &Value) -> HashSet<String> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap().to_string())
+        .collect()
+}
+
+fn out_map(v: &Value) -> HashMap<i64, i64> {
+    v.as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, val)| (k.parse::<i64>().unwrap(), val.as_i64().unwrap()))
+        .collect()
+}
+
+#[test]
+fn grouping_signature_helpers_match_python() {
+    for case in fixture("grouping")["signature"].as_array().unwrap() {
+        let (a, b) = (case["a"].as_str().unwrap(), case["b"].as_str().unwrap());
+        let min_colour = case["min_colour"].as_f64().unwrap();
+        let max_bits = case["max_bits"].as_i64().unwrap();
+        let label = format!("{a:?} / {b:?}");
+        assert_eq!(
+            grouping::shape_distance(a, b),
+            case["shape_distance"].as_i64().unwrap(),
+            "shape_distance {label}"
+        );
+        assert_eq!(
+            grouping::colour_matches(a, b, min_colour),
+            case["colour_matches"].as_bool().unwrap(),
+            "colour_matches {label}"
+        );
+        assert_eq!(
+            grouping::similar(a, b, max_bits, min_colour),
+            case["similar"].as_bool().unwrap(),
+            "similar {label}"
+        );
+    }
+}
+
+#[test]
+fn grouping_plate_helpers_match_python() {
+    let fixture = fixture("grouping");
+    let plate = &fixture["plate"];
+    for case in plate["tidy_plate"].as_array().unwrap() {
+        assert_eq!(
+            grouping::tidy_plate(opt_str(&case["value"])),
+            opt_str(&case["out"]).map(str::to_string),
+            "tidy_plate {:?}",
+            case["value"]
+        );
+    }
+    for case in plate["near_plate"].as_array().unwrap() {
+        let (a, b) = (case["a"].as_str().unwrap(), case["b"].as_str().unwrap());
+        assert_eq!(
+            grouping::near_plate(a, b),
+            case["out"].as_bool().unwrap(),
+            "near_plate {a:?}/{b:?}"
+        );
+    }
+    for case in plate["nearly_seen"].as_array().unwrap() {
+        let seen = strset(&case["seen"]);
+        assert_eq!(
+            grouping::nearly_seen(opt_str(&case["plate"]), &seen),
+            case["out"].as_bool().unwrap(),
+            "nearly_seen {:?}",
+            case["plate"]
+        );
+    }
+    for case in plate["plate_verdict"].as_array().unwrap() {
+        let seen = strset(&case["seen"]);
+        assert_eq!(
+            grouping::plate_verdict(opt_str(&case["plate"]), &seen),
+            case["out"].as_bool(),
+            "plate_verdict {:?}",
+            case["plate"]
+        );
+    }
+    for case in plate["same_make"].as_array().unwrap() {
+        assert_eq!(
+            grouping::same_make(opt_str(&case["a"]), opt_str(&case["b"])),
+            case["out"].as_bool().unwrap(),
+            "same_make {:?}/{:?}",
+            case["a"],
+            case["b"]
+        );
+    }
+}
+
+#[test]
+fn grouping_paint_helpers_match_python() {
+    let fixture = fixture("grouping");
+    let swatch = &fixture["swatch"];
+    for case in swatch["rgb"].as_array().unwrap() {
+        let want = case["out"].as_array().map(|a| {
+            (
+                a[0].as_u64().unwrap() as u8,
+                a[1].as_u64().unwrap() as u8,
+                a[2].as_u64().unwrap() as u8,
+            )
+        });
+        assert_eq!(
+            grouping::rgb(case["value"].as_str().unwrap()),
+            want,
+            "rgb {:?}",
+            case["value"]
+        );
+    }
+    for case in swatch["swatch_matches"].as_array().unwrap() {
+        let max_swatch = case["max_swatch"].as_i64().unwrap();
+        assert_eq!(
+            grouping::swatch_matches(opt_str(&case["a"]), opt_str(&case["b"]), max_swatch),
+            case["out"].as_bool().unwrap(),
+            "swatch_matches {:?}/{:?}",
+            case["a"],
+            case["b"]
+        );
+    }
+    for case in fixture["median_hex"].as_array().unwrap() {
+        let values = strvec(&case["values"]);
+        assert_eq!(
+            grouping::median_hex(&values),
+            opt_str(&case["out"]).map(str::to_string),
+            "median_hex {values:?}"
+        );
+    }
+}
+
+#[test]
+fn grouping_voting_helpers_match_python() {
+    let fixture = fixture("grouping");
+    for case in fixture["edit_distance"].as_array().unwrap() {
+        let (a, b) = (case["a"].as_str().unwrap(), case["b"].as_str().unwrap());
+        let limit = case["limit"].as_u64().unwrap() as usize;
+        assert_eq!(
+            grouping::edit_distance(a, b, limit),
+            case["out"].as_u64().unwrap() as usize,
+            "edit_distance {a:?}/{b:?}"
+        );
+    }
+    for case in fixture["accumulate"].as_array().unwrap() {
+        let members: Vec<Map<String, Value>> = case["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m.as_object().unwrap().clone())
+            .collect();
+        let key = case["key"].as_str().unwrap();
+        assert_eq!(
+            grouping::accumulate(&members, key),
+            strvec(&case["out"]),
+            "accumulate {key}"
+        );
+    }
+    for case in fixture["vote"].as_array().unwrap() {
+        let values: Vec<Option<String>> = case["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().map(str::to_string))
+            .collect();
+        let (value, hits) = grouping::vote(&values);
+        assert_eq!(
+            value,
+            opt_str(&case["value"]).map(str::to_string),
+            "vote value {values:?}"
+        );
+        assert_eq!(hits, case["hits"].as_f64().unwrap(), "vote hits {values:?}");
+    }
+    for case in fixture["proposed_makes"].as_array().unwrap() {
+        let members: Vec<Map<String, Value>> = case["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m.as_object().unwrap().clone())
+            .collect();
+        let mut got: Vec<String> = grouping::proposed_makes(&members).into_iter().collect();
+        got.sort();
+        assert_eq!(
+            got,
+            strvec(&case["out"]),
+            "proposed_makes {:?}",
+            case["members"]
+        );
+    }
+    for case in fixture["plain"].as_array().unwrap() {
+        assert_eq!(
+            grouping::plain(case["text"].as_str().unwrap()),
+            case["out"].as_str().unwrap()
+        );
+    }
+}
+
+#[test]
+fn grouping_own_reading_matches_python() {
+    let fixture = fixture("grouping");
+    for case in fixture["own_reading"]["remember_own_reading"]
+        .as_array()
+        .unwrap()
+    {
+        let mut current = case["before"].as_object().unwrap().clone();
+        grouping::remember_own_reading(&mut current);
+        assert_eq!(
+            Value::Object(current),
+            case["after"].clone(),
+            "remember_own_reading {:?}",
+            case["before"]
+        );
+    }
+    for case in fixture["own_reading"]["use_own_reading"]
+        .as_array()
+        .unwrap()
+    {
+        let mut parsed = case["before"].as_object().unwrap().clone();
+        grouping::use_own_reading(&mut parsed);
+        assert_eq!(
+            Value::Object(parsed),
+            case["after"].clone(),
+            "use_own_reading {:?}",
+            case["before"]
+        );
+    }
+}
+
+#[test]
+fn grouping_consensus_matches_python() {
+    for case in fixture("grouping")["consensus"].as_array().unwrap() {
+        let members: Vec<Map<String, Value>> = case["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m.as_object().unwrap().clone())
+            .collect();
+        let got = grouping::consensus(&members);
+        let want = &case["out"];
+        let label = format!("{:?}", case["members"]);
+        assert_eq!(
+            got.make,
+            opt_str(&want["make"]).map(str::to_string),
+            "make {label}"
+        );
+        assert_eq!(
+            got.model,
+            opt_str(&want["model"]).map(str::to_string),
+            "model {label}"
+        );
+        assert_eq!(
+            got.colour,
+            opt_str(&want["colour"]).map(str::to_string),
+            "colour {label}"
+        );
+        assert_eq!(
+            got.race_number,
+            opt_str(&want["race_number"]).map(str::to_string),
+            "race_number {label}"
+        );
+        assert_eq!(
+            got.plate,
+            opt_str(&want["plate"]).map(str::to_string),
+            "plate {label}"
+        );
+        assert_eq!(
+            got.colour_hex,
+            opt_str(&want["colour_hex"]).map(str::to_string),
+            "colour_hex {label}"
+        );
+        assert_eq!(
+            got.team,
+            opt_str(&want["team"]).map(str::to_string),
+            "team {label}"
+        );
+        assert_eq!(got.sponsors, strvec(&want["sponsors"]), "sponsors {label}");
+        assert_eq!(
+            got.livery_text,
+            strvec(&want["livery_text"]),
+            "livery_text {label}"
+        );
+        assert_eq!(
+            got.agreement,
+            want["agreement"].as_f64().unwrap(),
+            "agreement {label}"
+        );
+        assert_eq!(
+            got.size,
+            want["size"].as_u64().unwrap() as usize,
+            "size {label}"
+        );
+        assert_eq!(got.disputed, strvec(&want["disputed"]), "disputed {label}");
+    }
+}
+
+#[test]
+fn cluster_by_look_matches_python() {
+    for case in fixture("grouping")["cluster_by_look"].as_array().unwrap() {
+        let rows: Vec<grouping::LookRow> = case["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| grouping::LookRow {
+                det_id: r["det_id"].as_i64().unwrap(),
+                vector: r["vector"]
+                    .as_array()
+                    .map(|a| a.iter().map(|v| v.as_f64().unwrap()).collect()),
+                frame_index: r["frame_index"].as_i64().unwrap(),
+                burst: r["burst"].as_i64(),
+                plate: r["plate"].as_str().map(str::to_string),
+            })
+            .collect();
+        let same_car = case["same_car"].as_f64().unwrap();
+        let got = grouping::cluster_by_look(&rows, same_car);
+        assert_eq!(
+            got,
+            out_map(&case["out"]),
+            "cluster_by_look {:?}",
+            case["rows"]
+        );
+    }
+}
+
+#[test]
+fn cluster_matches_python() {
+    for case in fixture("grouping")["cluster"].as_array().unwrap() {
+        let rows: Vec<grouping::SignatureRow> = case["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| grouping::SignatureRow {
+                det_id: r["det_id"].as_i64().unwrap(),
+                signature: r["signature"].as_str().unwrap().to_string(),
+                frame_index: r["frame_index"].as_i64().unwrap(),
+                swatch: r["swatch"].as_str().map(str::to_string),
+                cls: r["cls"].as_str().map(str::to_string),
+                make: r["make"].as_str().map(str::to_string),
+                plate: r["plate"].as_str().map(str::to_string),
+                burst: r["burst"].as_i64(),
+            })
+            .collect();
+        let o = &case["options"];
+        let options = grouping::ClusterOptions {
+            max_bits: o["max_bits"].as_i64().unwrap(),
+            min_colour: o["min_colour"].as_f64().unwrap(),
+            frame_window: o["frame_window"].as_i64().unwrap(),
+            max_swatch: o["max_swatch"].as_i64().unwrap(),
+        };
+        let got = grouping::cluster(&rows, &options);
+        assert_eq!(got, out_map(&case["out"]), "cluster {:?}", case["rows"]);
+    }
 }
 
 #[test]

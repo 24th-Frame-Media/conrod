@@ -8,6 +8,7 @@
 pub mod analysis;
 pub mod bursts;
 pub mod framing;
+pub mod grouping;
 pub mod keywords;
 pub mod mapping;
 pub mod marques;
