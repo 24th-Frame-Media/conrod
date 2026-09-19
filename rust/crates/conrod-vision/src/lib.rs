@@ -1,5 +1,6 @@
-//! Conrod's pixel work: Pillow-exact image operations and the sharpness
-//! measure. Checked against Python on the same pixels in `tests/`.
+//! Conrod's pixel work: Pillow- and OpenCV-exact image operations, the
+//! detector, and the sharpness measure. Checked against Python in `tests/`.
 
+pub mod detect;
 pub mod imageops;
 pub mod sharpness;

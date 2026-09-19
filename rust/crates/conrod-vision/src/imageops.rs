@@ -107,10 +107,25 @@ impl Gray {
     /// with a triangle filter widened by the scale, horizontal pass first into
     /// an 8-bit intermediate, 22-bit fixed-point coefficients.
     pub fn resize_bilinear_box(&self, w: usize, h: usize, bbox: [f64; 4]) -> Gray {
+        self.resize_box(w, h, bbox, Filter::Bilinear)
+    }
+
+    /// `Image.resize((w, h), filter)` over the whole image.
+    pub fn resize(&self, w: usize, h: usize, filter: Filter) -> Gray {
+        self.resize_box(
+            w,
+            h,
+            [0.0, 0.0, self.width as f64, self.height as f64],
+            filter,
+        )
+    }
+
+    /// Pillow's separable resample for any of its convolution filters.
+    pub fn resize_box(&self, w: usize, h: usize, bbox: [f64; 4], filter: Filter) -> Gray {
         let need_h = w != self.width || bbox[0] != 0.0 || bbox[2] != w as f64;
         let need_v = h != self.height || bbox[1] != 0.0 || bbox[3] != h as f64;
-        let (bounds_h, kk_h, ksize_h) = coefficients(self.width, bbox[0], bbox[2], w);
-        let (mut bounds_v, kk_v, ksize_v) = coefficients(self.height, bbox[1], bbox[3], h);
+        let (bounds_h, kk_h, ksize_h) = coefficients(self.width, bbox[0], bbox[2], w, filter);
+        let (mut bounds_v, kk_v, ksize_v) = coefficients(self.height, bbox[1], bbox[3], h, filter);
 
         let mut current = self.clone();
         if need_h {
@@ -166,18 +181,50 @@ fn clip8(ss: i64) -> u8 {
     }
 }
 
-/// Pillow's `precompute_coeffs` + `normalize_coeffs_8bpc` for the bilinear
-/// (triangle) filter: per output pixel, the first source index, how many
-/// taps, and the fixed-point weights, `ksize` apart.
+/// Pillow's convolution filters, as `Resample.c` defines them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Filter {
+    Bilinear,
+    Lanczos,
+}
+
+impl Filter {
+    fn support(self) -> f64 {
+        match self {
+            Filter::Bilinear => 1.0,
+            Filter::Lanczos => 3.0,
+        }
+    }
+
+    fn weight(self, x: f64) -> f64 {
+        let sinc = |x: f64| {
+            if x == 0.0 {
+                1.0
+            } else {
+                (x * std::f64::consts::PI).sin() / (x * std::f64::consts::PI)
+            }
+        };
+        match self {
+            Filter::Bilinear => (1.0 - x.abs()).max(0.0),
+            Filter::Lanczos if (-3.0..3.0).contains(&x) => sinc(x) * sinc(x / 3.0),
+            Filter::Lanczos => 0.0,
+        }
+    }
+}
+
+/// Pillow's `precompute_coeffs` + `normalize_coeffs_8bpc`: per output pixel,
+/// the first source index, how many taps, and the fixed-point weights,
+/// `ksize` apart.
 fn coefficients(
     in_size: usize,
     in0: f64,
     in1: f64,
     out_size: usize,
+    filter: Filter,
 ) -> (Vec<(usize, usize)>, Vec<i64>, usize) {
     let scale = (in1 - in0) / out_size as f64;
     let filterscale = scale.max(1.0);
-    let support = filterscale; // the triangle's support is 1
+    let support = filter.support() * filterscale;
     let ksize = support.ceil() as usize * 2 + 1;
     let mut bounds = Vec::with_capacity(out_size);
     let mut kk = vec![0i64; out_size * ksize];
@@ -189,10 +236,7 @@ fn coefficients(
         let xmax = ((center + support + 0.5) as i64).min(in_size as i64) as usize;
         let taps = xmax.saturating_sub(xmin);
         let mut weights: Vec<f64> = (0..taps)
-            .map(|x| {
-                let t = ((x + xmin) as f64 - center + 0.5) * ss;
-                (1.0 - t.abs()).max(0.0)
-            })
+            .map(|x| filter.weight(((x + xmin) as f64 - center + 0.5) * ss))
             .collect();
         let total: f64 = weights.iter().sum();
         if total != 0.0 {
@@ -267,5 +311,154 @@ mod tests {
     fn a_resize_to_the_same_size_changes_nothing() {
         let g = Gray::new(3, 2, vec![1, 2, 3, 4, 5, 6]);
         assert_eq!(g.resize_bilinear_box(3, 2, [0.0, 0.0, 3.0, 2.0]), g);
+    }
+}
+
+/// An 8-bit RGB image, row-major, interleaved.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rgb {
+    pub width: usize,
+    pub height: usize,
+    pub data: Vec<u8>,
+}
+
+impl Rgb {
+    pub fn new(width: usize, height: usize, data: Vec<u8>) -> Rgb {
+        assert_eq!(data.len(), width * height * 3, "pixel count");
+        Rgb {
+            width,
+            height,
+            data,
+        }
+    }
+
+    /// Decode a JPEG at full size, or scaled in the DCT by 1/2, 1/4 or 1/8.
+    pub fn decode_jpeg(bytes: &[u8], denominator: u16) -> Result<Rgb, String> {
+        let mut decoder = jpeg_decoder::Decoder::new(bytes);
+        decoder.read_info().map_err(|e| e.to_string())?;
+        let info = decoder.info().ok_or("no JPEG header")?;
+        if denominator > 1 {
+            decoder
+                .scale(info.width / denominator, info.height / denominator)
+                .map_err(|e| e.to_string())?;
+        }
+        let pixels = decoder.decode().map_err(|e| e.to_string())?;
+        let info = decoder.info().ok_or("no JPEG header")?;
+        let (w, h) = (usize::from(info.width), usize::from(info.height));
+        match info.pixel_format {
+            jpeg_decoder::PixelFormat::RGB24 => Ok(Rgb::new(w, h, pixels)),
+            jpeg_decoder::PixelFormat::L8 => Ok(Rgb::new(
+                w,
+                h,
+                pixels.iter().flat_map(|&v| [v, v, v]).collect(),
+            )),
+            other => Err(format!("unsupported JPEG pixel format {other:?}")),
+        }
+    }
+
+    pub fn to_gray(&self) -> Gray {
+        Gray::from_rgb(self.width, self.height, &self.data)
+    }
+
+    /// Turn a frame upright per its EXIF orientation, the way the Python
+    /// scan baked it into the cached preview (3, 6 and 8; mirrored values are
+    /// left alone, as they were).
+    pub fn orient(self, orientation: u16) -> Rgb {
+        let (w, h) = (self.width, self.height);
+        let (nw, nh) = match orientation {
+            3 => (w, h),
+            6 | 8 => (h, w),
+            _ => return self,
+        };
+        let mut out = Vec::with_capacity(self.data.len());
+        for y in 0..nh {
+            for x in 0..nw {
+                // Pillow's ROTATE_180 for 3, ROTATE_270 (clockwise) for 6,
+                // ROTATE_90 for 8.
+                let (sx, sy) = match orientation {
+                    3 => (w - 1 - x, h - 1 - y),
+                    6 => (y, h - 1 - x),
+                    _ => (w - 1 - y, x),
+                };
+                let at = (sy * w + sx) * 3;
+                out.extend_from_slice(&self.data[at..at + 3]);
+            }
+        }
+        Rgb::new(nw, nh, out)
+    }
+
+    pub fn crop(&self, x0: usize, y0: usize, x1: usize, y1: usize) -> Rgb {
+        let (x1, y1) = (x1.min(self.width), y1.min(self.height));
+        let mut out = Vec::with_capacity((x1 - x0) * (y1 - y0) * 3);
+        for y in y0..y1 {
+            out.extend_from_slice(&self.data[(y * self.width + x0) * 3..(y * self.width + x1) * 3]);
+        }
+        Rgb::new(x1 - x0, y1 - y0, out)
+    }
+
+    /// Pillow's resample on each channel: its RGB path runs the same
+    /// arithmetic per band.
+    pub fn resize(&self, w: usize, h: usize, filter: Filter) -> Rgb {
+        let bands: Vec<Gray> = (0..3)
+            .map(|c| {
+                let band = self.data.iter().skip(c).step_by(3).copied().collect();
+                Gray::new(self.width, self.height, band).resize(w, h, filter)
+            })
+            .collect();
+        let mut out = Vec::with_capacity(w * h * 3);
+        for i in 0..w * h {
+            out.extend([bands[0].data[i], bands[1].data[i], bands[2].data[i]]);
+        }
+        Rgb::new(w, h, out)
+    }
+
+    /// `cv2.resize(..., INTER_LINEAR)` on 8-bit data, as it runs on x86: two
+    /// taps per axis in 11-bit fixed point, and the vectorised vertical pass's
+    /// own rounding -- what ultralytics' letterbox feeds the detector.
+    pub fn resize_cv2_linear(&self, dw: usize, dh: usize) -> Rgb {
+        fn taps(dst: usize, src: usize) -> Vec<(usize, usize, i32, i32)> {
+            let scale = 1.0 / (dst as f64 / src as f64);
+            (0..dst)
+                .map(|d| {
+                    let f = ((d as f64 + 0.5) * scale - 0.5) as f32;
+                    let mut s = f.floor() as isize;
+                    let mut f = f - s as f32;
+                    if s < 0 {
+                        f = 0.0;
+                        s = 0;
+                    }
+                    let mut s = s as usize;
+                    if s >= src - 1 {
+                        f = 0.0;
+                        s = src - 1;
+                    }
+                    let a0 = ((1.0 - f) * 2048.0).round() as i32;
+                    let a1 = (f * 2048.0).round() as i32;
+                    (s, (s + 1).min(src - 1), a0, a1)
+                })
+                .collect()
+        }
+        let xs = taps(dw, self.width);
+        let ys = taps(dh, self.height);
+        // Horizontal pass into 32-bit sums, one row at a time as cv2 does.
+        let row = |y: usize| -> Vec<i32> {
+            let src = &self.data[y * self.width * 3..(y + 1) * self.width * 3];
+            let mut out = Vec::with_capacity(dw * 3);
+            for &(s0, s1, a0, a1) in &xs {
+                for c in 0..3 {
+                    out.push(i32::from(src[s0 * 3 + c]) * a0 + i32::from(src[s1 * 3 + c]) * a1);
+                }
+            }
+            out
+        };
+        let mut out = Vec::with_capacity(dw * dh * 3);
+        for &(s0, s1, b0, b1) in &ys {
+            let (r0, r1) = (row(s0), row(s1));
+            for (&v0, &v1) in r0.iter().zip(&r1) {
+                let v = (((b0 * (v0 >> 4)) >> 16) + ((b1 * (v1 >> 4)) >> 16) + 2) >> 2;
+                out.push(v.clamp(0, 255) as u8);
+            }
+        }
+        Rgb::new(dw, dh, out)
     }
 }

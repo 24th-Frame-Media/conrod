@@ -198,11 +198,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "conrod-io"
+version = "0.1.0"
+dependencies = [
+ "conrod-core",
+ "rawler",
+ "serde_json",
+]
+
+[[package]]
 name = "conrod-vision"
 version = "0.1.0"
 dependencies = [
  "conrod-core",
  "image",
+ "jpeg-decoder",
+ "ort",
  "serde_json",
 ]
 
