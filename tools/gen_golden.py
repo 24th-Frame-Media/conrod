@@ -23,7 +23,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from conrod import bursts, framing, keywords, marques, sharp_model, sharpness, taste  # noqa: E402
+from conrod import bursts, framing, grouping, keywords, marques, sharp_model, sharpness, taste  # noqa: E402
 from conrod.analyze import VehicleAnalysis  # noqa: E402
 from conrod.mapping import NumberMap  # noqa: E402
 
@@ -395,6 +395,361 @@ def sharpness_local(jobs=(38, 39), count=200) -> None:
     print(f"rust/fixtures/sharpness_local.json  {len(cases)} real crops (local-only)")
 
 
+def _vec(*values) -> list:
+    """A unit vector, so a dot product is a cosine. Mirrors the helper
+    ``tests/test_grouping_by_look.py`` already trusts."""
+    v = np.array(values, dtype=np.float32)
+    return (v / np.linalg.norm(v)).tolist()
+
+
+def _like(base: list, nearness: float) -> list:
+    """A vector a known cosine away from ``base``."""
+    base_arr = np.array(base, dtype=np.float32)
+    other = np.zeros_like(base_arr)
+    other[-1] = 1.0
+    other = other - float(np.dot(other, base_arr)) * base_arr
+    other = other / np.linalg.norm(other)
+    result = base_arr * nearness + other * float(np.sqrt(1 - nearness ** 2))
+    return result.tolist()
+
+
+CAR = _vec(1, 0, 0, 0, 0)
+SIG_A = "ffff0000:" + ",".join(["0.03"] * 36)
+SIG_B = "0000ffff:" + ",".join(["0.03"] * 36)
+
+
+def _look_row(det_id, vector, frame_index, burst=None, plate=None) -> dict:
+    return {"det_id": det_id, "vector": vector, "frame_index": frame_index,
+            "burst": burst, "plate": plate}
+
+
+def _sig_row(det_id, signature, frame_index, swatch=None, cls=None,
+             make=None, plate=None, burst=None) -> dict:
+    return {"det_id": det_id, "signature": signature, "frame_index": frame_index,
+            "swatch": swatch, "cls": cls, "make": make, "plate": plate, "burst": burst}
+
+
+def _run_look(rows: list[dict], same_car=grouping.SAME_CAR) -> dict:
+    tuples = [(r["det_id"], r["vector"], r["frame_index"], r["burst"], r["plate"])
+              for r in rows]
+    out = grouping.cluster_by_look(tuples, same_car=same_car)
+    return {"rows": rows, "same_car": same_car, "out": out}
+
+
+def _run_cluster(rows: list[dict], **options) -> dict:
+    tuples = [(r["det_id"], r["signature"], r["frame_index"], r["swatch"],
+               r["cls"], r["make"], r["plate"], r["burst"]) for r in rows]
+    out = grouping.cluster(tuples, **options)
+    return {"rows": rows, "options": options, "out": out}
+
+
+def _signature_cases() -> list[dict]:
+    # NB a histogram-length mismatch is deliberately not exercised here: `_colour_matches`
+    # only wraps `_parse` in its try/except, not the `np.minimum(ca, cb)` that follows, so
+    # Python itself raises an uncaught ValueError on mismatched lengths rather than
+    # returning False. The Rust port returns False there instead of panicking -- see the
+    # port's doc comment on `colour_matches` and the task report for why.
+    pairs = [
+        (SIG_A, SIG_A, 0.62, 14),
+        (SIG_A, SIG_B, 0.62, 14),           # opposite hash, same histogram
+        (SIG_A, SIG_B, 0.62, 15),           # one bit under the popcount
+        (SIG_A, SIG_B, 0.62, 16),           # exactly the popcount of ffff0000^0000ffff
+        (SIG_A, "not-hex:0.1,0.2", 0.62, 14),
+        (SIG_A, "abcffff0000", 0.62, 14),   # valid hex, no colon, empty tail
+        (SIG_A, "", 0.62, 14),
+        ("", "", 0.62, 14),
+        (SIG_A, "ffff0000:0.1,abc,0.2", 0.62, 14),   # unparseable float in the tail
+        ("0000000000000000:" + ",".join(["1.0"] * 36),
+         "0000000000000000:" + ",".join(["0.0"] * 35 + ["1.0"]), 0.5, 0),
+    ]
+    out = []
+    for a, b, min_colour, max_bits in pairs:
+        out.append({
+            "a": a, "b": b, "min_colour": min_colour, "max_bits": max_bits,
+            "shape_distance": grouping._shape_distance(a, b),
+            "colour_matches": grouping._colour_matches(a, b, min_colour),
+            "similar": grouping.similar(a, b, max_bits=max_bits, min_colour=min_colour),
+        })
+    return out
+
+
+def _plate_cases() -> dict:
+    tidy = [None, "", "  ", "ab-12 cd", "39432J", "#39432J", "0"]
+    near = [("43111J", "73111J"), ("8BC123", "BBC123"), ("43111J", "45111J"),
+            ("43111J", "43111"), ("43111J", "73112J"), ("SAME", "SAME"),
+            ("", ""), ("A", "A")]
+    nearly = [(None, ["ABC"]), ("ABC", []), ("43111J", ["73111J", "OTHER"]),
+              ("43111J", ["45111J"])]
+    verdict = [(None, []), ("ABC", []), ("ABC", ["ABC"]), ("ABC", ["XYZ"]),
+               ("43111J", ["73111J"]), ("43111J", ["45111J", "OTHER"])]
+    same_make = [(None, None), ("", "Ford"), (" FORD ", "ford"), ("Ford", "Holden"),
+                 ("Ford", ""), (None, "Ford")]
+    return {
+        "tidy_plate": [{"value": v, "out": grouping._tidy_plate(v)} for v in tidy],
+        "near_plate": [{"a": a, "b": b, "out": grouping._near_plate(a, b)} for a, b in near],
+        "nearly_seen": [{"plate": p, "seen": s, "out": grouping._nearly_seen(p, set(s))}
+                        for p, s in nearly],
+        "plate_verdict": [{"plate": p, "seen": s, "out": grouping._plate_verdict(p, set(s))}
+                          for p, s in verdict],
+        "same_make": [{"a": a, "b": b, "out": grouping._same_make(a, b)} for a, b in same_make],
+    }
+
+
+def _swatch_cases() -> dict:
+    rgb_in = ["#ff0000", "#a1b2c3", "not a colour", "#GGGGGG", "#f", "#",
+              "#12", "#1234567"]
+    swatch_pairs = [
+        (None, "#ff0000"), ("#ff0000", None),
+        ("#808080", "#7f7f7f"),      # both grey, close value
+        ("#808080", "#202020"),      # both grey, far value
+        ("#808080", "#ff0000"),      # one grey, one coloured
+        ("#ff0000", "#fe0101"),      # same hue, almost
+        ("#ff0000", "#00ff88"),      # different hue, far apart
+        ("#4b2d6e", "#2e1a44"),      # the purple Falcon: same hue, different exposure
+        ("not a colour", "#ff0000"),  # unparseable -- abstains
+    ]
+    return {
+        "rgb": [{"value": v, "out": list(grouping._rgb(v)) if grouping._rgb(v) else None}
+               for v in rgb_in],
+        "swatch_matches": [{"a": a, "b": b, "max_swatch": 52,
+                            "out": grouping._swatch_matches(a, b, 52)}
+                           for a, b in swatch_pairs],
+    }
+
+
+def _median_hex_cases() -> list[dict]:
+    values_sets = [
+        ["#ff0000", "#00ff00", "#0000ff"],
+        ["#112233", "#445566", "#778899"],
+        [],
+        ["not a colour"],
+        ["#GGGGGG"],
+        # The Python quirk: a malformed value can append to one channel and
+        # then raise on the next, leaving that channel one entry longer than
+        # its neighbours. Not fixed here -- ported as measured.
+        ["#ffzz00", "#112233", "#445566"],
+        ["#ffzz00", "#112233"],
+    ]
+    return [{"values": v, "out": grouping._median_hex(v)} for v in values_sets]
+
+
+def _edit_distance_cases() -> list[dict]:
+    pairs = [("", "", 3), ("abc", "abc", 0), ("Betta", "Betto", 1), ("Betta", "Bella", 2),
+             ("Castrol", "Castrel", 1), ("BP", "GP", 1), ("Bridgestone", "Bridgstone", 1),
+             ("kitten", "sitting", 5), ("kitten", "sitting", 2), ("", "abc", 2)]
+    return [{"a": a, "b": b, "limit": limit, "out": grouping._edit_distance(a, b, limit)}
+            for a, b, limit in pairs]
+
+
+def _accumulate_cases() -> list[dict]:
+    member_sets = [
+        [{"sponsors": ["Red Bull", "red bull", "Ampol"]}, {"sponsors": "Repco"},
+         {"sponsors": []}, {"sponsors": None}, {}],
+        [{"sponsors": [text]} for text in ["Betta"] * 19 + ["Betto"] * 3 + ["Bella"]],
+        [{"sponsors": [text]} for text in ["Castrol"] * 10 + ["Castrel"] * 9],
+        [{"sponsors": ["  "]}, {"sponsors": [42]}],
+    ]
+    return [{"members": m, "key": "sponsors", "out": grouping._accumulate(m, "sponsors")}
+            for m in member_sets]
+
+
+def _vote_cases() -> list[dict]:
+    value_sets = [
+        ["Ford", "ford", "Holden"],
+        [None, "", "  ", "Ford"],
+        [],
+        ["Ford", "FORD", "Holden", "holden", "holden"],
+    ]
+    out = []
+    for values in value_sets:
+        value, hits = grouping._vote(values)
+        out.append({"values": values, "value": value, "hits": hits})
+    return out
+
+
+def _own_reading_cases() -> dict:
+    remember = [
+        {"make": "Ford", "model": "Falcon"},
+        {"make": "Ford", "own_make": "Holden"},        # never overwritten
+        {"make": None},
+        {"make": ""},
+        {},
+    ]
+    use = [
+        {"make": "Ford", "own_make": "Kawasaki"},
+        {"make": "Ford", "own_make": None},             # blank own_ falls through
+        {"make": "Ford"},
+        {"own_make": "Yamaha", "make": None},
+    ]
+    remember_cases = []
+    for before in remember:
+        current = dict(before)
+        grouping.remember_own_reading(current)
+        remember_cases.append({"before": before, "after": current})
+    use_cases = []
+    for before in use:
+        parsed = dict(before)
+        grouping.use_own_reading(parsed)
+        use_cases.append({"before": before, "after": parsed})
+    return {"remember_own_reading": remember_cases, "use_own_reading": use_cases}
+
+
+def _proposed_makes_cases() -> list[dict]:
+    member_sets = [
+        [{"own_make": "Yamaha", "own_model": "YZF-R1"}, {"own_make": "Yamaha", "own_model": "R6"},
+         {"own_make": "Yamaha", "own_model": None}],
+        [{"own_make": "Jaguar", "own_model": "XJS"}, {"make": "Holden", "model": "Monaro"},
+         {"own_make": "Jaguar", "own_model": "XJ-S"}],
+        [{"own_make": "Harley Davidson"}],
+        [{}, {"own_make": None}],
+        [{"make": "Ford"}, {"own_make": "", "make": "Holden"}],
+    ]
+    return [{"members": m, "out": sorted(grouping._proposed_makes(m))} for m in member_sets]
+
+
+def _plain_cases() -> list[dict]:
+    texts = ["Harley-Davidson", "", "  spaced  ", "Ninja H2", "Škoda"]
+    return [{"text": t, "out": grouping._plain(t)} for t in texts]
+
+
+def _consensus_cases() -> list[dict]:
+    import dataclasses
+
+    falcon = (
+        [{"make": "Ford", "model": "Fairmont", "colour": "blue"}] * 3
+        + [{"make": "Ford", "model": "Mustang", "colour": "blue"}] * 2
+        + [
+            {"make": "Ford", "model": "Fiesta", "colour": "blue"},
+            {"make": "Holden", "model": "Vauxhall Astra", "colour": "blue"},
+            {"make": "Holden", "model": "Holden Commodore", "colour": "blue"},
+        ]
+    )
+    member_sets = [
+        [],
+        falcon,
+        [{"make": "Ford", "model": "Fiesta"}, {"make": "Holden", "model": "Astra"},
+         {"make": "Holden", "model": "Commodore"}, {"make": "Toyota", "model": "Corolla"}],
+        [{"make": "Mitsubishi", "model": "Outlander", "colour": "grey"}] * 3,
+        [{"make": "Ford", "model": "Falcon", "plate": "AAA11A", "plate_conf": 0.4},
+         {"make": "Ford", "model": "Falcon", "plate": "AAA11A", "plate_conf": 0.4},
+         {"make": "Ford", "model": "Falcon", "plate": "73111J", "plate_conf": 0.91}],
+        [  # the purple Falcon: each frame saw a different panel
+            {"make": "Ford", "model": "Falcon FG", "colour": "Purple", "plate": "EYU06S",
+             "plate_conf": 0.94, "team": "CV Performance", "sponsors": ["CV Performance"],
+             "colour_hex": "#4b2d6e"},
+            {"make": "Ford", "model": "FG Falcon XR8", "colour": "blue", "plate": "EYU06S",
+             "plate_conf": 0.6, "race_number": "06", "number_conf": 0.70,
+             "sponsors": ["FPV"], "colour_hex": "#2e1a44"},
+        ],
+        [{"sponsors": [text]} for text in ["Betta"] * 19 + ["Betto"] * 3 + ["Bella"]],
+        [{"make": None, "model": None}, {}],       # nobody named anything
+        [{"make": "", "model": ""}, {"make": " ", "model": " "}],  # blank strings, not None
+        [{"make": "BMW", "model": "M3", "plate_conf": "0.8", "plate": "ABC123"}],  # confidence as a string
+    ]
+    out = []
+    for members in member_sets:
+        out.append({"members": members, "out": dataclasses.asdict(grouping.consensus(members))})
+    return out
+
+
+def _cluster_by_look_cases() -> list[dict]:
+    a, b = CAR, _like(CAR, 0.95)
+    c = _like(b, 0.95)   # resembles b, not a's own first frame
+    cases = [
+        _run_look([_look_row(1, CAR, 1, 7), _look_row(2, _like(CAR, 0.97), 2, 7)]),
+        _run_look([_look_row(1, CAR, 1, 7), _look_row(2, _like(CAR, 0.40), 2, 7)]),
+        _run_look([_look_row(1, CAR, 5, 7), _look_row(2, _like(CAR, 0.999), 5, 7)]),  # same frame twice
+        _run_look([_look_row(1, a, 1, 7), _look_row(2, b, 2, 7), _look_row(3, c, 3, 7)]),
+        _run_look([_look_row(1, CAR, 1, 7), _look_row(2, _like(CAR, 0.99), 2, 9)]),   # different bursts, no plate
+        _run_look([_look_row(1, CAR, 1, 7, "39432J"), _look_row(2, _like(CAR, 0.10), 2, 9, "39432J")]),
+        _run_look([_look_row(1, CAR, 1, 7, "43111J"), _look_row(2, _like(CAR, 0.10), 2, 9, "73111J")]),
+        _run_look([_look_row(1, CAR, 1, 7, "43111J"), _look_row(2, _like(CAR, 0.10), 2, 9, "73118J")]),
+        _run_look([_look_row(1, CAR, 1, 7, "ABC123"), _look_row(2, _like(CAR, 0.99), 2, 9, "XYZ789")]),
+        _run_look([_look_row(1, CAR, 1, 7, "ABC123"), _look_row(2, _like(CAR, 0.99), 2, 7, "XYZ789")]),
+        _run_look([_look_row(1, CAR, 1, 7), _look_row(2, None, 2, 7)]),   # no embedding
+        # A cascading plate merge across three bursts that never look alike:
+        # each burst's own crop forms a singleton, and only the confusable
+        # chain (0<->4<->7) brings all three together.
+        _run_look([
+            _look_row(1, CAR, 1, 1, "43111J"),
+            _look_row(2, _like(CAR, 0.05), 2, 2, "73111J"),
+            _look_row(3, _like(CAR, -0.05), 3, 3, "03111J"),
+        ]),
+        _run_look([_look_row(1, a, 1, 7, "39432J"), _look_row(2, b, 2, 7, "39432J"),
+                   _look_row(3, c, 3, 8, "ZE766")], same_car=0.85),
+    ]
+    return cases
+
+
+def _cluster_cases() -> list[dict]:
+    def opts(**kw) -> dict:
+        base = {"max_bits": 14, "min_colour": 0.62, "frame_window": 6, "max_swatch": 52}
+        base.update(kw)
+        return base
+
+    cases = [
+        _run_cluster([_sig_row(1, SIG_A, 1, "#4b2d6e", "car", "Ford", "EYU-06S"),
+                      _sig_row(2, SIG_B, 41, "#2e1a44", "car", "Ford", "EYU06S")], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, "#1a729c", "car", "Ford", "ABC12D"),
+                      _sig_row(2, SIG_A, 2, "#1a729c", "car", "Ford", "XYZ99Z")], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, "#2b3f67", "car", "Ford", "43111J"),
+                      _sig_row(2, SIG_A, 2, "#2c426c", "car", "Ford", "73111J")], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, "#2b3f67", "car", "Ford", "43111J"),
+                      _sig_row(2, SIG_A, 2, "#2c426c", "car", "Holden", "73111J")], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, "#2b3f67", "car", "Ford", "43111J"),
+                      _sig_row(2, SIG_A, 2, "#c0392b", "car", "Ford", "73111J")], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, "#2b3f67", "car", "Ford", "43111J"),
+                      _sig_row(2, SIG_A, 2, "#2b3f67", "car", "Ford", "98222K")], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, burst=7), _sig_row(2, SIG_B, 40, burst=7)], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, burst=7), _sig_row(2, SIG_B, 40, burst=9)], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, "#2b3f67", "car", burst=7),
+                      _sig_row(2, SIG_A, 2, "#c0392b", "car", burst=7)], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, None, "car", burst=None),
+                      _sig_row(2, SIG_A, 2, None, "car", burst=None)], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, None, "car", burst=1),
+                      _sig_row(2, SIG_A, 2, None, "car", burst=2)], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, None, "car", burst=1),
+                      _sig_row(2, SIG_A, 90, None, "car", burst=8)], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, "#2b3f67", "car", "Holden", burst=3),
+                      _sig_row(2, SIG_A, 2, "#2c426c", "car", "Holden", burst=4)], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, "#2b3f67", "car", burst=3),
+                      _sig_row(2, SIG_A, 2, "#2c426c", "car", burst=4)], **opts()),
+        _run_cluster([_sig_row(1, SIG_A, 1, None, "car", plate="39432J", burst=1),
+                      _sig_row(2, SIG_B, 90, None, "car", plate="39432J", burst=8)], **opts()),
+        # A motorcycle and a car moments apart: the class gate refuses what
+        # frame proximity would otherwise merge.
+        _run_cluster([_sig_row(1, SIG_A, 1, cls="motorcycle"),
+                      _sig_row(2, SIG_A, 2, cls="car")], **opts()),
+        # An empty signature is skipped outright, not grouped alone.
+        _run_cluster([_sig_row(1, "", 1), _sig_row(2, SIG_A, 2)], **opts()),
+        # Frame collision: the same photograph cannot hold one car twice.
+        _run_cluster([_sig_row(1, SIG_A, 1, "#2b3f67", "car"),
+                      _sig_row(2, SIG_A, 1, "#2b3f67", "car")], **opts()),
+        # Tight max_bits and a high min_colour: nothing left to agree on.
+        _run_cluster([_sig_row(1, SIG_A, 1), _sig_row(2, SIG_B, 2)],
+                     **opts(max_bits=0, min_colour=0.99, frame_window=0)),
+    ]
+    return cases
+
+
+def grouping_cases() -> dict:
+    return {
+        "signature": _signature_cases(),
+        "plate": _plate_cases(),
+        "swatch": _swatch_cases(),
+        "median_hex": _median_hex_cases(),
+        "edit_distance": _edit_distance_cases(),
+        "accumulate": _accumulate_cases(),
+        "vote": _vote_cases(),
+        "own_reading": _own_reading_cases(),
+        "proposed_makes": _proposed_makes_cases(),
+        "plain": _plain_cases(),
+        "consensus": _consensus_cases(),
+        "cluster_by_look": _cluster_by_look_cases(),
+        "cluster": _cluster_cases(),
+    }
+
+
 def main() -> None:
     if "--local" in sys.argv:
         sharpness_local()
@@ -406,6 +761,7 @@ def main() -> None:
     write("marques", marques_cases())
     write("mapping", mapping_cases())
     write("keywords", keywords_cases())
+    write("grouping", grouping_cases())
 
 
 if __name__ == "__main__":

@@ -1,0 +1,2573 @@
+{
+ "accumulate": [
+  {
+   "key": "sponsors",
+   "members": [
+    {
+     "sponsors": [
+      "Red Bull",
+      "red bull",
+      "Ampol"
+     ]
+    },
+    {
+     "sponsors": "Repco"
+    },
+    {
+     "sponsors": []
+    },
+    {
+     "sponsors": null
+    },
+    {}
+   ],
+   "out": [
+    "Red Bull",
+    "Ampol",
+    "Repco"
+   ]
+  },
+  {
+   "key": "sponsors",
+   "members": [
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betto"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betto"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betto"
+     ]
+    },
+    {
+     "sponsors": [
+      "Bella"
+     ]
+    }
+   ],
+   "out": [
+    "Betta"
+   ]
+  },
+  {
+   "key": "sponsors",
+   "members": [
+    {
+     "sponsors": [
+      "Castrol"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrol"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrol"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrol"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrol"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrol"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrol"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrol"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrol"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrol"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrel"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrel"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrel"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrel"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrel"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrel"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrel"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrel"
+     ]
+    },
+    {
+     "sponsors": [
+      "Castrel"
+     ]
+    }
+   ],
+   "out": [
+    "Castrol",
+    "Castrel"
+   ]
+  },
+  {
+   "key": "sponsors",
+   "members": [
+    {
+     "sponsors": [
+      "  "
+     ]
+    },
+    {
+     "sponsors": [
+      42
+     ]
+    }
+   ],
+   "out": [
+    "42"
+   ]
+  }
+ ],
+ "cluster": [
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": "Ford",
+     "plate": "EYU-06S",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#4b2d6e"
+    },
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 41,
+     "make": "Ford",
+     "plate": "EYU06S",
+     "signature": "0000ffff:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2e1a44"
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": "Ford",
+     "plate": "ABC12D",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#1a729c"
+    },
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": "Ford",
+     "plate": "XYZ99Z",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#1a729c"
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": "Ford",
+     "plate": "43111J",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2b3f67"
+    },
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": "Ford",
+     "plate": "73111J",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2c426c"
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": "Ford",
+     "plate": "43111J",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2b3f67"
+    },
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": "Holden",
+     "plate": "73111J",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2c426c"
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": "Ford",
+     "plate": "43111J",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2b3f67"
+    },
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": "Ford",
+     "plate": "73111J",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#c0392b"
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": "Ford",
+     "plate": "43111J",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2b3f67"
+    },
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": "Ford",
+     "plate": "98222K",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2b3f67"
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "cls": null,
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    },
+    {
+     "burst": 7,
+     "cls": null,
+     "det_id": 2,
+     "frame_index": 40,
+     "make": null,
+     "plate": null,
+     "signature": "0000ffff:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "cls": null,
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    },
+    {
+     "burst": 9,
+     "cls": null,
+     "det_id": 2,
+     "frame_index": 40,
+     "make": null,
+     "plate": null,
+     "signature": "0000ffff:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2b3f67"
+    },
+    {
+     "burst": 7,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#c0392b"
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    },
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": 1,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    },
+    {
+     "burst": 2,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": 1,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    },
+    {
+     "burst": 8,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 90,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": 3,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": "Holden",
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2b3f67"
+    },
+    {
+     "burst": 4,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": "Holden",
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2c426c"
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": 3,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2b3f67"
+    },
+    {
+     "burst": 4,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2c426c"
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": 1,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": "39432J",
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    },
+    {
+     "burst": 8,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 90,
+     "make": null,
+     "plate": "39432J",
+     "signature": "0000ffff:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": "motorcycle",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    },
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 2,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": null,
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "",
+     "swatch": null
+    },
+    {
+     "burst": null,
+     "cls": null,
+     "det_id": 2,
+     "frame_index": 2,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 6,
+    "max_bits": 14,
+    "max_swatch": 52,
+    "min_colour": 0.62
+   },
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2b3f67"
+    },
+    {
+     "burst": null,
+     "cls": "car",
+     "det_id": 2,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": "#2b3f67"
+    }
+   ]
+  },
+  {
+   "options": {
+    "frame_window": 0,
+    "max_bits": 0,
+    "max_swatch": 52,
+    "min_colour": 0.99
+   },
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": null,
+     "cls": null,
+     "det_id": 1,
+     "frame_index": 1,
+     "make": null,
+     "plate": null,
+     "signature": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    },
+    {
+     "burst": null,
+     "cls": null,
+     "det_id": 2,
+     "frame_index": 2,
+     "make": null,
+     "plate": null,
+     "signature": "0000ffff:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+     "swatch": null
+    }
+   ]
+  }
+ ],
+ "cluster_by_look": [
+  {
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": null,
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 7,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": null,
+     "vector": [
+      0.9700000286102295,
+      0.0,
+      0.0,
+      0.0,
+      0.24310491979122162
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": null,
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 7,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": null,
+     "vector": [
+      0.4000000059604645,
+      0.0,
+      0.0,
+      0.0,
+      0.9165151119232178
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 5,
+     "plate": null,
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 7,
+     "det_id": 2,
+     "frame_index": 5,
+     "plate": null,
+     "vector": [
+      0.9990000128746033,
+      0.0,
+      0.0,
+      0.0,
+      0.044710177928209305
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 1,
+    "3": 1
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": null,
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 7,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": null,
+     "vector": [
+      0.949999988079071,
+      0.0,
+      0.0,
+      0.0,
+      0.31224989891052246
+     ]
+    },
+    {
+     "burst": 7,
+     "det_id": 3,
+     "frame_index": 3,
+     "plate": null,
+     "vector": [
+      0.8050000071525574,
+      0.0,
+      0.0,
+      0.0,
+      0.5932748317718506
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": null,
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 9,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": null,
+     "vector": [
+      0.9900000095367432,
+      0.0,
+      0.0,
+      0.0,
+      0.14106735587120056
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": "39432J",
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 9,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": "39432J",
+     "vector": [
+      0.10000000149011612,
+      0.0,
+      0.0,
+      0.0,
+      0.994987428188324
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 1
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": "43111J",
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 9,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": "73111J",
+     "vector": [
+      0.10000000149011612,
+      0.0,
+      0.0,
+      0.0,
+      0.994987428188324
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": "43111J",
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 9,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": "73118J",
+     "vector": [
+      0.10000000149011612,
+      0.0,
+      0.0,
+      0.0,
+      0.994987428188324
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": "ABC123",
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 9,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": "XYZ789",
+     "vector": [
+      0.9900000095367432,
+      0.0,
+      0.0,
+      0.0,
+      0.14106735587120056
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 2
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": "ABC123",
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 7,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": "XYZ789",
+     "vector": [
+      0.9900000095367432,
+      0.0,
+      0.0,
+      0.0,
+      0.14106735587120056
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": null,
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 7,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": null,
+     "vector": null
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 1,
+    "3": 1
+   },
+   "rows": [
+    {
+     "burst": 1,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": "43111J",
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 2,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": "73111J",
+     "vector": [
+      0.05000000074505806,
+      0.0,
+      0.0,
+      0.0,
+      0.9987491965293884
+     ]
+    },
+    {
+     "burst": 3,
+     "det_id": 3,
+     "frame_index": 3,
+     "plate": "03111J",
+     "vector": [
+      -0.05000000074505806,
+      0.0,
+      0.0,
+      0.0,
+      0.9987491965293884
+     ]
+    }
+   ],
+   "same_car": 0.9
+  },
+  {
+   "out": {
+    "1": 1,
+    "2": 1,
+    "3": 2
+   },
+   "rows": [
+    {
+     "burst": 7,
+     "det_id": 1,
+     "frame_index": 1,
+     "plate": "39432J",
+     "vector": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "burst": 7,
+     "det_id": 2,
+     "frame_index": 2,
+     "plate": "39432J",
+     "vector": [
+      0.949999988079071,
+      0.0,
+      0.0,
+      0.0,
+      0.31224989891052246
+     ]
+    },
+    {
+     "burst": 8,
+     "det_id": 3,
+     "frame_index": 3,
+     "plate": "ZE766",
+     "vector": [
+      0.8050000071525574,
+      0.0,
+      0.0,
+      0.0,
+      0.5932748317718506
+     ]
+    }
+   ],
+   "same_car": 0.85
+  }
+ ],
+ "consensus": [
+  {
+   "members": [],
+   "out": {
+    "agreement": 0.0,
+    "colour": null,
+    "colour_hex": null,
+    "disputed": [],
+    "livery_text": [],
+    "make": null,
+    "model": null,
+    "plate": null,
+    "race_number": null,
+    "second_look": false,
+    "size": 0,
+    "sponsors": [],
+    "team": null
+   }
+  },
+  {
+   "members": [
+    {
+     "colour": "blue",
+     "make": "Ford",
+     "model": "Fairmont"
+    },
+    {
+     "colour": "blue",
+     "make": "Ford",
+     "model": "Fairmont"
+    },
+    {
+     "colour": "blue",
+     "make": "Ford",
+     "model": "Fairmont"
+    },
+    {
+     "colour": "blue",
+     "make": "Ford",
+     "model": "Mustang"
+    },
+    {
+     "colour": "blue",
+     "make": "Ford",
+     "model": "Mustang"
+    },
+    {
+     "colour": "blue",
+     "make": "Ford",
+     "model": "Fiesta"
+    },
+    {
+     "colour": "blue",
+     "make": "Holden",
+     "model": "Vauxhall Astra"
+    },
+    {
+     "colour": "blue",
+     "make": "Holden",
+     "model": "Holden Commodore"
+    }
+   ],
+   "out": {
+    "agreement": 0.75,
+    "colour": "blue",
+    "colour_hex": null,
+    "disputed": [
+     "Ford Fairmont",
+     "Ford Fiesta",
+     "Ford Mustang",
+     "Holden Holden Commodore",
+     "Holden Vauxhall Astra"
+    ],
+    "livery_text": [],
+    "make": "Ford",
+    "model": null,
+    "plate": null,
+    "race_number": null,
+    "second_look": false,
+    "size": 8,
+    "sponsors": [],
+    "team": null
+   }
+  },
+  {
+   "members": [
+    {
+     "make": "Ford",
+     "model": "Fiesta"
+    },
+    {
+     "make": "Holden",
+     "model": "Astra"
+    },
+    {
+     "make": "Holden",
+     "model": "Commodore"
+    },
+    {
+     "make": "Toyota",
+     "model": "Corolla"
+    }
+   ],
+   "out": {
+    "agreement": 0.25,
+    "colour": null,
+    "colour_hex": null,
+    "disputed": [
+     "Ford Fiesta",
+     "Holden Astra",
+     "Holden Commodore",
+     "Toyota Corolla"
+    ],
+    "livery_text": [],
+    "make": null,
+    "model": null,
+    "plate": null,
+    "race_number": null,
+    "second_look": false,
+    "size": 4,
+    "sponsors": [],
+    "team": null
+   }
+  },
+  {
+   "members": [
+    {
+     "colour": "grey",
+     "make": "Mitsubishi",
+     "model": "Outlander"
+    },
+    {
+     "colour": "grey",
+     "make": "Mitsubishi",
+     "model": "Outlander"
+    },
+    {
+     "colour": "grey",
+     "make": "Mitsubishi",
+     "model": "Outlander"
+    }
+   ],
+   "out": {
+    "agreement": 1.0,
+    "colour": "grey",
+    "colour_hex": null,
+    "disputed": [],
+    "livery_text": [],
+    "make": "Mitsubishi",
+    "model": "Outlander",
+    "plate": null,
+    "race_number": null,
+    "second_look": false,
+    "size": 3,
+    "sponsors": [],
+    "team": null
+   }
+  },
+  {
+   "members": [
+    {
+     "make": "Ford",
+     "model": "Falcon",
+     "plate": "AAA11A",
+     "plate_conf": 0.4
+    },
+    {
+     "make": "Ford",
+     "model": "Falcon",
+     "plate": "AAA11A",
+     "plate_conf": 0.4
+    },
+    {
+     "make": "Ford",
+     "model": "Falcon",
+     "plate": "73111J",
+     "plate_conf": 0.91
+    }
+   ],
+   "out": {
+    "agreement": 1.0,
+    "colour": null,
+    "colour_hex": null,
+    "disputed": [],
+    "livery_text": [],
+    "make": "Ford",
+    "model": "Falcon",
+    "plate": "73111J",
+    "race_number": null,
+    "second_look": false,
+    "size": 3,
+    "sponsors": [],
+    "team": null
+   }
+  },
+  {
+   "members": [
+    {
+     "colour": "Purple",
+     "colour_hex": "#4b2d6e",
+     "make": "Ford",
+     "model": "Falcon FG",
+     "plate": "EYU06S",
+     "plate_conf": 0.94,
+     "sponsors": [
+      "CV Performance"
+     ],
+     "team": "CV Performance"
+    },
+    {
+     "colour": "blue",
+     "colour_hex": "#2e1a44",
+     "make": "Ford",
+     "model": "FG Falcon XR8",
+     "number_conf": 0.7,
+     "plate": "EYU06S",
+     "plate_conf": 0.6,
+     "race_number": "06",
+     "sponsors": [
+      "FPV"
+     ]
+    }
+   ],
+   "out": {
+    "agreement": 0.5,
+    "colour": "Purple",
+    "colour_hex": "#4b2d6e",
+    "disputed": [],
+    "livery_text": [],
+    "make": "Ford",
+    "model": "Falcon FG",
+    "plate": "EYU06S",
+    "race_number": "06",
+    "second_look": false,
+    "size": 2,
+    "sponsors": [
+     "CV Performance",
+     "FPV"
+    ],
+    "team": "CV Performance"
+   }
+  },
+  {
+   "members": [
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betta"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betto"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betto"
+     ]
+    },
+    {
+     "sponsors": [
+      "Betto"
+     ]
+    },
+    {
+     "sponsors": [
+      "Bella"
+     ]
+    }
+   ],
+   "out": {
+    "agreement": 0.0,
+    "colour": null,
+    "colour_hex": null,
+    "disputed": [],
+    "livery_text": [],
+    "make": null,
+    "model": null,
+    "plate": null,
+    "race_number": null,
+    "second_look": false,
+    "size": 23,
+    "sponsors": [
+     "Betta"
+    ],
+    "team": null
+   }
+  },
+  {
+   "members": [
+    {
+     "make": null,
+     "model": null
+    },
+    {}
+   ],
+   "out": {
+    "agreement": 0.0,
+    "colour": null,
+    "colour_hex": null,
+    "disputed": [],
+    "livery_text": [],
+    "make": null,
+    "model": null,
+    "plate": null,
+    "race_number": null,
+    "second_look": false,
+    "size": 2,
+    "sponsors": [],
+    "team": null
+   }
+  },
+  {
+   "members": [
+    {
+     "make": "",
+     "model": ""
+    },
+    {
+     "make": " ",
+     "model": " "
+    }
+   ],
+   "out": {
+    "agreement": 0.0,
+    "colour": null,
+    "colour_hex": null,
+    "disputed": [],
+    "livery_text": [],
+    "make": null,
+    "model": null,
+    "plate": null,
+    "race_number": null,
+    "second_look": false,
+    "size": 2,
+    "sponsors": [],
+    "team": null
+   }
+  },
+  {
+   "members": [
+    {
+     "make": "BMW",
+     "model": "M3",
+     "plate": "ABC123",
+     "plate_conf": "0.8"
+    }
+   ],
+   "out": {
+    "agreement": 1.0,
+    "colour": null,
+    "colour_hex": null,
+    "disputed": [],
+    "livery_text": [],
+    "make": "BMW",
+    "model": "M3",
+    "plate": "ABC123",
+    "race_number": null,
+    "second_look": false,
+    "size": 1,
+    "sponsors": [],
+    "team": null
+   }
+  }
+ ],
+ "edit_distance": [
+  {
+   "a": "",
+   "b": "",
+   "limit": 3,
+   "out": 0
+  },
+  {
+   "a": "abc",
+   "b": "abc",
+   "limit": 0,
+   "out": 0
+  },
+  {
+   "a": "Betta",
+   "b": "Betto",
+   "limit": 1,
+   "out": 1
+  },
+  {
+   "a": "Betta",
+   "b": "Bella",
+   "limit": 2,
+   "out": 2
+  },
+  {
+   "a": "Castrol",
+   "b": "Castrel",
+   "limit": 1,
+   "out": 1
+  },
+  {
+   "a": "BP",
+   "b": "GP",
+   "limit": 1,
+   "out": 1
+  },
+  {
+   "a": "Bridgestone",
+   "b": "Bridgstone",
+   "limit": 1,
+   "out": 1
+  },
+  {
+   "a": "kitten",
+   "b": "sitting",
+   "limit": 5,
+   "out": 3
+  },
+  {
+   "a": "kitten",
+   "b": "sitting",
+   "limit": 2,
+   "out": 3
+  },
+  {
+   "a": "",
+   "b": "abc",
+   "limit": 2,
+   "out": 3
+  }
+ ],
+ "median_hex": [
+  {
+   "out": "#000000",
+   "values": [
+    "#ff0000",
+    "#00ff00",
+    "#0000ff"
+   ]
+  },
+  {
+   "out": "#445566",
+   "values": [
+    "#112233",
+    "#445566",
+    "#778899"
+   ]
+  },
+  {
+   "out": null,
+   "values": []
+  },
+  {
+   "out": null,
+   "values": [
+    "not a colour"
+   ]
+  },
+  {
+   "out": null,
+   "values": [
+    "#GGGGGG"
+   ]
+  },
+  {
+   "out": "#445566",
+   "values": [
+    "#ffzz00",
+    "#112233",
+    "#445566"
+   ]
+  },
+  {
+   "out": "#ff2233",
+   "values": [
+    "#ffzz00",
+    "#112233"
+   ]
+  }
+ ],
+ "own_reading": {
+  "remember_own_reading": [
+   {
+    "after": {
+     "make": "Ford",
+     "model": "Falcon",
+     "own_make": "Ford",
+     "own_model": "Falcon"
+    },
+    "before": {
+     "make": "Ford",
+     "model": "Falcon"
+    }
+   },
+   {
+    "after": {
+     "make": "Ford",
+     "own_make": "Holden"
+    },
+    "before": {
+     "make": "Ford",
+     "own_make": "Holden"
+    }
+   },
+   {
+    "after": {
+     "make": null
+    },
+    "before": {
+     "make": null
+    }
+   },
+   {
+    "after": {
+     "make": ""
+    },
+    "before": {
+     "make": ""
+    }
+   },
+   {
+    "after": {},
+    "before": {}
+   }
+  ],
+  "use_own_reading": [
+   {
+    "after": {
+     "make": "Kawasaki",
+     "own_make": "Kawasaki"
+    },
+    "before": {
+     "make": "Ford",
+     "own_make": "Kawasaki"
+    }
+   },
+   {
+    "after": {
+     "make": "Ford",
+     "own_make": null
+    },
+    "before": {
+     "make": "Ford",
+     "own_make": null
+    }
+   },
+   {
+    "after": {
+     "make": "Ford"
+    },
+    "before": {
+     "make": "Ford"
+    }
+   },
+   {
+    "after": {
+     "make": "Yamaha",
+     "own_make": "Yamaha"
+    },
+    "before": {
+     "make": null,
+     "own_make": "Yamaha"
+    }
+   }
+  ]
+ },
+ "plain": [
+  {
+   "out": "harleydavidson",
+   "text": "Harley-Davidson"
+  },
+  {
+   "out": "",
+   "text": ""
+  },
+  {
+   "out": "spaced",
+   "text": "  spaced  "
+  },
+  {
+   "out": "ninjah2",
+   "text": "Ninja H2"
+  },
+  {
+   "out": "\u0161koda",
+   "text": "\u0160koda"
+  }
+ ],
+ "plate": {
+  "near_plate": [
+   {
+    "a": "43111J",
+    "b": "73111J",
+    "out": true
+   },
+   {
+    "a": "8BC123",
+    "b": "BBC123",
+    "out": true
+   },
+   {
+    "a": "43111J",
+    "b": "45111J",
+    "out": false
+   },
+   {
+    "a": "43111J",
+    "b": "43111",
+    "out": false
+   },
+   {
+    "a": "43111J",
+    "b": "73112J",
+    "out": false
+   },
+   {
+    "a": "SAME",
+    "b": "SAME",
+    "out": false
+   },
+   {
+    "a": "",
+    "b": "",
+    "out": false
+   },
+   {
+    "a": "A",
+    "b": "A",
+    "out": false
+   }
+  ],
+  "nearly_seen": [
+   {
+    "out": false,
+    "plate": null,
+    "seen": [
+     "ABC"
+    ]
+   },
+   {
+    "out": false,
+    "plate": "ABC",
+    "seen": []
+   },
+   {
+    "out": true,
+    "plate": "43111J",
+    "seen": [
+     "73111J",
+     "OTHER"
+    ]
+   },
+   {
+    "out": false,
+    "plate": "43111J",
+    "seen": [
+     "45111J"
+    ]
+   }
+  ],
+  "plate_verdict": [
+   {
+    "out": null,
+    "plate": null,
+    "seen": []
+   },
+   {
+    "out": null,
+    "plate": "ABC",
+    "seen": []
+   },
+   {
+    "out": true,
+    "plate": "ABC",
+    "seen": [
+     "ABC"
+    ]
+   },
+   {
+    "out": false,
+    "plate": "ABC",
+    "seen": [
+     "XYZ"
+    ]
+   },
+   {
+    "out": null,
+    "plate": "43111J",
+    "seen": [
+     "73111J"
+    ]
+   },
+   {
+    "out": false,
+    "plate": "43111J",
+    "seen": [
+     "45111J",
+     "OTHER"
+    ]
+   }
+  ],
+  "same_make": [
+   {
+    "a": null,
+    "b": null,
+    "out": true
+   },
+   {
+    "a": "",
+    "b": "Ford",
+    "out": true
+   },
+   {
+    "a": " FORD ",
+    "b": "ford",
+    "out": true
+   },
+   {
+    "a": "Ford",
+    "b": "Holden",
+    "out": false
+   },
+   {
+    "a": "Ford",
+    "b": "",
+    "out": true
+   },
+   {
+    "a": null,
+    "b": "Ford",
+    "out": true
+   }
+  ],
+  "tidy_plate": [
+   {
+    "out": null,
+    "value": null
+   },
+   {
+    "out": null,
+    "value": ""
+   },
+   {
+    "out": null,
+    "value": "  "
+   },
+   {
+    "out": "AB12CD",
+    "value": "ab-12 cd"
+   },
+   {
+    "out": "39432J",
+    "value": "39432J"
+   },
+   {
+    "out": "39432J",
+    "value": "#39432J"
+   },
+   {
+    "out": "0",
+    "value": "0"
+   }
+  ]
+ },
+ "proposed_makes": [
+  {
+   "members": [
+    {
+     "own_make": "Yamaha",
+     "own_model": "YZF-R1"
+    },
+    {
+     "own_make": "Yamaha",
+     "own_model": "R6"
+    },
+    {
+     "own_make": "Yamaha",
+     "own_model": null
+    }
+   ],
+   "out": [
+    "yamaha"
+   ]
+  },
+  {
+   "members": [
+    {
+     "own_make": "Jaguar",
+     "own_model": "XJS"
+    },
+    {
+     "make": "Holden",
+     "model": "Monaro"
+    },
+    {
+     "own_make": "Jaguar",
+     "own_model": "XJ-S"
+    }
+   ],
+   "out": [
+    "holden",
+    "jaguar"
+   ]
+  },
+  {
+   "members": [
+    {
+     "own_make": "Harley Davidson"
+    }
+   ],
+   "out": [
+    "harleydavidson"
+   ]
+  },
+  {
+   "members": [
+    {},
+    {
+     "own_make": null
+    }
+   ],
+   "out": []
+  },
+  {
+   "members": [
+    {
+     "make": "Ford"
+    },
+    {
+     "make": "Holden",
+     "own_make": ""
+    }
+   ],
+   "out": [
+    "ford",
+    "holden"
+   ]
+  }
+ ],
+ "signature": [
+  {
+   "a": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "b": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "colour_matches": true,
+   "max_bits": 14,
+   "min_colour": 0.62,
+   "shape_distance": 0,
+   "similar": true
+  },
+  {
+   "a": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "b": "0000ffff:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "colour_matches": true,
+   "max_bits": 14,
+   "min_colour": 0.62,
+   "shape_distance": 32,
+   "similar": false
+  },
+  {
+   "a": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "b": "0000ffff:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "colour_matches": true,
+   "max_bits": 15,
+   "min_colour": 0.62,
+   "shape_distance": 32,
+   "similar": false
+  },
+  {
+   "a": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "b": "0000ffff:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "colour_matches": true,
+   "max_bits": 16,
+   "min_colour": 0.62,
+   "shape_distance": 32,
+   "similar": false
+  },
+  {
+   "a": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "b": "not-hex:0.1,0.2",
+   "colour_matches": false,
+   "max_bits": 14,
+   "min_colour": 0.62,
+   "shape_distance": 999,
+   "similar": false
+  },
+  {
+   "a": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "b": "abcffff0000",
+   "colour_matches": false,
+   "max_bits": 14,
+   "min_colour": 0.62,
+   "shape_distance": 999,
+   "similar": false
+  },
+  {
+   "a": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "b": "",
+   "colour_matches": false,
+   "max_bits": 14,
+   "min_colour": 0.62,
+   "shape_distance": 999,
+   "similar": false
+  },
+  {
+   "a": "",
+   "b": "",
+   "colour_matches": false,
+   "max_bits": 14,
+   "min_colour": 0.62,
+   "shape_distance": 999,
+   "similar": false
+  },
+  {
+   "a": "ffff0000:0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03,0.03",
+   "b": "ffff0000:0.1,abc,0.2",
+   "colour_matches": false,
+   "max_bits": 14,
+   "min_colour": 0.62,
+   "shape_distance": 999,
+   "similar": false
+  },
+  {
+   "a": "0000000000000000:1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0",
+   "b": "0000000000000000:0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0",
+   "colour_matches": true,
+   "max_bits": 0,
+   "min_colour": 0.5,
+   "shape_distance": 0,
+   "similar": true
+  }
+ ],
+ "swatch": {
+  "rgb": [
+   {
+    "out": [
+     255,
+     0,
+     0
+    ],
+    "value": "#ff0000"
+   },
+   {
+    "out": [
+     161,
+     178,
+     195
+    ],
+    "value": "#a1b2c3"
+   },
+   {
+    "out": null,
+    "value": "not a colour"
+   },
+   {
+    "out": null,
+    "value": "#GGGGGG"
+   },
+   {
+    "out": null,
+    "value": "#f"
+   },
+   {
+    "out": null,
+    "value": "#"
+   },
+   {
+    "out": null,
+    "value": "#12"
+   },
+   {
+    "out": [
+     18,
+     52,
+     86
+    ],
+    "value": "#1234567"
+   }
+  ],
+  "swatch_matches": [
+   {
+    "a": null,
+    "b": "#ff0000",
+    "max_swatch": 52,
+    "out": true
+   },
+   {
+    "a": "#ff0000",
+    "b": null,
+    "max_swatch": 52,
+    "out": true
+   },
+   {
+    "a": "#808080",
+    "b": "#7f7f7f",
+    "max_swatch": 52,
+    "out": true
+   },
+   {
+    "a": "#808080",
+    "b": "#202020",
+    "max_swatch": 52,
+    "out": true
+   },
+   {
+    "a": "#808080",
+    "b": "#ff0000",
+    "max_swatch": 52,
+    "out": false
+   },
+   {
+    "a": "#ff0000",
+    "b": "#fe0101",
+    "max_swatch": 52,
+    "out": true
+   },
+   {
+    "a": "#ff0000",
+    "b": "#00ff88",
+    "max_swatch": 52,
+    "out": false
+   },
+   {
+    "a": "#4b2d6e",
+    "b": "#2e1a44",
+    "max_swatch": 52,
+    "out": true
+   },
+   {
+    "a": "not a colour",
+    "b": "#ff0000",
+    "max_swatch": 52,
+    "out": true
+   }
+  ]
+ },
+ "vote": [
+  {
+   "hits": 0.6666666666666666,
+   "value": "Ford",
+   "values": [
+    "Ford",
+    "ford",
+    "Holden"
+   ]
+  },
+  {
+   "hits": 1.0,
+   "value": "Ford",
+   "values": [
+    null,
+    "",
+    "  ",
+    "Ford"
+   ]
+  },
+  {
+   "hits": 0.0,
+   "value": null,
+   "values": []
+  },
+  {
+   "hits": 0.6,
+   "value": "Holden",
+   "values": [
+    "Ford",
+    "FORD",
+    "Holden",
+    "holden",
+    "holden"
+   ]
+  }
+ ]
+}
