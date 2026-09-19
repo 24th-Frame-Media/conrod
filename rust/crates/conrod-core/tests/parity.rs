@@ -4,7 +4,7 @@
 //! regenerating them means the two implementations have diverged.
 
 use conrod_core::{framing, ridge};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::fs;
 use std::path::Path;
 
@@ -386,5 +386,417 @@ fn a_broken_stored_analysis_is_the_default_not_an_error() {
         let a = VehicleAnalysis::from_json(raw);
         assert_eq!(a.make, None);
         assert_eq!(a.kind, "car");
+    }
+}
+
+// --- normalise ------------------------------------------------------------
+
+use conrod_core::normalise::{self, Reading};
+
+fn reading_from_json(v: &Value) -> Reading {
+    Reading {
+        make: v["make"].as_str().unwrap().to_string(),
+        model: v["model"].as_str().unwrap().to_string(),
+        count: v["count"].as_i64().unwrap(),
+        stated: v["stated"].as_bool().unwrap(),
+    }
+}
+
+fn readings_from_json(v: &Value) -> Vec<Reading> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(reading_from_json)
+        .collect()
+}
+
+fn assert_reading_lists_eq(got: &[Reading], want: &Value, what: &str) {
+    let want: Vec<Reading> = readings_from_json(want);
+    assert_eq!(got, want.as_slice(), "{what}");
+}
+
+#[test]
+fn normalise_matches_python() {
+    let fixture = fixture("normalise");
+
+    for case in fixture["readings_from"].as_array().unwrap() {
+        let texts: Vec<String> = case["texts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap().to_string())
+            .collect();
+        assert_reading_lists_eq(
+            &normalise::readings_from(&texts),
+            &case["out"],
+            "readings_from",
+        );
+    }
+
+    for case in fixture["readings_of"].as_array().unwrap() {
+        let members: Vec<Map<String, Value>> = case["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m.as_object().unwrap().clone())
+            .collect();
+        assert_reading_lists_eq(
+            &normalise::readings_of(&members),
+            &case["out"],
+            "readings_of",
+        );
+    }
+
+    for case in fixture["key"].as_array().unwrap() {
+        assert_eq!(
+            normalise::key(case["a"].as_str().unwrap()),
+            case["key_a"].as_str().unwrap()
+        );
+        assert_eq!(
+            normalise::key(case["b"].as_str().unwrap()),
+            case["key_b"].as_str().unwrap()
+        );
+    }
+
+    for case in fixture["observed"].as_array().unwrap() {
+        let readings = readings_from_json(&case["readings"]);
+        assert_eq!(
+            normalise::observed(&readings),
+            case["out"].as_str().unwrap()
+        );
+    }
+
+    for case in fixture["plurality_make"].as_array().unwrap() {
+        let readings = readings_from_json(&case["readings"]);
+        assert_eq!(
+            normalise::plurality_make(&readings).as_deref(),
+            opt_str(&case["out"])
+        );
+    }
+
+    for case in fixture["acceptable_make"].as_array().unwrap() {
+        let readings = readings_from_json(&case["readings"]);
+        assert_eq!(
+            normalise::acceptable_make(opt_str(&case["make"]), &readings).as_deref(),
+            opt_str(&case["out"])
+        );
+    }
+
+    for case in fixture["acceptable_model"].as_array().unwrap() {
+        let readings = readings_from_json(&case["readings"]);
+        assert_eq!(
+            normalise::acceptable_model(opt_str(&case["model"]), &readings).as_deref(),
+            opt_str(&case["out"])
+        );
+    }
+
+    assert_eq!(
+        normalise::MAJORITY_SETTLES,
+        fixture["majority_settles"].as_f64().unwrap()
+    );
+
+    for case in fixture["settle_without_model"].as_array().unwrap() {
+        let readings = readings_from_json(&case["readings"]);
+        let out = normalise::settle_without_model(&readings)
+            .expect("every settle_without_model fixture case is expected to settle");
+        assert_eq!(out.make.as_deref(), opt_str(&case["make"]));
+        assert_eq!(out.model.as_deref(), opt_str(&case["model"]));
+        assert_eq!(out.rejected, strings(&case["rejected"]));
+    }
+
+    for case in fixture["cache_key"].as_array().unwrap() {
+        let readings = readings_from_json(&case["readings"]);
+        assert_eq!(
+            normalise::cache_key(&readings),
+            case["out"].as_str().unwrap()
+        );
+    }
+
+    for case in fixture["reconcile"].as_array().unwrap() {
+        let readings = readings_from_json(&case["readings"]);
+        let out = normalise::reconcile(
+            opt_str(&case["make_in"]),
+            opt_str(&case["model_in"]),
+            &readings,
+        );
+        assert_eq!(out.make.as_deref(), opt_str(&case["make"]));
+        assert_eq!(out.model.as_deref(), opt_str(&case["model"]));
+        assert_eq!(out.rejected, strings(&case["rejected"]));
+    }
+}
+
+fn strings(v: &Value) -> Vec<String> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap().to_string())
+        .collect()
+}
+
+// --- registry --------------------------------------------------------------
+
+use conrod_core::registry::{self, KnownVehicle, Member, Row};
+use std::collections::HashMap;
+
+fn known_vehicle_from_json(v: &Value) -> KnownVehicle {
+    KnownVehicle {
+        make: opt_str(&v["make"]).map(str::to_string),
+        model: opt_str(&v["model"]).map(str::to_string),
+        colour: opt_str(&v["colour"]).map(str::to_string),
+        body_type: opt_str(&v["body_type"]).map(str::to_string),
+        team: opt_str(&v["team"]).map(str::to_string),
+        sponsors: strings(&v["sponsors"]),
+        race_number: opt_str(&v["race_number"]).map(str::to_string),
+    }
+}
+
+fn known_from_json(v: &Value) -> HashMap<String, KnownVehicle> {
+    v.as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, entry)| (k.clone(), known_vehicle_from_json(entry)))
+        .collect()
+}
+
+fn member_from_json(v: &Value) -> Member {
+    Member {
+        plate: opt_str(&v["row"]["plate"]).map(str::to_string),
+        attributes: v["parsed"].as_object().unwrap().clone(),
+    }
+}
+
+fn members_from_json(v: &Value) -> Vec<Member> {
+    v.as_array().unwrap().iter().map(member_from_json).collect()
+}
+
+fn row_from_tuple(v: &Value) -> Row {
+    let t = v.as_array().unwrap();
+    Row {
+        plate: t[0].as_str().unwrap().to_string(),
+        make: opt_str(&t[1]).map(str::to_string),
+        model: opt_str(&t[2]).map(str::to_string),
+        colour: opt_str(&t[3]).map(str::to_string),
+        body_type: opt_str(&t[4]).map(str::to_string),
+        team: opt_str(&t[5]).map(str::to_string),
+        sponsors: opt_str(&t[6]).map(str::to_string),
+        race_number: opt_str(&t[7]).map(str::to_string),
+    }
+}
+
+#[test]
+fn registry_matches_python() {
+    let fixture = fixture("registry");
+
+    for case in fixture["normalise"].as_array().unwrap() {
+        assert_eq!(
+            registry::normalise(opt_str(&case["plate"])),
+            case["out"].as_str().unwrap()
+        );
+    }
+
+    for case in fixture["near_plate"].as_array().unwrap() {
+        assert_eq!(
+            registry::near_plate(case["a"].as_str().unwrap(), case["b"].as_str().unwrap()),
+            case["out"].as_bool().unwrap()
+        );
+    }
+
+    for case in fixture["fill"].as_array().unwrap() {
+        let mut a = VehicleAnalysis::from_map(case["analysis"].as_object().unwrap());
+        let known = known_from_json(&case["known"]);
+        let filled = registry::fill(&mut a, &known);
+        assert_eq!(filled, case["filled"].as_bool().unwrap());
+        assert_eq!(
+            a,
+            VehicleAnalysis::from_map(case["result"].as_object().unwrap())
+        );
+    }
+
+    for case in fixture["agreed"].as_array().unwrap() {
+        let members = members_from_json(&case["members"]);
+        let got = registry::agreed(&members);
+        match &case["out"] {
+            Value::Null => assert!(got.is_none()),
+            want => {
+                let got = got.expect("Python found an agreed reading");
+                assert_eq!(got.plate, want["plate"].as_str().unwrap());
+                assert_eq!(got.aliases, strings(&want["aliases"]));
+                assert_eq!(got.make.as_deref(), opt_str(&want["make"]));
+                assert_eq!(got.model.as_deref(), opt_str(&want["model"]));
+                assert_eq!(got.colour.as_deref(), opt_str(&want["colour"]));
+                assert_eq!(got.body_type.as_deref(), opt_str(&want["body_type"]));
+                assert_eq!(got.team.as_deref(), opt_str(&want["team"]));
+                assert_eq!(got.race_number.as_deref(), opt_str(&want["race_number"]));
+                match &want["sponsors"] {
+                    Value::Null => assert_eq!(got.sponsors, None),
+                    s => assert_eq!(got.sponsors, Some(strings(s))),
+                }
+            }
+        }
+    }
+
+    for case in fixture["majority"].as_array().unwrap() {
+        let members = members_from_json(&case["members"]);
+        let field = case["field"].as_str().unwrap();
+        if field == "sponsors" {
+            let want = match &case["out"] {
+                Value::Null => None,
+                s => Some(strings(s)),
+            };
+            assert_eq!(registry::majority_sponsors(&members), want);
+        } else {
+            assert_eq!(
+                registry::majority(&members, field).as_deref(),
+                opt_str(&case["out"])
+            );
+        }
+    }
+
+    for case in fixture["split"].as_array().unwrap() {
+        assert_eq!(registry::split_field(&case["value"]), strings(&case["out"]));
+    }
+
+    for case in fixture["text"].as_array().unwrap() {
+        assert_eq!(
+            registry::text_of(&case["value"]).as_deref(),
+            opt_str(&case["out"])
+        );
+    }
+
+    // to_csv / from_csv, split across parse_csv + merge_csv_row + to_csv.
+    let seed_rows: Vec<Row> = fixture["seed_rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(row_from_tuple)
+        .collect();
+    assert_eq!(
+        registry::to_csv(&seed_rows),
+        fixture["initial_csv"].as_str().unwrap()
+    );
+
+    let csv_in = fixture["csv_in"].as_str().unwrap();
+    let (given_rows, skipped) = registry::parse_csv(csv_in).unwrap();
+    assert_eq!(
+        skipped as u64,
+        fixture["from_csv_skipped"].as_u64().unwrap()
+    );
+    assert_eq!(
+        given_rows.len() as u64,
+        fixture["from_csv_written"].as_u64().unwrap()
+    );
+
+    let mut final_rows = seed_rows.clone();
+    for given in &given_rows {
+        let existing = final_rows.iter().find(|r| r.plate == given.plate).cloned();
+        let merged = registry::merge_csv_row(given, existing.as_ref());
+        match final_rows.iter_mut().find(|r| r.plate == merged.plate) {
+            Some(slot) => *slot = merged,
+            None => final_rows.push(merged),
+        }
+    }
+    assert_eq!(
+        registry::to_csv(&final_rows),
+        fixture["csv_out"].as_str().unwrap()
+    );
+
+    assert_eq!(
+        registry::parse_csv("driver,team\nA,B\n").is_err(),
+        fixture["bad_column_error"].as_bool().unwrap()
+    );
+    assert_eq!(
+        registry::parse_csv("").is_err(),
+        fixture["empty_error"].as_bool().unwrap()
+    );
+}
+
+// --- culling ----------------------------------------------------------------
+
+use conrod_core::culling::{self, Cull, CullSettings};
+
+#[test]
+fn culling_matches_python() {
+    let fixture = fixture("culling");
+
+    assert_eq!(
+        culling::REJECTED as i64,
+        fixture["rejected_const"].as_i64().unwrap()
+    );
+
+    for case in fixture["read_culls"].as_array().unwrap() {
+        let row = case["row"].as_object().unwrap().clone();
+        let got = culling::cull_from_tags(&row);
+        assert_eq!(
+            got.rating as i64,
+            case["rating"].as_i64().unwrap(),
+            "{row:?}"
+        );
+        assert_eq!(got.label, case["label"].as_str().unwrap(), "{row:?}");
+        assert_eq!(got.rejected, case["rejected"].as_bool().unwrap(), "{row:?}");
+    }
+
+    for case in fixture["sidecar"].as_array().unwrap() {
+        let got = culling::sidecar_for(Path::new(case["image"].as_str().unwrap()));
+        // Python's pathlib normalises "/" to the platform separator when
+        // stringified; Rust's Path keeps whichever one the input used. Both
+        // name the same path, so normalise before comparing.
+        let got = got.to_string_lossy().replace('\\', "/");
+        let want = case["sidecar"].as_str().unwrap().replace('\\', "/");
+        assert_eq!(got, want);
+    }
+
+    for case in fixture["passes"].as_array().unwrap() {
+        let cull = Cull {
+            rating: case["cull"]["rating"].as_i64().unwrap() as i32,
+            label: case["cull"]["label"].as_str().unwrap().to_string(),
+            rejected: case["cull"]["rejected"].as_bool().unwrap(),
+        };
+        let settings = CullSettings {
+            skip_rejected: case["settings"]["skip_rejected"].as_bool().unwrap(),
+            min_rating: case["settings"]["min_rating"].as_i64().unwrap() as i32,
+            require_label: case["settings"]["require_label"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        };
+        let (ok, reason) = cull.passes(&settings);
+        assert_eq!(ok, case["ok"].as_bool().unwrap());
+        assert_eq!(reason, case["reason"].as_str().unwrap());
+    }
+}
+
+// --- analyze: merge_number / corroborated -----------------------------------
+
+use conrod_core::analysis::{corroborated, merge_number, OcrReading};
+
+#[test]
+fn merge_matches_python() {
+    let fixture = fixture("merge");
+    let ocr_accept_confidence = fixture["ocr_accept_confidence"].as_f64().unwrap();
+
+    for case in fixture["merge_number"].as_array().unwrap() {
+        let ocr_reading = OcrReading {
+            number: opt_str(&case["ocr"]["number"]).map(str::to_string),
+            confidence: case["ocr"]["confidence"].as_f64().unwrap(),
+            source: case["ocr"]["source"].as_str().unwrap().to_string(),
+        };
+        let (number, source, confidence) = merge_number(
+            &ocr_reading,
+            opt_str(&case["vlm_number"]),
+            ocr_accept_confidence,
+        );
+        let want = case["out"].as_array().unwrap();
+        assert_eq!(number.as_deref(), opt_str(&want[0]), "{case}");
+        assert_eq!(source.as_deref(), opt_str(&want[1]), "{case}");
+        assert_eq!(confidence, want[2].as_f64().unwrap(), "{case}");
+    }
+
+    for case in fixture["corroborated"].as_array().unwrap() {
+        let evidence = strings(&case["evidence"]);
+        assert_eq!(
+            corroborated(opt_str(&case["claim"]), &evidence),
+            case["out"].as_bool().unwrap(),
+            "{case}"
+        );
     }
 }

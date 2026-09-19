@@ -4,6 +4,11 @@
 //! JSON in `detections.attributes`, which also carries keys this struct does
 //! not own (grouping writes its own), so reading is tolerant: unknown keys are
 //! ignored and a value of the wrong type falls back to the default.
+//!
+//! Also carries `_merge_number` and `_corroborated`, the two pure decisions
+//! `analyze()` makes once its four readers have each had their turn. The
+//! readers themselves (plate detection, OCR, the vision model) are all IO and
+//! stay in Python.
 
 use crate::py;
 use serde::Serialize;
@@ -147,4 +152,111 @@ impl VehicleAnalysis {
         }
         label
     }
+}
+
+/// A small (number, confidence, source) tuple -- `ocr.Reading` in
+/// `conrod/ocr.py`, which does IO to produce and so is not ported itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OcrReading {
+    pub number: Option<String>,
+    pub confidence: f64,
+    pub source: String,
+}
+
+impl Default for OcrReading {
+    fn default() -> Self {
+        OcrReading {
+            number: None,
+            confidence: 0.0,
+            source: "ocr".to_string(),
+        }
+    }
+}
+
+/// Decide the competition number from two disagreeing readers.
+///
+/// `ocr_accept_confidence` is `Settings.ocr_accept_confidence` (default
+/// 0.80): the OCR reading's own floor for winning outright.
+pub fn merge_number(
+    ocr_reading: &OcrReading,
+    vlm_number: Option<&str>,
+    ocr_accept_confidence: f64,
+) -> (Option<String>, Option<String>, f64) {
+    let ocr_number = given(&ocr_reading.number);
+    // An empty vlm_number is falsy in Python, same as an empty ocr number.
+    let vlm_number = vlm_number.filter(|s| !s.is_empty());
+    let source = if ocr_reading.source.is_empty() {
+        "ocr".to_string()
+    } else {
+        ocr_reading.source.clone()
+    };
+
+    if let (Some(o), Some(v)) = (ocr_number, vlm_number) {
+        if o == v {
+            // Independent agreement is worth more than either one's confidence.
+            let confidence = (ocr_reading.confidence.max(0.7) + 0.2).min(1.0);
+            return (
+                Some(o.to_string()),
+                Some(format!("{source}+vlm")),
+                confidence,
+            );
+        }
+    }
+    if let Some(o) = ocr_number {
+        if ocr_reading.confidence >= ocr_accept_confidence {
+            return (Some(o.to_string()), Some(source), ocr_reading.confidence);
+        }
+    }
+    if let Some(v) = vlm_number {
+        // The model reads stylised and angled numbers far better than OCR,
+        // so it wins where OCR was not already confident.
+        return (Some(v.to_string()), Some("vlm".to_string()), 0.7);
+    }
+    if let Some(o) = ocr_number {
+        // Weak, but better than nothing -- the low score sends it to review.
+        return (Some(o.to_string()), Some(source), ocr_reading.confidence);
+    }
+    (None, None, 0.0)
+}
+
+/// Words a model-reported name needs at least one of, to count as
+/// corroborated rather than invented. "Racing" or "Team" prove nothing.
+const GENERIC_TEAM_WORDS: [&str; 6] = [
+    "RACING",
+    "TEAM",
+    "MOTORSPORT",
+    "MOTORSPORTS",
+    "AUTO",
+    "GARAGE",
+];
+
+/// Is a model-reported name actually supported by text that was read?
+pub fn corroborated(claim: Option<&str>, evidence: &[String]) -> bool {
+    let Some(claim) = claim.filter(|c| !c.is_empty()) else {
+        return false;
+    };
+    let haystack: String = evidence
+        .join(" ")
+        .to_uppercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect();
+    if haystack.is_empty() {
+        return false;
+    }
+    // Match on the distinctive words only.
+    let words: Vec<String> = claim
+        .split_whitespace()
+        .map(|word| {
+            word.to_uppercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+        })
+        .filter(|w| w.chars().count() >= 4 && !GENERIC_TEAM_WORDS.contains(&w.as_str()))
+        .collect();
+    if words.is_empty() {
+        return false;
+    }
+    words.iter().any(|w| haystack.contains(w.as_str()))
 }
