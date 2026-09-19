@@ -1,0 +1,12 @@
+[package]
+name = "detbench"
+description = "Spike E: how fast can a frame go from JPEG to boxes in Rust, on CPU and GPU?"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+ort = { version = "=2.0.0-rc.13", features = ["directml", "cuda"] }
+jpeg-decoder = "0.3"
+serde_json = "1"

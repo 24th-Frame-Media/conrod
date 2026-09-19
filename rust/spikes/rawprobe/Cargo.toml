@@ -1,0 +1,11 @@
+[package]
+name = "rawprobe"
+description = "Spike C: read previews, capture time and body identity from RAW files without exiftool."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+rawler = "0.8"
+nom-exif = "3.8"
