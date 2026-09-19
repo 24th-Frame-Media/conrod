@@ -9,6 +9,10 @@ repository.workspace = true
 [dependencies]
 conrod-core = { path = "../conrod-core" }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Decodes with DCT scaling (1/2, 1/4, 1/8), which the detector path relies on.
+jpeg-decoder = "0.3"
+# ONNX Runtime; DirectML runs on any DirectX 12 GPU with nothing to install.
+ort = { version = "=2.0.0-rc.13", features = ["directml"] }
 
 [dev-dependencies]
 serde_json = { version = "1", features = ["float_roundtrip"] }
