@@ -1,0 +1,898 @@
+{
+ "cases": [
+  {
+   "box": null,
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 3000,
+   "sides": 0,
+   "width": 4000
+  },
+  {
+   "box": [
+    800,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 3000,
+   "sides": 0,
+   "width": 4000
+  },
+  {
+   "box": [
+    2000,
+    600,
+    4000,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "touches the frame edge",
+   "factor": 0.85,
+   "height": 3000,
+   "sides": 1,
+   "width": 4000
+  },
+  {
+   "box": [
+    0,
+    0,
+    1200,
+    900
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 3000,
+   "sides": 2,
+   "width": 4000
+  },
+  {
+   "box": [
+    0,
+    0,
+    4000,
+    3000
+   ],
+   "cut_off": true,
+   "describe": "cut off on 4 edges",
+   "factor": 0.4,
+   "height": 3000,
+   "sides": 4,
+   "width": 4000
+  },
+  {
+   "box": [
+    3,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "touches the frame edge",
+   "factor": 0.85,
+   "height": 3000,
+   "sides": 1,
+   "width": 4000
+  },
+  {
+   "box": [
+    16,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "touches the frame edge",
+   "factor": 0.85,
+   "height": 3000,
+   "sides": 1,
+   "width": 4000
+  },
+  {
+   "box": [
+    16.0001,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 3000,
+   "sides": 0,
+   "width": 4000
+  },
+  {
+   "box": [
+    0,
+    12,
+    3984,
+    2988
+   ],
+   "cut_off": true,
+   "describe": "cut off on 4 edges",
+   "factor": 0.4,
+   "height": 3000,
+   "sides": 4,
+   "width": 4000
+  },
+  {
+   "box": [
+    -50,
+    -50,
+    4050,
+    3050
+   ],
+   "cut_off": true,
+   "describe": "cut off on 4 edges",
+   "factor": 0.4,
+   "height": 3000,
+   "sides": 4,
+   "width": 4000
+  },
+  {
+   "box": [
+    10,
+    10,
+    10,
+    10
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 3000,
+   "sides": 2,
+   "width": 4000
+  },
+  {
+   "box": null,
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 4640,
+   "sides": 0,
+   "width": 6960
+  },
+  {
+   "box": [
+    800,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 4640,
+   "sides": 0,
+   "width": 6960
+  },
+  {
+   "box": [
+    2000,
+    600,
+    4000,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 4640,
+   "sides": 0,
+   "width": 6960
+  },
+  {
+   "box": [
+    0,
+    0,
+    1200,
+    900
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 4640,
+   "sides": 2,
+   "width": 6960
+  },
+  {
+   "box": [
+    0,
+    0,
+    4000,
+    3000
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 4640,
+   "sides": 2,
+   "width": 6960
+  },
+  {
+   "box": [
+    3,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "touches the frame edge",
+   "factor": 0.85,
+   "height": 4640,
+   "sides": 1,
+   "width": 6960
+  },
+  {
+   "box": [
+    16,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "touches the frame edge",
+   "factor": 0.85,
+   "height": 4640,
+   "sides": 1,
+   "width": 6960
+  },
+  {
+   "box": [
+    16.0001,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "touches the frame edge",
+   "factor": 0.85,
+   "height": 4640,
+   "sides": 1,
+   "width": 6960
+  },
+  {
+   "box": [
+    0,
+    12,
+    3984,
+    2988
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 4640,
+   "sides": 2,
+   "width": 6960
+  },
+  {
+   "box": [
+    -50,
+    -50,
+    4050,
+    3050
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 4640,
+   "sides": 2,
+   "width": 6960
+  },
+  {
+   "box": [
+    10,
+    10,
+    10,
+    10
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 4640,
+   "sides": 2,
+   "width": 6960
+  },
+  {
+   "box": null,
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 1080,
+   "sides": 0,
+   "width": 1920
+  },
+  {
+   "box": [
+    800,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 1080,
+   "sides": 2,
+   "width": 1920
+  },
+  {
+   "box": [
+    2000,
+    600,
+    4000,
+    2400
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 1080,
+   "sides": 2,
+   "width": 1920
+  },
+  {
+   "box": [
+    0,
+    0,
+    1200,
+    900
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 1080,
+   "sides": 2,
+   "width": 1920
+  },
+  {
+   "box": [
+    0,
+    0,
+    4000,
+    3000
+   ],
+   "cut_off": true,
+   "describe": "cut off on 4 edges",
+   "factor": 0.4,
+   "height": 1080,
+   "sides": 4,
+   "width": 1920
+  },
+  {
+   "box": [
+    3,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": true,
+   "describe": "cut off on 3 edges",
+   "factor": 0.55,
+   "height": 1080,
+   "sides": 3,
+   "width": 1920
+  },
+  {
+   "box": [
+    16,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 1080,
+   "sides": 2,
+   "width": 1920
+  },
+  {
+   "box": [
+    16.0001,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 1080,
+   "sides": 2,
+   "width": 1920
+  },
+  {
+   "box": [
+    0,
+    12,
+    3984,
+    2988
+   ],
+   "cut_off": true,
+   "describe": "cut off on 3 edges",
+   "factor": 0.55,
+   "height": 1080,
+   "sides": 3,
+   "width": 1920
+  },
+  {
+   "box": [
+    -50,
+    -50,
+    4050,
+    3050
+   ],
+   "cut_off": true,
+   "describe": "cut off on 4 edges",
+   "factor": 0.4,
+   "height": 1080,
+   "sides": 4,
+   "width": 1920
+  },
+  {
+   "box": [
+    10,
+    10,
+    10,
+    10
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 1080,
+   "sides": 0,
+   "width": 1920
+  },
+  {
+   "box": null,
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 5,
+   "sides": 0,
+   "width": 5
+  },
+  {
+   "box": [
+    800,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 5,
+   "sides": 2,
+   "width": 5
+  },
+  {
+   "box": [
+    2000,
+    600,
+    4000,
+    2400
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 5,
+   "sides": 2,
+   "width": 5
+  },
+  {
+   "box": [
+    0,
+    0,
+    1200,
+    900
+   ],
+   "cut_off": true,
+   "describe": "cut off on 4 edges",
+   "factor": 0.4,
+   "height": 5,
+   "sides": 4,
+   "width": 5
+  },
+  {
+   "box": [
+    0,
+    0,
+    4000,
+    3000
+   ],
+   "cut_off": true,
+   "describe": "cut off on 4 edges",
+   "factor": 0.4,
+   "height": 5,
+   "sides": 4,
+   "width": 5
+  },
+  {
+   "box": [
+    3,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 5,
+   "sides": 2,
+   "width": 5
+  },
+  {
+   "box": [
+    16,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 5,
+   "sides": 2,
+   "width": 5
+  },
+  {
+   "box": [
+    16.0001,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 5,
+   "sides": 2,
+   "width": 5
+  },
+  {
+   "box": [
+    0,
+    12,
+    3984,
+    2988
+   ],
+   "cut_off": true,
+   "describe": "cut off on 3 edges",
+   "factor": 0.55,
+   "height": 5,
+   "sides": 3,
+   "width": 5
+  },
+  {
+   "box": [
+    -50,
+    -50,
+    4050,
+    3050
+   ],
+   "cut_off": true,
+   "describe": "cut off on 4 edges",
+   "factor": 0.4,
+   "height": 5,
+   "sides": 4,
+   "width": 5
+  },
+  {
+   "box": [
+    10,
+    10,
+    10,
+    10
+   ],
+   "cut_off": true,
+   "describe": "cut off on 2 edges",
+   "factor": 0.7,
+   "height": 5,
+   "sides": 2,
+   "width": 5
+  },
+  {
+   "box": null,
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": [
+    800,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": [
+    2000,
+    600,
+    4000,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": [
+    0,
+    0,
+    1200,
+    900
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": [
+    0,
+    0,
+    4000,
+    3000
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": [
+    3,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": [
+    16,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": [
+    16.0001,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": [
+    0,
+    12,
+    3984,
+    2988
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": [
+    -50,
+    -50,
+    4050,
+    3050
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": [
+    10,
+    10,
+    10,
+    10
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 0,
+   "sides": 0,
+   "width": 0
+  },
+  {
+   "box": null,
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  },
+  {
+   "box": [
+    800,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  },
+  {
+   "box": [
+    2000,
+    600,
+    4000,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  },
+  {
+   "box": [
+    0,
+    0,
+    1200,
+    900
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  },
+  {
+   "box": [
+    0,
+    0,
+    4000,
+    3000
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  },
+  {
+   "box": [
+    3,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  },
+  {
+   "box": [
+    16,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  },
+  {
+   "box": [
+    16.0001,
+    600,
+    3200,
+    2400
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  },
+  {
+   "box": [
+    0,
+    12,
+    3984,
+    2988
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  },
+  {
+   "box": [
+    -50,
+    -50,
+    4050,
+    3050
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  },
+  {
+   "box": [
+    10,
+    10,
+    10,
+    10
+   ],
+   "cut_off": false,
+   "describe": "",
+   "factor": 1.0,
+   "height": 100,
+   "sides": 0,
+   "width": -1
+  }
+ ]
+}
