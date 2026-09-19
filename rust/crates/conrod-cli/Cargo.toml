@@ -1,0 +1,17 @@
+[package]
+name = "conrod-cli"
+description = "Conrod from the command line."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "conrod"
+path = "src/main.rs"
+
+[dependencies]
+conrod-core = { path = "../conrod-core" }
+conrod-io = { path = "../conrod-io" }
+conrod-vision = { path = "../conrod-vision" }
+serde_json = "1"

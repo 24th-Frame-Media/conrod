@@ -189,6 +189,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "conrod-cli"
+version = "0.1.0"
+dependencies = [
+ "conrod-core",
+ "conrod-io",
+ "conrod-vision",
+ "serde_json",
+]
+
+[[package]]
 name = "conrod-core"
 version = "0.1.0"
 dependencies = [
