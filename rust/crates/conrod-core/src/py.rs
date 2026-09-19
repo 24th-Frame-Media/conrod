@@ -3,6 +3,8 @@
 //! Small on purpose: only what a fixture has shown to matter.
 
 use serde_json::Value;
+use std::collections::HashMap;
+use std::hash::Hash;
 
 /// `str(value)` for the JSON values exiftool hands back.
 pub fn str_of(value: &Value) -> String {
@@ -48,5 +50,74 @@ pub fn capitalize(text: &str) -> String {
             .chain(chars.as_str().to_lowercase().chars())
             .collect(),
         None => String::new(),
+    }
+}
+
+/// `bool(value)` for a parsed JSON value: `None`/`false`/`0`/`""`/`[]`/`{}`
+/// are all falsy, exactly as Python treats them.
+pub fn truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64() != Some(0.0),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+    }
+}
+
+/// A `collections.Counter`-alike that remembers first-seen order.
+///
+/// Python's `Counter` is a plain dict, so it iterates in insertion order, and
+/// `most_common()` sorts by count with a *stable* sort -- ties keep that
+/// insertion order rather than coming out however a hash happens to land.
+/// Both matter to callers that break ties on "whichever was seen first".
+#[derive(Debug, Clone)]
+pub struct Counter<T: Hash + Eq + Clone> {
+    order: Vec<T>,
+    counts: HashMap<T, i64>,
+}
+
+impl<T: Hash + Eq + Clone> Counter<T> {
+    pub fn new() -> Self {
+        Counter {
+            order: Vec::new(),
+            counts: HashMap::new(),
+        }
+    }
+
+    pub fn add(&mut self, key: T, amount: i64) {
+        if !self.counts.contains_key(&key) {
+            self.order.push(key.clone());
+        }
+        *self.counts.entry(key).or_insert(0) += amount;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+
+    /// Keys in the order they were first added -- `for key in counter`.
+    pub fn keys(&self) -> &[T] {
+        &self.order
+    }
+
+    /// Counts high to low; equal counts keep first-seen order --
+    /// `Counter.most_common()`.
+    pub fn most_common(&self) -> Vec<(T, i64)> {
+        let mut items: Vec<(usize, T, i64)> = self
+            .order
+            .iter()
+            .enumerate()
+            .map(|(i, k)| (i, k.clone(), self.counts[k]))
+            .collect();
+        items.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+        items.into_iter().map(|(_, k, c)| (k, c)).collect()
+    }
+}
+
+impl<T: Hash + Eq + Clone> Default for Counter<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
