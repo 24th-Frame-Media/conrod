@@ -1,0 +1,15 @@
+[package]
+name = "conrod-core"
+description = "Conrod's pure logic: scoring, ratings, keywords, grouping. No IO, no models."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# float_roundtrip: without it serde_json can land one ULP off on a parsed
+# float, which is enough to fail a bit-exact comparison against Python.
+serde_json = { version = "1", features = ["float_roundtrip"] }

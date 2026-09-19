@@ -40,3 +40,22 @@ jobs:
       # introduces it rather than at release time.
       - name: Self-test
         run: python main.py --selftest
+
+  # The Rust port. Its tests read the JSON that tools/gen_golden.py wrote from
+  # the Python implementation, so a divergence between the two fails here.
+  rust:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all
