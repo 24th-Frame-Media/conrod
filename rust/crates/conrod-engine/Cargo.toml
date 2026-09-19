@@ -1,0 +1,13 @@
+[package]
+name = "conrod-engine"
+description = "Conrod's scan: the cull lane over a folder, with progress for the status area."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+conrod-core = { path = "../conrod-core" }
+conrod-io = { path = "../conrod-io" }
+conrod-vision = { path = "../conrod-vision" }
+serde_json = "1"

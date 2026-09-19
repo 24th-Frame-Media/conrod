@@ -12,6 +12,5 @@ path = "src/main.rs"
 
 [dependencies]
 conrod-core = { path = "../conrod-core" }
-conrod-io = { path = "../conrod-io" }
-conrod-vision = { path = "../conrod-vision" }
+conrod-engine = { path = "../conrod-engine" }
 serde_json = "1"
