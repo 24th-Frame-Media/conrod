@@ -58,4 +58,4 @@ jobs:
           workspaces: rust
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --all
+      - run: cargo test
