@@ -1,0 +1,893 @@
+{
+ "blurred_below": 0.606,
+ "cases": [
+  {
+   "box": null,
+   "image": "sharpness/crisp.png",
+   "learned": {
+    "background": -1.0,
+    "bands": [],
+    "features": [],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": false,
+    "score": 0.9265255214957322,
+    "sharp_end": "even",
+    "uncertain": false
+   },
+   "plain": {
+    "background": -1.0,
+    "bands": [],
+    "features": [],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": false,
+    "score": 0.9265255214957322,
+    "sharp_end": "even",
+    "uncertain": false
+   }
+  },
+  {
+   "box": [
+    110,
+    90,
+    530,
+    390
+   ],
+   "image": "sharpness/crisp_box.png",
+   "learned": {
+    "background": 1.0,
+    "bands": [
+     1.0,
+     0.88,
+     1.0
+    ],
+    "features": [
+     1.0,
+     0.7650694233690348,
+     1.0,
+     0.6084575179722836,
+     0.7840677057957367,
+     -0.0685535335459706,
+     -0.2764060076692535,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     0.88,
+     1.0,
+     0.12,
+     3.976979053372422,
+     5.872018592966808,
+     0.41015625,
+     -2.995732273553991
+    ],
+    "heuristic": 1.0,
+    "learned": true,
+    "measured": true,
+    "panning": false,
+    "score": 1.0,
+    "sharp_end": "even",
+    "uncertain": false
+   },
+   "plain": {
+    "background": 1.0,
+    "bands": [
+     1.0,
+     0.88,
+     1.0
+    ],
+    "features": [
+     1.0,
+     0.7650694233690348,
+     1.0,
+     0.6084575179722836,
+     0.7840677057957367,
+     -0.0685535335459706,
+     -0.2764060076692535,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     0.88,
+     1.0,
+     0.12,
+     3.976979053372422,
+     5.872018592966808,
+     0.41015625,
+     -2.995732273553991
+    ],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": false,
+    "score": 1.0,
+    "sharp_end": "even",
+    "uncertain": false
+   }
+  },
+  {
+   "box": [
+    110,
+    90,
+    530,
+    390
+   ],
+   "image": "sharpness/soft_box.png",
+   "learned": {
+    "background": 0.6186250878317334,
+    "bands": [
+     0.317,
+     0.293,
+     0.955
+    ],
+    "features": [
+     0.9438295068201177,
+     0.238407382606759,
+     1.0,
+     0.11967440770606873,
+     -0.28272750133893937,
+     -0.9251773799103931,
+     -1.3138439568439466,
+     0.9722222222222222,
+     0.6186250878317334,
+     1.0,
+     0.317,
+     0.293,
+     0.955,
+     0.6619999999999999,
+     3.9012144519455982,
+     5.872018592966808,
+     0.41015625,
+     -2.995732273553991
+    ],
+    "heuristic": 0.9438295068201177,
+    "learned": true,
+    "measured": true,
+    "panning": false,
+    "score": 1.0,
+    "sharp_end": "right",
+    "uncertain": false
+   },
+   "plain": {
+    "background": 0.6186250878317334,
+    "bands": [
+     0.317,
+     0.293,
+     0.955
+    ],
+    "features": [
+     0.9438295068201177,
+     0.238407382606759,
+     1.0,
+     0.11967440770606873,
+     -0.28272750133893937,
+     -0.9251773799103931,
+     -1.3138439568439466,
+     0.9722222222222222,
+     0.6186250878317334,
+     1.0,
+     0.317,
+     0.293,
+     0.955,
+     0.6619999999999999,
+     3.9012144519455982,
+     5.872018592966808,
+     0.41015625,
+     -2.995732273553991
+    ],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": false,
+    "score": 0.9438295068201177,
+    "sharp_end": "right",
+    "uncertain": false
+   }
+  },
+  {
+   "box": [
+    110,
+    90,
+    530,
+    390
+   ],
+   "image": "sharpness/blurred_box.png",
+   "learned": {
+    "background": 0.24844589461127545,
+    "bands": [
+     0.003,
+     0.0,
+     0.49
+    ],
+    "features": [
+     0.43960579404941214,
+     0.0,
+     0.6289508102035549,
+     0.0,
+     -1.3617996078719885,
+     -1.2412176313196177,
+     -2.22124992057494,
+     0.9722222222222222,
+     0.24844589461127545,
+     1.0,
+     0.003,
+     0.0,
+     0.49,
+     0.49,
+     3.8382480302398942,
+     5.872018592966808,
+     0.41015625,
+     -2.995732273553991
+    ],
+    "heuristic": 0.43960579404941214,
+    "learned": true,
+    "measured": true,
+    "panning": true,
+    "score": 0.7476297124207557,
+    "sharp_end": "right",
+    "uncertain": false
+   },
+   "plain": {
+    "background": 0.24844589461127545,
+    "bands": [
+     0.003,
+     0.0,
+     0.49
+    ],
+    "features": [
+     0.43960579404941214,
+     0.0,
+     0.6289508102035549,
+     0.0,
+     -1.3617996078719885,
+     -1.2412176313196177,
+     -2.22124992057494,
+     0.9722222222222222,
+     0.24844589461127545,
+     1.0,
+     0.003,
+     0.0,
+     0.49,
+     0.49,
+     3.8382480302398942,
+     5.872018592966808,
+     0.41015625,
+     -2.995732273553991
+    ],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": true,
+    "score": 0.43960579404941214,
+    "sharp_end": "right",
+    "uncertain": false
+   }
+  },
+  {
+   "box": [
+    120,
+    100,
+    520,
+    380
+   ],
+   "image": "sharpness/pan.png",
+   "learned": {
+    "background": 0.0,
+    "bands": [
+     0.959,
+     0.927,
+     0.809
+    ],
+    "features": [
+     1.0,
+     0.7983862684929334,
+     1.0,
+     0.6485054709702631,
+     -0.03708341078507025,
+     -0.28135002910879325,
+     -0.7625107848444332,
+     1.0,
+     0.0,
+     1.0,
+     0.959,
+     0.927,
+     0.809,
+     0.1499999999999999,
+     4.150966312574182,
+     5.813127075138616,
+     0.3645833333333333,
+     -2.995732273553991
+    ],
+    "heuristic": 1.0,
+    "learned": true,
+    "measured": true,
+    "panning": true,
+    "score": 1.0,
+    "sharp_end": "left",
+    "uncertain": false
+   },
+   "plain": {
+    "background": 0.0,
+    "bands": [
+     0.959,
+     0.927,
+     0.809
+    ],
+    "features": [
+     1.0,
+     0.7983862684929334,
+     1.0,
+     0.6485054709702631,
+     -0.03708341078507025,
+     -0.28135002910879325,
+     -0.7625107848444332,
+     1.0,
+     0.0,
+     1.0,
+     0.959,
+     0.927,
+     0.809,
+     0.1499999999999999,
+     4.150966312574182,
+     5.813127075138616,
+     0.3645833333333333,
+     -2.995732273553991
+    ],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": true,
+    "score": 1.0,
+    "sharp_end": "left",
+    "uncertain": false
+   }
+  },
+  {
+   "box": [
+    110,
+    90,
+    530,
+    390
+   ],
+   "image": "sharpness/flat.png",
+   "learned": {
+    "background": -1.0,
+    "bands": [],
+    "features": [],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": false,
+    "panning": false,
+    "score": 0.0,
+    "sharp_end": "even",
+    "uncertain": false
+   },
+   "plain": {
+    "background": -1.0,
+    "bands": [],
+    "features": [],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": false,
+    "panning": false,
+    "score": 0.0,
+    "sharp_end": "even",
+    "uncertain": false
+   }
+  },
+  {
+   "box": null,
+   "image": "sharpness/tiny.png",
+   "learned": {
+    "background": -1.0,
+    "bands": [],
+    "features": [],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": false,
+    "panning": false,
+    "score": 0.0,
+    "sharp_end": "even",
+    "uncertain": false
+   },
+   "plain": {
+    "background": -1.0,
+    "bands": [],
+    "features": [],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": false,
+    "panning": false,
+    "score": 0.0,
+    "sharp_end": "even",
+    "uncertain": false
+   }
+  },
+  {
+   "box": [
+    300,
+    200,
+    330,
+    228
+   ],
+   "image": "sharpness/small_subject.png",
+   "learned": {
+    "background": -1.0,
+    "bands": [],
+    "features": [],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": false,
+    "score": 0.9265255214957322,
+    "sharp_end": "even",
+    "uncertain": true
+   },
+   "plain": {
+    "background": -1.0,
+    "bands": [],
+    "features": [],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": false,
+    "score": 0.9265255214957322,
+    "sharp_end": "even",
+    "uncertain": true
+   }
+  },
+  {
+   "box": [
+    200,
+    150,
+    1200,
+    750
+   ],
+   "image": "sharpness/large.png",
+   "learned": {
+    "background": 1.0,
+    "bands": [
+     1.0,
+     0.879,
+     1.0
+    ],
+    "features": [
+     1.0,
+     0.8369873386132706,
+     1.0,
+     0.6050101210566442,
+     0.7989530450223976,
+     -0.1481355008232036,
+     -0.5051557863851905,
+     0.9722222222222222,
+     1.0,
+     1.0,
+     1.0,
+     0.879,
+     1.0,
+     0.121,
+     3.273828298397058,
+     6.339456436412475,
+     0.4762730931800912,
+     -2.995732273553991
+    ],
+    "heuristic": 1.0,
+    "learned": true,
+    "measured": true,
+    "panning": false,
+    "score": 1.0,
+    "sharp_end": "even",
+    "uncertain": false
+   },
+   "plain": {
+    "background": 1.0,
+    "bands": [
+     1.0,
+     0.879,
+     1.0
+    ],
+    "features": [
+     1.0,
+     0.8369873386132706,
+     1.0,
+     0.6050101210566442,
+     0.7989530450223976,
+     -0.1481355008232036,
+     -0.5051557863851905,
+     0.9722222222222222,
+     1.0,
+     1.0,
+     1.0,
+     0.879,
+     1.0,
+     0.121,
+     3.273828298397058,
+     6.339456436412475,
+     0.4762730931800912,
+     -2.995732273553991
+    ],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": false,
+    "score": 1.0,
+    "sharp_end": "even",
+    "uncertain": false
+   }
+  },
+  {
+   "box": [
+    40,
+    60,
+    320,
+    700
+   ],
+   "image": "sharpness/tall_one_end.png",
+   "learned": {
+    "background": -1.0,
+    "bands": [
+     0.823,
+     1.0,
+     0.0
+    ],
+    "features": [
+     0.6807484402833958,
+     0.333124614873577,
+     1.0,
+     0.0,
+     -0.8457383900906887,
+     -0.4513367413180537,
+     -1.0565727443202826,
+     1.0,
+     0.0,
+     0.0,
+     0.823,
+     1.0,
+     0.0,
+     1.0,
+     3.98804879659663,
+     6.048128889761483,
+     0.6549707602339181,
+     -2.995732273553991
+    ],
+    "heuristic": 0.6807484402833958,
+    "learned": true,
+    "measured": true,
+    "panning": false,
+    "score": 0.9902669659391862,
+    "sharp_end": "top",
+    "uncertain": false
+   },
+   "plain": {
+    "background": -1.0,
+    "bands": [
+     0.823,
+     1.0,
+     0.0
+    ],
+    "features": [
+     0.6807484402833958,
+     0.333124614873577,
+     1.0,
+     0.0,
+     -0.8457383900906887,
+     -0.4513367413180537,
+     -1.0565727443202826,
+     1.0,
+     0.0,
+     0.0,
+     0.823,
+     1.0,
+     0.0,
+     1.0,
+     3.98804879659663,
+     6.048128889761483,
+     0.6549707602339181,
+     -2.995732273553991
+    ],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": false,
+    "score": 0.6807484402833958,
+    "sharp_end": "top",
+    "uncertain": false
+   }
+  },
+  {
+   "box": [
+    30,
+    30,
+    730,
+    350
+   ],
+   "image": "sharpness/rear_soft.png",
+   "learned": {
+    "background": -1.0,
+    "bands": [
+     0.876,
+     0.746,
+     0.019
+    ],
+    "features": [
+     0.8343955526744823,
+     0.5744856729085741,
+     1.0,
+     0.0,
+     -0.516923403743616,
+     -0.357085217498458,
+     -0.9859788849120089,
+     1.0,
+     0.0,
+     0.0,
+     0.876,
+     0.746,
+     0.019,
+     0.857,
+     3.9425109028394294,
+     6.159700665418589,
+     0.775623268698061,
+     -2.995732273553991
+    ],
+    "heuristic": 0.8343955526744823,
+    "learned": true,
+    "measured": true,
+    "panning": false,
+    "score": 1.0,
+    "sharp_end": "left",
+    "uncertain": false
+   },
+   "plain": {
+    "background": -1.0,
+    "bands": [
+     0.876,
+     0.746,
+     0.019
+    ],
+    "features": [
+     0.8343955526744823,
+     0.5744856729085741,
+     1.0,
+     0.0,
+     -0.516923403743616,
+     -0.357085217498458,
+     -0.9859788849120089,
+     1.0,
+     0.0,
+     0.0,
+     0.876,
+     0.746,
+     0.019,
+     0.857,
+     3.9425109028394294,
+     6.159700665418589,
+     0.775623268698061,
+     -2.995732273553991
+    ],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": false,
+    "score": 0.8343955526744823,
+    "sharp_end": "left",
+    "uncertain": false
+   }
+  },
+  {
+   "box": [
+    60,
+    50,
+    420,
+    310
+   ],
+   "image": "sharpness/colour.png",
+   "learned": {
+    "background": 1.0,
+    "bands": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "features": [
+     1.0,
+     0.8354885831774737,
+     1.0,
+     0.6685471081065343,
+     0.34511470049244847,
+     -0.2555671058523485,
+     -0.6506213594207944,
+     0.9722222222222222,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     0.0,
+     3.510655364332621,
+     5.723392831232842,
+     0.5416666666666666,
+     -2.995732273553991
+    ],
+    "heuristic": 1.0,
+    "learned": true,
+    "measured": true,
+    "panning": false,
+    "score": 1.0,
+    "sharp_end": "even",
+    "uncertain": false
+   },
+   "plain": {
+    "background": 1.0,
+    "bands": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "features": [
+     1.0,
+     0.8354885831774737,
+     1.0,
+     0.6685471081065343,
+     0.34511470049244847,
+     -0.2555671058523485,
+     -0.6506213594207944,
+     0.9722222222222222,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     0.0,
+     3.510655364332621,
+     5.723392831232842,
+     0.5416666666666666,
+     -2.995732273553991
+    ],
+    "heuristic": -1.0,
+    "learned": false,
+    "measured": true,
+    "panning": false,
+    "score": 1.0,
+    "sharp_end": "even",
+    "uncertain": false
+   }
+  }
+ ],
+ "learned_model": {
+  "intercept": 3.1,
+  "mean": [
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5,
+   0.5
+  ],
+  "spread": [
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25,
+   0.25
+  ],
+  "trained_on": 90,
+  "version": 1,
+  "weights": [
+   0.9,
+   0.1,
+   0.2,
+   -0.1,
+   0.3,
+   0.0,
+   0.05,
+   0.1,
+   -0.2,
+   0.0,
+   0.1,
+   0.1,
+   0.1,
+   -0.3,
+   0.05,
+   0.02,
+   0.0,
+   -0.1
+  ]
+ },
+ "sharp_at": 0.825,
+ "verdicts": [
+  {
+   "rating": "poor",
+   "score": 0.0,
+   "stars": 1,
+   "verdict": "blurred"
+  },
+  {
+   "rating": "poor",
+   "score": 0.3,
+   "stars": 1,
+   "verdict": "blurred"
+  },
+  {
+   "rating": "poor",
+   "score": 0.605,
+   "stars": 1,
+   "verdict": "blurred"
+  },
+  {
+   "rating": "fair",
+   "score": 0.606,
+   "stars": 2,
+   "verdict": "soft"
+  },
+  {
+   "rating": "fair",
+   "score": 0.7,
+   "stars": 2,
+   "verdict": "soft"
+  },
+  {
+   "rating": "fair",
+   "score": 0.728,
+   "stars": 3,
+   "verdict": "soft"
+  },
+  {
+   "rating": "fair",
+   "score": 0.82,
+   "stars": 3,
+   "verdict": "soft"
+  },
+  {
+   "rating": "good",
+   "score": 0.825,
+   "stars": 4,
+   "verdict": "sharp"
+  },
+  {
+   "rating": "good",
+   "score": 0.9,
+   "stars": 4,
+   "verdict": "sharp"
+  },
+  {
+   "rating": "good",
+   "score": 0.958,
+   "stars": 5,
+   "verdict": "sharp"
+  },
+  {
+   "rating": "good",
+   "score": 1.0,
+   "stars": 5,
+   "verdict": "sharp"
+  }
+ ]
+}
