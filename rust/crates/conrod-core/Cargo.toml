@@ -7,9 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+csv = "1"
 serde = { version = "1", features = ["derive"] }
-
-[dev-dependencies]
 # float_roundtrip: without it serde_json can land one ULP off on a parsed
 # float, which is enough to fail a bit-exact comparison against Python.
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

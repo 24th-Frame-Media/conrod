@@ -5,5 +5,11 @@
 //! `rust/fixtures` and `tools/gen_golden.py`) rather than against a reading of
 //! its source.
 
+pub mod analysis;
+pub mod bursts;
 pub mod framing;
+pub mod keywords;
+pub mod mapping;
+pub mod marques;
+pub mod py;
 pub mod ridge;

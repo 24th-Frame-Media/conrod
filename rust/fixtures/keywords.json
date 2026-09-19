@@ -1,0 +1,547 @@
+{
+ "cases": [
+  {
+   "analysis": {},
+   "keywords": [],
+   "keywords_with_map": [],
+   "prefix": "",
+   "title": "Car, not identified",
+   "write_plate": true
+  },
+  {
+   "analysis": {},
+   "keywords": [],
+   "keywords_with_map": [],
+   "prefix": "Motorsport|",
+   "title": "Car, not identified",
+   "write_plate": false
+  },
+  {
+   "analysis": {
+    "body_type": "coupe",
+    "colour": "red",
+    "is_competition": true,
+    "make": "Ford",
+    "model": "Mustang GT",
+    "plate": "ABC123",
+    "plate_state": "NSW",
+    "race_number": "88",
+    "sponsors": [
+     "Red Bull",
+     "red bull",
+     "Ampol"
+    ],
+    "team": "Triple Eight",
+    "team_corroborated": true
+   },
+   "keywords": [
+    "88",
+    "#88",
+    "Car 88",
+    "ABC123",
+    "NSW",
+    "Ford",
+    "red",
+    "coupe",
+    "Mustang GT",
+    "Ford Mustang GT",
+    "Triple Eight",
+    "Red Bull",
+    "Ampol",
+    "Motorsport"
+   ],
+   "keywords_with_map": [
+    "88",
+    "#88",
+    "Car 88",
+    "Duplicate Wins",
+    "T8",
+    "Supercars",
+    "ABC123",
+    "NSW",
+    "Ford",
+    "red",
+    "coupe",
+    "Mustang GT",
+    "Ford Mustang GT",
+    "Triple Eight",
+    "Red Bull",
+    "Ampol",
+    "Motorsport"
+   ],
+   "prefix": "",
+   "title": "#88 Red Ford Mustang GT",
+   "write_plate": true
+  },
+  {
+   "analysis": {
+    "body_type": "coupe",
+    "colour": "red",
+    "is_competition": true,
+    "make": "Ford",
+    "model": "Mustang GT",
+    "plate": "ABC123",
+    "plate_state": "NSW",
+    "race_number": "88",
+    "sponsors": [
+     "Red Bull",
+     "red bull",
+     "Ampol"
+    ],
+    "team": "Triple Eight",
+    "team_corroborated": true
+   },
+   "keywords": [
+    "Motorsport|88",
+    "Motorsport|#88",
+    "Motorsport|Car 88",
+    "Motorsport|Ford",
+    "Motorsport|red",
+    "Motorsport|coupe",
+    "Motorsport|Mustang GT",
+    "Motorsport|Ford Mustang GT",
+    "Motorsport|Triple Eight",
+    "Motorsport|Red Bull",
+    "Motorsport|Ampol",
+    "Motorsport|Motorsport"
+   ],
+   "keywords_with_map": [
+    "Motorsport|88",
+    "Motorsport|#88",
+    "Motorsport|Car 88",
+    "Motorsport|Duplicate Wins",
+    "Motorsport|T8",
+    "Motorsport|Supercars",
+    "Motorsport|Ford",
+    "Motorsport|red",
+    "Motorsport|coupe",
+    "Motorsport|Mustang GT",
+    "Motorsport|Ford Mustang GT",
+    "Motorsport|Triple Eight",
+    "Motorsport|Red Bull",
+    "Motorsport|Ampol",
+    "Motorsport|Motorsport"
+   ],
+   "prefix": "Motorsport|",
+   "title": "#88 Red Ford Mustang GT",
+   "write_plate": false
+  },
+  {
+   "analysis": {
+    "colour": "blue",
+    "make": "Holden",
+    "model": "Holden Commodore"
+   },
+   "keywords": [
+    "Holden",
+    "blue",
+    "Holden Commodore",
+    "Holden Holden Commodore"
+   ],
+   "keywords_with_map": [
+    "Holden",
+    "blue",
+    "Holden Commodore",
+    "Holden Holden Commodore"
+   ],
+   "prefix": "",
+   "title": "Blue Holden Commodore",
+   "write_plate": true
+  },
+  {
+   "analysis": {
+    "colour": "blue",
+    "make": "Holden",
+    "model": "Holden Commodore"
+   },
+   "keywords": [
+    "Motorsport|Holden",
+    "Motorsport|blue",
+    "Motorsport|Holden Commodore",
+    "Motorsport|Holden Holden Commodore"
+   ],
+   "keywords_with_map": [
+    "Motorsport|Holden",
+    "Motorsport|blue",
+    "Motorsport|Holden Commodore",
+    "Motorsport|Holden Holden Commodore"
+   ],
+   "prefix": "Motorsport|",
+   "title": "Blue Holden Commodore",
+   "write_plate": false
+  },
+  {
+   "analysis": {
+    "model": "Commodore",
+    "number_source": "vlm",
+    "team": "Guessed Team"
+   },
+   "keywords": [
+    "Commodore"
+   ],
+   "keywords_with_map": [
+    "Commodore"
+   ],
+   "prefix": "",
+   "title": "Commodore",
+   "write_plate": true
+  },
+  {
+   "analysis": {
+    "model": "Commodore",
+    "number_source": "vlm",
+    "team": "Guessed Team"
+   },
+   "keywords": [
+    "Motorsport|Commodore"
+   ],
+   "keywords_with_map": [
+    "Motorsport|Commodore"
+   ],
+   "prefix": "Motorsport|",
+   "title": "Commodore",
+   "write_plate": false
+  },
+  {
+   "analysis": {
+    "is_bike": true,
+    "kind": "motorcycle",
+    "make": "Kawasaki",
+    "number_source": "manual",
+    "race_number": "7",
+    "team": "Manual Team"
+   },
+   "keywords": [
+    "7",
+    "#7",
+    "Car 7",
+    "Kawasaki",
+    "Manual Team",
+    "Motorcycle"
+   ],
+   "keywords_with_map": [
+    "7",
+    "#7",
+    "Car 7",
+    "Someone Else",
+    "Team",
+    "With Comma",
+    "Supercars",
+    "Kawasaki",
+    "Manual Team",
+    "Motorcycle"
+   ],
+   "prefix": "",
+   "title": "#7 Kawasaki",
+   "write_plate": true
+  },
+  {
+   "analysis": {
+    "is_bike": true,
+    "kind": "motorcycle",
+    "make": "Kawasaki",
+    "number_source": "manual",
+    "race_number": "7",
+    "team": "Manual Team"
+   },
+   "keywords": [
+    "Motorsport|7",
+    "Motorsport|#7",
+    "Motorsport|Car 7",
+    "Motorsport|Kawasaki",
+    "Motorsport|Manual Team",
+    "Motorsport|Motorcycle"
+   ],
+   "keywords_with_map": [
+    "Motorsport|7",
+    "Motorsport|#7",
+    "Motorsport|Car 7",
+    "Motorsport|Someone Else",
+    "Motorsport|Team",
+    "Motorsport|With Comma",
+    "Motorsport|Supercars",
+    "Motorsport|Kawasaki",
+    "Motorsport|Manual Team",
+    "Motorsport|Motorcycle"
+   ],
+   "prefix": "Motorsport|",
+   "title": "#7 Kawasaki",
+   "write_plate": false
+  },
+  {
+   "analysis": {
+    "kind": "truck",
+    "plate": "XYZ"
+   },
+   "keywords": [
+    "XYZ"
+   ],
+   "keywords_with_map": [
+    "XYZ"
+   ],
+   "prefix": "",
+   "title": "Truck",
+   "write_plate": true
+  },
+  {
+   "analysis": {
+    "kind": "truck",
+    "plate": "XYZ"
+   },
+   "keywords": [],
+   "keywords_with_map": [],
+   "prefix": "Motorsport|",
+   "title": "Truck",
+   "write_plate": false
+  },
+  {
+   "analysis": {
+    "kind": "car"
+   },
+   "keywords": [],
+   "keywords_with_map": [],
+   "prefix": "",
+   "title": "Car, not identified",
+   "write_plate": true
+  },
+  {
+   "analysis": {
+    "kind": "car"
+   },
+   "keywords": [],
+   "keywords_with_map": [],
+   "prefix": "Motorsport|",
+   "title": "Car, not identified",
+   "write_plate": false
+  },
+  {
+   "analysis": {
+    "colour": "dark metallic blue",
+    "make": "  ",
+    "model": " Golf "
+   },
+   "keywords": [
+    "dark metallic blue",
+    "Golf"
+   ],
+   "keywords_with_map": [
+    "dark metallic blue",
+    "Golf"
+   ],
+   "prefix": "",
+   "title": "Dark metallic blue     Golf ",
+   "write_plate": true
+  },
+  {
+   "analysis": {
+    "colour": "dark metallic blue",
+    "make": "  ",
+    "model": " Golf "
+   },
+   "keywords": [
+    "Motorsport|dark metallic blue",
+    "Motorsport|Golf"
+   ],
+   "keywords_with_map": [
+    "Motorsport|dark metallic blue",
+    "Motorsport|Golf"
+   ],
+   "prefix": "Motorsport|",
+   "title": "Dark metallic blue     Golf ",
+   "write_plate": false
+  },
+  {
+   "analysis": {
+    "colour": "\u00dftra\u00dfe",
+    "make": "BMW",
+    "model": "M3",
+    "race_number": "5"
+   },
+   "keywords": [
+    "5",
+    "#5",
+    "Car 5",
+    "BMW",
+    "\u00dftra\u00dfe",
+    "M3",
+    "BMW M3"
+   ],
+   "keywords_with_map": [
+    "5",
+    "#5",
+    "Car 5",
+    "Extra",
+    "Fields",
+    "X",
+    "Y",
+    "Z",
+    "BMW",
+    "\u00dftra\u00dfe",
+    "M3",
+    "BMW M3"
+   ],
+   "prefix": "",
+   "title": "#5 SStra\u00dfe BMW M3",
+   "write_plate": true
+  },
+  {
+   "analysis": {
+    "colour": "\u00dftra\u00dfe",
+    "make": "BMW",
+    "model": "M3",
+    "race_number": "5"
+   },
+   "keywords": [
+    "Motorsport|5",
+    "Motorsport|#5",
+    "Motorsport|Car 5",
+    "Motorsport|BMW",
+    "Motorsport|\u00dftra\u00dfe",
+    "Motorsport|M3",
+    "Motorsport|BMW M3"
+   ],
+   "keywords_with_map": [
+    "Motorsport|5",
+    "Motorsport|#5",
+    "Motorsport|Car 5",
+    "Motorsport|Extra",
+    "Motorsport|Fields",
+    "Motorsport|X",
+    "Motorsport|Y",
+    "Motorsport|Z",
+    "Motorsport|BMW",
+    "Motorsport|\u00dftra\u00dfe",
+    "Motorsport|M3",
+    "Motorsport|BMW M3"
+   ],
+   "prefix": "Motorsport|",
+   "title": "#5 SStra\u00dfe BMW M3",
+   "write_plate": false
+  },
+  {
+   "analysis": {
+    "extra_unknown": 1,
+    "make": "Ford",
+    "model": "Falcon",
+    "sponsors": [
+     "Castrol"
+    ]
+   },
+   "keywords": [
+    "Ford",
+    "Falcon",
+    "Ford Falcon",
+    "Castrol"
+   ],
+   "keywords_with_map": [
+    "Ford",
+    "Falcon",
+    "Ford Falcon",
+    "Castrol"
+   ],
+   "prefix": "",
+   "title": "Ford Falcon",
+   "write_plate": true
+  },
+  {
+   "analysis": {
+    "extra_unknown": 1,
+    "make": "Ford",
+    "model": "Falcon",
+    "sponsors": [
+     "Castrol"
+    ]
+   },
+   "keywords": [
+    "Motorsport|Ford",
+    "Motorsport|Falcon",
+    "Motorsport|Ford Falcon",
+    "Motorsport|Castrol"
+   ],
+   "keywords_with_map": [
+    "Motorsport|Ford",
+    "Motorsport|Falcon",
+    "Motorsport|Ford Falcon",
+    "Motorsport|Castrol"
+   ],
+   "prefix": "Motorsport|",
+   "title": "Ford Falcon",
+   "write_plate": false
+  }
+ ],
+ "csv": "\ufeffNo., Driver ,Team,Class,Sponsor,Empty\r\n88,Broc Feeney,Triple Eight Race Engineering,Supercars,Red Bull;Ampol,\r\n#07 ,Someone Else,\"Team, With Comma\",Supercars,,\r\n\r\n0,Zero Driver,Zeros,Club,\"A, B ; C\",\r\nabc,No Number,Nobody,,,\r\n17,Short Row\r\n5,Extra,Fields,X,Y,Z,surplus,more\r\n88,Duplicate Wins,T8,Supercars,,\r\n",
+ "frame": {
+  "analyses": [
+   {},
+   {
+    "body_type": "coupe",
+    "colour": "red",
+    "is_competition": true,
+    "make": "Ford",
+    "model": "Mustang GT",
+    "plate": "ABC123",
+    "plate_state": "NSW",
+    "race_number": "88",
+    "sponsors": [
+     "Red Bull",
+     "red bull",
+     "Ampol"
+    ],
+    "team": "Triple Eight",
+    "team_corroborated": true
+   },
+   {
+    "colour": "blue",
+    "make": "Holden",
+    "model": "Holden Commodore"
+   },
+   {
+    "model": "Commodore",
+    "number_source": "vlm",
+    "team": "Guessed Team"
+   },
+   {
+    "is_bike": true,
+    "kind": "motorcycle",
+    "make": "Kawasaki",
+    "number_source": "manual",
+    "race_number": "7",
+    "team": "Manual Team"
+   }
+  ],
+  "caption": "Car, not identified; #88 Red Ford Mustang GT; Blue Holden Commodore; Commodore; #7 Kawasaki",
+  "keywords": [
+   "88",
+   "#88",
+   "Car 88",
+   "Duplicate Wins",
+   "T8",
+   "Supercars",
+   "ABC123",
+   "NSW",
+   "Ford",
+   "red",
+   "coupe",
+   "Mustang GT",
+   "Ford Mustang GT",
+   "Triple Eight",
+   "Red Bull",
+   "Ampol",
+   "Motorsport",
+   "Holden",
+   "blue",
+   "Holden Commodore",
+   "Holden Holden Commodore",
+   "Commodore",
+   "7",
+   "#7",
+   "Car 7",
+   "Someone Else",
+   "Team",
+   "With Comma",
+   "Kawasaki",
+   "Manual Team",
+   "Motorcycle"
+  ]
+ }
+}
