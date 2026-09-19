@@ -1156,6 +1156,34 @@ def merge_cases() -> dict:
             "ocr_accept_confidence": settings.ocr_accept_confidence}
 
 
+def settings_cases() -> dict:
+    """Defaults, and what Settings.load makes of odd files."""
+    import tempfile
+
+    stored_cases = [
+        {},
+        {"detect_conf": 0.55, "keyword_prefix": "Race|", "unknown_key": 1},
+        {"sharp_at": 0.5, "blurred_below": 0.3},                     # no focus_scale: retired
+        {"sharp_at": 0.5, "blurred_below": 0.3, "focus_scale": 3},    # current scale: kept
+        {"sharp_at": 0.5, "focus_scale": 2},
+        {"detect_conf": 1, "max_text_items": 5, "extra": {"a": 1}},
+        {"vlm_host": "http://a:11434/", "vlm_extra_hosts": " http://b:11434, http://a:11434 ,,"},
+    ]
+    cases = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for stored in stored_cases:
+            path = Path(tmp) / "settings.json"
+            path.write_text(json.dumps(stored), encoding="utf-8")
+            loaded = Settings.load(path).to_dict()
+            loaded.pop("workers")
+            cases.append({"stored": stored, "loaded": loaded,
+                          "hosts": Settings.load(path).ollama_hosts(),
+                          "classes": Settings.load(path).active_classes()})
+    defaults = Settings().to_dict()
+    defaults.pop("workers")          # depends on the machine
+    return {"defaults": defaults, "cases": cases}
+
+
 def main() -> None:
     if "--local" in sys.argv:
         sharpness_local()
@@ -1172,6 +1200,7 @@ def main() -> None:
     write("registry", registry_cases())
     write("culling", culling_cases())
     write("merge", merge_cases())
+    write("settings", settings_cases())
 
 
 if __name__ == "__main__":

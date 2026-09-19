@@ -1162,3 +1162,57 @@ fn merge_matches_python() {
         );
     }
 }
+
+#[test]
+fn settings_match_python() {
+    use conrod_core::settings::Settings;
+    let fixture = fixture("settings");
+    let as_map = |s: &Settings| {
+        let mut v = serde_json::to_value(s).unwrap();
+        let m = v.as_object_mut().unwrap();
+        m.remove("workers");
+        m.remove("scan_profile"); // Rust-only
+        v
+    };
+    // Python stores 1 for 1.0 and vice versa; compare numbers as numbers.
+    let same = |a: &Value, b: &Value| -> bool {
+        a.as_object().unwrap().iter().all(|(k, va)| {
+            let vb = &b[k];
+            match (va.as_f64(), vb.as_f64()) {
+                (Some(x), Some(y)) => x == y,
+                _ => va == vb,
+            }
+        }) && a.as_object().unwrap().len() == b.as_object().unwrap().len()
+    };
+    assert!(
+        same(&as_map(&Settings::default()), &fixture["defaults"]),
+        "defaults differ"
+    );
+    let dir = std::env::temp_dir().join(format!("conrod-settings-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("settings.json");
+    for case in fixture["cases"].as_array().unwrap() {
+        std::fs::write(&path, case["stored"].to_string()).unwrap();
+        let loaded = Settings::load(&path);
+        assert!(
+            same(&as_map(&loaded), &case["loaded"]),
+            "load of {}",
+            case["stored"]
+        );
+        let hosts: Vec<&str> = case["hosts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h.as_str().unwrap())
+            .collect();
+        assert_eq!(loaded.ollama_hosts(), hosts);
+        let classes: Vec<usize> = case["classes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.as_u64().unwrap() as usize)
+            .collect();
+        assert_eq!(loaded.vehicle_classes(), classes);
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
