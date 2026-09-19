@@ -23,7 +23,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from conrod import bursts, framing, keywords, marques, sharp_model, taste  # noqa: E402
+from conrod import bursts, framing, keywords, marques, sharp_model, sharpness, taste  # noqa: E402
 from conrod.analyze import VehicleAnalysis  # noqa: E402
 from conrod.mapping import NumberMap  # noqa: E402
 
@@ -275,7 +275,131 @@ def mapping_number_map():
         return NumberMap.load(path)
 
 
+def _sharpness_result(result) -> dict:
+    return {"score": result.score, "background": result.background,
+            "panning": result.panning, "sharp_end": result.sharp_end,
+            "bands": list(result.bands), "uncertain": result.uncertain,
+            "measured": result.measured, "features": list(result.features),
+            "learned": result.learned, "heuristic": result.heuristic}
+
+
+# A fixed learned model, so the fixture checks the learned path without
+# depending on whatever the photographer has trained.
+LEARNED = {"version": 1, "trained_on": 90, "intercept": 3.1,
+           "mean": [0.5] * 18, "spread": [0.25] * 18,
+           "weights": [0.9, 0.1, 0.2, -0.1, 0.3, 0.0, 0.05, 0.1, -0.2, 0.0,
+                       0.1, 0.1, 0.1, -0.3, 0.05, 0.02, 0.0, -0.1]}
+
+
+def sharpness_cases() -> dict:
+    """Synthetic crops, saved losslessly so both sides read identical pixels.
+
+    Built with the helpers tests/test_sharpness.py already trusts. Mostly the
+    band-limited "photo" texture because it compresses to a few tens of KB;
+    white noise would be hundreds.
+    """
+    from unittest import mock
+
+    from PIL import Image, ImageFilter
+
+    sys.path.insert(0, str(ROOT / "tests"))
+    from test_sharpness import _paste, _photo_texture  # noqa: E402
+
+    blur = ImageFilter.GaussianBlur
+    images = {
+        "crisp": (_photo_texture(640, 480), None),
+        "crisp_box": (_photo_texture(640, 480), (110, 90, 530, 390)),
+        "soft_box": (_photo_texture(640, 480).filter(blur(1.5)), (110, 90, 530, 390)),
+        "blurred_box": (_photo_texture(640, 480).filter(blur(3)), (110, 90, 530, 390)),
+        "pan": (_paste(_photo_texture(640, 480, seed=2).filter(blur(7)),
+                       _photo_texture(400, 280, seed=3), (120, 100)), (120, 100, 520, 380)),
+        "flat": (Image.new("L", (640, 480), 128), (110, 90, 530, 390)),
+        "tiny": (_photo_texture(640, 480).crop((100, 100, 120, 120)), None),
+        "small_subject": (_photo_texture(640, 480), (300, 200, 330, 228)),
+        "large": (_photo_texture(1400, 900, seed=5), (200, 150, 1200, 750)),
+        "tall_one_end": (_paste(_photo_texture(360, 760, seed=6),
+                                _photo_texture(360, 760, seed=6).crop((0, 380, 360, 760))
+                                .filter(blur(4)), (0, 380)), (40, 60, 320, 700)),
+        "rear_soft": (_paste(_photo_texture(760, 380, seed=8),
+                             _photo_texture(760, 380, seed=8).crop((500, 0, 760, 380))
+                             .filter(blur(5)), (500, 0)), (30, 30, 730, 350)),
+    }
+    colour = _photo_texture(480, 360, seed=9)
+    r, g, b = (colour.point(lambda v, k=k: (v * k) % 256) for k in (1, 3, 7))
+    images["colour"] = (Image.merge("RGB", (r.convert("L"), g.convert("L"),
+                                            b.convert("L"))), (60, 50, 420, 310))
+
+    folder = OUT / "sharpness"
+    folder.mkdir(parents=True, exist_ok=True)
+    cases = []
+    for name, (image, box) in images.items():
+        mode = "RGB" if name == "colour" else "L"
+        image = image.convert(mode)
+        image.save(folder / f"{name}.png", optimize=True)
+        reread = Image.open(folder / f"{name}.png")
+        reread.load()
+        with mock.patch.object(sharp_model, "current", return_value=None):
+            plain = sharpness.measure(reread, box)
+        with mock.patch.object(sharp_model, "current", return_value=LEARNED):
+            learned = sharpness.measure(reread, box)
+        cases.append({"image": f"sharpness/{name}.png", "box": list(box) if box else None,
+                      "plain": _sharpness_result(plain),
+                      "learned": _sharpness_result(learned)})
+
+    verdicts = []
+    for score in (0.0, 0.3, 0.605, 0.606, 0.7, 0.728, 0.82, 0.825, 0.9, 0.958, 1.0):
+        verdicts.append({"score": score,
+                         "verdict": sharpness.verdict_for(score, sharpness.SHARP_AT,
+                                                          sharpness.BLURRED_BELOW),
+                         "rating": sharpness.rating_for(score, sharpness.SHARP_AT,
+                                                        sharpness.BLURRED_BELOW),
+                         "stars": sharpness.stars_for(score)})
+    return {"learned_model": LEARNED, "cases": cases, "verdicts": verdicts,
+            "sharp_at": sharpness.SHARP_AT, "blurred_below": sharpness.BLURRED_BELOW}
+
+
+def sharpness_local(jobs=(38, 39), count=200) -> None:
+    """The same measure on the photographer's real crops: the parity gate that
+    counts. Local-only, like the frames it points at."""
+    import random
+    import sqlite3
+    from unittest import mock
+
+    from PIL import Image
+
+    from conrod.config import DB_PATH, Settings
+    from conrod.pipeline import crop_box_for
+
+    settings = Settings.load()
+    db = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    marks = ",".join("?" * len(jobs))
+    rows = [r for r in db.execute(
+        f"""SELECT d.crop_path, d.x1, d.y1, d.x2, d.y2, i.preview_path
+              FROM detections d JOIN images i ON i.id = d.image_id
+             WHERE i.job_id IN ({marks}) AND d.crop_path IS NOT NULL""", jobs)
+        if Path(r[0]).exists() and r[5] and Path(r[5]).exists()]
+    rows = random.Random(7).sample(rows, min(count, len(rows)))
+    cases = []
+    for crop_path, x1, y1, x2, y2, preview in rows:
+        box = (x1, y1, x2, y2)
+        cx1, cy1, cx2, cy2 = crop_box_for(preview, box, settings)
+        with Image.open(crop_path) as crop:
+            crop.load()
+            scale = crop.width / (cx2 - cx1)
+            inner = [(x1 - cx1) * scale, (y1 - cy1) * scale,
+                     (x2 - cx1) * scale, (y2 - cy1) * scale]
+            with mock.patch.object(sharp_model, "current", return_value=None):
+                result = sharpness.measure(crop, inner)
+        cases.append({"image": crop_path, "box": inner, "plain": _sharpness_result(result)})
+    (OUT / "sharpness_local.json").write_text(json.dumps({"cases": cases}), encoding="utf-8")
+    print(f"rust/fixtures/sharpness_local.json  {len(cases)} real crops (local-only)")
+
+
 def main() -> None:
+    if "--local" in sys.argv:
+        sharpness_local()
+        return
+    write("sharpness", sharpness_cases())
     write("framing", framing_cases())
     write("ridge", ridge_cases(), compact=True)
     write("bursts", bursts_cases())
