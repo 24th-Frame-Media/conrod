@@ -1,0 +1,1091 @@
+{
+ "corroborated": [
+  {
+   "claim": null,
+   "evidence": [],
+   "out": false
+  },
+  {
+   "claim": null,
+   "evidence": [
+    "Nos8e",
+    "No886"
+   ],
+   "out": false
+  },
+  {
+   "claim": null,
+   "evidence": [
+    "REPCO",
+    "Castrol"
+   ],
+   "out": false
+  },
+  {
+   "claim": null,
+   "evidence": [
+    "TRIPLE",
+    "EIGHT",
+    "ENGINEERING"
+   ],
+   "out": false
+  },
+  {
+   "claim": null,
+   "evidence": [
+    "random",
+    "text",
+    "here"
+   ],
+   "out": false
+  },
+  {
+   "claim": null,
+   "evidence": [
+    "eclair"
+   ],
+   "out": false
+  },
+  {
+   "claim": "",
+   "evidence": [],
+   "out": false
+  },
+  {
+   "claim": "",
+   "evidence": [
+    "Nos8e",
+    "No886"
+   ],
+   "out": false
+  },
+  {
+   "claim": "",
+   "evidence": [
+    "REPCO",
+    "Castrol"
+   ],
+   "out": false
+  },
+  {
+   "claim": "",
+   "evidence": [
+    "TRIPLE",
+    "EIGHT",
+    "ENGINEERING"
+   ],
+   "out": false
+  },
+  {
+   "claim": "",
+   "evidence": [
+    "random",
+    "text",
+    "here"
+   ],
+   "out": false
+  },
+  {
+   "claim": "",
+   "evidence": [
+    "eclair"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Triple Eight Race Engineering",
+   "evidence": [],
+   "out": false
+  },
+  {
+   "claim": "Triple Eight Race Engineering",
+   "evidence": [
+    "Nos8e",
+    "No886"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Triple Eight Race Engineering",
+   "evidence": [
+    "REPCO",
+    "Castrol"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Triple Eight Race Engineering",
+   "evidence": [
+    "TRIPLE",
+    "EIGHT",
+    "ENGINEERING"
+   ],
+   "out": true
+  },
+  {
+   "claim": "Triple Eight Race Engineering",
+   "evidence": [
+    "random",
+    "text",
+    "here"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Triple Eight Race Engineering",
+   "evidence": [
+    "eclair"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Racing Team",
+   "evidence": [],
+   "out": false
+  },
+  {
+   "claim": "Racing Team",
+   "evidence": [
+    "Nos8e",
+    "No886"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Racing Team",
+   "evidence": [
+    "REPCO",
+    "Castrol"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Racing Team",
+   "evidence": [
+    "TRIPLE",
+    "EIGHT",
+    "ENGINEERING"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Racing Team",
+   "evidence": [
+    "random",
+    "text",
+    "here"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Racing Team",
+   "evidence": [
+    "eclair"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Nosso",
+   "evidence": [],
+   "out": false
+  },
+  {
+   "claim": "Nosso",
+   "evidence": [
+    "Nos8e",
+    "No886"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Nosso",
+   "evidence": [
+    "REPCO",
+    "Castrol"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Nosso",
+   "evidence": [
+    "TRIPLE",
+    "EIGHT",
+    "ENGINEERING"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Nosso",
+   "evidence": [
+    "random",
+    "text",
+    "here"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Nosso",
+   "evidence": [
+    "eclair"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Repco Team",
+   "evidence": [],
+   "out": false
+  },
+  {
+   "claim": "Repco Team",
+   "evidence": [
+    "Nos8e",
+    "No886"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Repco Team",
+   "evidence": [
+    "REPCO",
+    "Castrol"
+   ],
+   "out": true
+  },
+  {
+   "claim": "Repco Team",
+   "evidence": [
+    "TRIPLE",
+    "EIGHT",
+    "ENGINEERING"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Repco Team",
+   "evidence": [
+    "random",
+    "text",
+    "here"
+   ],
+   "out": false
+  },
+  {
+   "claim": "Repco Team",
+   "evidence": [
+    "eclair"
+   ],
+   "out": false
+  },
+  {
+   "claim": "  ",
+   "evidence": [],
+   "out": false
+  },
+  {
+   "claim": "  ",
+   "evidence": [
+    "Nos8e",
+    "No886"
+   ],
+   "out": false
+  },
+  {
+   "claim": "  ",
+   "evidence": [
+    "REPCO",
+    "Castrol"
+   ],
+   "out": false
+  },
+  {
+   "claim": "  ",
+   "evidence": [
+    "TRIPLE",
+    "EIGHT",
+    "ENGINEERING"
+   ],
+   "out": false
+  },
+  {
+   "claim": "  ",
+   "evidence": [
+    "random",
+    "text",
+    "here"
+   ],
+   "out": false
+  },
+  {
+   "claim": "  ",
+   "evidence": [
+    "eclair"
+   ],
+   "out": false
+  },
+  {
+   "claim": "T8",
+   "evidence": [],
+   "out": false
+  },
+  {
+   "claim": "T8",
+   "evidence": [
+    "Nos8e",
+    "No886"
+   ],
+   "out": false
+  },
+  {
+   "claim": "T8",
+   "evidence": [
+    "REPCO",
+    "Castrol"
+   ],
+   "out": false
+  },
+  {
+   "claim": "T8",
+   "evidence": [
+    "TRIPLE",
+    "EIGHT",
+    "ENGINEERING"
+   ],
+   "out": false
+  },
+  {
+   "claim": "T8",
+   "evidence": [
+    "random",
+    "text",
+    "here"
+   ],
+   "out": false
+  },
+  {
+   "claim": "T8",
+   "evidence": [
+    "eclair"
+   ],
+   "out": false
+  },
+  {
+   "claim": "AB",
+   "evidence": [],
+   "out": false
+  },
+  {
+   "claim": "AB",
+   "evidence": [
+    "Nos8e",
+    "No886"
+   ],
+   "out": false
+  },
+  {
+   "claim": "AB",
+   "evidence": [
+    "REPCO",
+    "Castrol"
+   ],
+   "out": false
+  },
+  {
+   "claim": "AB",
+   "evidence": [
+    "TRIPLE",
+    "EIGHT",
+    "ENGINEERING"
+   ],
+   "out": false
+  },
+  {
+   "claim": "AB",
+   "evidence": [
+    "random",
+    "text",
+    "here"
+   ],
+   "out": false
+  },
+  {
+   "claim": "AB",
+   "evidence": [
+    "eclair"
+   ],
+   "out": false
+  },
+  {
+   "claim": "\u00c9clair Motorsport",
+   "evidence": [],
+   "out": false
+  },
+  {
+   "claim": "\u00c9clair Motorsport",
+   "evidence": [
+    "Nos8e",
+    "No886"
+   ],
+   "out": false
+  },
+  {
+   "claim": "\u00c9clair Motorsport",
+   "evidence": [
+    "REPCO",
+    "Castrol"
+   ],
+   "out": false
+  },
+  {
+   "claim": "\u00c9clair Motorsport",
+   "evidence": [
+    "TRIPLE",
+    "EIGHT",
+    "ENGINEERING"
+   ],
+   "out": false
+  },
+  {
+   "claim": "\u00c9clair Motorsport",
+   "evidence": [
+    "random",
+    "text",
+    "here"
+   ],
+   "out": false
+  },
+  {
+   "claim": "\u00c9clair Motorsport",
+   "evidence": [
+    "eclair"
+   ],
+   "out": false
+  }
+ ],
+ "merge_number": [
+  {
+   "ocr": {
+    "confidence": 0.0,
+    "number": null,
+    "source": "ocr"
+   },
+   "out": [
+    null,
+    null,
+    0.0
+   ],
+   "vlm_number": null
+  },
+  {
+   "ocr": {
+    "confidence": 0.0,
+    "number": null,
+    "source": "ocr"
+   },
+   "out": [
+    "88",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "88"
+  },
+  {
+   "ocr": {
+    "confidence": 0.0,
+    "number": null,
+    "source": "ocr"
+   },
+   "out": [
+    "7",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "7"
+  },
+  {
+   "ocr": {
+    "confidence": 0.0,
+    "number": null,
+    "source": "ocr"
+   },
+   "out": [
+    "9",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "9"
+  },
+  {
+   "ocr": {
+    "confidence": 0.0,
+    "number": null,
+    "source": "ocr"
+   },
+   "out": [
+    "07",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "07"
+  },
+  {
+   "ocr": {
+    "confidence": 0.0,
+    "number": null,
+    "source": "ocr"
+   },
+   "out": [
+    null,
+    null,
+    0.0
+   ],
+   "vlm_number": ""
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "88",
+    "source": "ocr"
+   },
+   "out": [
+    "88",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": null
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "88",
+    "source": "ocr"
+   },
+   "out": [
+    "88",
+    "ocr+vlm",
+    1.0
+   ],
+   "vlm_number": "88"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "88",
+    "source": "ocr"
+   },
+   "out": [
+    "88",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": "7"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "88",
+    "source": "ocr"
+   },
+   "out": [
+    "88",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": "9"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "88",
+    "source": "ocr"
+   },
+   "out": [
+    "88",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": "07"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "88",
+    "source": "ocr"
+   },
+   "out": [
+    "88",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": ""
+  },
+  {
+   "ocr": {
+    "confidence": 0.5,
+    "number": "7",
+    "source": "ocr"
+   },
+   "out": [
+    "7",
+    "ocr",
+    0.5
+   ],
+   "vlm_number": null
+  },
+  {
+   "ocr": {
+    "confidence": 0.5,
+    "number": "7",
+    "source": "ocr"
+   },
+   "out": [
+    "88",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "88"
+  },
+  {
+   "ocr": {
+    "confidence": 0.5,
+    "number": "7",
+    "source": "ocr"
+   },
+   "out": [
+    "7",
+    "ocr+vlm",
+    0.8999999999999999
+   ],
+   "vlm_number": "7"
+  },
+  {
+   "ocr": {
+    "confidence": 0.5,
+    "number": "7",
+    "source": "ocr"
+   },
+   "out": [
+    "9",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "9"
+  },
+  {
+   "ocr": {
+    "confidence": 0.5,
+    "number": "7",
+    "source": "ocr"
+   },
+   "out": [
+    "07",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "07"
+  },
+  {
+   "ocr": {
+    "confidence": 0.5,
+    "number": "7",
+    "source": "ocr"
+   },
+   "out": [
+    "7",
+    "ocr",
+    0.5
+   ],
+   "vlm_number": ""
+  },
+  {
+   "ocr": {
+    "confidence": 0.95,
+    "number": "07",
+    "source": "roundel"
+   },
+   "out": [
+    "07",
+    "roundel",
+    0.95
+   ],
+   "vlm_number": null
+  },
+  {
+   "ocr": {
+    "confidence": 0.95,
+    "number": "07",
+    "source": "roundel"
+   },
+   "out": [
+    "07",
+    "roundel",
+    0.95
+   ],
+   "vlm_number": "88"
+  },
+  {
+   "ocr": {
+    "confidence": 0.95,
+    "number": "07",
+    "source": "roundel"
+   },
+   "out": [
+    "07",
+    "roundel",
+    0.95
+   ],
+   "vlm_number": "7"
+  },
+  {
+   "ocr": {
+    "confidence": 0.95,
+    "number": "07",
+    "source": "roundel"
+   },
+   "out": [
+    "07",
+    "roundel",
+    0.95
+   ],
+   "vlm_number": "9"
+  },
+  {
+   "ocr": {
+    "confidence": 0.95,
+    "number": "07",
+    "source": "roundel"
+   },
+   "out": [
+    "07",
+    "roundel+vlm",
+    1.0
+   ],
+   "vlm_number": "07"
+  },
+  {
+   "ocr": {
+    "confidence": 0.95,
+    "number": "07",
+    "source": "roundel"
+   },
+   "out": [
+    "07",
+    "roundel",
+    0.95
+   ],
+   "vlm_number": ""
+  },
+  {
+   "ocr": {
+    "confidence": 0.79,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "12",
+    "ocr",
+    0.79
+   ],
+   "vlm_number": null
+  },
+  {
+   "ocr": {
+    "confidence": 0.79,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "88",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "88"
+  },
+  {
+   "ocr": {
+    "confidence": 0.79,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "7",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "7"
+  },
+  {
+   "ocr": {
+    "confidence": 0.79,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "9",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "9"
+  },
+  {
+   "ocr": {
+    "confidence": 0.79,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "07",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "07"
+  },
+  {
+   "ocr": {
+    "confidence": 0.79,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "12",
+    "ocr",
+    0.79
+   ],
+   "vlm_number": ""
+  },
+  {
+   "ocr": {
+    "confidence": 0.8,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "12",
+    "ocr",
+    0.8
+   ],
+   "vlm_number": null
+  },
+  {
+   "ocr": {
+    "confidence": 0.8,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "12",
+    "ocr",
+    0.8
+   ],
+   "vlm_number": "88"
+  },
+  {
+   "ocr": {
+    "confidence": 0.8,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "12",
+    "ocr",
+    0.8
+   ],
+   "vlm_number": "7"
+  },
+  {
+   "ocr": {
+    "confidence": 0.8,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "12",
+    "ocr",
+    0.8
+   ],
+   "vlm_number": "9"
+  },
+  {
+   "ocr": {
+    "confidence": 0.8,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "12",
+    "ocr",
+    0.8
+   ],
+   "vlm_number": "07"
+  },
+  {
+   "ocr": {
+    "confidence": 0.8,
+    "number": "12",
+    "source": "ocr"
+   },
+   "out": [
+    "12",
+    "ocr",
+    0.8
+   ],
+   "vlm_number": ""
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "",
+    "source": "ocr"
+   },
+   "out": [
+    null,
+    null,
+    0.0
+   ],
+   "vlm_number": null
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "",
+    "source": "ocr"
+   },
+   "out": [
+    "88",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "88"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "",
+    "source": "ocr"
+   },
+   "out": [
+    "7",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "7"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "",
+    "source": "ocr"
+   },
+   "out": [
+    "9",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "9"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "",
+    "source": "ocr"
+   },
+   "out": [
+    "07",
+    "vlm",
+    0.7
+   ],
+   "vlm_number": "07"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "",
+    "source": "ocr"
+   },
+   "out": [
+    null,
+    null,
+    0.0
+   ],
+   "vlm_number": ""
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "5",
+    "source": ""
+   },
+   "out": [
+    "5",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": null
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "5",
+    "source": ""
+   },
+   "out": [
+    "5",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": "88"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "5",
+    "source": ""
+   },
+   "out": [
+    "5",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": "7"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "5",
+    "source": ""
+   },
+   "out": [
+    "5",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": "9"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "5",
+    "source": ""
+   },
+   "out": [
+    "5",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": "07"
+  },
+  {
+   "ocr": {
+    "confidence": 0.9,
+    "number": "5",
+    "source": ""
+   },
+   "out": [
+    "5",
+    "ocr",
+    0.9
+   ],
+   "vlm_number": ""
+  }
+ ],
+ "ocr_accept_confidence": 0.8
+}

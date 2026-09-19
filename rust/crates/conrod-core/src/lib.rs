@@ -7,10 +7,13 @@
 
 pub mod analysis;
 pub mod bursts;
+pub mod culling;
 pub mod framing;
 pub mod grouping;
 pub mod keywords;
 pub mod mapping;
 pub mod marques;
+pub mod normalise;
 pub mod py;
+pub mod registry;
 pub mod ridge;

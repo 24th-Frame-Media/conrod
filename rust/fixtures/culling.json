@@ -1,0 +1,675 @@
+{
+ "passes": [
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "0 star",
+   "settings": {
+    "min_rating": 3,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "label none",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "green",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "label none",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "Blue",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "0 star",
+   "settings": {
+    "min_rating": 2,
+    "require_label": " Green ",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 3,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 3,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 3,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 3,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 3,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "label none",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "green",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 3,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "label none",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "Blue",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 3,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "label none",
+   "settings": {
+    "min_rating": 2,
+    "require_label": " Green ",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 1,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 1,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 1,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "1 star",
+   "settings": {
+    "min_rating": 3,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 1,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "label none",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "green",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 1,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "label none",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "Blue",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 1,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "1 star",
+   "settings": {
+    "min_rating": 2,
+    "require_label": " Green ",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": true
+   },
+   "ok": false,
+   "reason": "rejected",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": true
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": true
+   },
+   "ok": false,
+   "reason": "rejected",
+   "settings": {
+    "min_rating": 3,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": true
+   },
+   "ok": false,
+   "reason": "rejected",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "green",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": true
+   },
+   "ok": false,
+   "reason": "rejected",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "Blue",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": true
+   },
+   "ok": false,
+   "reason": "0 star",
+   "settings": {
+    "min_rating": 2,
+    "require_label": " Green ",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "Green",
+    "rating": 2,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "Green",
+    "rating": 2,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "Green",
+    "rating": 2,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "2 star",
+   "settings": {
+    "min_rating": 3,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "Green",
+    "rating": 2,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "green",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "Green",
+    "rating": 2,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "label Green",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "Blue",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "Green",
+    "rating": 2,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 2,
+    "require_label": " Green ",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": true,
+   "reason": "",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "",
+    "skip_rejected": false
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "0 star",
+   "settings": {
+    "min_rating": 3,
+    "require_label": "",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "label none",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "green",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "label none",
+   "settings": {
+    "min_rating": 0,
+    "require_label": "Blue",
+    "skip_rejected": true
+   }
+  },
+  {
+   "cull": {
+    "label": "",
+    "rating": 0,
+    "rejected": false
+   },
+   "ok": false,
+   "reason": "0 star",
+   "settings": {
+    "min_rating": 2,
+    "require_label": " Green ",
+    "skip_rejected": false
+   }
+  }
+ ],
+ "read_culls": [
+  {
+   "label": "",
+   "rating": 0,
+   "rejected": false,
+   "row": {}
+  },
+  {
+   "label": "",
+   "rating": 3,
+   "rejected": false,
+   "row": {
+    "Rating": "3"
+   }
+  },
+  {
+   "label": "",
+   "rating": 3,
+   "rejected": false,
+   "row": {
+    "Rating": 3
+   }
+  },
+  {
+   "label": "",
+   "rating": 3,
+   "rejected": false,
+   "row": {
+    "Rating": "3.9"
+   }
+  },
+  {
+   "label": "",
+   "rating": 0,
+   "rejected": true,
+   "row": {
+    "Rating": "-1"
+   }
+  },
+  {
+   "label": "",
+   "rating": 0,
+   "rejected": true,
+   "row": {
+    "Rating": -2
+   }
+  },
+  {
+   "label": "",
+   "rating": 4,
+   "rejected": false,
+   "row": {
+    "XMP:Rating": "4"
+   }
+  },
+  {
+   "label": "",
+   "rating": 2,
+   "rejected": false,
+   "row": {
+    "Rating": null,
+    "XMP:Rating": "2"
+   }
+  },
+  {
+   "label": "",
+   "rating": 0,
+   "rejected": false,
+   "row": {
+    "Rating": "abc"
+   }
+  },
+  {
+   "label": "",
+   "rating": 0,
+   "rejected": false,
+   "row": {
+    "Rating": [
+     1,
+     2
+    ]
+   }
+  },
+  {
+   "label": "",
+   "rating": 1,
+   "rejected": false,
+   "row": {
+    "Rating": true
+   }
+  },
+  {
+   "label": "Green",
+   "rating": 2,
+   "rejected": false,
+   "row": {
+    "Label": "Green",
+    "Rating": "2"
+   }
+  },
+  {
+   "label": "",
+   "rating": 2,
+   "rejected": false,
+   "row": {
+    "Label": "",
+    "Rating": "2"
+   }
+  },
+  {
+   "label": "",
+   "rating": 2,
+   "rejected": false,
+   "row": {
+    "Label": null,
+    "Rating": "2"
+   }
+  },
+  {
+   "label": "Blue",
+   "rating": 0,
+   "rejected": false,
+   "row": {
+    "Label": "Blue"
+   }
+  },
+  {
+   "label": "",
+   "rating": 0,
+   "rejected": false,
+   "row": {
+    "Rating": "0"
+   }
+  },
+  {
+   "label": "5",
+   "rating": 0,
+   "rejected": true,
+   "row": {
+    "Label": 5,
+    "Rating": "-1"
+   }
+  }
+ ],
+ "rejected_const": -1,
+ "sidecar": [
+  {
+   "image": "a/IMG_0001.CR3",
+   "sidecar": "a\\IMG_0001.xmp"
+  },
+  {
+   "image": "b/photo.jpg",
+   "sidecar": "b\\photo.xmp"
+  },
+  {
+   "image": "no_ext_file",
+   "sidecar": "no_ext_file.xmp"
+  },
+  {
+   "image": "a.b.c.CR2",
+   "sidecar": "a.b.c.xmp"
+  },
+  {
+   "image": "UPPER.JPG",
+   "sidecar": "UPPER.xmp"
+  }
+ ]
+}
