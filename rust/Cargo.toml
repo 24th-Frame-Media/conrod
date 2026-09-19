@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-io", "crates/conrod-cli", "crates/conrod-engine", "spikes/rawprobe", "spikes/detbench"]
+members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-io", "crates/conrod-cli", "crates/conrod-engine", "crates/conrod-app", "spikes/rawprobe", "spikes/detbench"]
 # Spikes pull ONNX Runtime and GPU runtimes (hundreds of MB); CI and a plain
 # `cargo test` build only the product crates. Run a spike with -p.
-default-members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-io", "crates/conrod-cli", "crates/conrod-engine"]
+default-members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-io", "crates/conrod-cli", "crates/conrod-engine", "crates/conrod-app"]
 
 [workspace.package]
 version = "0.1.0"

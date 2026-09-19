@@ -1,0 +1,17 @@
+[package]
+name = "conrod-app"
+description = "Conrod, the native app."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "Conrod"
+path = "src/main.rs"
+
+[dependencies]
+conrod-core = { path = "../conrod-core" }
+conrod-engine = { path = "../conrod-engine" }
+eframe = "0.36"
+rfd = "0.17"
