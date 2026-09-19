@@ -84,6 +84,23 @@ CREATE TABLE IF NOT EXISTS known_vehicles (
     updated_at  REAL
 );
 
+-- Sharpness rated by hand on the Train screen. Keyed by the frame and the box
+-- rather than by detection id: an album scanned again gets new detection ids
+-- and the rating is about the photograph, not about the row. The features are
+-- kept here, taken when the rating was given, so training does not depend on
+-- a crop still being in the cache -- see sharp_model.
+CREATE TABLE IF NOT EXISTS sharpness_labels (
+    path            TEXT NOT NULL,
+    x1 REAL NOT NULL, y1 REAL NOT NULL, x2 REAL NOT NULL, y2 REAL NOT NULL,
+    stars           INTEGER NOT NULL,   -- 1..5 of the subject, 0 = cannot tell
+    pan             INTEGER NOT NULL DEFAULT 0,
+    heur_pan        INTEGER,            -- what the measure said, for scoring it
+    features        TEXT,
+    feature_version INTEGER,
+    created_at      REAL NOT NULL,
+    PRIMARY KEY (path, x1, y1, x2, y2)
+);
+
 CREATE INDEX IF NOT EXISTS idx_images_job    ON images(job_id, status);
 CREATE INDEX IF NOT EXISTS idx_det_image     ON detections(image_id);
 CREATE INDEX IF NOT EXISTS idx_det_number    ON detections(number);
@@ -480,3 +497,62 @@ def set_embedding(conn: sqlite3.Connection, det_id: int, packed: str) -> None:
     conn.execute("UPDATE detections SET embedding=? WHERE id=?",
                  (packed, det_id))
     conn.commit()
+
+
+# --- sharpness training -----------------------------------------------------
+
+def next_to_rate(conn: sqlite3.Connection, *, pan: int, low: float, high: float,
+                 job_id: int | None = None) -> sqlite3.Row | None:
+    """A crop nobody has rated yet, from one slice of the measured range.
+
+    The caller picks the slice. A random crop of a shoot is mostly blur and
+    would spend the whole session rating the easy cases; asking for every
+    slice in turn is what puts the borderline frames in front of a person.
+    """
+    return conn.execute(
+        """SELECT d.id, d.crop_path, d.x1, d.y1, d.x2, d.y2,
+                  i.path AS frame, i.preview_path
+             FROM detections d
+             JOIN images i ON i.id = d.image_id
+        LEFT JOIN sharpness_labels l
+               ON l.path = i.path AND l.x1 = d.x1 AND l.y1 = d.y1
+              AND l.x2 = d.x2 AND l.y2 = d.y2
+            WHERE l.path IS NULL AND d.crop_path IS NOT NULL
+              AND d.sharpness IS NOT NULL
+              AND COALESCE(d.panning, 0) = ?
+              AND d.sharpness >= ? AND d.sharpness < ?
+              AND (? IS NULL OR i.job_id = ?)
+            ORDER BY random() LIMIT 1""",
+        (pan, low, high, job_id, job_id)).fetchone()
+
+
+def add_sharpness_label(conn: sqlite3.Connection, frame: str, box, *, stars: int,
+                        pan: bool, heur_pan: bool, features: tuple,
+                        version: int) -> None:
+    conn.execute(
+        """INSERT OR REPLACE INTO sharpness_labels
+               (path, x1, y1, x2, y2, stars, pan, heur_pan, features,
+                feature_version, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (frame, *box, stars, int(pan), int(heur_pan),
+         json.dumps(list(features)) if features else None, version, time.time()))
+
+
+def undo_sharpness_label(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM sharpness_labels WHERE rowid = "
+                 "(SELECT max(rowid) FROM sharpness_labels)")
+
+
+def sharpness_labels(conn: sqlite3.Connection, version: int) -> list[sqlite3.Row]:
+    """Every rating that can be learned from: rated, and measured the way the
+    current features are measured."""
+    return conn.execute(
+        """SELECT stars, pan, heur_pan, features FROM sharpness_labels
+            WHERE stars > 0 AND features IS NOT NULL AND feature_version = ?""",
+        (version,)).fetchall()
+
+
+def sharpness_label_counts(conn: sqlite3.Connection) -> dict:
+    rows = conn.execute(
+        "SELECT stars, count(*) AS n FROM sharpness_labels GROUP BY stars").fetchall()
+    return {int(r["stars"]): int(r["n"]) for r in rows}

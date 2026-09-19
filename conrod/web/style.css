@@ -1202,3 +1202,43 @@ button.danger:hover { color: #ff7b7b; border-color: var(--bad); }
 .tile.waiting img { opacity: 0; }
 .tile.unreadable { background: rgba(220,80,80,.08); }
 @keyframes tile-wait { to { background-position: -200% 0; } }
+
+
+/* ── train ──────────────────────────────────────────────── */
+.train { display: flex; height: 100%; min-height: 0; }
+.train-stage {
+  flex: 1; min-width: 0; overflow: auto; background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+}
+.train-frame { position: relative; display: inline-block; line-height: 0; }
+.train-frame img { max-width: 100%; max-height: calc(100vh - 110px); }
+.train-stage.full .train-frame img { max-width: none; max-height: none; }
+.train-stage.full { align-items: flex-start; justify-content: flex-start; }
+#train-box {
+  position: absolute; border: 2px solid var(--warn2); pointer-events: none;
+}
+.train-empty { color: var(--text-dim); padding: 24px; }
+.train-side {
+  width: 320px; flex: none; padding: 20px; overflow: auto;
+  background: var(--surface); border-left: 1px solid var(--line);
+}
+.train-side h3 { margin: 0 0 6px; font-size: 16px; }
+.train-side .small { font-size: 12px; }
+.train-stars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 14px 0; }
+.train-stars button {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 10px 2px; line-height: 1.1;
+}
+.train-stars b { font-size: 18px; }
+.train-stars small { font-size: 10px; color: var(--text-mute); }
+.train-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.train-row button.on { background: var(--good); border-color: var(--good); color: #04130c; }
+.train-progress { margin: 14px 0; color: var(--text-dim); }
+.train-fit { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.train-result { font-size: 13px; color: var(--text-dim); display: grid; gap: 4px; }
+.train-result .ok { color: var(--good); }
+.train-result .warn { color: var(--warn2); }
+kbd {
+  font: 11px ui-monospace, Consolas, monospace; padding: 0 5px;
+  border: 1px solid var(--line); border-radius: 4px; color: var(--text-dim);
+}

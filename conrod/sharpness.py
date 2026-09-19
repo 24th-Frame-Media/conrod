@@ -38,6 +38,8 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 
+from . import sharp_model
+
 # Tiles across the longer edge. Enough that a rotating wheel is a minority of
 # them, few enough that each still holds real detail at thumbnail sizes.
 TILE_GRID = 6
@@ -158,6 +160,16 @@ class Sharpness:
     # 541 detections, 8% of everything the cull kept: not culled, not rated,
     # not sortable, and never eligible to be the keeper of a pass.
     measured: bool = False
+
+    # What the learned model reads: the subject as a fixed-length vector (see
+    # FEATURE_NAMES), taken from the same pass as the score so a rating given
+    # by hand is stored against exactly what a scan would have measured.
+    features: tuple = ()
+
+    # The hand-built score, kept when a learned model has replaced ``score``.
+    # -1 where no model was involved and the two are the same number.
+    heuristic: float = -1.0
+    learned: bool = False
 
     def __bool__(self) -> bool:
         return self.verdict != "unknown"
@@ -293,9 +305,103 @@ def measure(image: Image.Image, box=None) -> Sharpness:
                and score - background >= PAN_MARGIN)
 
     bands, sharp_end = _bands(subject)
-    return Sharpness(score=score, verdict="unknown", background=background,
+    described = _features(data, subject, subject_tiles, background, bands)
+
+    # A pan is decided above on the hand-built score and stays that way: what
+    # the photographer rates is the subject, and whether the background is
+    # smeared is a fact about the picture, not a matter of taste.
+    learned = _learned_score(described)
+    return Sharpness(score=score if learned is None else learned,
+                     verdict="unknown", background=background,
                      panning=panning, bands=bands, sharp_end=sharp_end,
-                     measured=True)
+                     measured=True, features=described,
+                     heuristic=score if learned is not None else -1.0,
+                     learned=learned is not None)
+
+
+FEATURE_NAMES = (
+    "score", "tiles_p50", "tiles_p95", "tiles_p20",
+    "log_focus", "log_focus_over_half", "log_focus_over_quarter",
+    "usable_tiles", "background", "has_background",
+    "band_0", "band_1", "band_2", "band_spread",
+    "log_contrast", "log_subject_px", "subject_fraction", "log_noise",
+)
+
+
+def _log_raw(tiles: list[float]) -> float:
+    return math.log(max(float(np.percentile(tiles, TILE_PERCENTILE)), 1e-4))
+
+
+def _shrink(region: np.ndarray, factor: int) -> np.ndarray:
+    height = (region.shape[0] // factor) * factor
+    width = (region.shape[1] // factor) * factor
+    return region[:height, :width].reshape(
+        height // factor, factor, width // factor, factor).mean(axis=(1, 3))
+
+
+def _features(data: np.ndarray, subject: np.ndarray, tiles: list[float],
+              background: float, bands: tuple) -> tuple:
+    """The subject as numbers a model can be fitted to.
+
+    Version 1 -- change the meaning or the length and sharp_model.FEATURE_VERSION
+    has to move with it, or a model fitted to the old vector is read against
+    the new one.
+
+    The ratios between scales are the part a single score cannot carry: blur
+    removes fine-scale energy before it removes coarse-scale energy, so how
+    much the focus figure falls from full size to half and quarter size says
+    how big the blur is, where the score alone says only that there is some.
+    """
+    scales = [_log_raw(tiles)]
+    for factor in (2, 4):
+        coarse = _tile_scores(_shrink(subject, factor))
+        scales.append(_log_raw(coarse) if coarse else scales[-1])
+
+    def at(percentile: float) -> float:
+        return _normalise(float(np.percentile(tiles, percentile)))
+
+    # Second difference on the interior. Flat panels barely register in it and
+    # sensor noise registers a lot, which is what makes the median of it a
+    # noise reading rather than a detail reading.
+    # The 0.05 is a floor: on a flat or heavily smoothed crop the median is
+    # exactly zero, and a log of 1e-3 put those frames seven units from the
+    # rest, which a linear model reads as an enormous signal.
+    centre = subject[1:-1, 1:-1]
+    laplacian = np.abs(4 * centre - subject[:-2, 1:-1] - subject[2:, 1:-1]
+                       - subject[1:-1, :-2] - subject[1:-1, 2:])
+    height, width = subject.shape
+    return (
+        at(TILE_PERCENTILE), at(50), at(95), at(20),
+        scales[0], scales[0] - scales[1], scales[0] - scales[2],
+        len(tiles) / float(TILE_GRID ** 2),
+        max(background, 0.0), float(background >= 0.0),
+        *(bands if bands else (0.0, 0.0, 0.0)),
+        (max(bands) - min(bands)) if bands else 0.0,
+        math.log(float(subject.std()) + 1.0),
+        math.log(math.sqrt(height * width)),
+        (height * width) / float(data.shape[0] * data.shape[1]),
+        math.log(float(np.median(laplacian)) + 0.05),
+    )
+
+
+# Where a predicted star lands on the 0..1 scale everything downstream is
+# written against. The knots sit on the STAR_BANDS floors, half a star apart
+# from the star itself, so a prediction of 3.4 lands in the three-star band
+# and stars_for() gives back the rounded prediction exactly -- and the verdict
+# thresholds (sharp from four stars, blurred below two) fall where they
+# always did. Below one star the line keeps going rather than clamping, which
+# is what keeps the worst frames orderable.
+_STAR_KNOTS = (0.0, 1.0, 1.5, 2.5, 3.5, 4.5, 5.0, 6.0)
+
+
+def _learned_score(described: tuple) -> float | None:
+    model = sharp_model.current()
+    stars = sharp_model.predict(model, described) if model else None
+    if stars is None:
+        return None
+    floors = [floor for floor, _ in reversed(STAR_BANDS)][1:]   # 0.606 .. 0.958
+    return float(np.interp(stars, _STAR_KNOTS,
+                           (0.0, 0.30, *floors, 0.99, 1.0)))
 
 
 def _background_score(data: np.ndarray, inner) -> float:

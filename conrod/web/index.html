@@ -31,6 +31,7 @@
       <button data-screen="home" class="active">Home</button>
       <button data-screen="scan">Scan</button>
       <button data-screen="review">Review</button>
+      <button data-screen="train">Train</button>
       <button data-screen="settings">Settings</button>
       <button data-screen="setup">Setup<span class="dot" id="setup-dot" hidden></span></button>
     </nav>
@@ -240,6 +241,46 @@
   </section>
 
   <!-- ────────────────────────── SETTINGS ───────────────────────── -->
+  <!-- ─────────────────────────── TRAIN ─────────────────────────── -->
+  <section class="screen" id="screen-train" hidden>
+    <div class="train">
+      <div class="train-stage" id="train-stage">
+        <div class="train-frame" id="train-frame">
+          <img id="train-img" alt="">
+          <div id="train-box" hidden></div>
+        </div>
+        <div class="train-empty" id="train-empty" hidden>
+          Nothing left to rate. Scan a shoot and come back.
+        </div>
+      </div>
+      <aside class="train-side">
+        <h3>How sharp is the car?</h3>
+        <p class="muted">Judge the car, not the picture. A pan with a streaked
+           background and a crisp car is a 5.</p>
+        <div class="train-stars" id="train-stars">
+          <button data-stars="1"><b>1</b><small>smeared</small></button>
+          <button data-stars="2"><b>2</b><small>soft</small></button>
+          <button data-stars="3"><b>3</b><small>usable</small></button>
+          <button data-stars="4"><b>4</b><small>sharp</small></button>
+          <button data-stars="5"><b>5</b><small>pin sharp</small></button>
+        </div>
+        <div class="train-row">
+          <button id="train-pan">Pan <kbd>P</kbd></button>
+          <button id="train-unsure">Can't tell <kbd>X</kbd></button>
+          <button id="train-undo">Undo <kbd>U</kbd></button>
+        </div>
+        <p class="muted small">Press 1&ndash;5 to rate and move on. <kbd>Z</kbd>
+           shows the crop at 100%, <kbd>B</kbd> hides the car's outline.</p>
+        <div class="train-progress" id="train-progress"></div>
+        <div class="train-fit">
+          <button class="primary" id="train-fit">Learn from my ratings</button>
+          <button class="ghost" id="train-forget" hidden>Forget what it learned</button>
+          <div id="train-result" class="train-result"></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
   <section class="screen" id="screen-settings" hidden>
     <div class="pane wide">
       <h2>Settings</h2>

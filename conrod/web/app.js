@@ -81,6 +81,7 @@ function show(screen) {
   }
   if (screen === "album") loadAlbum();
   if (screen === "review") refreshReview();
+  if (screen === "train") loadTrain();
   // Coming to the Scan screen always means "I want to add a folder". The
   // setup pane used to be hidden the moment a scan started and never put
   // back, so during a run that takes hours -- exactly when the next card
@@ -2998,3 +2999,108 @@ $("#btn-write").onclick = async () => {
     $("#splash-msg").textContent = `Could not start: ${err.message}`;
   }
 })();
+
+
+/* ── train ────────────────────────────────────────────────── */
+// Rate how sharp the car in a crop is, one to five. The ratings fit a small
+// model (sharp_model.py) that takes over the sharpness score on every scan
+// and re-measure, so the cull ends up judging the way its owner does.
+
+const train = { det: null, pan: false, busy: false, showBox: true };
+
+function trainReflect(info) {
+  const done = info.rated;
+  $("#train-progress").textContent =
+    `${done} rated` + (info.unsure ? ` · ${info.unsure} skipped` : "")
+    + (done < info.needed ? ` · ${info.needed - done} more before it can learn` : "");
+  $("#train-fit").disabled = done < info.needed;
+  $("#train-forget").hidden = !info.model;
+}
+
+async function loadTrain() {
+  trainReflect(await api("/api/training"));
+  if (train.det == null) await trainNext();
+}
+
+async function trainNext() {
+  const next = await api("/api/training/next");
+  trainReflect(next.state);
+  train.det = next.det;
+  trainPan(false);
+  $("#train-empty").hidden = next.det != null;
+  $("#train-frame").hidden = next.det == null;
+  if (next.det == null) return;
+  $("#train-img").src = `/api/crop/${next.det}`;
+  const box = $("#train-box"), b = next.box;
+  box.dataset.has = b ? "1" : "";
+  if (b) Object.assign(box.style, {
+    left: `${b[0] * 100}%`, top: `${b[1] * 100}%`,
+    width: `${(b[2] - b[0]) * 100}%`, height: `${(b[3] - b[1]) * 100}%`,
+  });
+  box.hidden = !(b && train.showBox);
+}
+
+function trainPan(on) {
+  train.pan = on;
+  $("#train-pan").classList.toggle("on", on);
+}
+
+async function trainRate(stars) {
+  if (train.det == null || train.busy) return;
+  train.busy = true;
+  try {
+    await api("/api/training/label", { method: "POST", body: JSON.stringify({
+      det: train.det, stars, pan: train.pan }) });
+    await trainNext();
+  } catch (err) { toast(err.message); }
+  finally { train.busy = false; }
+}
+
+$$("#train-stars button").forEach((b) => { b.onclick = () => trainRate(+b.dataset.stars); });
+$("#train-pan").onclick = () => trainPan(!train.pan);
+$("#train-unsure").onclick = () => trainRate(0);
+$("#train-undo").onclick = async () => {
+  trainReflect(await api("/api/training/undo", { method: "POST" }));
+  train.det = null; await trainNext();
+};
+
+$("#train-fit").onclick = async () => {
+  const button = $("#train-fit"), out = $("#train-result");
+  button.disabled = true; out.textContent = "Learning…";
+  try {
+    const r = await api("/api/training/train", { method: "POST" });
+    const pct = (x) => `${Math.round(x * 100)}%`;
+    const line = (name, m) =>
+      `${name}: ${pct(m.exact)} exact, ${pct(m.within_one)} within a star`;
+    out.replaceChildren(
+      el("div", {}, `On ratings it had not seen (${r.n}):`),
+      el("div", {}, line("Learned", r.model)),
+      el("div", {}, line("Built-in measure", r.measure)),
+      el("div", { className: r.active ? "ok" : "warn" }, r.active
+        ? "Switched on. New scans, and albums you re-measure, use it."
+        : "Not switched on: it does not beat the built-in measure yet. Rate more, from soft to sharp."),
+      ...(r.pans.rated ? [el("div", {}, `Pans you marked: ${r.pans.caught} of ${r.pans.rated} caught by the measure, ${r.pans.false} false alarms.`)] : []));
+    trainReflect(await api("/api/training"));
+  } catch (err) { out.textContent = err.message; }
+  finally { button.disabled = false; }
+};
+
+$("#train-forget").onclick = async () => {
+  trainReflect(await api("/api/training/model", { method: "DELETE" }));
+  $("#train-result").textContent = "Back to the built-in measure.";
+};
+
+document.addEventListener("keydown", (e) => {
+  if (state.screen !== "train" || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.closest?.("input, textarea, select")) return;
+  const k = e.key.toLowerCase();
+  if (k.length === 1 && "12345".includes(k)) trainRate(+k);
+  else if (k === "x") trainRate(0);
+  else if (k === "p") trainPan(!train.pan);
+  else if (k === "u") $("#train-undo").click();
+  else if (k === "z") $("#train-stage").classList.toggle("full");
+  else if (k === "b") {
+    train.showBox = !train.showBox;
+    $("#train-box").hidden = !(train.showBox && $("#train-box").dataset.has);
+  }
+});
