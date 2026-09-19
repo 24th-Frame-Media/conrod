@@ -193,8 +193,7 @@ name = "conrod-cli"
 version = "0.1.0"
 dependencies = [
  "conrod-core",
- "conrod-io",
- "conrod-vision",
+ "conrod-engine",
  "serde_json",
 ]
 
@@ -204,6 +203,16 @@ version = "0.1.0"
 dependencies = [
  "csv",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "conrod-engine"
+version = "0.1.0"
+dependencies = [
+ "conrod-core",
+ "conrod-io",
+ "conrod-vision",
  "serde_json",
 ]
 
