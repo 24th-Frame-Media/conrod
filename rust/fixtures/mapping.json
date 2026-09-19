@@ -1,0 +1,333 @@
+{
+ "bad_has_error": true,
+ "csv": "\ufeffNo., Driver ,Team,Class,Sponsor,Empty\r\n88,Broc Feeney,Triple Eight Race Engineering,Supercars,Red Bull;Ampol,\r\n#07 ,Someone Else,\"Team, With Comma\",Supercars,,\r\n\r\n0,Zero Driver,Zeros,Club,\"A, B ; C\",\r\nabc,No Number,Nobody,,,\r\n17,Short Row\r\n5,Extra,Fields,X,Y,Z,surplus,more\r\n88,Duplicate Wins,T8,Supercars,,\r\n",
+ "empty_rows": {},
+ "lookups": [
+  {
+   "describe": "Duplicate Wins, T8, Supercars",
+   "keywords": [
+    "88",
+    "#88",
+    "Car 88",
+    "Duplicate Wins",
+    "T8",
+    "Supercars"
+   ],
+   "number": "88",
+   "prefix": ""
+  },
+  {
+   "describe": "Duplicate Wins, T8, Supercars",
+   "keywords": [
+    "Race|88",
+    "Race|#88",
+    "Race|Car 88",
+    "Race|Duplicate Wins",
+    "Race|T8",
+    "Race|Supercars"
+   ],
+   "number": "88",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "Duplicate Wins, T8, Supercars",
+   "keywords": [
+    "#88",
+    "##88",
+    "Car #88",
+    "Duplicate Wins",
+    "T8",
+    "Supercars"
+   ],
+   "number": "#88",
+   "prefix": ""
+  },
+  {
+   "describe": "Duplicate Wins, T8, Supercars",
+   "keywords": [
+    "Race|#88",
+    "Race|##88",
+    "Race|Car #88",
+    "Race|Duplicate Wins",
+    "Race|T8",
+    "Race|Supercars"
+   ],
+   "number": "#88",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "Duplicate Wins, T8, Supercars",
+   "keywords": [
+    "088",
+    "#088",
+    "Car 088",
+    "Duplicate Wins",
+    "T8",
+    "Supercars"
+   ],
+   "number": "088",
+   "prefix": ""
+  },
+  {
+   "describe": "Duplicate Wins, T8, Supercars",
+   "keywords": [
+    "Race|088",
+    "Race|#088",
+    "Race|Car 088",
+    "Race|Duplicate Wins",
+    "Race|T8",
+    "Race|Supercars"
+   ],
+   "number": "088",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "Someone Else, Team, With Comma, Supercars",
+   "keywords": [
+    "7",
+    "#7",
+    "Car 7",
+    "Someone Else",
+    "Team",
+    "With Comma",
+    "Supercars"
+   ],
+   "number": "7",
+   "prefix": ""
+  },
+  {
+   "describe": "Someone Else, Team, With Comma, Supercars",
+   "keywords": [
+    "Race|7",
+    "Race|#7",
+    "Race|Car 7",
+    "Race|Someone Else",
+    "Race|Team",
+    "Race|With Comma",
+    "Race|Supercars"
+   ],
+   "number": "7",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "Someone Else, Team, With Comma, Supercars",
+   "keywords": [
+    "07",
+    "#07",
+    "Car 07",
+    "Someone Else",
+    "Team",
+    "With Comma",
+    "Supercars"
+   ],
+   "number": "07",
+   "prefix": ""
+  },
+  {
+   "describe": "Someone Else, Team, With Comma, Supercars",
+   "keywords": [
+    "Race|07",
+    "Race|#07",
+    "Race|Car 07",
+    "Race|Someone Else",
+    "Race|Team",
+    "Race|With Comma",
+    "Race|Supercars"
+   ],
+   "number": "07",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "Zero Driver, Zeros, Club, A, B ; C",
+   "keywords": [
+    "0",
+    "#0",
+    "Car 0",
+    "Zero Driver",
+    "Zeros",
+    "Club",
+    "A",
+    "B",
+    "C"
+   ],
+   "number": "0",
+   "prefix": ""
+  },
+  {
+   "describe": "Zero Driver, Zeros, Club, A, B ; C",
+   "keywords": [
+    "Race|0",
+    "Race|#0",
+    "Race|Car 0",
+    "Race|Zero Driver",
+    "Race|Zeros",
+    "Race|Club",
+    "Race|A",
+    "Race|B",
+    "Race|C"
+   ],
+   "number": "0",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "",
+   "keywords": [
+    "00",
+    "#00",
+    "Car 00"
+   ],
+   "number": "00",
+   "prefix": ""
+  },
+  {
+   "describe": "",
+   "keywords": [
+    "Race|00",
+    "Race|#00",
+    "Race|Car 00"
+   ],
+   "number": "00",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "Extra, Fields, X, Y, Z",
+   "keywords": [
+    "5",
+    "#5",
+    "Car 5",
+    "Extra",
+    "Fields",
+    "X",
+    "Y",
+    "Z"
+   ],
+   "number": "5",
+   "prefix": ""
+  },
+  {
+   "describe": "Extra, Fields, X, Y, Z",
+   "keywords": [
+    "Race|5",
+    "Race|#5",
+    "Race|Car 5",
+    "Race|Extra",
+    "Race|Fields",
+    "Race|X",
+    "Race|Y",
+    "Race|Z"
+   ],
+   "number": "5",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "Short Row",
+   "keywords": [
+    "17",
+    "#17",
+    "Car 17",
+    "Short Row"
+   ],
+   "number": "17",
+   "prefix": ""
+  },
+  {
+   "describe": "Short Row",
+   "keywords": [
+    "Race|17",
+    "Race|#17",
+    "Race|Car 17",
+    "Race|Short Row"
+   ],
+   "number": "17",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "",
+   "keywords": [
+    "99",
+    "#99",
+    "Car 99"
+   ],
+   "number": "99",
+   "prefix": ""
+  },
+  {
+   "describe": "",
+   "keywords": [
+    "Race|99",
+    "Race|#99",
+    "Race|Car 99"
+   ],
+   "number": "99",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "",
+   "keywords": [
+    "",
+    "#",
+    "Car "
+   ],
+   "number": "",
+   "prefix": ""
+  },
+  {
+   "describe": "",
+   "keywords": [
+    "Race|",
+    "Race|#",
+    "Race|Car "
+   ],
+   "number": "",
+   "prefix": "Race|"
+  },
+  {
+   "describe": "",
+   "keywords": [
+    "abc",
+    "#abc",
+    "Car abc"
+   ],
+   "number": "abc",
+   "prefix": ""
+  },
+  {
+   "describe": "",
+   "keywords": [
+    "Race|abc",
+    "Race|#abc",
+    "Race|Car abc"
+   ],
+   "number": "abc",
+   "prefix": "Race|"
+  }
+ ],
+ "rows": {
+  "0": {
+   "Class": "Club",
+   "Driver": "Zero Driver",
+   "Sponsor": "A, B ; C",
+   "Team": "Zeros"
+  },
+  "17": {
+   "Driver": "Short Row"
+  },
+  "5": {
+   "Class": "X",
+   "Driver": "Extra",
+   "Empty": "Z",
+   "Sponsor": "Y",
+   "Team": "Fields"
+  },
+  "7": {
+   "Class": "Supercars",
+   "Driver": "Someone Else",
+   "Team": "Team, With Comma"
+  },
+  "88": {
+   "Class": "Supercars",
+   "Driver": "Duplicate Wins",
+   "Team": "T8"
+  }
+ }
+}

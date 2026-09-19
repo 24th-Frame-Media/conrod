@@ -24,3 +24,5 @@ assets/icon-preview.png
 
 # Rust build output. Keep it out of OneDrive: set CARGO_TARGET_DIR to a local folder.
 rust/target/
+# Fixtures that point at the photographer's own frames; never committed.
+rust/fixtures/*_local.json

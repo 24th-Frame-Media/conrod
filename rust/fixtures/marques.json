@@ -1,0 +1,89 @@
+{
+ "cases": [
+  {
+   "make": null,
+   "model": null,
+   "out": null
+  },
+  {
+   "make": "Yamaha",
+   "model": "Ninja H2",
+   "out": "Kawasaki"
+  },
+  {
+   "make": "Kawasaki",
+   "model": "Ninja H2",
+   "out": "Kawasaki"
+  },
+  {
+   "make": "kawasaki ",
+   "model": "ninja",
+   "out": "kawasaki "
+  },
+  {
+   "make": null,
+   "model": "Falcon XR8",
+   "out": "Ford"
+  },
+  {
+   "make": "Holden",
+   "model": "Falcon",
+   "out": "Ford"
+  },
+  {
+   "make": "Ford",
+   "model": "Focus RS",
+   "out": "Ford"
+  },
+  {
+   "make": "Ford",
+   "model": "GT",
+   "out": "Ford"
+  },
+  {
+   "make": "Mazda",
+   "model": "MX-5 Miata",
+   "out": "Mazda"
+  },
+  {
+   "make": "",
+   "model": "RX-7",
+   "out": "Mazda"
+  },
+  {
+   "make": "Toyota",
+   "model": "Supra, Commodore",
+   "out": "Toyota"
+  },
+  {
+   "make": "Subaru",
+   "model": "WRX STI",
+   "out": "Subaru"
+  },
+  {
+   "make": "Honda",
+   "model": "CBR1000RR Fireblade",
+   "out": "Honda"
+  },
+  {
+   "make": "Suzuki",
+   "model": "GSX-R1000",
+   "out": "Suzuki"
+  },
+  {
+   "make": "BMW",
+   "model": "M3",
+   "out": "BMW"
+  },
+  {
+   "make": "Holden",
+   "model": "VL Commodore SS",
+   "out": "Holden"
+  },
+  {
+   "make": "X",
+   "model": "-ninja",
+   "out": "Kawasaki"
+  }
+ ]
+}

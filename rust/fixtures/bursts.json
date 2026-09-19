@@ -1,0 +1,371 @@
+{
+ "bursts": [
+  {
+   "camera": "Canon EOS 80D 2",
+   "ended": null,
+   "frames": [
+    "c/IMG_9001.CR2"
+   ],
+   "key": 2,
+   "started": null
+  },
+  {
+   "camera": "Canon EOS 80D 2",
+   "ended": null,
+   "frames": [
+    "c/IMG_9002.CR2"
+   ],
+   "key": 3,
+   "started": null
+  },
+  {
+   "camera": "Job folder",
+   "ended": null,
+   "frames": [
+    "d/phone.jpg"
+   ],
+   "key": 6,
+   "started": null
+  },
+  {
+   "camera": "Canon EOS R7 1",
+   "ended": 1789293604.5,
+   "frames": [
+    "b/IMG_0003.CR3",
+    "a/IMG_0001.CR3",
+    "a/IMG_0002.CR3",
+    "a/IMG_0004.CR3"
+   ],
+   "key": 4,
+   "started": 1789293600.0
+  },
+  {
+   "camera": "Canon EOS 80D 2",
+   "ended": 1789293601.0,
+   "frames": [
+    "c/IMG_9000.CR2"
+   ],
+   "key": 1,
+   "started": 1789293601.0
+  },
+  {
+   "camera": "Canon EOS R7 1",
+   "ended": 1789293608.51,
+   "frames": [
+    "a/IMG_0005.CR3"
+   ],
+   "key": 5,
+   "started": 1789293608.51
+  }
+ ],
+ "cases": [
+  {
+   "camera": "fallback cam",
+   "tags": {},
+   "taken": null
+  },
+  {
+   "camera": "Canon EOS R7 358034000852",
+   "tags": {
+    "Model": "Canon EOS R7",
+    "SerialNumber": "358034000852"
+   },
+   "taken": null
+  },
+  {
+   "camera": "Canon EOS 80D 185023000306",
+   "tags": {
+    "Model": "Canon EOS 80D",
+    "SerialNumber": 185023000306
+   },
+   "taken": null
+  },
+  {
+   "camera": "Canon EOS R7 AB1234",
+   "tags": {
+    "InternalSerialNumber": "AB1234",
+    "Model": "Canon EOS R7"
+   },
+   "taken": null
+  },
+  {
+   "camera": "Canon EOS R7 + RF100-500mm",
+   "tags": {
+    "LensModel": "RF100-500mm",
+    "Model": "Canon EOS R7",
+    "SerialNumber": "-"
+   },
+   "taken": null
+  },
+  {
+   "camera": "Canon EOS R7 + Canon RF 70-200mm",
+   "tags": {
+    "LensID": "Canon RF 70-200mm",
+    "Model": "Canon EOS R7"
+   },
+   "taken": null
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "LensModel": "x",
+    "Model": "",
+    "SerialNumber": ""
+   },
+   "taken": null
+  },
+  {
+   "camera": "9999",
+   "tags": {
+    "SerialNumber": "9999"
+   },
+   "taken": null
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:09:13 10:15:30"
+   },
+   "taken": 1789294530.0
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:09:13 10:15:30",
+    "SubSecTimeOriginal": "45"
+   },
+   "taken": 1789294530.45
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:09:13 10:15:30",
+    "SubSecTimeOriginal": 7
+   },
+   "taken": 1789294530.7
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:09:13 10:15:30",
+    "SubSecTimeOriginal": "045 "
+   },
+   "taken": 1789294530.045
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:09:13 10:15:30",
+    "SubSecTimeOriginal": "x"
+   },
+   "taken": 1789294530.0
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "SubSecDateTimeOriginal": "2026:09:13 10:15:30.12+10:00",
+    "SubSecTimeOriginal": "99"
+   },
+   "taken": 1789294530.12
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:09:13 10:15:30",
+    "SubSecDateTimeOriginal": "",
+    "SubSecTimeOriginal": "5"
+   },
+   "taken": 1789294530.0
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:09:13T10:15:30-05:00"
+   },
+   "taken": 1789294530.0
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026/09/13 10:15:30"
+   },
+   "taken": 1789294530.0
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "0000:00:00 00:00:00"
+   },
+   "taken": null
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:02:31 23:59:59.5"
+   },
+   "taken": 1772582399.5
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:13:01 00:00:00"
+   },
+   "taken": null
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "1969:12:31 23:59:59"
+   },
+   "taken": null
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:09:13"
+   },
+   "taken": null
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026:09:13 10:15"
+   },
+   "taken": null
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "garbage here"
+   },
+   "taken": null
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": " 2026:09:13 25:61:61 "
+   },
+   "taken": 1789351321.0
+  },
+  {
+   "camera": "fallback cam",
+   "tags": {
+    "DateTimeOriginal": "2026-09-13 10:15:30"
+   },
+   "taken": 1789294530.0
+  }
+ ],
+ "fallback": "Job folder",
+ "frames": [
+  {
+   "burst": 4,
+   "camera": "Canon EOS R7 1",
+   "path": "b/IMG_0003.CR3",
+   "taken": 1789293600.5
+  },
+  {
+   "burst": 4,
+   "camera": "Canon EOS R7 1",
+   "path": "a/IMG_0001.CR3",
+   "taken": 1789293600.0
+  },
+  {
+   "burst": 4,
+   "camera": "Canon EOS R7 1",
+   "path": "a/IMG_0002.CR3",
+   "taken": 1789293600.5
+  },
+  {
+   "burst": 4,
+   "camera": "Canon EOS R7 1",
+   "path": "a/IMG_0004.CR3",
+   "taken": 1789293604.5
+  },
+  {
+   "burst": 5,
+   "camera": "Canon EOS R7 1",
+   "path": "a/IMG_0005.CR3",
+   "taken": 1789293608.51
+  },
+  {
+   "burst": 1,
+   "camera": "Canon EOS 80D 2",
+   "path": "c/IMG_9000.CR2",
+   "taken": 1789293601.0
+  },
+  {
+   "burst": 2,
+   "camera": "Canon EOS 80D 2",
+   "path": "c/IMG_9001.CR2",
+   "taken": null
+  },
+  {
+   "burst": 3,
+   "camera": "Canon EOS 80D 2",
+   "path": "c/IMG_9002.CR2",
+   "taken": null
+  },
+  {
+   "burst": 6,
+   "camera": "Job folder",
+   "path": "d/phone.jpg",
+   "taken": null
+  }
+ ],
+ "rows": [
+  {
+   "DateTimeOriginal": "2026:09:13 10:00:00",
+   "Model": "Canon EOS R7",
+   "SerialNumber": "1",
+   "SourceFile": "b/IMG_0003.CR3",
+   "SubSecTimeOriginal": "50"
+  },
+  {
+   "DateTimeOriginal": "2026:09:13 10:00:00",
+   "Model": "Canon EOS R7",
+   "SerialNumber": "1",
+   "SourceFile": "a/IMG_0001.CR3",
+   "SubSecTimeOriginal": "00"
+  },
+  {
+   "DateTimeOriginal": "2026:09:13 10:00:00",
+   "Model": "Canon EOS R7",
+   "SerialNumber": "1",
+   "SourceFile": "a/IMG_0002.CR3",
+   "SubSecTimeOriginal": "50"
+  },
+  {
+   "DateTimeOriginal": "2026:09:13 10:00:04",
+   "Model": "Canon EOS R7",
+   "SerialNumber": "1",
+   "SourceFile": "a/IMG_0004.CR3",
+   "SubSecTimeOriginal": "50"
+  },
+  {
+   "DateTimeOriginal": "2026:09:13 10:00:08",
+   "Model": "Canon EOS R7",
+   "SerialNumber": "1",
+   "SourceFile": "a/IMG_0005.CR3",
+   "SubSecTimeOriginal": "51"
+  },
+  {
+   "DateTimeOriginal": "2026:09:13 10:00:01",
+   "Model": "Canon EOS 80D",
+   "SerialNumber": "2",
+   "SourceFile": "c/IMG_9000.CR2"
+  },
+  {
+   "Model": "Canon EOS 80D",
+   "SerialNumber": "2",
+   "SourceFile": "c/IMG_9001.CR2"
+  },
+  {
+   "Model": "Canon EOS 80D",
+   "SerialNumber": "2",
+   "SourceFile": "c/IMG_9002.CR2"
+  },
+  {
+   "SourceFile": "d/phone.jpg"
+  }
+ ]
+}
