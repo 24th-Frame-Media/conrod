@@ -1,6 +1,6 @@
 # Conrod desktop UI: design notes
 
-Ground truth: `conrod/web/style.css`, `index.html`, `app.js` (the Python UI). The React
+Ground truth: `conrod/web/style.css`, `index.html`, `app.js` (the Python UI, on the `legacy-python` branch). The React
 app in `src/` re-creates that look and keeps its own engine calls (`src/lib/api.ts`).
 
 ## Tokens (from Python `:root`, copied 1:1 into `src/styles/base.css`)

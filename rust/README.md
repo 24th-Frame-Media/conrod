@@ -1,7 +1,8 @@
 # Conrod native
 
-Rust + Tauri 2 + React desktop application. The Python sources remain the parity reference
-until real-photo and installed-update acceptance is signed off.
+Rust + Tauri 2 + React desktop application. It replaced the Python app, which lives on the `legacy-python`
+branch; the parity fixtures in `fixtures/` and the checks against real libraries were generated from it (see
+`fixtures/README.md`).
 
 ## Build
 
