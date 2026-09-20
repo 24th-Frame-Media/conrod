@@ -1,10 +1,9 @@
 # Releasing the native Conrod
 
-The native app replaces the Python app (owner, 20 Sept 2026). Until the cutover Python keeps shipping `v*`
-releases (`.github/workflows/release.yml`; its latest is v0.8.0) and the native app releases on tags `rust-v*`,
-always as a **pre-release**, which the Python app's "latest release" updater cannot see. At the cutover the native
-app publishes plain `v*` releases (see "Cutover" below). The native updater accepts both tag styles, and only
-releases that carry an installer.
+The native app replaced the Python app on 20 Sept 2026; the Python code (up to v0.8.0) is on the
+`legacy-python` branch. Releases are plain `v*` tags built by `.github/workflows/release.yml`; a tag with a suffix
+(`v1.0.0-beta.1`) is published as a pre-release, which GitHub does not treat as "latest". The in-app updater only
+offers releases that carry an installer, so the old Python zips are never offered.
 
 ## What a release contains
 
@@ -43,18 +42,18 @@ Licences are recorded per asset in `assets.json`; ExifTool's own licence files s
    `rust/crates/conrod-app/tauri.conf.json`, `rust/frontend/package.json` (and `package-lock.json`).
    `node rust/scripts/check-version.mjs` must pass; CI runs it too. The native line continues above the Python
    app's 0.8.x, so the betas are `1.0.0-beta.N` and the first stable release is `1.0.0`.
-2. Merge to `main`, then `git tag rust-v1.0.0-beta.1 && git push origin rust-v1.0.0-beta.1`.
-3. `.github/workflows/release-rust.yml` fetches the pinned assets, builds the frontend, runs fmt, clippy and
+2. On `main`, `git tag v1.0.0-beta.1 && git push origin v1.0.0-beta.1`.
+3. `.github/workflows/release.yml` fetches the pinned assets, builds the frontend, runs fmt, clippy and
    every test, builds the installer, assembles the portable folder, **self-tests the shipped `Conrod.exe`**
    (`Conrod.exe --selftest report.txt`: models found and loaded, a frame through detector + sharpness + OCR,
-   ExifTool, database), checksums, and publishes the pre-release. A failing self-test fails the release.
+   ExifTool, database), checksums, and publishes the release (a pre-release when the version has a suffix). A failing self-test fails the release.
 4. Check by hand on a clean profile: install, scan a folder, review, identify, write XMP on a copy.
 
 Locally: `stage-assets.ps1`, `cargo build --release -p conrod-app --features tauri/custom-protocol`, copy
 `target/release/Conrod.exe` next to `crates/conrod-app/resources`, run `Conrod.exe --selftest out.txt`.
 Producing the installer locally needs the Tauri bundler, which downloads NSIS on first use.
 
-## Cutover: replacing the Python app
+## Upgrading Python installs
 
 The Python app's updater reads GitHub's latest release (never a pre-release), offers the first `.zip` asset whose
 name contains `win`, checks it against `SHA256SUMS.txt`, and swaps its `Conrod` folder for the archive's `Conrod/`
@@ -67,12 +66,10 @@ app, and `~/.conrod` (database, settings) carries over. It needs:
 - assets `Conrod-<v>-win64.zip` (with `Conrod/Conrod.exe` inside), `Conrod-<v>-win64-setup.exe` and a
   `SHA256SUMS.txt` covering both (Python installs without a check when the file is missing; never ship without it).
 
-Nothing publishes a stable release by accident: `release-rust.yml` triggers on `rust-v*` and marks it pre-release.
-When the owner decides to cut over, in one reviewed change: delete the Python app (`conrod/`, `main.py`, `cli.py`,
-`conrod.spec`, `requirements.txt`, `smoke_test.py`, `tests/`, `.github/workflows/release.yml`, the Python job in
-`check.yml`), let `release-rust.yml` also trigger on `v*` and publish that tag as a normal release, and rewrite the
-root README. The frozen Python updater cannot be pointed at a test server, so the first stable release is the real
-test of that path; the Python swap keeps the old build as `Conrod-previous` if it fails.
+`release.yml` publishes `v1.0.0` (no suffix) as a normal release, so it becomes GitHub's latest and reaches every
+Python install. Betas (`v1.0.0-beta.N`) stay pre-releases and are invisible to them. The frozen Python updater
+cannot be pointed at a test server, so the first stable release is the real test of that path; the Python swap keeps
+the old build as `Conrod-previous` if it fails.
 
 ## Rollback
 

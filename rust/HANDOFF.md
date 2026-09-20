@@ -1,27 +1,28 @@
-# Rust port handoff, 20 September 2026 (state after Codex's pass and a verification pass)
+# Rust port handoff, 20 September 2026 (the native app is `main`; the Python app is on `legacy-python`)
 
-Branch `rust-port` (HEAD `6bca7cf`). **Everything is uncommitted** (about 80 paths); the owner has not asked for a
-commit, so ask before committing or pushing. Original plan: `C:/Users/kapsikkum/.claude/plans/cryptic-humming-thacker.md`
-(its egui decision is superseded: the app is **Tauri v2 + React**). Wire format of every command: [API.md](API.md).
-Build, dev and CLI: [README.md](README.md). Release steps: [RELEASING.md](RELEASING.md).
+The port is merged into `main` (fast-forward) and the Python app was removed from it. **`legacy-python`** holds the Python
+app as it was (through v0.8.0) plus the tools that need its package (`tools/parity_ops.py`, `gen_*_local.py`,
+`local_frames.py`, `compare_cull.py`, `gen_vlm_fixtures.py`); use it with `git worktree add ../conrod-legacy legacy-python`
+(see `fixtures/README.md`). Wire format of every command: [API.md](API.md). Build, dev and CLI: [README.md](README.md).
+Release steps: [RELEASING.md](RELEASING.md). Original plan: `C:/Users/kapsikkum/.claude/plans/cryptic-humming-thacker.md`
+(its egui decision is superseded: the app is **Tauri v2 + React**).
 Owner goal: every feature works and is ported properly; the Rust is idiomatic, not a Python imitation; a release can
-be built; the UI resembles the Python web UI with a native touch; the app installs missing models itself.
+be built; the UI resembles the old Python web UI with a native touch; the app installs missing models itself.
 
 ## 0. Next steps, in order
 
-1. Ask the owner to authorize committing this work (about 80 uncommitted paths; nothing is safe from a stray checkout).
-2. Owner decisions, made 20 Sept 2026: **no code signing** (releases stay unsigned; do not add signing steps),
-   **keep Rust's rule that the keeper is of the subject kind the profile rates** (do not "fix" it to Python's), and
-   Tauri **may download NSIS** to build the installer. Also: **the native app replaces the Python app**, and `gh` may
-   be used to publish `assets-v1` (done, section 1). Still the owner's: the go-ahead to commit and push, and to cut the
-   first tag. The version is now `1.0.0-beta.1` (my choice: the native line continues above Python's 0.8.x; change it
-   in the three places `check-version.mjs` lists if the owner prefers another number).
-3. Close the remaining parity checks in section 2 (item 2) with `tools/parity_ops.py` style comparisons.
-4. Tagged pre-release `rust-v1.0.0-beta.1` through `release-rust.yml` (needs the commit and push; the local
-   installer test and the assets are done, section 1).
-5. UI and idiom items in section 2 (items 3 to 6).
-6. Cutover and deleting the Python app (section 5). The owner has said the native app will replace it; deleting
-   the Python code waits for their go-ahead once the beta is accepted.
+Decisions already made (20 Sept 2026): **no code signing** (do not add signing steps); **keep Rust's rule that the
+keeper is of the subject kind the profile rates** (do not "fix" it to Python's); Tauri may download NSIS; the native app
+replaces the Python app (done); `gh` may publish assets (done). The version `1.0.0-beta.1` was my choice (the native line
+continues above Python's 0.8.x); change it in the three places `scripts/check-version.mjs` lists if the owner prefers.
+
+1. Cut the first beta: `git tag v1.0.0-beta.1 && git push origin v1.0.0-beta.1`. `release.yml` builds, self-tests and
+   publishes a pre-release. It publishes, so it needs the owner's go-ahead. Then install its setup.exe on another machine
+   and unzip the portable build.
+2. Close the remaining parity checks (section 2, item 2) by comparing with the Python app on `legacy-python`.
+3. UI and idiom items (section 2, items 3 to 6).
+4. After the owner accepts the beta, tag the stable `v1.0.0`: it becomes GitHub's latest release and reaches existing
+   Python installs through their own updater (RELEASING.md, "Upgrading Python installs").
 
 ## 1. State
 
@@ -52,7 +53,7 @@ album resumed through the saved stage; deleting a watched album stopped the watc
 (Conrod 0.1.0, kapsikkum). `Conrod.exe --selftest` passes from the installed folder and the installed app reports no
 missing models. Silent uninstall removed the folder, shortcut and Add/Remove entry.
 
-**In-app update with the real installer**: a local fake release server (`rust-v9.9.9`, `SHA256SUMS.txt`) served the real
+**In-app update with the real installer**: a local fake release server (`v9.9.9`, `SHA256SUMS.txt`) served the real
 installer with `CONROD_UPDATE_API`; the installed app saw it as installable, downloaded and verified it, quit, NSIS
 reinstalled silently **in place** (same folder, nothing written to the default location), and the app relaunched. A wrong
 checksum failed the task with the app still running and nothing kept.
@@ -74,14 +75,14 @@ for confirmation** (what will be written and whether ratings/labels are overwrit
 closing the window reads one setting (`Desktop::close_to_tray`) instead of building a bootstrap; tray Quit and window
 close stop the scan through the typed `Command::Stop`.
 
-Two real bugs found by comparing with Python on private copies of the real library (`tools/parity_ops.py`):
+Two real bugs found by comparing with Python on private copies of the real library (`tools/parity_ops.py` on `legacy-python`):
 **grouping used a same-car threshold of 0.8 where Python uses 0.90** (`grouping::SAME_CAR`), so albums merged cars that
 Python keeps apart; fixed in `conrod-engine/src/passes.rs`, and job 39 now reproduces Python's 36 groups exactly (was 23).
 **The update launcher could never relaunch the app**: it started PowerShell with `DETACHED_PROCESS`, which leaves it
 without a console, and `Start-Process -Wait` needs one. It now uses a hidden console, always relaunches the app in a
 `finally`, and logs a failure next to the installer (`update.rs`).
 
-### Parity measured on real data (private copies of `~/.conrod/conrod.db`; `python tools/parity_ops.py <mode> <job>`)
+### Parity measured on real data (private copies of `~/.conrod/conrod.db`; `tools/parity_ops.py <mode> <job>` on `legacy-python`)
 
 | Operation | Job | Result |
 | --- | --- | --- |
@@ -95,20 +96,20 @@ without a console, and `Start-Process -Wait` needs one. It now uses a hidden con
 otherwise have offered the assets release to every Python install). Each file was re-downloaded from its public URL and
 matched the manifest size and SHA-256; a first run on an empty library installed the missing models from it in 17 s.
 
-**Updater and version**: the app is now `1.0.0-beta.1`. The updater accepts `rust-v*` and plain `v*` tags but only
-releases that carry a `-win64-setup.exe`, so the Python zips and the asset files are never offered (test:
-`plain_v_tags_are_updates_once_they_carry_an_installer`). A beta therefore can move to the final `v1.0.0`.
+**Updater and version**: the app is `1.0.0-beta.1`. The updater looks at `v*` releases that carry a
+`-win64-setup.exe`, so the old Python zips and the asset files are never offered (test:
+`only_releases_with_an_installer_are_updates`), and a beta moves to the final `v1.0.0`.
 
 ## 2. Not yet verified or not yet done
 
-1. **Installer**: built and tested locally (section 1). Still to do: a tagged pre-release through `release-rust.yml`
+1. **Installer**: built and tested locally (section 1). Still to do: a tagged beta through `release.yml`
    (needs the commit and push) and one install from the GitHub release on another machine.
    Tauri names the file `Conrod_<v>_x64-setup.exe`; the workflow renames it to `Conrod-<v>-win64-setup.exe`, which is what
    the updater looks for. An installed copy running while the installer runs is not tested (the updater quits first).
 2. **Parity still unchecked**: `summary`, `seed_known` (Python's consensus rules), the known-vehicle CSV column
    set and the entry-list format, `bulk_edit` semantics, and `identify` with `stage: all` on a whole album. Method in
    section 6 (private copy of the DB, never the real one). Note the CLI `command` waits for background operations, but
-   a check must tamper first to prove an operation ran (`tools/parity_ops.py rescore` does).
+   a check must tamper first to prove an operation ran (`tools/parity_ops.py rescore` on `legacy-python` does).
 3. **UI gaps**: write dry-run output appears only in the event log (Python toasted counts and what would be
    kept); chip-style team/livery editing; drag-a-folder-to-scan and the taskbar progress bar are not visually
    verified; tray hide/restore and single-instance behaviour are not exercised; review refresh is still
@@ -116,7 +117,7 @@ releases that carry a `-win64-setup.exe`, so the Python zips and the asset files
 4. **Accuracy** (unchanged): 9% plate-text and 8% number disagreement vs RapidOCR, RapidOCR's angle classifier not
    ported, plates run on CPU because DirectML rejects a `Resize` node, faces/eyes unvalidated on real portraits,
    pan/shake/focus-miss unchecked. Stale local fixtures (`detector_local`, `faces_local`, `vision_local`) pass by
-   skipping; rebuild with `tools/gen_faces_local.py`, `tools/gen_vision_local.py` via `tools/local_frames.py`.
+   skipping; rebuild with `tools/gen_faces_local.py`, `tools/gen_vision_local.py` via `tools/local_frames.py`, all on `legacy-python`.
    Opt-in real-photo gates: `cargo test --release -p conrod-vision -- --ignored`.
 5. **Idiom review still open**: `Result<_, String>` everywhere (keep `String` at the Tauri boundary, type the library
    crates where callers branch; `VlmError` is the model); `rows()` builds `serde_json::Value` for every query, so the
@@ -127,7 +128,7 @@ releases that carry a `-win64-setup.exe`, so the Python zips and the asset files
 6. **CLI** lacks Python's `review` (there is no web server by design) and `--map/--vlm-*/--detect-*` flags; use
    `command save_settings` instead, or add flags if a headless path must survive.
 
-## 3. Route parity (`conrod/server.py`)
+## 3. Route parity (Python's `conrod/server.py`, on `legacy-python`)
 
 | Python | Rust command | State |
 | --- | --- | --- |
@@ -149,28 +150,21 @@ releases that carry a `-win64-setup.exe`, so the Python zips and the asset files
 ## 4. Release (see RELEASING.md)
 
 Ready: `assets-v1` published, pinned manifest `rust/scripts/assets.json`, `stage-assets.ps1`,
-`fetch-release-assets.ps1`, `check-version.mjs`, `.github/workflows/release-rust.yml` (tag `rust-v*`, pre-release,
-`SHA256SUMS.txt`, runs the shipped exe's selftest), `check.yml` (Rust job plus the Python job), the installer (built and
-tested locally, unsigned by decision) and the version `1.0.0-beta.1`. Outstanding: commit and push, then tag
-`rust-v1.0.0-beta.1`, watch the workflow, install the resulting setup.exe on another machine and unzip the portable build.
+`fetch-release-assets.ps1`, `check-version.mjs`, `.github/workflows/release.yml` (tag `v*`, a suffix makes it a
+pre-release, `SHA256SUMS.txt`, runs the shipped exe's selftest), `check.yml` (the Rust checks on every push to `main` and
+every pull request), the installer (built and tested locally, unsigned by decision) and the version `1.0.0-beta.1`.
+Outstanding: the first tag (section 0) and one install from the GitHub release on another machine.
 
-## 5. Replacing the Python app (cutover checklist)
+## 5. Cutover (done 20 Sept 2026)
 
-1. Sign off parity (sections 2 and 3) on the same album in both apps.
-2. Data: Rust opens the same `~/.conrod` (`conrod.db`, `settings.json`, `entries/`). Open a **copy** made from a
-   Python-written DB and confirm nothing is lost, and that Python can still open a Rust-touched copy while both coexist.
-3. **Migration path already exists**: Python's own updater installs a stable release's `Conrod-<v>-win64.zip` by
-   swapping its `Conrod` folder for the zip's `Conrod/` folder (keeping `Conrod-previous`), which is the layout of the
-   native portable zip, and `~/.conrod` carries over. So a stable `v1.0.0` (not pre-release, number above Python's
-   0.8.x, zip + setup.exe + `SHA256SUMS.txt`) upgrades existing Python installs in place. Details and the cutover
-   change list: RELEASING.md "Cutover". Native betas stay invisible to Python (pre-release, `rust-v` prefix).
-4. Then delete, in one reviewed change: `conrod/` (incl. `web/`), `main.py`, `cli.py`, `conrod.spec`,
-   `requirements.txt`, `smoke_test.py`, Python `tests/`, `.github/workflows/release.yml` and the Python job in
-   `check.yml`; rewrite the root `README.md` and `docs/`. Keep `tools/*.py` while parity is re-measured (they import the
-   Python package). Since the Python app goes away, the "one library opens in either app" constraint on
-   `settings.json` keys and the database can be relaxed after the cutover.
-5. Make the Rust workflow the main release path: also trigger on `v*` (publishing that tag as a normal release and
-   letting `check-version.mjs` accept it); the updater already accepts `v*`.
+Removed from `main`: `conrod/` (incl. `web/`), `main.py`, `cli.py`, `conrod.spec`, `requirements.txt`, `smoke_test.py`,
+`tests/`, `tools/`, `assets/`, `docs/` (screenshots of the old UI), the Python release workflow and the Python CI job; the
+root README is rewritten for the native app. All of it is on `legacy-python`. Kept: `samples/entries-example.csv`, `LICENSE`.
+
+Still true: Rust opens the same `~/.conrod` (`conrod.db`, `settings.json`, `entries/`), so an existing library carries
+over. The old "either app can open one library" constraint no longer binds, so settings keys and the database schema can be
+changed when there is a reason (keep migrations additive for people upgrading). Python installs upgrade in place through
+their own updater when a stable `v*` release appears (RELEASING.md); that path can only be proven by the real release.
 
 ## 6. How to verify
 
@@ -187,10 +181,11 @@ cargo build --release -p conrod-app --features tauri/custom-protocol   # needs f
   `window.__TAURI_INTERNALS__.invoke('command', {action, args})`, and key events on `document.body`. Pass folder paths
   with forward slashes (the Bash tool eats backslashes). Copy a few JPEGs from job 15 to `%TEMP%`; never scan or write
   on `D:\`.
-- **Updater against a fake release**: serve `/releases?per_page=15` (a `rust-v9.9.9` pre-release with
+- **Updater against a fake release**: serve `/releases?per_page=15` (a `v9.9.9` release with
   `Conrod-9.9.9-win64-setup.exe` and `SHA256SUMS.txt`) on localhost, copy the release exe to a folder with a dummy
   `uninstall.exe` beside it, and start it with `CONROD_UPDATE_API=http://127.0.0.1:<port>`.
-- **Parity on real data**: `python tools/parity_ops.py pick|pick-py|group|rescore <job>` (needs
+- **Parity on real data** (from a `legacy-python` worktree, see `fixtures/README.md`):
+  `CONROD_CLI=<repo>/rust/target/release/conrod-cli.exe python tools/parity_ops.py pick|pick-py|group|rescore <job>` (needs
   `cargo build --release -p conrod-cli`); it backs the real DB up into `%TEMP%` read-only and never writes to `~/.conrod`.
   Jobs: 15 fully identified (17,587 detections), 38 cull-only Museum (4,713 CR3, Python picks), 39 (Python groups),
   95 (only one with stored features).

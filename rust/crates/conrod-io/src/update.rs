@@ -5,11 +5,10 @@
 //! offered: the Python updater installed whatever it downloaded when the sums file
 //! was missing, and that is the one thing a verifying updater must not do.
 //!
-//! Releases of the native app are tagged `rust-v*` while the Python app still ships
-//! `v*` releases, and plain `v*` once it is retired, so both count. What makes a
-//! release an update is an installer: `Conrod-<version>-win64-setup.exe`, a per-user
-//! NSIS installer that runs silently with `/S`. The Python app's zips and the asset
-//! files of `assets-v1` have none, so they are never offered.
+//! Releases are tagged `v*`. What makes one an update is an installer:
+//! `Conrod-<version>-win64-setup.exe`, a per-user NSIS installer that runs silently
+//! with `/S`. The Python app's old zips (v0.8.0 and earlier) and the asset files of
+//! `assets-v1` have none, so they are never offered.
 
 use crate::assets;
 use serde_json::Value;
@@ -21,8 +20,8 @@ pub const REPO_API: &str = "https://api.github.com/repos/kapsikkum/conrod";
 const INSTALLER_SUFFIX: &str = "-win64-setup.exe";
 const SUMS: &str = "SHA256SUMS.txt";
 
-/// A dotted version with an optional pre-release, e.g. `0.1.0-beta.2`
-/// (a leading `v` or `rust-v` is ignored).
+/// A dotted version with an optional pre-release, e.g. `1.0.0-beta.2`
+/// (a leading `v` is ignored).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Version {
     core: [u64; 3],
@@ -38,10 +37,7 @@ enum Ident {
 
 impl Version {
     pub fn parse(text: &str) -> Option<Version> {
-        let text = text
-            .trim()
-            .trim_start_matches("rust-")
-            .trim_start_matches('v');
+        let text = text.trim().trim_start_matches('v');
         let (core, pre) = match text.split_once('-') {
             Some((c, p)) => (c, Some(p)),
             None => (text, None),
@@ -148,7 +144,7 @@ pub fn choose(
         .filter(|r| allow_pre || !r["prerelease"].as_bool().unwrap_or(false))
         .filter_map(|r| {
             let tag = r["tag_name"].as_str()?;
-            (tag.starts_with("rust-v") || tag.starts_with('v')).then_some(())?;
+            tag.starts_with('v').then_some(())?;
             r["assets"]
                 .as_array()?
                 .iter()
@@ -342,7 +338,7 @@ mod tests {
         assert!(v("0.1.0-beta.10") > v("0.1.0-beta.2"));
         assert!(v("0.1.0-beta.2") > v("0.1.0-alpha.9"));
         assert!(v("0.2.0-beta.1") > v("0.1.9"));
-        assert_eq!(v("rust-v1.2.3-rc.1").to_string(), "1.2.3-rc.1");
+        assert_eq!(v("v1.2.3-rc.1").to_string(), "1.2.3-rc.1");
         assert_eq!(Version::parse("nonsense"), None);
         assert_eq!(Version::parse("1.2"), None);
     }
@@ -353,11 +349,11 @@ mod tests {
         let list = json!([
             release("v0.9.9", false, &["Conrod-0.9.9-win64.zip", SUMS]),
             release(
-                "rust-v0.1.0-beta.2",
+                "v0.1.0-beta.2",
                 true,
                 &["Conrod-0.1.0-beta.2-win64-setup.exe", SUMS]
             ),
-            release("rust-v0.1.0-beta.3", true, &[name, SUMS]),
+            release("v0.1.0-beta.3", true, &[name, SUMS]),
         ]);
         let found = choose(&list, &v("0.1.0-beta.1"), true, &mut sums_for(name))
             .unwrap()
@@ -378,15 +374,15 @@ mod tests {
     }
 
     #[test]
-    fn plain_v_tags_are_updates_once_they_carry_an_installer() {
-        // After the cutover the native releases are `v1.0.0`, beside the Python line's
-        // `v0.8.x` zips (no installer, and older) and the assets-v1 pre-release.
+    fn only_releases_with_an_installer_are_updates() {
+        // Native releases are `v1.0.0`, beside the Python line's `v0.8.x` zips (no
+        // installer, and older) and the assets-v1 pre-release.
         let name = "Conrod-1.0.0-win64-setup.exe";
         let list = json!([
             release("v0.8.0", false, &["Conrod-0.8.0-win64.zip", SUMS]),
             release("assets-v1", true, &["yolo11s-960.onnx"]),
             release(
-                "rust-v1.0.0-beta.2",
+                "v1.0.0-beta.2",
                 true,
                 &["Conrod-1.0.0-beta.2-win64-setup.exe", SUMS]
             ),
@@ -407,14 +403,14 @@ mod tests {
     #[test]
     fn a_release_without_a_checksum_is_never_offered() {
         let name = "Conrod-0.2.0-win64-setup.exe";
-        let no_sums_file = json!([release("rust-v0.2.0", false, &[name])]);
+        let no_sums_file = json!([release("v0.2.0", false, &[name])]);
         assert!(
             choose(&no_sums_file, &v("0.1.0"), false, &mut sums_for(name))
                 .unwrap_err()
                 .contains("SHA256SUMS")
         );
 
-        let list = json!([release("rust-v0.2.0", false, &[name, SUMS])]);
+        let list = json!([release("v0.2.0", false, &[name, SUMS])]);
         // the sums file exists but does not mention the installer
         let err = choose(&list, &v("0.1.0"), false, &mut |_| {
             Ok(format!("{HASH}  something-else.zip\n"))
