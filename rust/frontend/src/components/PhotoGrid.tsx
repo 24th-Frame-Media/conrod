@@ -3,6 +3,7 @@ import { asset } from '../lib/api';
 import { filename, frameStars, verdictOf, type FrameFacts } from '../lib/review';
 import type { Frame } from '../lib/types';
 import { StarPill } from './Stars';
+import { LoadableImage } from './Media';
 
 const GAP = 10, MIN_W = 190, BODY_H = 64, PAD = 18;
 
@@ -23,7 +24,7 @@ const Card = memo(function Card({ frame, facts, selected, left, top, width, heig
       onClick={() => onSelect(frame.id)} onDoubleClick={onOpen}>
       <div className="frame-box">
         {onToggle && <input style={{position: 'absolute', left: 8, top: 8, zIndex: 4}} type="checkbox" aria-label={`Select ${filename(frame.path)}`} checked={checked} onClick={e => e.stopPropagation()} onChange={() => onToggle(frame.id)} />}
-        <img className="thumb" loading="lazy" decoding="async" draggable={false} src={asset(frame.thumb_path)} alt={filename(frame.path)} />
+        <LoadableImage className="thumb" loading="lazy" decoding="async" draggable={false} src={asset(frame.thumb_path)} alt={filename(frame.path)} />
         <StarPill frame={frame} />
         {facts?.panned && <span className="focus panning" title="Subject sharp against a blurred background. Kept, never auto-culled">panned</span>}
         {facts?.pick && <span className="focus keeper" title="The sharpest frame of this pass">keeper</span>}

@@ -82,6 +82,8 @@ pub struct ScanArgs {
     pub root: Option<String>,
     pub profile: Option<String>,
     pub label: Option<String>,
+    pub read_plates: Option<bool>,
+    pub read_numbers: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -347,6 +349,16 @@ mod tests {
         assert!(Command::parse("mark", json!({}))
             .unwrap_err()
             .contains("imageId"));
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({"root":"C:\\\\Photos", "readPlates":false, "readNumbers":true}),
+        ) else {
+            panic!()
+        };
+        assert_eq!(
+            (scan.read_plates, scan.read_numbers),
+            (Some(false), Some(true))
+        );
     }
 
     #[test]

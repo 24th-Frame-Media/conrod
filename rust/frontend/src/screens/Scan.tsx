@@ -4,13 +4,13 @@ import { FilePick, Icon } from '../components/basics';
 import { call, chooseFolder } from '../lib/api';
 import { etaText, pct } from '../lib/format';
 import { filename } from '../lib/review';
-import { PROFILES, type ModelInfo, type ScanArgs, type Status } from '../lib/types';
+import { PROFILES, type ModelInfo, type ScanArgs, type Settings, type Status } from '../lib/types';
 import type { StatusActions } from '../components/TitleBar';
 
 export type ScanDraft = { root: string; label: string };
 type Props = {
   draft: ScanDraft; setDraft: (d: ScanDraft) => void; profile: string; setProfile: (p: string) => void;
-  models: ModelInfo[]; status: Status; busy: boolean; actions: StatusActions;
+  models: ModelInfo[]; settings: Settings; status: Status; busy: boolean; actions: StatusActions;
   onStart: (args: ScanArgs) => void; onReviewActive: () => void;
 };
 
@@ -21,10 +21,12 @@ const NOTES: [string, string, string][] = [
 ];
 
 /** Pick a folder and a scan type; while a scan runs the rail shows it live with pause / stop. */
-export function Scan({ draft, setDraft, profile, setProfile, models, status, busy, actions, onStart, onReviewActive }: Props) {
+export function Scan({ draft, setDraft, profile, setProfile, models, settings, status, busy, actions, onStart, onReviewActive }: Props) {
   const run = useRun();
   const [recursive, setRecursive] = useState(true);
   const [stage, setStage] = useState<'index' | 'cull' | 'all'>('cull');
+  const [readPlates, setReadPlates] = useState(() => settings.read_plates !== false);
+  const [readNumbers, setReadNumbers] = useState(() => settings.read_numbers !== false);
   const [entries, setEntries] = useState('');
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const scanning = status.activeJob !== null;
@@ -59,8 +61,13 @@ export function Scan({ draft, setDraft, profile, setProfile, models, status, bus
                 </button>
               ))}
             </div>
+            <h3 className="step-label">What should it look for?</h3>
+            <div className="scan-targets">
+              <label><input type="checkbox" checked={readPlates} onChange={(e) => setReadPlates(e.target.checked)} /><span><b>Registration plates</b><small>Use the plate detector and OCR; tune the vision prompt for registered vehicles.</small></span></label>
+              <label><input type="checkbox" checked={readNumbers} onChange={(e) => setReadNumbers(e.target.checked)} /><span><b>Race numbers</b><small>Read door, roundel and fairing numbers; tune the vision prompt for competition vehicles.</small></span></label>
+            </div>
             <div className="actions-row">
-              <button className="primary" disabled={!draft.root || busy || scanning} onClick={() => onStart({ root: draft.root, label: draft.label, profile, recursive, stage })}>
+              <button className="primary" disabled={!draft.root || busy || scanning} onClick={() => onStart({ root: draft.root, label: draft.label, profile, recursive, stage, readPlates, readNumbers })}>
                 {busy ? 'Preparing scan…' : 'Start scan'}
               </button>
               {scanning && <span className="muted busy-note">A scan is already running. Stop it from the activity menu, top right, to start another.</span>}

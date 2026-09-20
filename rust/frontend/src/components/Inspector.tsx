@@ -2,6 +2,7 @@ import { asset } from '../lib/api';
 import { filename, frameStars, parseAttributes } from '../lib/review';
 import { ATTRIBUTE_KEYS, type AttributeKey, type Detection, type Frame, type MarkValues } from '../lib/types';
 import { StarControl } from './Stars';
+import { LoadableImage } from './Media';
 
 const LABELS: Record<AttributeKey, string> = { plate: 'Plate', race_number: 'No.', make: 'Make', model: 'Model', colour: 'Colour', team: 'Team', plate_state: 'State', body_type: 'Body' };
 
@@ -54,7 +55,7 @@ export function Inspector({ frame, detections, scanning, onMark, onOpen, onEdit 
         {frame.status !== 'done' && <span className="tag">{frame.status}</span>}
       </div>
       <button className="inspect-image" onClick={onOpen} title="Open the full frame (Enter)">
-        <img src={asset(frame.thumb_path)} alt={filename(frame.path)} />
+        <LoadableImage src={asset(frame.thumb_path)} alt={filename(frame.path)} />
       </button>
       <div className="frame-side-foot">
         <StarControl value={stars} onChange={(n) => onMark({ stars: n })} />

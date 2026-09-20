@@ -5,6 +5,7 @@ import { boxOf, filename } from '../lib/review';
 import { REGIONS, type Job, type Region, type Toaster, type Training } from '../lib/types';
 import { usePreview, type Runner } from '../state/hooks';
 import type { ReviewModel } from '../state/useReview';
+import { ZoomPanImage } from '../components/Media';
 
 /** The verbs the window-level key handler calls on this screen. */
 export type TrainVerbs = { rate: (stars: number) => void; pan: () => void; undo: () => void; zoom: () => void; step: (delta: number) => void };
@@ -37,10 +38,14 @@ export function Train({ rv, jobs, jobId, run, toast, showBoxes, verbs, onPickJob
   const box = subject && frame ? boxOf(subject, frame) : null;
 
   const step = useCallback((delta: number) => {
-    const i = queue.findIndex((f) => f.id === selected);
-    const next = queue[Math.max(0, Math.min(queue.length - 1, i + delta))];
-    if (next) setSelected(next.id);
-  }, [queue, selected, setSelected]);
+    setSelected((currentId) => {
+      if (!queue.length) return null;
+      const currentIndex = queue.findIndex((f) => f.id === currentId);
+      const origin = currentIndex < 0 ? (delta < 0 ? queue.length : -1) : currentIndex;
+      const index = Math.max(0, Math.min(queue.length - 1, origin + delta));
+      return queue[index]?.id ?? currentId;
+    });
+  }, [queue, setSelected]);
 
   const rate = useCallback(async (stars: number) => {
     if (!subject) return;
@@ -63,11 +68,12 @@ export function Train({ rv, jobs, jobId, run, toast, showBoxes, verbs, onPickJob
   }
   return (
     <div className="train">
-      <div className={`train-stage${zoom ? ' full' : ''}`}>
+      <div className="train-stage">
         {subject && frame ? (
           <div className="train-frame" style={{ '--ar': frame.width && frame.height ? frame.width / frame.height : 1.5 } as CSSProperties}>
-            <img src={asset(preview) ?? asset(frame.thumb_path)} alt={filename(frame.path)} />
+            <ZoomPanImage src={asset(preview) ?? asset(frame.thumb_path)} alt={filename(frame.path)} zoomed={zoom}>
             {showBoxes && box && <div className="train-box" style={{ left: `${box[0] * 100}%`, top: `${box[1] * 100}%`, width: `${(box[2] - box[0]) * 100}%`, height: `${(box[3] - box[1]) * 100}%` }} />}
+            </ZoomPanImage>
           </div>
         ) : (
           <div className="train-empty">Nothing left to rate in this album for “{region}”. Scan a shoot and come back, or pick another region.</div>
@@ -88,7 +94,7 @@ export function Train({ rv, jobs, jobId, run, toast, showBoxes, verbs, onPickJob
           <button disabled={!subject} onClick={() => void rate(0)}>Can&apos;t tell <kbd>X</kbd></button>
           <button onClick={undo}>Undo <kbd>U</kbd></button>
         </div>
-        <p className="muted small">Press 1&ndash;5 to rate and move on. <kbd>Z</kbd> shows the crop at 100%, <kbd>B</kbd> hides the outline.</p>
+        <p className="muted small">Press 1&ndash;5 to rate and move on. Use the mouse wheel to zoom and drag to pan; <kbd>Z</kbd> toggles 200%. <kbd>B</kbd> hides the outline.</p>
         <div className="train-progress"><b>{training?.labels ?? 0}</b> rated · {training?.active ? 'learned model active' : 'built-in focus measure'} · {queue.length.toLocaleString()} to go</div>
         <div className="train-fit">
           <button className="primary" onClick={fit}>Learn from my ratings</button>

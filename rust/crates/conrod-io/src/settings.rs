@@ -16,6 +16,8 @@ pub struct Settings {
     pub vlm_input_edge: u32,
     pub number_min_len: usize,
     pub number_max_len: usize,
+    pub read_plates: bool,
+    pub read_numbers: bool,
 
     pub write_sidecar_for_raw: bool,
     pub overwrite_caption: bool,
@@ -39,6 +41,8 @@ impl Default for Settings {
             vlm_input_edge: 1568,
             number_min_len: 1,
             number_max_len: 3,
+            read_plates: true,
+            read_numbers: true,
 
             write_sidecar_for_raw: true,
             overwrite_caption: false,
@@ -67,6 +71,8 @@ impl Settings {
             vlm_input_edge: settings.vlm_input_edge.max(1) as u32,
             number_min_len: settings.number_min_len.max(0) as usize,
             number_max_len: settings.number_max_len.max(0) as usize,
+            read_plates: settings.read_plates,
+            read_numbers: settings.read_numbers,
             write_sidecar_for_raw: settings.write_sidecar_for_raw,
             overwrite_caption: settings.overwrite_caption,
             write_rating: settings.write_rating,

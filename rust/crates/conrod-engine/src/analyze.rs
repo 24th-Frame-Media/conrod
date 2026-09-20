@@ -129,7 +129,10 @@ pub fn analyze(
     }
 
     // 4. Reconcile the number.
-    let vlm_number = trusted_vlm_number(&described, &roundels, &ocr_number);
+    let vlm_number = s
+        .read_numbers
+        .then(|| trusted_vlm_number(&described, &roundels, &ocr_number))
+        .flatten();
     let (number, source, confidence) =
         merge_number(&ocr_number, vlm_number.as_deref(), s.ocr_accept_confidence);
     a.race_number = number;

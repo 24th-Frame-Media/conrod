@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window';
 import { Icon, KeysDialog, Splash } from './components/basics';
 import { TitleBar, type StatusActions } from './components/TitleBar';
-import { engine, mocked } from './lib/api';
+import { engine, inTauri, mocked } from './lib/api';
 import { filename } from './lib/review';
 import type { DevStart } from './lib/mock';
 import type { Page, ScanArgs } from './lib/types';
@@ -70,6 +71,7 @@ export function App() {
       eng.setStatus(await engine.status());
       setPage('Review');
       toast('Scan started. Photographs appear as they are measured.', { tone: 'ok' });
+      if (inTauri) void getCurrentWindow().requestUserAttention(UserAttentionType.Informational);
     });
     setStarting(false);
   };
@@ -100,7 +102,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TitleBar page={page} setPage={setPage} jobs={eng.jobs} status={status} profile={profile} actions={actions} popoverOpen={dev?.popover ?? false} />
+      <TitleBar page={page} setPage={setPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} actions={actions} popoverOpen={dev?.popover ?? false} />
       <main className="stage" key={page}>
         {page === 'Library' && (
           <Library jobs={eng.jobs} models={eng.models} scanning={scanning} onOpen={(j) => openJob(j.id)} onNewScan={() => setPage('Scan')}
@@ -113,7 +115,7 @@ export function App() {
             })} />
         )}
         {page === 'Scan' && (
-          <Scan draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} models={eng.models} status={status} busy={starting}
+          <Scan draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} models={eng.models} settings={eng.settings} status={status} busy={starting}
             actions={actions} onStart={(args) => void startScan(args)} onReviewActive={() => { if (status.activeJob != null) openJob(status.activeJob); }} />
         )}
         {page === 'Review' && (
