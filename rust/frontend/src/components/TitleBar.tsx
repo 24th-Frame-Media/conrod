@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getCurrentWindow, type Window } from '@tauri-apps/api/window';
 import { inTauri, mocked } from '../lib/api';
 import { etaText, pct, plural } from '../lib/format';
-import type { Job, Page, Status } from '../lib/types';
+import type { Job, ModelInfo, Page, Status } from '../lib/types';
 import { PROFILES } from '../lib/types';
 import { Icon, Mark } from './basics';
 
@@ -44,7 +44,7 @@ function WindowControls() {
 }
 
 /** The health light of the Python header, grown into a popover: tasks, pause / stop, cancel, event log. */
-function StatusPill({ status, actions, defaultOpen }: { status: Status; actions: StatusActions; defaultOpen: boolean }) {
+function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: Status; jobs: Job[]; models: ModelInfo[]; actions: StatusActions; defaultOpen: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
@@ -52,7 +52,10 @@ function StatusPill({ status, actions, defaultOpen }: { status: Status; actions:
   const failed = status.tasks.find((t) => t.state === 'failed' && t.error !== 'stopped');
   const tone = active ? (active.state === 'paused' ? 'warn' : 'busy') : failed ? 'error' : 'ok';
   const label = active ? (active.state === 'paused' ? 'Paused' : active.label) : failed ? 'Needs attention' : 'All caught up';
-  const tasks = [...status.tasks].sort((a, b) => b.id - a.id).slice(0, 6);
+  const activeTasks = status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').sort((a, b) => b.id - a.id);
+  const finishedTasks = status.tasks.filter((task) => task.state !== 'running' && task.state !== 'paused').sort((a, b) => b.id - a.id);
+  const activeJob = jobs.find((job) => job.id === status.activeJob);
+  const readyModels = models.filter((model) => model.ready).length;
 
   useEffect(() => {
     if (!open) return;
@@ -65,17 +68,24 @@ function StatusPill({ status, actions, defaultOpen }: { status: Status; actions:
 
   return (
     <div className="status" ref={box}>
-      <button className={`health ${tone}`} aria-expanded={open} aria-haspopup="dialog" title="Activity" onClick={() => setOpen((v) => !v)}>
+      <button className={`health ${tone}`} aria-expanded={open} aria-haspopup="dialog" title="Notifications and activity" onClick={() => setOpen((v) => !v)}>
         <span className="light" />
         <span className="health-text">{label}</span>
         {active && active.total > 0 && <small>{active.done.toLocaleString()}/{active.total.toLocaleString()}</small>}
         <Icon name="chevron" size={13} />
       </button>
       {open && (
-        <div className="popover" role="dialog" aria-label="Activity">
-          <div className="popover-head"><h3>Activity</h3></div>
-          {tasks.length === 0 && <p className="muted">No background tasks.</p>}
-          {tasks.map((t) => (
+        <div className="popover activity-dashboard" role="dialog" aria-label="Notifications and activity">
+          <div className="popover-head"><h3>Scan monitor</h3><span className={`state ${tone === 'busy' ? 'running' : tone === 'error' ? 'failed' : 'done'}`}>{label}</span></div>
+          <div className="activity-summary">
+            <div><b>{activeJob && active?.total ? `${active.done.toLocaleString()} / ${active.total.toLocaleString()}` : '—'}</b><small>{activeJob ? activeJob.label : 'No active scan'}</small></div>
+            <div><b>{readyModels} / {models.length}</b><small>Models ready</small></div>
+            <div><b>{status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').length}</b><small>Active tasks</small></div>
+          </div>
+          {activeJob && active?.total ? <div className="bar scan-overall" title="Overall scan progress"><div className="fill" style={{ width: `${pct(active.done, active.total)}%` }} /></div> : null}
+          <div className="activity-section"><span>Running now</span><span>{activeTasks.length}</span></div>
+          {activeTasks.length === 0 && <p className="muted activity-empty">No background tasks.</p>}
+          {activeTasks.map((t) => (
             <div className="task" key={t.id}>
               <div className="task-row"><b>{t.label}</b><span className={`state ${t.state}`}>{t.state}</span></div>
               {t.total > 0 && <div className="bar"><div className="fill" style={{ width: `${pct(t.done, t.total)}%` }} /></div>}
@@ -93,7 +103,22 @@ function StatusPill({ status, actions, defaultOpen }: { status: Status; actions:
               {status.operations.map((key) => <button key={key} className="ghost small" onClick={() => actions.cancel(key)}>Cancel {key}</button>)}
             </div>
           )}
-          <details><summary>Event log</summary><pre className="log mono">{status.log.join('\n') || 'Nothing yet.'}</pre></details>
+          <div className="activity-section"><span>Detection models</span><span>{readyModels}/{models.length}</span></div>
+          <ul className="activity-models">
+            {models.map((model) => <li key={model.file}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span>{model.name}</span><small>{model.ready ? 'Ready' : 'Unavailable'}</small></li>)}
+            {!models.length && <li className="muted">Checking model availability…</li>}
+          </ul>
+          <details className="activity-history">
+            <summary>Recent activity ({finishedTasks.length})</summary>
+            {finishedTasks.map((t) => (
+              <div className="task" key={t.id}>
+                <div className="task-row"><b>{t.label}</b><span className={`state ${t.state}`}>{t.state}</span></div>
+                <small className="muted">{t.error || t.detail || (t.total > 0 ? `${t.done.toLocaleString()} of ${t.total.toLocaleString()}` : '')}</small>
+              </div>
+            ))}
+            {!finishedTasks.length && <p className="muted activity-empty">Nothing finished yet.</p>}
+            <details><summary>Event log</summary><pre className="log mono">{status.log.join('\n') || 'Nothing yet.'}</pre></details>
+          </details>
         </div>
       )}
     </div>
@@ -101,12 +126,12 @@ function StatusPill({ status, actions, defaultOpen }: { status: Status; actions:
 }
 
 type Props = {
-  page: Page; setPage: (page: Page) => void; jobs: Job[]; status: Status; profile: string;
+  page: Page; setPage: (page: Page) => void; jobs: Job[]; models: ModelInfo[]; status: Status; profile: string;
   actions: StatusActions; popoverOpen: boolean;
 };
 
 /** Topbar and title bar in one: brand, tabs, stats, scan type, status pill, window controls. Drag it to move the window. */
-export function TitleBar({ page, setPage, jobs, status, profile, actions, popoverOpen }: Props) {
+export function TitleBar({ page, setPage, jobs, models, status, profile, actions, popoverOpen }: Props) {
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const photos = jobs.reduce((n, j) => n + j.total, 0);
   return (
@@ -127,7 +152,7 @@ export function TitleBar({ page, setPage, jobs, status, profile, actions, popove
       <button className="pill scan-type" title="Scan type. Click to change it" onClick={() => setPage('Scan')}>
         {(PROFILES.find((p) => p.id === profile)?.title ?? profile).toUpperCase()}
       </button>
-      <StatusPill status={status} actions={actions} defaultOpen={popoverOpen} />
+      <StatusPill status={status} jobs={jobs} models={models} actions={actions} defaultOpen={popoverOpen} />
       <WindowControls />
       {active && active.total > 0 && <i className="topbar-progress" style={{ width: `${pct(active.done, active.total)}%` }} />}
     </header>

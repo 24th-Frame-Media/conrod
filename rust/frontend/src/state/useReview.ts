@@ -34,10 +34,14 @@ export function useReview(jobId: number | null, run: Runner) {
   const patchFilters = useCallback((patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch })), []);
 
   const step = useCallback((delta: number) => {
-    const i = frames.findIndex((f) => f.id === selected);
-    const next = frames[Math.max(0, Math.min(frames.length - 1, i + delta))];
-    if (next) setSelected(next.id);
-  }, [frames, selected]);
+    setSelected((currentId) => {
+      if (!frames.length) return null;
+      const currentIndex = frames.findIndex((f) => f.id === currentId);
+      const origin = currentIndex < 0 ? (delta < 0 ? frames.length : -1) : currentIndex;
+      const index = Math.max(0, Math.min(frames.length - 1, origin + delta));
+      return frames[index]?.id ?? currentId;
+    });
+  }, [frames]);
 
   const mark = useCallback((values: MarkValues, id: number | null = selected) => {
     if (id == null) return Promise.resolve(undefined);

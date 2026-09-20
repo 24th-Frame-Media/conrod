@@ -104,7 +104,7 @@ export function KeysDialog({ onClose }: { onClose: () => void }) {
           <div key={k}><dt>{k.split(/\s{2}\/\s{2}/).map((part) => <kbd key={part}>{part}</kbd>)}</dt><dd>{what}</dd></div>
         ))}
       </dl>
-      <p className="muted small-print">On Train: <kbd>1</kbd>-<kbd>5</kbd> rate, <kbd>X</kbd> can&apos;t tell, <kbd>P</kbd> pan, <kbd>U</kbd> undo, <kbd>Z</kbd> 100%.</p>
+      <p className="muted small-print">On Train: <kbd>1</kbd>-<kbd>5</kbd> rate, <kbd>X</kbd> can&apos;t tell, <kbd>P</kbd> pan, <kbd>U</kbd> undo, <kbd>Z</kbd> 200%.</p>
     </Modal>
   );
 }

@@ -9,7 +9,7 @@ export type Detection = {
   sharpness: number; panning: number; number: string | null; plate: string | null;
   cull_reason: string | null; attributes: string | null; burst_pick: number; region_type: string | null;
 };
-export type Task = { id: number; label: string; detail: string; state: string; done: number; total: number; eta: number | null; error: string | null };
+export type Task = { id: number; label: string; detail: string; state: string; done: number; total: number; elapsed?: number; eta: number | null; error: string | null };
 export type Status = { revision?: number; tasks: Task[]; log: string[]; activeJob: number | null; operations: string[] };
 export type Review = { frames: Frame[]; detections: Detection[] };
 
@@ -30,7 +30,7 @@ export type Page = 'Library' | 'Scan' | 'Review' | 'Train' | 'Known vehicles' | 
 export type View = 'review' | 'all' | 'picks' | 'rejected';
 export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick';
 export type Facet = { kind: 'number' | 'plate'; value: string };
-export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all' } | { jobId: number };
+export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean } | { jobId: number };
 export type MarkValues = { stars?: number | null; rejected?: boolean };
 export type Toaster = (message: string, options?: { tone?: 'error' | 'ok'; ms?: number }) => void;
 

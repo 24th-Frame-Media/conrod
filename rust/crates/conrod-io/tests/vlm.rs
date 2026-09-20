@@ -1,7 +1,7 @@
 use conrod_io::settings::Settings;
 use conrod_io::vlm::{
     anthropic_auth, build_request, parse_anthropic_response, parse_gemini_response,
-    parse_ollama_response, parse_openai_response, schema,
+    parse_ollama_response, parse_openai_response, schema, vehicle_prompt,
 };
 use serde_json::{json, Value};
 
@@ -161,4 +161,17 @@ fn settings_hosts_and_anthropic_auth_match_fixture() {
 #[test]
 fn schema_is_stable() {
     assert_eq!(schema()["required"].as_array().unwrap().len(), 9);
+}
+
+#[test]
+fn vehicle_prompt_matches_the_album_targets() {
+    let mut settings = Settings::default();
+    assert!(vehicle_prompt(&settings, false).contains("registered competition vehicles"));
+    settings.read_numbers = false;
+    let road = vehicle_prompt(&settings, false);
+    assert!(road.contains("registered vehicles, not race-numbered"));
+    assert!(road.contains("Set race_number to null"));
+    settings.read_plates = false;
+    assert!(vehicle_prompt(&settings, true)
+        .contains("not expected to contain useful registration plates or race numbers"));
 }

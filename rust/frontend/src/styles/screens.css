@@ -40,6 +40,13 @@
 .profile .radio { flex: none; width: 16px; height: 16px; margin-top: 2px; border-radius: 50%; border: 2px solid var(--text-mute); transition: border-color .12s, box-shadow .12s; }
 .profile.selected .radio { border-color: var(--accent); box-shadow: inset 0 0 0 3px var(--surface), inset 0 0 0 8px var(--accent); }
 .profile-text { display: grid; gap: 1px; } .profile-text b { font-weight: 600; } .profile-text small { color: var(--text-mute); font-size: 12px; }
+.scan-targets { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.scan-targets label { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); cursor: pointer; }
+.scan-targets label:has(input:checked) { border-color: #315a45; background: rgba(46, 230, 168, .05); }
+.scan-targets input { flex: none; margin-top: 2px; }
+.scan-targets span { display: grid; gap: 1px; }
+.scan-targets b { font-weight: 600; }
+.scan-targets small { color: var(--text-mute); font-size: 12px; line-height: 1.4; }
 .busy-note { font-size: 12px; max-width: 42ch; line-height: 1.4; }
 .dropzone { display: flex; align-items: center; gap: 14px; max-width: 720px; margin-top: 18px; padding: 16px 18px; border: 1px dashed var(--line); border-radius: var(--radius-lg); color: var(--text-dim); }
 .dropzone div { display: grid; gap: 1px; } .dropzone b { color: var(--text); font-weight: 600; } .dropzone span { font-size: 12.5px; color: var(--text-mute); }
@@ -84,7 +91,8 @@
 .card.culled { opacity: 1; border-left: 3px solid var(--bad); }
 .card.culled .thumb { opacity: .82; }
 .frame-box { position: relative; flex: none; }
-.card .thumb { aspect-ratio: 3 / 2; width: 100%; object-fit: cover; object-position: center; background: #08080a; display: block; }
+.card .thumb-wrap { aspect-ratio: 3 / 2; }
+.card .thumb { width: 100%; height: 100%; object-fit: cover; object-position: center; background: #08080a; display: block; }
 .focus { position: absolute; top: 8px; right: 8px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 2px 6px; border-radius: 5px; background: rgba(0, 0, 0, .6); backdrop-filter: blur(4px); border: 1px solid transparent; }
 .focus.good { color: var(--good); } .focus.fair { color: var(--warn2); } .focus.poor { color: var(--bad); } .focus.none { color: var(--text-mute); }
 .focus.panning { color: var(--scan); border-color: #1c4a3c; top: 32px; }
@@ -107,7 +115,8 @@
 .frame-side-head h3 { flex: 1; margin: 0; font-size: 15px; font-weight: 650; color: var(--text); text-transform: none; letter-spacing: 0; line-height: 1.35; word-break: break-all; }
 .inspect-image { padding: 0; border: 1px solid var(--line-soft); border-radius: var(--radius); overflow: hidden; background: #08080a; line-height: 0; }
 .inspect-image:hover { border-color: var(--accent); }
-.inspect-image img { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; }
+.inspect-image .image-load { aspect-ratio: 3 / 2; }
+.inspect-image img { width: 100%; height: 100%; object-fit: cover; }
 .frame-side-foot { display: flex; align-items: center; gap: 6px; padding: 10px 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
 .cut { font-size: 11px; padding: 2px 9px; } .cut.on { background: rgba(240, 97, 107, .12); }
 .meta { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 12px; }
@@ -123,8 +132,6 @@ dialog.viewer { padding: 0; max-width: 96vw; max-height: 94vh; overflow: hidden;
 .frame-view { display: flex; align-items: stretch; max-height: 94vh; }
 .frame-stage-big { position: relative; display: flex; align-items: center; justify-content: center; background: #08080a; min-width: 0; }
 .stage-inner { position: relative; width: min(calc(96vw - 302px), calc(94vh * var(--ar)), 1500px); aspect-ratio: var(--ar); }
-.stage-inner img { width: 100%; height: 100%; object-fit: contain; display: block; transition: filter .25s; }
-.stage-inner.loading img { filter: blur(3px) saturate(.85); }
 .overlay { position: absolute; inset: 0; pointer-events: none; }
 .box { position: absolute; border: 2px solid var(--scan); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
 .box.pan { border-color: var(--accent-hover); }
@@ -133,6 +140,10 @@ dialog.viewer { padding: 0; max-width: 96vw; max-height: 94vh; overflow: hidden;
 .frame-step { position: absolute; top: 50%; transform: translateY(-50%); width: 42px; height: 62px; padding: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .55); backdrop-filter: blur(4px); border: 1px solid var(--line); border-radius: 9px; font-size: 26px; line-height: 1; opacity: 0; transition: opacity .12s; }
 .frame-stage-big:hover .frame-step { opacity: 1; } .frame-step:hover { border-color: var(--accent); } .frame-step:disabled { opacity: 0 !important; }
 .frame-step.prev { left: 12px; } .frame-step.next { right: 12px; }
+.frame-jump { position: absolute; bottom: 12px; padding: 5px 10px; background: rgba(0, 0, 0, .55); backdrop-filter: blur(4px); font-size: 11px; opacity: 0; }
+.frame-stage-big:hover .frame-jump, .frame-jump:focus-visible { opacity: 1; }
+.frame-jump:disabled { opacity: 0 !important; }
+.frame-jump.first { left: 12px; } .frame-jump.last { right: 12px; }
 .viewer-subject { display: grid; gap: 3px; padding-top: 8px; margin-top: 6px; border-top: 1px solid var(--line-soft); }
 #frame-caption { font-size: 10.5px; line-height: 1.45; word-break: break-all; margin: 0; }
 .frame-pos { margin: 0; font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; }
@@ -142,9 +153,6 @@ dialog.viewer { padding: 0; max-width: 96vw; max-height: 94vh; overflow: hidden;
 .train-stage { flex: 1; min-width: 0; overflow: auto; background: var(--bg); display: flex; align-items: center; justify-content: center; }
 /* Sized from the frame's aspect ratio, not from percentages of an auto-sized box, so the outline lines up with the picture. */
 .train-frame { position: relative; flex: none; width: min(calc(100vw - 342px), calc((100vh - 110px) * var(--ar, 1.5))); aspect-ratio: var(--ar, 1.5); line-height: 0; border-radius: var(--radius); overflow: hidden; }
-.train-frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.train-stage.full { align-items: flex-start; justify-content: flex-start; }
-.train-stage.full .train-frame { width: auto; aspect-ratio: auto; border-radius: 0; } .train-stage.full .train-frame img { width: auto; height: auto; max-width: none; }
 .train-box { position: absolute; border: 2px solid var(--warn2); pointer-events: none; }
 .train-empty { color: var(--text-dim); padding: 24px; max-width: 46ch; text-align: center; line-height: 1.5; }
 .train-side { width: 320px; flex: none; padding: 20px; overflow: auto; background: var(--surface); border-left: 1px solid var(--line); }

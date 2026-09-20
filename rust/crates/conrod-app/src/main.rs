@@ -136,6 +136,31 @@ fn taskbar(desktop: &Desktop) -> ProgressBarState {
     }
 }
 
+/// The notification-area tooltip stays useful while the window is hidden.
+fn tray_tooltip(desktop: &Desktop) -> String {
+    use conrod_core::tasks::State;
+    let tasks = desktop.hub.snapshot();
+    let Some(task) = tasks
+        .iter()
+        .find(|task| matches!(task.state, State::Running | State::Paused))
+    else {
+        return "Conrod · All caught up".into();
+    };
+    let state = if task.state == State::Paused {
+        "Paused"
+    } else {
+        "Running"
+    };
+    match task.total {
+        0 => format!("Conrod · {state}: {}", task.label),
+        total => format!(
+            "Conrod · {state}: {} · {}%",
+            task.label,
+            (task.done.saturating_mul(100) / total).min(100)
+        ),
+    }
+}
+
 /// `Conrod.exe --selftest [report.txt]`: the release's own proof that it can work.
 /// The GUI build has no console, so the report goes to a file (default: the temp folder).
 fn selftest() -> ! {
@@ -198,6 +223,9 @@ fn main() {
                     }
                     seen = version;
                     let _ = handle.emit("status", worker.status());
+                    if let Some(tray) = handle.tray_by_id("main") {
+                        let _ = tray.set_tooltip(Some(tray_tooltip(&worker)));
+                    }
                     if let Some(window) = handle.get_webview_window("main") {
                         let _ = window.set_progress_bar(taskbar(&worker));
                     }
@@ -207,7 +235,7 @@ fn main() {
                 tauri::menu::MenuItem::with_id(app, "show", "Open Conrod", true, None::<&str>)?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = tauri::menu::Menu::with_items(app, &[&show, &quit])?;
-            let mut tray = tauri::tray::TrayIconBuilder::new()
+            let mut tray = tauri::tray::TrayIconBuilder::with_id("main")
                 .tooltip("Conrod")
                 .menu(&menu)
                 .on_menu_event(|app, event| {

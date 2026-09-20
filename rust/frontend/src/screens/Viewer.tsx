@@ -5,6 +5,7 @@ import { asset } from '../lib/api';
 import { boxOf, filename, frameStars, parseAttributes } from '../lib/review';
 import type { ReviewModel } from '../state/useReview';
 import { usePreview, type Runner } from '../state/hooks';
+import { ZoomPanImage } from '../components/Media';
 
 type Props = { rv: ReviewModel; run: Runner; showBoxes: boolean; onToggleBoxes: () => void; onClose: () => void };
 
@@ -21,8 +22,8 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
     <Modal label="Photo viewer" className="viewer" onClose={onClose}>
       <div className="frame-view">
         <div className="frame-stage-big">
-          <div className={`stage-inner${preview ? '' : ' loading'}`} style={{ '--ar': ratio } as CSSProperties}>
-            <img src={asset(preview) ?? asset(frame.thumb_path)} alt={filename(frame.path)} />
+          <div className="stage-inner" style={{ '--ar': ratio } as CSSProperties}>
+            <ZoomPanImage src={asset(preview) ?? asset(frame.thumb_path)} alt={filename(frame.path)}>
             {showBoxes && (
               <div className="overlay">
                 {dets.map((d) => {
@@ -37,9 +38,12 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
                 })}
               </div>
             )}
+            </ZoomPanImage>
           </div>
+          <button className="frame-jump first" title="First frame" aria-label="First frame" disabled={index <= 0} onClick={() => step(Number.NEGATIVE_INFINITY)}>First</button>
           <button className="frame-step prev" title="Previous frame (←)" aria-label="Previous frame" disabled={index <= 0} onClick={() => step(-1)}>‹</button>
           <button className="frame-step next" title="Next frame (→)" aria-label="Next frame" disabled={index < 0 || index >= frames.length - 1} onClick={() => step(1)}>›</button>
+          <button className="frame-jump last" title="Last frame" aria-label="Last frame" disabled={index < 0 || index >= frames.length - 1} onClick={() => step(Number.POSITIVE_INFINITY)}>Last</button>
         </div>
         <aside className="frame-side">
           <div className="frame-side-head">

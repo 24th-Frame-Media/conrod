@@ -1,6 +1,7 @@
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { engine } from '../lib/api';
+import { engine, inTauri } from '../lib/api';
 import type { Job, ModelInfo, Settings, Status } from '../lib/types';
 import type { Runner } from './hooks';
 import { useToast } from './toast';
@@ -84,6 +85,7 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
     if (last?.state === 'failed' && last.error === 'stopped') toast('Scan stopped. You can resume it later.');
     else if (last?.state === 'failed') toast(`Scan failed: ${last.error ?? 'unknown error'}`, { tone: 'error' });
     else toast(name ? `Scan complete: ${name}` : 'Scan complete', { tone: 'ok' });
+    if (inTauri) void getCurrentWindow().requestUserAttention(last?.state === 'failed' ? UserAttentionType.Critical : UserAttentionType.Informational);
   }, [status, toast]);
 
   return { ready, jobs, setJobs, settings, setSettings, models, status, setStatus, refreshJobs };

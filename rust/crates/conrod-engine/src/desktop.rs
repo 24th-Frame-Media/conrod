@@ -120,6 +120,8 @@ impl Desktop {
             label: None,
             stage,
             recursive: true,
+            read_plates: None,
+            read_numbers: None,
         })
         .map(|_| ())
     }
@@ -397,6 +399,12 @@ impl Desktop {
             }
             let profile = a.profile.as_deref().unwrap_or(&settings.scan_profile);
             settings.scan_profile = ScanProfile::parse(profile).name().into();
+            if let Some(read) = a.read_plates {
+                settings.read_plates = read;
+            }
+            if let Some(read) = a.read_numbers {
+                settings.read_numbers = read;
+            }
             settings.extra.insert(
                 "native_scan_stage".into(),
                 json!(match a.stage {

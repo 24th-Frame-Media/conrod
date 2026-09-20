@@ -6,7 +6,7 @@ members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-io", "cr
 default-members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-io", "crates/conrod-store", "crates/conrod-cli", "crates/conrod-engine", "crates/conrod-app"]
 
 [workspace.package]
-version = "1.0.0-beta.1"
+version = "1.0.0-beta.2"
 edition = "2021"
 license = "AGPL-3.0-only"
 repository = "https://github.com/kapsikkum/conrod"

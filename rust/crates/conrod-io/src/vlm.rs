@@ -928,6 +928,19 @@ pub const CAR_PROMPT: &str = include_str!("prompts/car.txt");
 pub const BIKE_PROMPT: &str = include_str!("prompts/bike.txt");
 pub const BURST_PROMPT: &str = include_str!("prompts/burst.txt");
 
+/// Add the shoot's known visual context instead of asking a local model to
+/// decide whether incidental digits are a plate or a competition number.
+pub fn vehicle_prompt(settings: &Settings, is_bike: bool) -> String {
+    let base = if is_bike { BIKE_PROMPT } else { CAR_PROMPT };
+    let context = match (settings.read_plates, settings.read_numbers) {
+        (true, true) => "This shoot contains registered competition vehicles. Look for a race number only on a door, roundel, fairing, or rider. Registration plates are handled by a separate reader: never copy plate characters into race_number.",
+        (true, false) => "This shoot contains registered vehicles, not race-numbered competition entries. Registration plates are handled by a separate reader. Set race_number to null and focus on vehicle identity, colour, body type, and visible livery.",
+        (false, true) => "This shoot contains competition vehicles without useful registration plates. Look carefully for a race number on a door, roundel, fairing, or rider, and never use unrelated background digits.",
+        (false, false) => "This shoot is not expected to contain useful registration plates or race numbers. Set race_number to null and focus on vehicle identity, colour, body type, team, and visible livery.",
+    };
+    format!("{base}\n\nAlbum context: {context}")
+}
+
 pub fn schema() -> Value {
     json!({
         "type": "object",
@@ -1155,9 +1168,9 @@ pub fn describe(
     is_bike: bool,
 ) -> Result<VehicleDescription, VlmError> {
     let payload_image = encode_for_model(image, settings.vlm_input_edge);
-    let prompt = if is_bike { BIKE_PROMPT } else { CAR_PROMPT };
-    match client.call(settings, prompt, &[payload_image], &schema(), 500) {
-        Ok(parsed) => Ok(map_vehicle(&parsed, settings, true)),
+    let prompt = vehicle_prompt(settings, is_bike);
+    match client.call(settings, &prompt, &[payload_image], &schema(), 500) {
+        Ok(parsed) => Ok(map_vehicle(&parsed, settings, settings.read_numbers)),
         Err(VlmError::Stopped) => Err(VlmError::Stopped),
         Err(err) => {
             let who = display_name(&settings.vlm_provider);
