@@ -1,0 +1,134 @@
+name: Release (Rust)
+
+# Tag-triggered: push rust-v1.0.0-beta.1 and this builds the Windows installer and
+# a portable zip and attaches them, as a PRE-release, to a GitHub Release. The
+# Python app keeps its own v* releases (release.yml) until the cutover; a
+# pre-release is invisible to its updater, which reads "latest".
+on:
+  push:
+    tags:
+      - "rust-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (without the leading rust-v)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME#rust-v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One version across Cargo.toml, tauri.conf.json, package.json and the tag,
+      # so an installer never says one thing and its filename another.
+      - name: Check the version everywhere
+        run: node rust/scripts/check-version.mjs "rust-v${{ steps.version.outputs.value }}"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: rust/frontend/package-lock.json
+
+      # Models and ExifTool, pinned by SHA-256 in rust/scripts/assets.json. A
+      # download whose hash differs fails the release rather than shipping it.
+      - name: Fetch the pinned release assets
+        run: powershell -NoProfile -File rust/scripts/fetch-release-assets.ps1
+
+      - name: Build the frontend
+        working-directory: rust/frontend
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: Test
+        working-directory: rust
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+
+      - name: Build the app and the installer
+        working-directory: rust/crates/conrod-app
+        run: node ../../frontend/node_modules/@tauri-apps/cli/tauri.js build
+
+      - name: Assemble the portable folder
+        shell: powershell
+        run: |
+          $v = "${{ steps.version.outputs.value }}"
+          New-Item -ItemType Directory -Force dist/Conrod | Out-Null
+          Copy-Item rust/target/release/Conrod.exe dist/Conrod/
+          Copy-Item rust/crates/conrod-app/resources dist/Conrod/resources -Recurse
+          Copy-Item LICENSE dist/Conrod/
+          Copy-Item (Get-ChildItem rust/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1) "dist/Conrod-$v-win64-setup.exe"
+          Compress-Archive -Path dist/Conrod -DestinationPath "dist/Conrod-$v-win64.zip"
+
+      # Importing proves nothing about a bundle. This runs the shipped exe from the
+      # assembled folder: every model found and loaded, a frame through the
+      # detector, sharpness and OCR, ExifTool, a database. It fails the release
+      # if any of them break.
+      - name: Self-test the shipped build
+        shell: powershell
+        run: |
+          $p = Start-Process dist/Conrod/Conrod.exe -ArgumentList '--selftest', "$PWD/selftest.txt" -Wait -PassThru
+          Get-Content selftest.txt
+          exit $p.ExitCode
+
+      # The in-app updater refuses to install an asset whose hash does not match
+      # this file, so it ships with every release. sha256sum format, as the
+      # Python releases use.
+      - name: Checksums
+        shell: bash
+        working-directory: dist
+        run: |
+          sha256sum "Conrod-${{ steps.version.outputs.value }}-win64.zip" "Conrod-${{ steps.version.outputs.value }}-win64-setup.exe" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Conrod-rust-windows
+          path: |
+            dist/Conrod-*-win64.zip
+            dist/Conrod-*-win64-setup.exe
+            dist/SHA256SUMS.txt
+
+      - name: Publish the pre-release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          files: |
+            dist/Conrod-*-win64.zip
+            dist/Conrod-*-win64-setup.exe
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+          body: |
+            ## Conrod (native) ${{ steps.version.outputs.value }} — pre-release
+
+            **Installer** (`-setup.exe`, per-user, no admin) or **portable** (unzip, run `Conrod.exe`).
+            Models and ExifTool are bundled. Your existing `~/.conrod` library, settings and
+            trained models are used as they are, and the Python app can still open them.
+
+            Optional: **Ollama** plus `ollama pull qwen2.5vl:7b` (~6 GB) names make, model,
+            colour and team. Without it Conrod still culls, reads plates, numbers and livery text.
+
+            The installer is not code-signed, so Windows SmartScreen will ask you to confirm.
