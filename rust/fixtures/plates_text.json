@@ -1,0 +1,286 @@
+{
+ "interpret": [
+  {
+   "lines": [
+    [
+     "FD23RS",
+     0.9
+    ]
+   ],
+   "want": {
+    "candidates": [
+     "FD23RS"
+    ],
+    "confidence": 1.0,
+    "state": null,
+    "text": "FD23RS"
+   }
+  },
+  {
+   "lines": [
+    [
+     "New South Wales",
+     0.5
+    ],
+    [
+     "FD23RS",
+     0.92
+    ]
+   ],
+   "want": {
+    "candidates": [
+     "FD23RS"
+    ],
+    "confidence": 1.0,
+    "state": "NSW",
+    "text": "FD23RS"
+   }
+  },
+  {
+   "lines": [
+    [
+     "NSW",
+     0.4
+    ],
+    [
+     "ABC123",
+     0.6
+    ]
+   ],
+   "want": {
+    "candidates": [
+     "ABC123"
+    ],
+    "confidence": 0.8,
+    "state": "NSW",
+    "text": "ABC123"
+   }
+  },
+  {
+   "lines": [
+    [
+     "QUEENSLAND",
+     0.3
+    ],
+    [
+     "73111J",
+     0.88
+    ]
+   ],
+   "want": {
+    "candidates": [
+     "73111J"
+    ],
+    "confidence": 1.0,
+    "state": "QLD",
+    "text": "73111J"
+   }
+  },
+  {
+   "lines": [
+    [
+     "The Sunshine State",
+     0.2
+    ],
+    [
+     "XY",
+     0.5
+    ]
+   ],
+   "want": {
+    "candidates": [],
+    "confidence": 0.0,
+    "state": null,
+    "text": null
+   }
+  },
+  {
+   "lines": [
+    [
+     "garbage!!",
+     0.9
+    ]
+   ],
+   "want": {
+    "candidates": [],
+    "confidence": 0.0,
+    "state": null,
+    "text": null
+   }
+  },
+  {
+   "lines": [
+    [
+     "ABC1234567",
+     0.9
+    ]
+   ],
+   "want": {
+    "candidates": [],
+    "confidence": 0.0,
+    "state": null,
+    "text": null
+   }
+  },
+  {
+   "lines": [
+    [
+     "ELA93NG",
+     0.7
+    ]
+   ],
+   "want": {
+    "candidates": [
+     "LA93NG"
+    ],
+    "confidence": 0.8999999999999999,
+    "state": null,
+    "text": "LA93NG"
+   }
+  },
+  {
+   "lines": [],
+   "want": {
+    "candidates": [],
+    "confidence": 0.0,
+    "state": null,
+    "text": null
+   }
+  },
+  {
+   "lines": [
+    [
+     "Australia",
+     0.9
+    ],
+    [
+     "random word",
+     0.8
+    ]
+   ],
+   "want": {
+    "candidates": [],
+    "confidence": 0.0,
+    "state": null,
+    "text": null
+   }
+  },
+  {
+   "lines": [
+    [
+     "VIC",
+     0.6
+    ],
+    [
+     "1ABC23",
+     0.5
+    ]
+   ],
+   "want": {
+    "candidates": [
+     "1ABC23"
+    ],
+    "confidence": 0.7,
+    "state": "VIC",
+    "text": "1ABC23"
+   }
+  },
+  {
+   "lines": [
+    [
+     "73111J",
+     0.5
+    ],
+    [
+     "FD23RS",
+     0.6
+    ]
+   ],
+   "want": {
+    "candidates": [
+     "73111J",
+     "FD23RS"
+    ],
+    "confidence": 0.8,
+    "state": null,
+    "text": "FD23RS"
+   }
+  }
+ ],
+ "looks_like_plate": [
+  {
+   "token": "FD23RS",
+   "want": true
+  },
+  {
+   "token": "ABC123",
+   "want": true
+  },
+  {
+   "token": "123ABC",
+   "want": true
+  },
+  {
+   "token": "A1234",
+   "want": true
+  },
+  {
+   "token": "731117J",
+   "want": true
+  },
+  {
+   "token": "AB1",
+   "want": false
+  },
+  {
+   "token": "",
+   "want": false
+  },
+  {
+   "token": "abc123",
+   "want": true
+  },
+  {
+   "token": "NSW",
+   "want": false
+  },
+  {
+   "token": "12345678",
+   "want": false
+  },
+  {
+   "token": "AB1234CD",
+   "want": false
+  },
+  {
+   "token": "1A2B3C",
+   "want": false
+  }
+ ],
+ "trim_to_format": [
+  {
+   "token": "ELA93NG",
+   "want": "LA93NG"
+  },
+  {
+   "token": "LA93NGX",
+   "want": "LA93NG"
+  },
+  {
+   "token": "ABCDEFGH",
+   "want": "ABCDEFGH"
+  },
+  {
+   "token": "FD23RS",
+   "want": "FD23RS"
+  },
+  {
+   "token": "A",
+   "want": "A"
+  },
+  {
+   "token": "12345",
+   "want": "12345"
+  }
+ ]
+}

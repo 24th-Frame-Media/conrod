@@ -167,6 +167,27 @@ impl Gray {
         }
         current
     }
+
+    /// `cv2.resize(..., INTER_LINEAR)` on a single channel.
+    pub fn resize_cv2_linear(&self, dw: usize, dh: usize) -> Gray {
+        let xs = cv2_linear_taps(dw, self.width);
+        let ys = cv2_linear_taps(dh, self.height);
+        let row = |y: usize| -> Vec<i32> {
+            let src = &self.data[y * self.width..(y + 1) * self.width];
+            xs.iter()
+                .map(|&(s0, s1, a0, a1)| i32::from(src[s0]) * a0 + i32::from(src[s1]) * a1)
+                .collect()
+        };
+        let mut out = Vec::with_capacity(dw * dh);
+        for &(s0, s1, b0, b1) in &ys {
+            let (r0, r1) = (row(s0), row(s1));
+            for (&v0, &v1) in r0.iter().zip(&r1) {
+                let v = (((b0 * (v0 >> 4)) >> 16) + ((b1 * (v1 >> 4)) >> 16) + 2) >> 2;
+                out.push(v.clamp(0, 255) as u8);
+            }
+        }
+        Gray::new(dw, dh, out)
+    }
 }
 
 const PRECISION_BITS: u32 = 32 - 8 - 2;
@@ -293,6 +314,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn crop_is_total() {
+        let img = Rgb::new(4, 3, vec![7; 4 * 3 * 3]);
+        assert_eq!(
+            (img.crop(1, 1, 3, 2).width, img.crop(1, 1, 3, 2).height),
+            (2, 1)
+        );
+        // Outside, inverted and past-the-edge regions are empty rather than a panic.
+        for (x0, y0, x1, y1) in [(5, 5, 9, 9), (3, 2, 1, 1), (2, 2, 2, 9), (0, 0, 9, 9)] {
+            let c = img.crop(x0, y0, x1, y1);
+            assert_eq!(c.data.len(), c.width * c.height * 3);
+        }
+        assert_eq!(img.crop(5, 5, 9, 9).width * img.crop(5, 5, 9, 9).height, 0);
+    }
+
+    #[test]
     fn luma_matches_pillow_on_the_corners() {
         let g = Gray::from_rgb(4, 1, &[255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0]);
         // Pillow: white 255, black 0, red 76, green 150.
@@ -332,6 +368,13 @@ impl Rgb {
         }
     }
 
+    /// Decode an image as RGB, matching Pillow's `convert("RGB")`.
+    pub fn open(path: &std::path::Path) -> image::ImageResult<Rgb> {
+        let img = image::open(path)?.to_rgb8();
+        let (w, h) = img.dimensions();
+        Ok(Rgb::new(w as usize, h as usize, img.into_raw()))
+    }
+
     /// Decode a JPEG at full size, or scaled in the DCT by 1/2, 1/4 or 1/8.
     pub fn decode_jpeg(bytes: &[u8], denominator: u16) -> Result<Rgb, String> {
         let mut decoder = jpeg_decoder::Decoder::new(bytes);
@@ -358,6 +401,43 @@ impl Rgb {
 
     pub fn to_gray(&self) -> Gray {
         Gray::from_rgb(self.width, self.height, &self.data)
+    }
+
+    /// Pillow's 8-bit `RGB.convert("HSV")`, used by the paint swatch.
+    pub fn to_hsv(&self) -> Rgb {
+        let mut data = vec![0u8; self.data.len()];
+        for (px, out) in self
+            .data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(data.as_chunks_mut::<3>().0.iter_mut())
+        {
+            let (r, g, b) = (px[0], px[1], px[2]);
+            let (mx, mn) = (r.max(g).max(b), r.min(g).min(b));
+            let delta = mx - mn;
+            let (h, s) = if delta == 0 {
+                (0u8, 0u8)
+            } else {
+                let s = (255u32 * u32::from(delta) / u32::from(mx)) as u8;
+                let d = f64::from(delta);
+                let mut h6 = if r == mx {
+                    (f64::from(g) - f64::from(b)) / d
+                } else if g == mx {
+                    2.0 + (f64::from(b) - f64::from(r)) / d
+                } else {
+                    4.0 + (f64::from(r) - f64::from(g)) / d
+                };
+                if h6 < 0.0 {
+                    h6 += 6.0;
+                }
+                ((h6 * 42.5) as u8, s)
+            };
+            out[0] = h;
+            out[1] = s;
+            out[2] = mx;
+        }
+        Rgb::new(self.width, self.height, data)
     }
 
     /// Turn a frame upright per its EXIF orientation, the way the Python
@@ -387,8 +467,11 @@ impl Rgb {
         Rgb::new(nw, nh, out)
     }
 
+    /// The region, clamped to the image; empty (zero width or height) when it
+    /// falls outside it or is inverted, never a panic.
     pub fn crop(&self, x0: usize, y0: usize, x1: usize, y1: usize) -> Rgb {
         let (x1, y1) = (x1.min(self.width), y1.min(self.height));
+        let (x0, y0) = (x0.min(x1), y0.min(y1));
         let mut out = Vec::with_capacity((x1 - x0) * (y1 - y0) * 3);
         for y in y0..y1 {
             out.extend_from_slice(&self.data[(y * self.width + x0) * 3..(y * self.width + x1) * 3]);
@@ -416,30 +499,8 @@ impl Rgb {
     /// taps per axis in 11-bit fixed point, and the vectorised vertical pass's
     /// own rounding -- what ultralytics' letterbox feeds the detector.
     pub fn resize_cv2_linear(&self, dw: usize, dh: usize) -> Rgb {
-        fn taps(dst: usize, src: usize) -> Vec<(usize, usize, i32, i32)> {
-            let scale = 1.0 / (dst as f64 / src as f64);
-            (0..dst)
-                .map(|d| {
-                    let f = ((d as f64 + 0.5) * scale - 0.5) as f32;
-                    let mut s = f.floor() as isize;
-                    let mut f = f - s as f32;
-                    if s < 0 {
-                        f = 0.0;
-                        s = 0;
-                    }
-                    let mut s = s as usize;
-                    if s >= src - 1 {
-                        f = 0.0;
-                        s = src - 1;
-                    }
-                    let a0 = ((1.0 - f) * 2048.0).round() as i32;
-                    let a1 = (f * 2048.0).round() as i32;
-                    (s, (s + 1).min(src - 1), a0, a1)
-                })
-                .collect()
-        }
-        let xs = taps(dw, self.width);
-        let ys = taps(dh, self.height);
+        let xs = cv2_linear_taps(dw, self.width);
+        let ys = cv2_linear_taps(dh, self.height);
         // Horizontal pass into 32-bit sums, one row at a time as cv2 does.
         let row = |y: usize| -> Vec<i32> {
             let src = &self.data[y * self.width * 3..(y + 1) * self.width * 3];
@@ -461,4 +522,28 @@ impl Rgb {
         }
         Rgb::new(dw, dh, out)
     }
+}
+
+/// OpenCV's two-tap 11-bit interpolation coefficients shared by RGB and gray.
+fn cv2_linear_taps(dst: usize, src: usize) -> Vec<(usize, usize, i32, i32)> {
+    let scale = 1.0 / (dst as f64 / src as f64);
+    (0..dst)
+        .map(|d| {
+            let f = ((d as f64 + 0.5) * scale - 0.5) as f32;
+            let mut s = f.floor() as isize;
+            let mut f = f - s as f32;
+            if s < 0 {
+                f = 0.0;
+                s = 0;
+            }
+            let mut s = s as usize;
+            if s >= src - 1 {
+                f = 0.0;
+                s = src - 1;
+            }
+            let a0 = ((1.0 - f) * 2048.0).round() as i32;
+            let a1 = (f * 2048.0).round() as i32;
+            (s, (s + 1).min(src - 1), a0, a1)
+        })
+        .collect()
 }

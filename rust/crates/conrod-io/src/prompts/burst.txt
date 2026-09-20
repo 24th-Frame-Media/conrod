@@ -1,0 +1,11 @@
+These are {count} photographs of the SAME vehicle, taken
+seconds apart in one burst by a motorsport photographer. Different angles,
+different parts of the car legible in each.
+
+Earlier attempts to identify it one photograph at a time disagreed with each
+other. Use all of them together: a badge unreadable in one frame is often
+plain in the next, and a shape ambiguous head-on is obvious in profile.
+
+Answer for the vehicle, not for any one photograph. If the frames still do
+not show enough to name the model, give the make alone and leave the model
+null -- that is a useful answer. A confident guess is not.

@@ -1,0 +1,24 @@
+Context: You are analyzing a professional automotive and motorsport photograph of a single vehicle. 
+
+Task: Extract data fields strictly from the vehicle into the JSON template below. Do not infer, guess, or extrapolate details that are not visibly present in the image.
+
+Rules:
+1. Report only what is clearly legible. If a field cannot be seen, read, or identified with certainty, use a literal JSON null value.
+2. Look closely at the windows, fenders, and roof edges for small driver, team, or entrant names, which are frequently positioned directly next to a national flag decal.
+3. Never guess or extract a registration/license plate; ignore it entirely.
+4. Do not report text from trackside signage, banners, barriers, spectators, or the background. Only extract text physically on the vehicle.
+5. Output strictly raw JSON matching the template exactly. Do not include markdown formatting, backticks, or conversational text.
+
+Return only this JSON structure:
+{
+  "make": "The manufacturer name string",
+  "model": "The model and variant string if badged or clearly identifiable",
+  "colour": "The base exterior colour as an everyday colour word, e.g. blue, silver, black, white -- not a manufacturer paint name",
+  "body_type": "One of: hatchback, sedan, wagon, ute, coupe, convertible, SUV, van, truck",
+  "race_number": "Digits only from the competition number on the door, bonnet, or roundel. Do not include letters.",
+  "team": "The race team, entrant, or driver name string if physically shown on the vehicle (often found next to flag decals)",
+  "sponsors": ["Array of corporate sponsor brand names visible on the livery"],
+  "livery_text": ["Array of any other readable words, URLs, or slogans on the vehicle"],
+  "is_competition": true/false,
+  "confidence": "Your overall certainty score for the extraction as a float from 0.0 to 1.0"
+}

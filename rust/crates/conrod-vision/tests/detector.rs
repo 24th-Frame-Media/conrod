@@ -23,6 +23,15 @@ fn boxes_match_ultralytics_when_available() {
         return;
     };
     let fixture: Value = serde_json::from_str(&text).unwrap();
+    if fixture["frames"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|frame| !Path::new(frame["frame"].as_str().unwrap()).is_file())
+    {
+        eprintln!("local detector fixture references removed previews; regenerate with tools/export_onnx.py");
+        return;
+    }
     let options = DetectOptions {
         classes: vec![0, 2, 3, 5, 7],
         ..DetectOptions::default()
