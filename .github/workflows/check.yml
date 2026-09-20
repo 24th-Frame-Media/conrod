@@ -6,44 +6,9 @@ on:
   pull_request:
 
 jobs:
-  import-and-unit:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      - name: Every module imports
-        run: |
-          python -c "
-          import importlib
-          mods = ['config','exif','store','detect','ocr','plates','vlm','analyze',
-                  'mapping','keywords','writer','culling','pipeline','setup_check','server',
-                  'selftest']
-          for m in mods: importlib.import_module('conrod.'+m)
-          print('ok')
-          "
-      # A syntax error in the UI script only shows up as a blank window with a
-      # message in a console nobody is looking at, so check it here.
-      - name: Web assets parse
-        run: node --check conrod/web/app.js
-
-      - name: Offline unit tests
-        run: python -m unittest discover -s tests -t . -v
-
-      # Runs the readers for real — a YOLO inference, an OCR pass and a plate
-      # detector load — so a broken dependency is caught on the commit that
-      # introduces it rather than at release time.
-      - name: Self-test
-        run: python main.py --selftest
-
-  # The Rust port. Its tests read the JSON that tools/gen_golden.py wrote from
-  # the Python implementation, so a divergence between the two fails here.
-  rust:
+  # Its parity tests read fixtures generated from the Python app (branch
+  # legacy-python), so a divergence from that behaviour fails here.
+  check:
     runs-on: windows-latest
     defaults:
       run:

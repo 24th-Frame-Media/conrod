@@ -1,42 +1,38 @@
 # Conrod
 
 Vehicle keywording for motorsport and car photography. Point it at a folder of
-frames; it finds cars and bikes, reads competition numbers, plates and livery
-text, works out make, model and colour, and writes it all into XMP for
-Lightroom, Bridge, Photo Mechanic and Capture One.
+frames; it finds cars, bikes and people, measures focus on the subject, picks
+the keeper of each pass, reads competition numbers, plates and livery text,
+works out make, model and colour, and writes it all into XMP for Lightroom,
+Bridge, Photo Mechanic and Capture One.
 
-![Scanning a folder of frames](docs/screenshots/scan.png)
+Conrod is a native Windows app (Rust, Tauri and React). The earlier Python
+version, up to v0.8.0, lives on the
+[`legacy-python`](../../tree/legacy-python) branch.
 
-![Reviewing what was found](docs/screenshots/review.png)
+## Install
 
-## Run it
+Download the latest release from [Releases](../../releases): the
+`-win64-setup.exe` installer (per user, no admin rights) or the portable
+`-win64.zip` (unzip, run `Conrod.exe`). Builds are not code-signed, so Windows
+SmartScreen asks you to confirm.
 
-Download the latest zip from [Releases](../../releases), unpack it, run
-`Conrod.exe`.
+The models and ExifTool come with the release. If one is ever missing Conrod
+downloads it on the next scan, checked against a pinned SHA-256. Settings →
+Maintenance checks the setup, installs what is missing and looks for updates.
 
-Needs [ExifTool](https://exiftool.org/) on `PATH`, and
-[Ollama](https://ollama.com/) + `ollama pull qwen2.5vl:7b` for make/model/colour
-(optional — without it, Conrod still reads plates, numbers and livery text).
-The Setup screen checks both and links to what's missing.
+Optional: [Ollama](https://ollama.com/) and `ollama pull qwen2.5vl:7b` to name
+make, model, colour and team. Without it Conrod still culls, and reads plates,
+numbers and livery text.
 
-From source:
-
-```bash
-python -m venv .venv
-.venv/Scripts/python -m pip install -r requirements.txt
-.venv/Scripts/python main.py
-```
-
-`main.py --browser` opens in a browser tab instead of a native window.
-`main.py --cli run <folder>` / `review` / `write` / `jobs` gives a command
-line. `main.py --selftest` runs a real detector, OCR and plate-detector pass —
-the first thing to try if a build misbehaves.
+Coming from the Python version: your library in `%USERPROFILE%\.conrod`
+(database, settings, trained models) opens as it is.
 
 ## The entry list
 
-Optional. A CSV with a `number` column — every other column becomes a
-keyword, so a bare two-column grid and a full entry list both work with no
-configuration:
+Optional. A CSV with a `number` column; every other column becomes a keyword,
+so a bare two-column grid and a full entry list both work with no
+configuration (there is an example in [`samples/`](samples/entries-example.csv)):
 
 ```csv
 number,driver,team,class,sponsor
@@ -51,37 +47,34 @@ it beats anything read off the car's own panels.
 ## Good to know
 
 - **Non-destructive.** RAW frames get an `.xmp` sidecar; the original file is
-  never touched. Only JPEGs are written to directly. Keywords are deleted then
-  re-added on every write, so scanning the same shoot twice doesn't stack
-  duplicates.
-- **Culling-aware.** Keywording happens after the cull — rejected frames are
-  skipped by default, and a minimum star rating or colour label can be
-  required. Ratings are read from the `.xmp` sidecar first and the file
-  second, the order Lightroom and Bridge write them.
+  never touched. Only JPEGs are written to directly. Keywords are replaced on
+  every write, so scanning the same shoot twice does not stack duplicates. A
+  dry run shows what would be written first.
 - **Trainable sharpness.** The Train tab shows crops and asks how sharp the
   car is, 1-5 (judge the car, not the background; a crisp car on a streaked
   pan is a 5). After about 60 ratings, *Learn from my ratings* fits a small
-  model, checks it against ratings it hasn't seen, and only switches it on if
-  it beats the built-in measure. It then scores every new scan; re-measure an
-  album to apply it to old ones.
+  model, checks it against ratings it has not seen, and only switches it on if
+  it beats the built-in measure.
 - **Canon-first.** Tested throughout on `.cr3`/`.cr2`. `.jpg`/`.jpeg` are
-  fully supported. Other RAW (`.crw`, `.arw`, `.raf`, `.orf`, `.rw2`, `.dng`)
-  is accepted but unverified; `.nef` is not supported. Open an issue with a
-  few sample frames if you shoot something else.
-- **Data lives in `%USERPROFILE%\.conrod`** — models, previews, the job
-  database, and `conrod.log` if something goes wrong before the window opens.
+  fully supported. Other RAW is not read yet; open an issue with a few sample
+  frames if you shoot something else.
+- **Folder watch.** Point it at a card that is still copying and it picks up
+  each frame once it has stopped changing.
+- **Data lives in `%USERPROFILE%\.conrod`**: previews, the job database,
+  settings and trained models.
 
 ## Models
 
-Each stage uses the model that's actually good at it, rather than asking one
-model to do everything:
+Each stage uses the model that is good at it, rather than asking one model to
+do everything:
 
 | Task | Model | Why |
 |---|---|---|
-| Vehicle detection | YOLO11s | Small and fast, runs on CPU |
-| Plate detection | [open-image-models](https://github.com/ankandrew/open-image-models) | 7.5 MB, ~60ms/frame; also boxes competition-number roundels, which reads far better than OCR across the whole car |
-| Plate OCR | fast-plate-ocr | Trained on plates specifically — 18/18 test crops correct vs 5/18 for general OCR, and ~40x faster |
-| Number & livery text | RapidOCR | General-purpose, for anything that isn't a plate |
+| Vehicle detection | YOLO11s | Small and fast |
+| Plate detection | [open-image-models](https://github.com/ankandrew/open-image-models) | 7.5 MB; also boxes competition-number roundels, which read far better than OCR across the whole car |
+| Plate OCR | fast-plate-ocr | Trained on plates specifically: 18/18 test crops correct vs 5/18 for general OCR, and about 40x faster |
+| Number and livery text | PP-OCRv4 (the RapidOCR models) | General-purpose, for anything that is not a plate |
+| Faces | YuNet | For portrait sessions |
 | Grouping one car across a burst | dinov2-small (quantized) | Cheap visual similarity to merge crops of the same vehicle |
 | Make, model, colour, team | qwen2.5vl:7b via Ollama | See below |
 
@@ -100,13 +93,21 @@ prompt:
 Not close. qwen3-vl is newer and worse here, and puts its answer in a
 `thinking` field a normal reader sees as empty. The vision model also cannot
 read plate characters at any resolution tried, which is why plate reading is
-a separate detector + OCR pair rather than one more thing asked of the VLM.
+a separate detector and OCR pair rather than one more thing asked of the VLM.
 
-## Test
+## Build
 
-```bash
-.venv/Scripts/python -m unittest discover -s tests
+Needs Rust (MSVC), the Visual Studio C++ build tools, Node.js and WebView2.
+
+```powershell
+cd rust/frontend
+npm ci
+npm run tauri -- build --ci     # installer: rust/target/release/bundle/nsis/
 ```
+
+[`rust/README.md`](rust/README.md) has development, checks and the
+`conrod-cli` command line; [`rust/API.md`](rust/API.md) lists every command the
+app exposes.
 
 ## Contribute
 
@@ -114,24 +115,31 @@ a separate detector + OCR pair rather than one more thing asked of the VLM.
 scan -> preview -> detect -> plate/number/text -> identify (VLM) -> merge -> review -> write
 ```
 
-Everything runs per-vehicle, not per-frame — that's what stops a trackside
-banner being keyworded onto every car that passes it. `conrod/pipeline.py` is
-the orchestration; each reader (`plates.py`, `vlm.py`, `normalise.py`, ...) is
-independent and swappable.
+Everything runs per vehicle, not per frame, which is what stops a trackside
+banner being keyworded onto every car that passes it. The crates in
+[`rust/crates`](rust/crates): `conrod-core` (pure logic), `conrod-vision`
+(detector, plates, OCR, faces, similarity), `conrod-io` (RAW, ExifTool, VLM,
+assets, updates), `conrod-store` (SQLite), `conrod-engine` (the operations),
+`conrod-app` (the Tauri app) and `conrod-cli`.
 
 Issues and PRs welcome.
 
 ### Releasing
 
-Push a tag and CI builds the Windows app, self-tests the frozen exe, and
-attaches it to a GitHub Release:
+Push a tag and CI builds the Windows installer and portable zip, self-tests the
+shipped exe and attaches them, with checksums, to a GitHub Release:
 
 ```bash
-git tag v0.9.0 && git push origin v0.9.0
+git tag v1.0.0 && git push origin v1.0.0
 ```
+
+A tag with a suffix (`v1.0.0-beta.1`) is published as a pre-release. See
+[`rust/RELEASING.md`](rust/RELEASING.md).
 
 ## Licensing
 
-Detection uses Ultralytics YOLO, which is **AGPL-3.0** — anyone distributing a
+Detection uses Ultralytics YOLO, which is **AGPL-3.0**: anyone distributing a
 build must make source available on the same terms. The plate detector
 ([open-image-models](https://github.com/ankandrew/open-image-models)) is MIT.
+Licences of every downloaded model and ExifTool are listed in
+[`rust/scripts/assets.json`](rust/scripts/assets.json).
