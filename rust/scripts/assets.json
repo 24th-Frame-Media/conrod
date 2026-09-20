@@ -1,0 +1,85 @@
+{
+  "release": "https://github.com/kapsikkum/conrod/releases/download/assets-v1",
+  "assets": [
+    {
+      "name": "yolo11s-960.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "AGPL-3.0 (Ultralytics YOLO11)",
+      "sha256": "a7969b78bfd41783637faa406a9e6fff5caa61e5edea4a089446583f4d34943d",
+      "size": 39425581,
+      "sources": []
+    },
+    {
+      "name": "face_detection_yunet_2023mar.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "MIT (OpenCV Zoo YuNet)",
+      "sha256": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+      "size": 232589,
+      "sources": [
+        "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+      ]
+    },
+    {
+      "name": "dinov2-small-quantized.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "Apache-2.0 (Meta DINOv2)",
+      "sha256": "3afdc8bc63b50558d6e5770f5b799bb82455c2311183a2de43803f343a29d917",
+      "size": 24451943,
+      "sources": [
+        "https://huggingface.co/Xenova/dinov2-small/resolve/main/onnx/model_quantized.onnx"
+      ]
+    },
+    {
+      "name": "yolo-v9-t-640-license-plates-end2end.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "MIT (open-image-models)",
+      "sha256": "c3c1026ca7d0585dd88084d68182dd897113712fa734ae1557ca70174440c076",
+      "size": 7835770,
+      "sources": [
+        "https://github.com/ankandrew/open-image-models/releases/download/assets/yolo-v9-t-640-license-plates-end2end.onnx"
+      ]
+    },
+    {
+      "name": "global_mobile_vit_v2_ocr.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "MIT (fast-plate-ocr)",
+      "sha256": "e2fe5946c02e73901f73d21b3b7223a0c3e3b02059d4964fbf279b01af38d63c",
+      "size": 4991602,
+      "sources": [
+        "https://github.com/ankandrew/cnn-ocr-lp/releases/download/arg-plates/global_mobile_vit_v2_ocr.onnx"
+      ]
+    },
+    {
+      "name": "ch_PP-OCRv4_det_infer.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "Apache-2.0 (PaddleOCR via RapidOCR)",
+      "sha256": "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
+      "size": 4745517,
+      "sources": []
+    },
+    {
+      "name": "ch_PP-OCRv4_rec_infer.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "Apache-2.0 (PaddleOCR via RapidOCR)",
+      "sha256": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
+      "size": 10857958,
+      "sources": []
+    },
+    {
+      "name": "exiftool-13.58-win64.zip",
+      "dest": "exiftool",
+      "extract": true,
+      "licence": "Artistic-1.0-Perl OR GPL-1.0-or-later (ExifTool by Phil Harvey; Perl runtime licences in exiftool_files)",
+      "sha256": "170f5c0b791daf6ae089670e12f266cd13d120eec66d6e34cfa72b7e0e6ab5a0",
+      "size": 12740327,
+      "sources": []
+    }
+  ]
+}
