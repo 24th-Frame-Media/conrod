@@ -1,7 +1,7 @@
-//! Round-trip coverage for the setters, plus proof that a database this
-//! crate creates or touches stays fully usable by the Python app: the two
-//! python-backed tests shell out to the photographer's own venv and skip
-//! (rather than fail) when it is not present, since it is a dev-machine path.
+//! Round-trip coverage for the setters, plus proof that a library the Python app wrote
+//! (`fixtures/python_library.sql`) and the schema it created (`fixtures/python_schema.json`)
+//! stay usable by this crate. Both fixtures were recorded from the Python app's own store
+//! (branch `legacy-python`).
 
 use conrod_core::bursts::Frame;
 use conrod_store::{
@@ -15,18 +15,7 @@ use conrod_store::{
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-const PYTHON: &str = "C:/Users/kapsikkum/.trackaction/venv/Scripts/python.exe";
-
-fn python_available() -> bool {
-    Path::new(PYTHON).exists()
-}
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
-}
 
 /// A path under the system temp dir that no other test or process is using.
 fn temp_db_path(label: &str) -> PathBuf {
@@ -41,7 +30,7 @@ fn fresh_conn(label: &str) -> Connection {
     conrod_store::connect(Some(&temp_db_path(label))).unwrap()
 }
 
-// --- pure Rust round trips (no Python needed) --------------------------------
+// --- round trips ---------------------------------------------------------------
 
 #[test]
 fn round_trip_job_and_images() {
@@ -368,194 +357,37 @@ fn review_group_and_frame_fields_round_trip() {
     assert!(get_detection(&conn, det_id).unwrap().is_none());
 }
 
-// --- compatibility with the Python app ---------------------------------------
+// --- compatibility with libraries the Python app wrote ---------------------------
 
 #[test]
-fn rust_created_db_is_readable_by_python() {
-    if !python_available() {
-        eprintln!("no venv at {PYTHON}; skipping");
-        return;
+fn a_library_written_by_the_python_app_opens_and_reads() {
+    let db = temp_db_path("python_library");
+    {
+        let raw = Connection::open(&db).unwrap();
+        // The dump lists tables alphabetically, so a child's rows precede its parent's table.
+        raw.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        raw.execute_batch(include_str!("../../../fixtures/python_library.sql"))
+            .unwrap();
     }
-    let db = temp_db_path("rust_to_python");
-    let conn = conrod_store::connect(Some(&db)).unwrap();
-    let job_id = create_job(
-        &conn,
-        Path::new("C:/shoot"),
-        Some("My Shoot"),
-        &serde_json::json!({"a": 1}),
-    )
-    .unwrap();
-    add_images(
-        &conn,
-        job_id,
-        &[
-            PathBuf::from("C:/shoot/a.jpg"),
-            PathBuf::from("C:/shoot/b.jpg"),
-        ],
-    )
-    .unwrap();
-    let imgs = pending_images(&conn, job_id, "pending").unwrap();
-    let det_id = add_detection(
-        &conn,
-        imgs[0].id,
-        [1.0, 2.0, 3.0, 4.0],
-        "car",
-        0.9,
-        "C:/shoot/crops/1.jpg",
-    )
-    .unwrap();
-    set_number(&conn, det_id, Some("42"), "manual", 0.99).unwrap();
-    set_quality(
-        &conn, det_id, 0.7, "sharp", 0, 4.0, "good", false, "even", -1.0, false,
-    )
-    .unwrap();
-    let culled_id = add_detection(
-        &conn,
-        imgs[1].id,
-        [0.0, 0.0, 1.0, 1.0],
-        "car",
-        0.5,
-        "C:/shoot/crops/2.jpg",
-    )
-    .unwrap();
-    cull_detection(&conn, culled_id, "blurred", false).unwrap();
-    add_sharpness_label(
-        &conn,
-        &imgs[0].path,
-        [1.0, 2.0, 3.0, 4.0],
-        4,
-        false,
-        false,
-        Some(&[0.1, 0.2]),
-        1,
-    )
-    .unwrap();
-    drop(conn);
-
-    let script = r#"
-import json, sys
-from pathlib import Path
-from conrod import store
-
-conn = store.connect(Path(sys.argv[1]))
-det_id, culled_id = int(sys.argv[2]), int(sys.argv[3])
-
-job = store.latest_job(conn)
-imgs = store.pending_images(conn, job["id"], "pending")
-det = conn.execute("SELECT * FROM detections WHERE id=?", (det_id,)).fetchone()
-culled = conn.execute("SELECT * FROM detections WHERE id=?", (culled_id,)).fetchone()
-label = conn.execute(
-    "SELECT stars, features FROM sharpness_labels WHERE path=?", (imgs[0]["path"],)
-).fetchone()
-
-print(json.dumps({
-    "job_label": job["label"],
-    "job_status": job["status"],
-    "image_count": len(imgs),
-    "det_number": det["number"],
-    "det_number_conf": det["number_conf"],
-    "det_sharpness": det["sharpness"],
-    "det_rating_verdict": det["rating_verdict"],
-    "culled_rejected": bool(culled["rejected"]),
-    "culled_reason": culled["cull_reason"],
-    "label_stars": label["stars"] if label else None,
-    "label_features": json.loads(label["features"]) if label and label["features"] else None,
-    "label_counts": store.sharpness_label_counts(conn),
-}))
-"#;
-    let out = Command::new(PYTHON)
-        .current_dir(repo_root())
-        .args([
-            "-c",
-            script,
-            db.to_str().unwrap(),
-            &det_id.to_string(),
-            &culled_id.to_string(),
-        ])
-        .output()
-        .expect("run python");
-    assert!(
-        out.status.success(),
-        "python failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let got: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-
-    assert_eq!(got["job_label"], "My Shoot");
-    assert_eq!(got["job_status"], "scanning");
-    assert_eq!(got["image_count"], 2);
-    assert_eq!(got["det_number"], "42");
-    assert_eq!(got["det_number_conf"], 0.99);
-    assert_eq!(got["det_sharpness"], 0.7);
-    assert_eq!(got["det_rating_verdict"], "good");
-    assert_eq!(got["culled_rejected"], true);
-    assert_eq!(got["culled_reason"], "blurred");
-    assert_eq!(got["label_stars"], 4);
-    assert_eq!(got["label_features"], serde_json::json!([0.1, 0.2]));
-    assert_eq!(got["label_counts"]["4"], 1);
-}
-
-#[test]
-fn python_created_db_is_readable_by_rust() {
-    if !python_available() {
-        eprintln!("no venv at {PYTHON}; skipping");
-        return;
-    }
-    let db = temp_db_path("python_to_rust");
-    let script = r#"
-import json, sys
-from pathlib import Path
-from conrod import store
-
-conn = store.connect(Path(sys.argv[1]))
-job_id = store.create_job(conn, Path("C:/shoot2"), "Py Shoot", {"b": 2})
-store.add_images(conn, job_id, [Path("C:/shoot2/a.jpg"), Path("C:/shoot2/b.jpg")])
-imgs = store.pending_images(conn, job_id, "pending")
-det_id = store.add_detection(conn, imgs[0]["id"], (1.0, 2.0, 3.0, 4.0), "car", 0.8, "C:/shoot2/crops/1.jpg")
-store.set_number(conn, det_id, "7", "ocr", 0.95)
-store.set_quality(conn, det_id, sharpness=0.6, sharpness_verdict="soft", clipped=1,
-                   rating=2.5, rating_verdict="fair", panning=True, sharp_end="left",
-                   background=0.2, uncertain=True)
-culled_id = store.add_detection(conn, imgs[1]["id"], (0.0, 0.0, 1.0, 1.0), "car", 0.4, "C:/shoot2/crops/2.jpg")
-store.cull_detection(conn, culled_id, "no plate", uncertain=True)
-store.add_sharpness_label(conn, imgs[0]["path"], (1.0, 2.0, 3.0, 4.0), stars=5, pan=False,
-                           heur_pan=False, features=(0.3, 0.4), version=1)
-conn.close()
-print(json.dumps({"job_id": job_id, "det_id": det_id, "culled_id": culled_id}))
-"#;
-    let out = Command::new(PYTHON)
-        .current_dir(repo_root())
-        .args(["-c", script, db.to_str().unwrap()])
-        .output()
-        .expect("run python");
-    assert!(
-        out.status.success(),
-        "python failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let meta: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let job_id = meta["job_id"].as_i64().unwrap();
-    let det_id = meta["det_id"].as_i64().unwrap();
-    let culled_id = meta["culled_id"].as_i64().unwrap();
-
     let conn = conrod_store::connect(Some(&db)).unwrap();
     let job = latest_job(&conn).unwrap().unwrap();
-    assert_eq!(job.id, job_id);
     assert_eq!(job.label.as_deref(), Some("Py Shoot"));
 
-    let imgs = pending_images(&conn, job_id, "pending").unwrap();
+    let imgs = pending_images(&conn, job.id, "pending").unwrap();
     assert_eq!(imgs.len(), 2);
 
-    // det_id has a number_source; only the culled one, with none, is unread.
-    let unread = unread_detections(&conn, job_id).unwrap();
+    // The numbered detection has a number_source; only the culled one, with none, is unread.
+    let unread = unread_detections(&conn, job.id).unwrap();
     assert_eq!(unread.len(), 1);
-    assert_eq!(unread[0].id, culled_id);
     assert!(unread[0].rejected);
     assert_eq!(unread[0].cull_reason.as_deref(), Some("no plate"));
     assert_eq!(unread[0].uncertain, Some(1));
 
-    let numbered = one_detection(&conn, det_id);
-    assert_eq!(numbered.number.as_deref(), Some("7"));
+    let numbered = list_detections(&conn, job.id)
+        .unwrap()
+        .into_iter()
+        .find(|d| d.number.as_deref() == Some("7"))
+        .expect("the numbered detection");
     assert_eq!(numbered.sharpness, Some(0.6));
     assert_eq!(numbered.rating_verdict.as_deref(), Some("fair"));
     assert_eq!(numbered.panning, Some(1));
@@ -567,72 +399,47 @@ print(json.dumps({"job_id": job_id, "det_id": det_id, "culled_id": culled_id}))
 }
 
 #[test]
-fn schema_matches_between_python_and_rust_created_dbs() {
-    if !python_available() {
-        eprintln!("no venv at {PYTHON}; skipping");
-        return;
-    }
+fn the_rust_schema_keeps_every_column_of_the_python_schema() {
     let rust_db = temp_db_path("schema_rust");
     conrod_store::connect(Some(&rust_db)).unwrap();
-
-    let py_db = temp_db_path("schema_python");
-    let out = Command::new(PYTHON)
-        .current_dir(repo_root())
-        .args([
-            "-c",
-            "import sys; from pathlib import Path; from conrod import store; store.connect(Path(sys.argv[1])).close()",
-            py_db.to_str().unwrap(),
-        ])
-        .output()
-        .expect("run python");
-    assert!(
-        out.status.success(),
-        "python failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-
     let rust_conn = Connection::open(&rust_db).unwrap();
-    let py_conn = Connection::open(&py_db).unwrap();
 
-    for table in [
-        "jobs",
-        "images",
-        "detections",
-        "known_vehicles",
-        "sharpness_labels",
-    ] {
+    let python: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/python_schema.json")).unwrap();
+    for (table, columns) in python.as_object().unwrap() {
         let rust_columns = table_info(&rust_conn, table);
-        let python_columns = table_info(&py_conn, table);
-        // Rust carries additive engine fields; every Python column must keep
-        // the same ordinal/type/constraint so either implementation can read
-        // a database created by the other.
-        assert!(
-            python_columns
-                .iter()
-                .all(|(_, name, kind, notnull, default, pk)| {
-                    rust_columns.iter().any(
-                        |(_, rust_name, rust_kind, rust_notnull, rust_default, rust_pk)| {
-                            name == rust_name
-                                && kind == rust_kind
-                                && notnull == rust_notnull
-                                && default == rust_default
-                                && pk == rust_pk
-                        },
-                    )
-                }),
-            "Python columns missing or changed in Rust schema for {table}"
-        );
+        // Rust carries additive engine fields; every column the Python app created must keep
+        // the same type and constraints so a library it wrote opens unchanged.
+        for c in columns.as_array().unwrap() {
+            let (name, kind) = (c[1].as_str().unwrap(), c[2].as_str().unwrap());
+            let (notnull, default, pk) = (
+                c[3].as_i64().unwrap(),
+                c[4].as_str(),
+                c[5].as_i64().unwrap(),
+            );
+            assert!(
+                rust_columns.iter().any(|(_, n, k, nn, d, p)| n == name
+                    && k == kind
+                    && *nn == notnull
+                    && d.as_deref() == default
+                    && *p == pk),
+                "Python column {table}.{name} is missing or changed in the Rust schema"
+            );
+        }
     }
 
-    assert!(table_info(&rust_conn, "images")
-        .iter()
-        .any(|(_, name, _, _, _, _)| name == "stars"));
-    assert!(table_info(&rust_conn, "images")
-        .iter()
-        .any(|(_, name, _, _, _, _)| name == "rejected"));
-    assert!(table_info(&rust_conn, "detections")
-        .iter()
-        .any(|(_, name, _, _, _, _)| name == "region_type"));
+    for (table, column) in [
+        ("images", "stars"),
+        ("images", "rejected"),
+        ("detections", "region_type"),
+    ] {
+        assert!(
+            table_info(&rust_conn, table)
+                .iter()
+                .any(|(_, name, _, _, _, _)| name == column),
+            "the Rust schema adds {table}.{column}"
+        );
+    }
 }
 
 type ColumnRow = (i64, String, String, i64, Option<String>, i64);
