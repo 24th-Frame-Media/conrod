@@ -6,13 +6,14 @@
     python tools/parity_ops.py rescore 95       # Rust rescore vs Python's stored ratings (a job with stored features)
 
 The real ~/.conrod/conrod.db is only ever opened read-only (sqlite backup into %TEMP%); every run starts
-from a fresh copy. Needs `cargo build --release -p conrod-cli` first. Results on 20 Sept 2026, see rust/HANDOFF.md.
+from a fresh copy. Needs `cargo build --release -p conrod-cli` first (in the main branch's checkout), and
+CONROD_CLI set to that conrod-cli.exe when run from a separate legacy-python worktree. Results on 20 Sept 2026, see rust/HANDOFF.md.
 """
 import json, os, sqlite3, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CLI = ROOT / "rust/target/release/conrod-cli.exe"
+CLI = Path(os.environ.get("CONROD_CLI") or ROOT / "rust/target/release/conrod-cli.exe")
 REAL = "file:" + os.path.expanduser("~/.conrod/conrod.db").replace("\\", "/") + "?mode=ro"
 
 

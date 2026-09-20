@@ -1,3 +1,6 @@
+> **Archived.** The Python app was replaced by the native Rust app on `main`. This branch is the Python code as of
+> v0.8.0, kept for reference and for the tools that check the native port against it (`tools/`).
+
 # Conrod
 
 Vehicle keywording for motorsport and car photography. Point it at a folder of
