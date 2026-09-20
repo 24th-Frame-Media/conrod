@@ -11,6 +11,7 @@ conrod-core = { path = "../conrod-core" }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # Decodes with DCT scaling (1/2, 1/4, 1/8), which the detector path relies on.
 jpeg-decoder = "0.3"
+oar-ocr = { version = "0.9.2", default-features = false }
 # ONNX Runtime; DirectML runs on any DirectX 12 GPU with nothing to install.
 ort = { version = "=2.0.0-rc.13", features = ["directml"] }
 

@@ -94,41 +94,43 @@ pub struct Detector {
     pub device: &'static str,
 }
 
+/// Open an ONNX session with the requested provider. Shared by detector,
+/// plate detector/reader, and the similarity embedder.
+pub(crate) fn open_session(
+    model: &Path,
+    device: Device,
+) -> Result<(Session, &'static str), String> {
+    let open = |gpu: bool| -> Result<Session, String> {
+        let fail = |e: ort::Error<ort::session::builder::SessionBuilder>| e.to_string();
+        let mut builder = Session::builder().map_err(|e| e.to_string())?;
+        if gpu {
+            builder = builder
+                .with_execution_providers([ep::DirectML::default().build().error_on_failure()])
+                .map_err(fail)?;
+        } else {
+            // A share of the cores, so several CPU sessions can run side by side.
+            let threads = (std::thread::available_parallelism().map_or(4, |n| n.get()) / 4).max(1);
+            builder = builder.with_intra_threads(threads).map_err(fail)?;
+            builder = builder
+                .with_execution_providers([ep::CPU::default().build()])
+                .map_err(fail)?;
+        }
+        builder.commit_from_file(model).map_err(|e| e.to_string())
+    };
+    match device {
+        Device::Cpu => Ok((open(false)?, "CPU")),
+        Device::DirectMl => Ok((open(true)?, "DirectML")),
+        Device::Auto => match open(true) {
+            Ok(session) => Ok((session, "DirectML")),
+            Err(_) => Ok((open(false)?, "CPU")),
+        },
+    }
+}
+
 impl Detector {
     pub fn load(model: &Path, device: Device) -> Result<Detector, String> {
-        let open = |gpu: bool| -> Result<Session, String> {
-            let builder = Session::builder().map_err(|e| e.to_string())?;
-            let builder = if gpu {
-                builder
-                    .with_execution_providers([ep::DirectML::default().build().error_on_failure()])
-            } else {
-                builder.with_execution_providers([ep::CPU::default().build()])
-            };
-            builder
-                .map_err(|e| e.to_string())?
-                .commit_from_file(model)
-                .map_err(|e| e.to_string())
-        };
-        match device {
-            Device::Cpu => Ok(Detector {
-                session: open(false)?,
-                device: "CPU",
-            }),
-            Device::DirectMl => Ok(Detector {
-                session: open(true)?,
-                device: "DirectML",
-            }),
-            Device::Auto => match open(true) {
-                Ok(session) => Ok(Detector {
-                    session,
-                    device: "DirectML",
-                }),
-                Err(_) => Ok(Detector {
-                    session: open(false)?,
-                    device: "CPU",
-                }),
-            },
-        }
+        let (session, device) = open_session(model, device)?;
+        Ok(Detector { session, device })
     }
 
     /// Find subjects in one upright frame, with detect.py's rules applied.
@@ -137,8 +139,21 @@ impl Detector {
         frame: &Rgb,
         options: &DetectOptions,
     ) -> Result<Vec<Detection>, String> {
-        let boxes = self.raw(frame, options)?;
-        Ok(filter(boxes, frame.width, frame.height, options))
+        self.detect_letterboxed(letterbox(frame), options)
+    }
+
+    /// `detect` for a frame already run through `letterbox`. That resize is
+    /// the costly, parallelisable half, so a caller sharing this detector
+    /// behind a lock does it before taking the lock and holds it only for
+    /// the network.
+    pub fn detect_letterboxed(
+        &mut self,
+        input: Letterboxed,
+        options: &DetectOptions,
+    ) -> Result<Vec<Detection>, String> {
+        let (width, height) = input.frame;
+        let boxes = self.run(input, options)?;
+        Ok(filter(boxes, width, height, options))
     }
 
     /// What the network itself found, as ultralytics would report it:
@@ -148,10 +163,17 @@ impl Detector {
         frame: &Rgb,
         options: &DetectOptions,
     ) -> Result<Vec<(usize, f32, [f64; 4])>, String> {
-        let input = letterbox(frame);
-        let tensor =
-            Tensor::from_array(([1usize, 3, input.height, input.width], input.tensor.clone()))
-                .map_err(|e| e.to_string())?;
+        self.run(letterbox(frame), options)
+    }
+
+    fn run(
+        &mut self,
+        mut input: Letterboxed,
+        options: &DetectOptions,
+    ) -> Result<Vec<(usize, f32, [f64; 4])>, String> {
+        let dims = [1usize, 3, input.height, input.width];
+        let tensor = Tensor::from_array((dims, std::mem::take(&mut input.tensor)))
+            .map_err(|e| e.to_string())?;
         let outputs = self
             .session
             .run(ort::inputs![tensor])

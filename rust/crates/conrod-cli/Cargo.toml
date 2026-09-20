@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "conrod"
+name = "conrod-cli"
 path = "src/main.rs"
 
 [dependencies]

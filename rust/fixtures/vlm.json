@@ -1,0 +1,541 @@
+{
+ "anthropic_key_kind": [
+  {
+   "anthropic_key_kind": "auto",
+   "expected_auth": {
+    "x-api-key": "sk-ant-api03-abc"
+   },
+   "expected_kind": "api-key",
+   "vlm_api_key": "sk-ant-api03-abc"
+  },
+  {
+   "anthropic_key_kind": "auto",
+   "expected_auth": {
+    "Authorization": "Bearer sk-ant-oat01-abc"
+   },
+   "expected_kind": "claude-code",
+   "vlm_api_key": "sk-ant-oat01-abc"
+  },
+  {
+   "anthropic_key_kind": "auto",
+   "expected_auth": {
+    "Authorization": "Bearer sk-ant-ort01-abc"
+   },
+   "expected_kind": "claude-code",
+   "vlm_api_key": "sk-ant-ort01-abc"
+  },
+  {
+   "anthropic_key_kind": "api-key",
+   "expected_auth": {
+    "x-api-key": "sk-ant-api03-abc"
+   },
+   "expected_kind": "api-key",
+   "vlm_api_key": "sk-ant-api03-abc"
+  },
+  {
+   "anthropic_key_kind": "claude-code",
+   "expected_auth": {
+    "Authorization": "Bearer sk-ant-oat01-abc"
+   },
+   "expected_kind": "claude-code",
+   "vlm_api_key": "sk-ant-oat01-abc"
+  },
+  {
+   "anthropic_key_kind": "auto",
+   "expected_auth": {
+    "x-api-key": ""
+   },
+   "expected_kind": "api-key",
+   "vlm_api_key": ""
+  }
+ ],
+ "dispatch": {
+  "empty_provider_is_ollama": true,
+  "unknown_provider_raises": true
+ },
+ "ollama_hosts": [
+  {
+   "expected": [
+    "http://127.0.0.1:11434"
+   ],
+   "vlm_extra_hosts": "",
+   "vlm_host": "http://127.0.0.1:11434"
+  },
+  {
+   "expected": [
+    "http://a:11434",
+    "http://b:11434",
+    "http://c:11434"
+   ],
+   "vlm_extra_hosts": "http://b:11434, http://c:11434",
+   "vlm_host": "http://a:11434"
+  },
+  {
+   "expected": [
+    "http://a:11434",
+    "http://b:11434"
+   ],
+   "vlm_extra_hosts": "http://a:11434, http://b:11434",
+   "vlm_host": "http://a:11434/"
+  },
+  {
+   "expected": [
+    "http://a:11434",
+    "http://b:11434"
+   ],
+   "vlm_extra_hosts": " , http://b:11434 ,, ",
+   "vlm_host": "http://a:11434"
+  }
+ ],
+ "requests": [
+  {
+   "provider": "ollama",
+   "request": {
+    "headers": {},
+    "json": {
+     "format": {
+      "properties": {
+       "make": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      },
+      "required": [
+       "make"
+      ],
+      "type": "object"
+     },
+     "images": [
+      "b64img"
+     ],
+     "model": "qwen2.5vl:7b",
+     "options": {
+      "num_predict": 500,
+      "temperature": 0.0
+     },
+     "prompt": "describe it",
+     "stream": false
+    },
+    "query": {},
+    "url": "http://127.0.0.1:11434/api/generate"
+   }
+  },
+  {
+   "provider": "openai",
+   "request": {
+    "headers": {
+     "Authorization": "Bearer sk-test-123"
+    },
+    "json": {
+     "max_tokens": 500,
+     "messages": [
+      {
+       "content": [
+        {
+         "text": "describe it",
+         "type": "text"
+        },
+        {
+         "image_url": {
+          "url": "data:image/jpeg;base64,b64img"
+         },
+         "type": "image_url"
+        }
+       ],
+       "role": "user"
+      }
+     ],
+     "model": "gpt-4o",
+     "response_format": {
+      "json_schema": {
+       "name": "vehicle",
+       "schema": {
+        "additionalProperties": false,
+        "properties": {
+         "make": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "make"
+        ],
+        "type": "object"
+       },
+       "strict": true
+      },
+      "type": "json_schema"
+     },
+     "temperature": 0.0
+    },
+    "query": {},
+    "url": "https://api.openai.com/v1/chat/completions"
+   }
+  },
+  {
+   "provider": "anthropic",
+   "request": {
+    "headers": {
+     "anthropic-version": "2023-06-01",
+     "x-api-key": "sk-ant-test"
+    },
+    "json": {
+     "max_tokens": 500,
+     "messages": [
+      {
+       "content": [
+        {
+         "text": "describe it",
+         "type": "text"
+        },
+        {
+         "source": {
+          "data": "b64img",
+          "media_type": "image/jpeg",
+          "type": "base64"
+         },
+         "type": "image"
+        }
+       ],
+       "role": "user"
+      }
+     ],
+     "model": "claude-sonnet-5",
+     "tool_choice": {
+      "name": "describe_vehicle",
+      "type": "tool"
+     },
+     "tools": [
+      {
+       "description": "Record the extracted vehicle fields.",
+       "input_schema": {
+        "properties": {
+         "make": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "make"
+        ],
+        "type": "object"
+       },
+       "name": "describe_vehicle"
+      }
+     ]
+    },
+    "query": {},
+    "url": "https://api.anthropic.com/v1/messages"
+   }
+  },
+  {
+   "provider": "anthropic-claude-code",
+   "request": {
+    "headers": {
+     "Authorization": "Bearer sk-ant-oat01-test",
+     "anthropic-version": "2023-06-01"
+    },
+    "json": {
+     "max_tokens": 500,
+     "messages": [
+      {
+       "content": [
+        {
+         "text": "describe it",
+         "type": "text"
+        },
+        {
+         "source": {
+          "data": "b64img",
+          "media_type": "image/jpeg",
+          "type": "base64"
+         },
+         "type": "image"
+        }
+       ],
+       "role": "user"
+      }
+     ],
+     "model": "claude-sonnet-5",
+     "tool_choice": {
+      "name": "describe_vehicle",
+      "type": "tool"
+     },
+     "tools": [
+      {
+       "description": "Record the extracted vehicle fields.",
+       "input_schema": {
+        "properties": {
+         "make": {
+          "type": [
+           "string",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "make"
+        ],
+        "type": "object"
+       },
+       "name": "describe_vehicle"
+      }
+     ]
+    },
+    "query": {},
+    "url": "https://api.anthropic.com/v1/messages"
+   }
+  },
+  {
+   "provider": "gemini",
+   "request": {
+    "headers": {},
+    "json": {
+     "contents": [
+      {
+       "parts": [
+        {
+         "text": "describe it"
+        },
+        {
+         "inline_data": {
+          "data": "b64img",
+          "mime_type": "image/jpeg"
+         }
+        }
+       ],
+       "role": "user"
+      }
+     ],
+     "generationConfig": {
+      "maxOutputTokens": 500,
+      "responseMimeType": "application/json",
+      "temperature": 0.0
+     }
+    },
+    "query": {
+     "key": "AIzaTest"
+    },
+    "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+   }
+  }
+ ],
+ "responses": [
+  {
+   "body": {
+    "response": "{\"make\": \"Subaru\"}"
+   },
+   "ok": true,
+   "provider": "ollama",
+   "result": {
+    "make": "Subaru"
+   }
+  },
+  {
+   "body": {
+    "response": "",
+    "thinking": "{\"make\": \"BMW\"}"
+   },
+   "ok": true,
+   "provider": "ollama",
+   "result": {
+    "make": "BMW"
+   }
+  },
+  {
+   "body": {
+    "response": "  ",
+    "thinking": ""
+   },
+   "ok": false,
+   "provider": "ollama",
+   "result": null
+  },
+  {
+   "body": {
+    "response": "not json"
+   },
+   "ok": false,
+   "provider": "ollama",
+   "result": null
+  },
+  {
+   "body": {},
+   "ok": false,
+   "provider": "ollama",
+   "result": null
+  },
+  {
+   "body": {
+    "choices": [
+     {
+      "message": {
+       "content": "{\"make\": \"Ford\"}"
+      }
+     }
+    ]
+   },
+   "ok": true,
+   "provider": "openai",
+   "result": {
+    "make": "Ford"
+   }
+  },
+  {
+   "body": {
+    "choices": []
+   },
+   "ok": false,
+   "provider": "openai",
+   "result": null
+  },
+  {
+   "body": {
+    "choices": [
+     {
+      "message": {
+       "content": "not json"
+      }
+     }
+    ]
+   },
+   "ok": false,
+   "provider": "openai",
+   "result": null
+  },
+  {
+   "body": {},
+   "ok": false,
+   "provider": "openai",
+   "result": null
+  },
+  {
+   "body": {
+    "content": [
+     {
+      "input": {
+       "make": "Holden"
+      },
+      "type": "tool_use"
+     }
+    ]
+   },
+   "ok": true,
+   "provider": "anthropic",
+   "result": {
+    "make": "Holden"
+   }
+  },
+  {
+   "body": {
+    "content": [
+     {
+      "text": "thinking out loud",
+      "type": "text"
+     },
+     {
+      "input": {
+       "make": "Toyota"
+      },
+      "name": "describe_vehicle",
+      "type": "tool_use"
+     }
+    ]
+   },
+   "ok": true,
+   "provider": "anthropic",
+   "result": {
+    "make": "Toyota"
+   }
+  },
+  {
+   "body": {
+    "content": [
+     {
+      "text": "no thanks",
+      "type": "text"
+     }
+    ]
+   },
+   "ok": false,
+   "provider": "anthropic",
+   "result": null
+  },
+  {
+   "body": {
+    "content": [
+     {
+      "type": "tool_use"
+     }
+    ]
+   },
+   "ok": true,
+   "provider": "anthropic",
+   "result": {}
+  },
+  {
+   "body": {},
+   "ok": false,
+   "provider": "anthropic",
+   "result": null
+  },
+  {
+   "body": {
+    "candidates": [
+     {
+      "content": {
+       "parts": [
+        {
+         "text": "{\"make\": \"Toyota\"}"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "ok": true,
+   "provider": "gemini",
+   "result": {
+    "make": "Toyota"
+   }
+  },
+  {
+   "body": {
+    "candidates": [
+     {
+      "content": {
+       "parts": [
+        {
+         "text": "not json"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "ok": false,
+   "provider": "gemini",
+   "result": null
+  },
+  {
+   "body": {
+    "candidates": []
+   },
+   "ok": false,
+   "provider": "gemini",
+   "result": null
+  },
+  {
+   "body": {},
+   "ok": false,
+   "provider": "gemini",
+   "result": null
+  }
+ ]
+}

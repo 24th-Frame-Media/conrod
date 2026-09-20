@@ -1,0 +1,13 @@
+[package]
+name = "conrod-store"
+description = "Conrod's SQLite job store: the same conrod.db the Python app reads and writes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Frame, for set_frame_origin -- the same shape bursts.py already hands store.py.
+conrod-core = { path = "../conrod-core" }
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

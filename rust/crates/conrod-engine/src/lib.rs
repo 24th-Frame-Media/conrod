@@ -12,11 +12,32 @@ use conrod_core::settings::Settings;
 use conrod_core::tasks::TaskHub;
 use conrod_io::raw;
 use conrod_vision::detect::{self, DetectOptions, Detector, Device};
+use conrod_vision::faces::FaceDetector;
 use conrod_vision::imageops::{Filter, Rgb};
 use conrod_vision::sharpness;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Condvar;
 use std::sync::{Arc, Mutex};
+
+pub mod analyze;
+pub mod catalog;
+pub mod commands;
+pub mod desktop;
+pub mod edits;
+pub mod housekeeping;
+pub mod library;
+pub mod operations;
+pub mod passes;
+pub mod region_training;
+pub mod rescore;
+pub mod selftest;
+pub mod setup;
+#[cfg(test)]
+mod testkit;
+pub mod training;
+pub mod updating;
+pub mod watching;
 
 pub const EXTENSIONS: [&str; 4] = ["cr3", "cr2", "jpg", "jpeg"];
 /// Long edge of the thumbnail handed to the UI with each frame.
@@ -24,14 +45,37 @@ pub const THUMB_EDGE: usize = 420;
 
 /// Every frame under `root`, sorted.
 pub fn files(root: &Path) -> Vec<PathBuf> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+    files_with_recursion(root, true)
+}
+
+pub fn files_with_recursion(root: &Path, recursive: bool) -> Vec<PathBuf> {
+    fn walk(
+        dir: &Path,
+        recursive: bool,
+        out: &mut Vec<PathBuf>,
+        seen: &mut std::collections::HashSet<PathBuf>,
+    ) {
+        let Ok(canonical) = dir.canonicalize() else {
+            return;
+        };
+        if !seen.insert(canonical) {
+            return;
+        }
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
-                walk(&path, out);
+            // The listing already says which entries are folders; `is_dir()`
+            // is a stat each, 11 s over the 9,500 files of one shoot on USB.
+            let is_dir = match entry.file_type() {
+                Ok(t) if !t.is_symlink() => t.is_dir(),
+                _ => path.is_dir(),
+            };
+            if is_dir {
+                if recursive {
+                    walk(&path, recursive, out, seen);
+                }
             } else if path
                 .extension()
                 .and_then(|e| e.to_str())
@@ -42,7 +86,12 @@ pub fn files(root: &Path) -> Vec<PathBuf> {
         }
     }
     let mut out = Vec::new();
-    walk(root, &mut out);
+    walk(
+        root,
+        recursive,
+        &mut out,
+        &mut std::collections::HashSet::new(),
+    );
     out.sort();
     out
 }
@@ -61,6 +110,9 @@ pub struct Subject {
     pub stars: u8,
     /// Why the cull would drop it, or empty.
     pub cull_reason: String,
+    pub features: Vec<f64>,
+    pub heuristic: f64,
+    pub region_type: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +127,7 @@ pub struct FrameResult {
     /// The frame's stars: its best subject's, else the whole frame's.
     pub stars: u8,
     pub thumb: Rgb,
+    pub rating: f64,
 }
 
 /// detect.py's `cut`: native resolution, resized only to keep the longest
@@ -115,7 +168,7 @@ fn options(settings: &Settings, profile: ScanProfile) -> DetectOptions {
     if profile.wants_vehicles() {
         classes.extend(settings.vehicle_classes());
     }
-    if profile.wants_people() && profile != ScanProfile::Motorsport {
+    if profile.wants_people() {
         classes.push(detect::PERSON);
     }
     DetectOptions {
@@ -134,14 +187,18 @@ pub fn cull_frame(
     detector: &Mutex<Detector>,
     settings: &Settings,
     profile: ScanProfile,
-    model: Option<&conrod_core::ridge::SharpModel>,
+    models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
+    faces: Option<&Mutex<FaceDetector>>,
 ) -> Result<FrameResult, String> {
     let frame = raw::read(path)?;
     let image = Rgb::decode_jpeg(&frame.preview, 1)?.orient(frame.orientation);
+    // Resize outside the lock: only the network itself is serial.
+    let input = detect::letterbox(&image);
     let found = detector
         .lock()
         .unwrap()
-        .detect(&image, &options(settings, profile))?;
+        .detect_letterboxed(input, &options(settings, profile))?;
+
     let (fw, fh) = (image.width, image.height);
 
     let mut subjects = Vec::new();
@@ -155,7 +212,12 @@ pub fn cull_frame(
             (det.bbox[2] - cx) * scale,
             (det.bbox[3] - cy) * scale,
         ];
-        let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), model);
+        let kind = if det.class_id == detect::PERSON {
+            "person"
+        } else {
+            "vehicle"
+        };
+        let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), models.get(kind));
         if !profile.pan_compatible() {
             focus.panning = false;
         }
@@ -184,20 +246,120 @@ pub fn cull_frame(
             rating,
             stars,
             cull_reason,
+            features: focus.features,
+            region_type: if det.class_id == detect::PERSON {
+                "person"
+            } else {
+                "vehicle"
+            },
+            heuristic: if focus.learned {
+                focus.heuristic
+            } else {
+                focus.score
+            },
         });
     }
-    let whole = if found.is_empty() {
+    if let Some(detector) = faces {
+        for person in found.iter().filter(|d| d.class_id == detect::PERSON) {
+            let [x0, y0, x1, y1] = person.bbox.map(|v| v.max(0.0) as usize);
+            if x1 <= x0 || y1 <= y0 {
+                continue;
+            }
+            let crop = image.crop(x0, y0, x1.min(fw), y1.min(fh));
+            for face in detector.lock().unwrap().detect(&crop)? {
+                let face_box = [
+                    face.bbox[0] + x0 as f64,
+                    face.bbox[1] + y0 as f64,
+                    face.bbox[2] + x0 as f64,
+                    face.bbox[3] + y0 as f64,
+                ];
+                let mut regions = vec![("face", face_box)];
+                let side = (face.bbox[2] - face.bbox[0]) / 3.0;
+                for (x, y) in face.eyes {
+                    let (x, y) = (x + x0 as f64, y + y0 as f64);
+                    regions.push((
+                        "eye",
+                        [
+                            x - side / 2.0,
+                            y - side / 2.0,
+                            x + side / 2.0,
+                            y + side / 2.0,
+                        ],
+                    ));
+                }
+                for (kind, bbox) in regions {
+                    let [a, b, c, d] = [
+                        bbox[0].clamp(0.0, fw as f64),
+                        bbox[1].clamp(0.0, fh as f64),
+                        bbox[2].clamp(0.0, fw as f64),
+                        bbox[3].clamp(0.0, fh as f64),
+                    ]
+                    .map(|v| v as usize);
+                    if c <= a + 24 || d <= b + 24 {
+                        continue;
+                    }
+                    let focus = sharpness::measure(
+                        &image.crop(a, b, c, d).to_gray(),
+                        None,
+                        models.get(kind),
+                    );
+                    if !focus.measured {
+                        continue;
+                    }
+                    let stars = sharpness::stars_for(focus.score);
+                    let reason = if stars < (settings.auto_reject_below_stars as u8)
+                        || (settings.cull_blurred && focus.score < settings.blurred_below)
+                    {
+                        format!("{kind} soft")
+                    } else {
+                        String::new()
+                    };
+                    subjects.push(Subject {
+                        class: kind,
+                        conf: face.score,
+                        bbox: [a as f64, b as f64, c as f64, d as f64],
+                        sharpness: focus.score,
+                        panning: false,
+                        sharp_end: focus.sharp_end,
+                        rating: focus.score,
+                        stars,
+                        cull_reason: reason,
+                        features: focus.features,
+                        heuristic: if focus.learned {
+                            focus.heuristic
+                        } else {
+                            focus.score
+                        },
+                        region_type: kind,
+                    });
+                }
+            }
+        }
+    }
+    let whole = {
         let focus = sharpness::measure(&image.to_gray(), None, None);
         focus.measured.then_some(focus.score)
-    } else {
-        None
     };
-    let stars = subjects
+    let rating = profile
+        .priority()
         .iter()
-        .map(|s| s.stars)
-        .max()
-        .or(whole.map(sharpness::stars_for))
-        .unwrap_or(1);
+        .find_map(|kind| {
+            use conrod_core::profile::Subject as Kind;
+            let name = match kind {
+                Kind::Eye => "eye",
+                Kind::Face => "face",
+                Kind::Person => "person",
+                Kind::Vehicle => "vehicle",
+                Kind::WholeFrame => return whole,
+            };
+            subjects
+                .iter()
+                .filter(|s| s.region_type == name)
+                .map(|s| s.rating)
+                .max_by(f64::total_cmp)
+        })
+        .unwrap_or(0.0);
+    let stars = sharpness::stars_for(rating);
     Ok(FrameResult {
         path: path.to_path_buf(),
         camera: frame.camera("camera"),
@@ -207,16 +369,34 @@ pub fn cull_frame(
         whole,
         stars,
         thumb: thumbnail(&image),
+        rating,
     })
 }
 
 /// Where the detector model lives, per the data directory.
 pub fn detector_model() -> PathBuf {
-    conrod_core::settings::data_root().join("models/yolo11s-960.onnx")
+    conrod_core::models::expected(conrod_core::models::DETECTOR)
 }
 
 pub struct Scan {
     pub stop: Arc<AtomicBool>,
+    pub finished: Arc<AtomicBool>,
+    pub error: Arc<Mutex<Option<String>>>,
+    pause: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl Scan {
+    pub fn pause(&self, paused: bool) {
+        *self.pause.0.lock().unwrap() = paused;
+        self.pause.1.notify_all();
+    }
+    pub fn cancel(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.pause.1.notify_all();
+    }
+    pub fn is_finished(&self) -> bool {
+        self.finished.load(Ordering::Acquire)
+    }
 }
 
 /// Cull every frame under `root` on background threads. `on_frame` is called
@@ -228,45 +408,122 @@ pub fn scan(
     hub: TaskHub,
     on_frame: impl Fn(FrameResult) + Send + Sync + 'static,
 ) -> Scan {
+    let finding = hub.start("Finding photos", 0);
+    let paths = files(&root);
+    finding.finish();
+    scan_files(paths, settings, profile, hub, move |result| {
+        if let Ok(frame) = result {
+            on_frame(frame);
+        }
+    })
+}
+
+pub type ScanResult = Result<FrameResult, (PathBuf, String)>;
+
+pub fn scan_files(
+    paths: Vec<PathBuf>,
+    settings: Settings,
+    profile: ScanProfile,
+    hub: TaskHub,
+    on_frame: impl Fn(ScanResult) + Send + Sync + 'static,
+) -> Scan {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
+    let finished = Arc::new(AtomicBool::new(false));
+    let complete = finished.clone();
+    let error = Arc::new(Mutex::new(None));
+    let failure = error.clone();
+    let pause = Arc::new((Mutex::new(false), Condvar::new()));
+    let pausing = pause.clone();
+    let loading = hub.start("Loading the detector", 0);
     std::thread::spawn(move || {
-        let finding = hub.start("Finding photos", 0);
-        let paths = files(&root);
-        finding.finish();
-        let loading = hub.start("Loading the detector", 0);
+        struct Completion(Arc<AtomicBool>);
+        impl Drop for Completion {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let _completion = Completion(complete);
+        if paths.is_empty() || flag.load(Ordering::Relaxed) {
+            loading.finish();
+            return;
+        }
+        let mut needs = setup::SCAN.to_vec();
+        if profile.wants_faces() {
+            needs.extend(setup::FACES);
+        }
+        if let Err(e) = setup::ensure(&hub, &flag, &needs) {
+            *failure.lock().unwrap() = Some(e.clone());
+            loading.fail(format!("could not install the models: {e}"));
+            return;
+        }
         let detector = match Detector::load(&detector_model(), Device::Auto) {
             Ok(d) => {
                 loading.finish();
                 Mutex::new(d)
             }
             Err(e) => {
+                *failure.lock().unwrap() = Some(e.clone());
                 loading.fail(format!("could not load the detector: {e}"));
                 return;
             }
         };
         let device = detector.lock().unwrap().device;
-        let model = load_sharp_model();
+        let faces = if profile.wants_faces() {
+            let task = hub.start("Loading face detector", 0);
+            match FaceDetector::load(&conrod_core::models::expected(conrod_core::models::FACES)) {
+                Ok(detector) => {
+                    task.finish();
+                    Some(Mutex::new(detector))
+                }
+                Err(e) => {
+                    *failure.lock().unwrap() = Some(e.clone());
+                    task.fail(e);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let models: std::collections::HashMap<_, _> = ["vehicle", "person", "face", "eye"]
+            .into_iter()
+            .filter_map(|region| load_region_model(region).map(|m| (region.to_string(), m)))
+            .collect();
         let task = hub.start(
             format!("Culling ({}, {device})", profile.label()),
             paths.len() as u64,
         );
         let next = AtomicUsize::new(0);
         let done = AtomicUsize::new(0);
+        // Most of the machine, a fifth left for the UI. Past ~16 workers the
+        // hyperthreads and E-cores add little: 10.1, 12.3, 13.8 and 14.4
+        // frames/s at 8, 12, 16 and 20 workers on a 20-thread laptop.
         let workers = std::thread::available_parallelism()
-            .map_or(4, |n| n.get())
-            .min(8);
+            .map_or(4, |n| n.get() * 4 / 5)
+            .clamp(2, 16);
         std::thread::scope(|s| {
             for _ in 0..workers {
                 s.spawn(|| loop {
+                    let mut paused = pausing.0.lock().unwrap();
+                    while *paused && !flag.load(Ordering::Relaxed) {
+                        task.paused(true);
+                        paused = pausing
+                            .1
+                            .wait_timeout(paused, std::time::Duration::from_millis(100))
+                            .unwrap()
+                            .0;
+                    }
+                    drop(paused);
+                    task.paused(false);
                     if flag.load(Ordering::Relaxed) {
                         break;
                     }
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(path) = paths.get(i) else { break };
-                    match cull_frame(path, &detector, &settings, profile, model.as_ref()) {
-                        Ok(result) => on_frame(result),
+                    match cull_frame(path, &detector, &settings, profile, &models, faces.as_ref()) {
+                        Ok(result) => on_frame(Ok(result)),
                         Err(e) => {
+                            on_frame(Err((path.clone(), e.clone())));
                             let t = hub.start(format!("Skipped {}", path.display()), 0);
                             t.fail(e);
                         }
@@ -282,12 +539,59 @@ pub fn scan(
             task.finish();
         }
     });
-    Scan { stop }
+    Scan {
+        stop,
+        finished,
+        error,
+        pause,
+    }
 }
 
 /// The photographer's learned sharpness model, if one is saved and current.
 pub fn load_sharp_model() -> Option<conrod_core::ridge::SharpModel> {
-    let path = conrod_core::settings::data_root().join("models/sharpness.json");
+    load_region_model("vehicle")
+}
+
+pub fn load_region_model(region: &str) -> Option<conrod_core::ridge::SharpModel> {
+    let name = if region == "vehicle" {
+        "sharpness.json".to_string()
+    } else {
+        format!("sharpness-{region}.json")
+    };
+    let path = conrod_core::settings::data_root().join("models").join(name);
     let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_finds_frames_in_subfolders_only_by_extension_sorted() {
+        let root = std::env::temp_dir().join(format!("conrod-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("b/deep")).unwrap();
+        for name in [
+            "z.CR3",
+            "a.jpg",
+            "a.xmp",
+            "b/m.cr2",
+            "b/deep/n.JPEG",
+            "b/notes.txt",
+        ] {
+            std::fs::write(root.join(name), b"").unwrap();
+        }
+        let found: Vec<_> = files(&root)
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(found, ["a.jpg", "b/deep/n.JPEG", "b/m.cr2", "z.CR3"]);
+    }
 }

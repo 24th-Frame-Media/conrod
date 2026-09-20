@@ -13,6 +13,7 @@ pub mod grouping;
 pub mod keywords;
 pub mod mapping;
 pub mod marques;
+pub mod models;
 pub mod normalise;
 pub mod profile;
 pub mod py;

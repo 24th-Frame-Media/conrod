@@ -55,6 +55,8 @@ struct Inner {
 pub struct TaskHub {
     inner: Arc<Mutex<Inner>>,
     next: Arc<AtomicU64>,
+    /// Bumped on every change, so a watcher can tell there is something new to say.
+    changes: Arc<AtomicU64>,
 }
 
 /// Finished tasks kept for the popover, and log lines kept.
@@ -68,6 +70,7 @@ impl TaskHub {
 
     /// Announce a piece of work. `total` 0 means "don't know how much".
     pub fn start(&self, label: impl Into<String>, total: u64) -> Task {
+        self.changes.fetch_add(1, Ordering::Relaxed);
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let label = label.into();
         let mut inner = self.inner.lock().unwrap();
@@ -88,6 +91,11 @@ impl TaskHub {
             id,
             cancelled: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// A number that changes whenever any task does.
+    pub fn version(&self) -> u64 {
+        self.changes.load(Ordering::Relaxed)
     }
 
     /// Everything running, then the most recent finished, newest first.
@@ -122,11 +130,17 @@ impl TaskHub {
         out
     }
 
+    pub fn note(&self, line: impl Into<String>) {
+        self.inner.lock().unwrap().log_line(line.into());
+        self.changes.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn log(&self) -> Vec<String> {
         self.inner.lock().unwrap().log.iter().cloned().collect()
     }
 
     fn update(&self, id: u64, f: impl FnOnce(&mut Entry, &mut VecDeque<String>)) {
+        self.changes.fetch_add(1, Ordering::Relaxed);
         let mut inner = self.inner.lock().unwrap();
         let Inner { tasks, log } = &mut *inner;
         if let Some(e) = tasks.iter_mut().find(|e| e.id == id) {
