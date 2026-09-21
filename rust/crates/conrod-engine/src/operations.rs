@@ -163,7 +163,10 @@ impl Run<'_> {
             return Ok(());
         }
         let path = wanted[0]["path"].as_str().ok_or("Missing image path")?;
-        self.task.detail(path);
+        let filename = Path::new(path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
         let raw = conrod_io::raw::read(Path::new(path))?;
         let image = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
         for row in wanted {
@@ -191,6 +194,7 @@ impl Run<'_> {
             );
             let native = (s.plate_native_search && s.read_plates).then_some(&tight);
             let kind = row["cls"].as_str().unwrap_or("car");
+            self.task.detail(format!("{filename} · {kind}"));
             let outcome = analyze::analyze(
                 &crop,
                 native,
@@ -245,11 +249,19 @@ fn load_readers(settings: &Settings, ocr: &Option<Arc<ocr::Ocr>>) -> Result<Read
 
 pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
     let settings = settings(d, job)?;
-    if !conrod_core::profile::ScanProfile::parse(&settings.scan_profile).identifies_vehicles() {
-        return Err("Vehicle identification is available for Motorsport and Mixed shoots".into());
+    let profile = conrod_core::profile::ScanProfile::parse(&settings.scan_profile);
+    let finds_faces =
+        conrod_core::profile::ShootPreset::parse(&settings.scan_profile).wants_faces();
+    if !profile.identifies_vehicles() && !finds_faces {
+        return Err("There are no identifiable subjects in this shoot preset".into());
     }
     launch(d, job, "Identifying", move |d, stop, task| {
         if !wait_for_cull(d, stop, task) {
+            return Ok(());
+        }
+        if !profile.identifies_vehicles() {
+            let faces = crate::passes::embed_faces_missing(d, job, stop, task)?;
+            task.detail(format!("Prepared {faces} faces for name suggestions"));
             return Ok(());
         }
         let reads_text = settings.read_plates || settings.read_numbers || settings.read_text;
@@ -362,6 +374,8 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             return Err(e);
         }
         if !stop.load(Ordering::Relaxed) {
+            crate::passes::embed_faces_missing(d, job, stop, task)?;
+            task.detail("Grouping similar vehicles");
             crate::passes::consolidate(d, job, task)?;
             crate::catalog::seed(d, Some(job))?;
         }

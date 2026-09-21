@@ -18,6 +18,7 @@ pub struct Settings {
     pub number_max_len: usize,
     pub read_plates: bool,
     pub read_numbers: bool,
+    pub scan_profile: String,
 
     pub write_sidecar_for_raw: bool,
     pub overwrite_caption: bool,
@@ -43,6 +44,7 @@ impl Default for Settings {
             number_max_len: 3,
             read_plates: true,
             read_numbers: true,
+            scan_profile: "motorsport".into(),
 
             write_sidecar_for_raw: true,
             overwrite_caption: false,
@@ -73,6 +75,7 @@ impl Settings {
             number_max_len: settings.number_max_len.max(0) as usize,
             read_plates: settings.read_plates,
             read_numbers: settings.read_numbers,
+            scan_profile: settings.scan_profile.clone(),
             write_sidecar_for_raw: settings.write_sidecar_for_raw,
             overwrite_caption: settings.overwrite_caption,
             write_rating: settings.write_rating,

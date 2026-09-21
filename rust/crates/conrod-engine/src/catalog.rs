@@ -149,15 +149,42 @@ pub fn seed(d: &Desktop, job: Option<i64>) -> Result<Value> {
         aliases.remove("");
         aliases.remove(&plate);
         let aliases = aliases.into_iter().collect::<Vec<_>>().join(", ");
+        let visual = found.iter().find(|v| {
+            let reading = registry::normalise(v["plate"].as_str());
+            reading == plate
+                || r.aliases
+                    .iter()
+                    .any(|alias| registry::normalise(Some(alias)) == reading)
+        });
+        let embedding = visual
+            .and_then(|v| v["embedding"].as_str())
+            .filter(|v| !v.is_empty());
+        let visual_attrs = visual
+            .and_then(|v| v["attributes"].as_str())
+            .and_then(|raw| serde_json::from_str::<serde_json::Map<String, Value>>(raw).ok());
+        let driver = visual_attrs
+            .as_ref()
+            .and_then(|a| a.get("driver"))
+            .and_then(Value::as_str);
+        let country = visual_attrs
+            .as_ref()
+            .and_then(|a| a.get("country"))
+            .and_then(Value::as_str);
+        let enrichment_changed = existing.first().is_none_or(|old| {
+            (embedding.is_some() && old["embedding"].as_str() != embedding)
+                || (old["driver"].as_str().is_none() && driver.is_some())
+                || (old["country"].as_str().is_none() && country.is_some())
+        });
         if existing.first().is_some_and(|old| {
             row(old) == merged && old["aliases"].as_str().unwrap_or_default() == aliases
-        }) {
+        }) && !enrichment_changed
+        {
             continue;
         }
         put(&tx, &merged)?;
         tx.execute(
-            "UPDATE known_vehicles SET aliases=? WHERE plate=?",
-            params![aliases, plate],
+            "UPDATE known_vehicles SET aliases=?,embedding=COALESCE(?2,embedding),driver=COALESCE(driver,?3),country=COALESCE(country,?4) WHERE plate=?5",
+            params![aliases, embedding, driver, country, plate],
         )
         .map_err(err)?;
         written += 1;

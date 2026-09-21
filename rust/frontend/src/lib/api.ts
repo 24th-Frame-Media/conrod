@@ -40,6 +40,7 @@ export const engine = {
   known: () => call<KnownVehicle[]>('known'),
   saveKnown: (vehicle: KnownVehicle) => call('save_known', vehicle),
   deleteKnown: (plate: string) => call('delete_known', { plate }),
+  deleteAllKnown: () => call<{ removed: number }>('delete_all_known'),
   trainingStatus: () => call<Training>('training_status'),
   trainLabel: (detectionId: number, stars: number, pan: boolean) => call('train_label', { detectionId, stars, pan }),
   undoLabel: () => call('undo_label'),

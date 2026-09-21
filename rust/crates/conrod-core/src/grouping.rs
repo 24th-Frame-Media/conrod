@@ -658,6 +658,8 @@ pub struct Consensus {
     /// Sampled paint, not the model's word for the colour.
     pub colour_hex: Option<String>,
     pub team: Option<String>,
+    pub driver: Option<String>,
+    pub country: Option<String>,
     pub sponsors: Vec<String>,
     pub livery_text: Vec<String>,
     /// How much of the group backed the winning name.
@@ -964,6 +966,20 @@ pub fn consensus(members: &[Map<String, Value>]) -> Consensus {
         &members
             .iter()
             .map(|m| text_field(m, "team"))
+            .collect::<Vec<_>>(),
+    )
+    .0;
+    out.driver = vote(
+        &members
+            .iter()
+            .map(|m| text_field(m, "driver"))
+            .collect::<Vec<_>>(),
+    )
+    .0;
+    out.country = vote(
+        &members
+            .iter()
+            .map(|m| text_field(m, "country"))
             .collect::<Vec<_>>(),
     )
     .0;

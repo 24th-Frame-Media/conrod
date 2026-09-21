@@ -69,6 +69,8 @@ struct Row {
     stars: Option<i64>,
     predicted: Option<i64>,
     rating: Option<f64>,
+    embedding: Option<String>,
+    region: Option<String>,
 }
 
 pub fn edit_detection(d: &Desktop, a: &EditArgs) -> Result<Value> {
@@ -87,7 +89,7 @@ pub fn edit_detection(d: &Desktop, a: &EditArgs) -> Result<Value> {
     let db = d.db.lock().unwrap();
     let row = db
         .query_row(
-            "SELECT attributes,cls,number,number_source,number_conf,plate,plate_state,COALESCE(rejected,0),COALESCE(bystander,0),stars,predicted_stars,rating FROM detections WHERE id=?",
+            "SELECT attributes,cls,number,number_source,number_conf,plate,plate_state,COALESCE(rejected,0),COALESCE(bystander,0),stars,predicted_stars,rating,embedding,region_type FROM detections WHERE id=?",
             [a.detection_id],
             |r| {
                 Ok(Row {
@@ -103,6 +105,8 @@ pub fn edit_detection(d: &Desktop, a: &EditArgs) -> Result<Value> {
                     stars: r.get(9)?,
                     predicted: r.get(10)?,
                     rating: r.get(11)?,
+                    embedding: r.get(12)?,
+                    region: r.get(13)?,
                 })
             },
         )
@@ -163,6 +167,22 @@ pub fn edit_detection(d: &Desktop, a: &EditArgs) -> Result<Value> {
         params![number, source, conf, plate, plate_state, Value::Object(attrs.clone()).to_string(), rejected, a.reviewed, stars, bystander, a.detection_id],
     )
     .map_err(err)?;
+    if row.region.as_deref() == Some("face") {
+        if let (Some(name), Some(embedding)) = (
+            attrs
+                .get("person_name")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty()),
+            row.embedding.as_deref().filter(|s| !s.is_empty()),
+        ) {
+            let country = attrs.get("country").and_then(Value::as_str);
+            db.execute(
+                "INSERT INTO known_people(name,country,embedding,updated_at) VALUES(?,?,?,unixepoch('now')) ON CONFLICT(name) DO UPDATE SET country=COALESCE(excluded.country,known_people.country),embedding=excluded.embedding,updated_at=excluded.updated_at",
+                params![name.trim(), country, embedding],
+            )
+            .map_err(err)?;
+        }
+    }
     drop(db);
 
     let mut analysis = VehicleAnalysis::from_map(&attrs);
@@ -225,6 +245,13 @@ pub fn bulk_edit(d: &Desktop, a: &BulkArgs) -> Result<Value> {
             tx.execute(
                 "UPDATE detections SET bystander=?,reviewed=1 WHERE id=?",
                 params![bystander, id],
+            )
+            .map_err(err)?;
+        }
+        if let Some(reviewed) = a.reviewed {
+            tx.execute(
+                "UPDATE detections SET reviewed=? WHERE id=?",
+                params![reviewed, id],
             )
             .map_err(err)?;
         }
@@ -305,6 +332,34 @@ mod tests {
             .run("edit_detection", json!({"detectionId": det + 100}))
             .unwrap_err()
             .contains("No such detection"));
+    }
+
+    #[test]
+    fn naming_an_embedded_face_remembers_it_for_later_suggestions() {
+        let lib = Lib::new("edit-known-person");
+        let image = lib.frame("portrait.jpg", Some(1));
+        let face = lib.detection(image, "face", 0.9);
+        lib.sql(
+            "UPDATE detections SET region_type='face',embedding=? WHERE id=?",
+            params!["0.1,0.2,0.3", face],
+        );
+        lib.run(
+            "edit_detection",
+            json!({"detectionId": face, "personName": " Alex Smith ", "country": "AU"}),
+        )
+        .unwrap();
+        let (country, embedding): (String, String) = lib
+            .db()
+            .query_row(
+                "SELECT country,embedding FROM known_people WHERE name='Alex Smith'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (country.as_str(), embedding.as_str()),
+            ("AU", "0.1,0.2,0.3")
+        );
     }
 
     #[test]

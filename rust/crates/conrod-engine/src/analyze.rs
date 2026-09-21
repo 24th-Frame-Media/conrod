@@ -120,6 +120,8 @@ pub fn analyze(
                     a.team = d.team.clone();
                     a.sponsors = d.sponsors.clone();
                 }
+                a.driver = d.driver.clone();
+                a.country = d.country.clone();
                 a.is_competition = d.is_competition;
                 described = d;
             }
@@ -151,6 +153,8 @@ pub fn analyze(
             .sponsors
             .iter()
             .chain(&a.team)
+            .chain(&a.driver)
+            .chain(&a.country)
             .chain(&a.plate)
             .chain(&a.plate_state)
             .chain(&a.race_number)

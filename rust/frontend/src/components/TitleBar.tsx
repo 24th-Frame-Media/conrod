@@ -3,7 +3,7 @@ import { getCurrentWindow, type Window } from '@tauri-apps/api/window';
 import { inTauri, mocked } from '../lib/api';
 import { etaText, pct, plural } from '../lib/format';
 import type { Job, ModelInfo, Page, Status } from '../lib/types';
-import { PROFILES } from '../lib/types';
+import { profileLabel } from '../lib/types';
 import { Icon, Mark } from './basics';
 
 const TABS: [Page, string, string][] = [
@@ -16,6 +16,14 @@ const TABS: [Page, string, string][] = [
 ];
 
 export type StatusActions = { pause: () => void; resume: () => void; stop: () => void; cancel: (key: string) => void };
+
+function workLabel(label: string): string {
+  if (label.startsWith('Identifying')) return 'Reading vehicle details';
+  if (label.startsWith('Grouping')) return 'Grouping similar vehicles';
+  if (label.startsWith('Culling')) return 'Measuring and culling photos';
+  if (label.startsWith('Loading')) return label;
+  return label.replace(/\s*[·-]\s*album\s+\d+$/i, '');
+}
 
 /** Minimise / maximise / close. Only drawn when the window has no OS frame of its own. */
 function WindowControls() {
@@ -51,7 +59,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const failed = status.tasks.find((t) => t.state === 'failed' && t.error !== 'stopped');
   const tone = active ? (active.state === 'paused' ? 'warn' : 'busy') : failed ? 'error' : 'ok';
-  const label = active ? (active.state === 'paused' ? 'Paused' : active.label) : failed ? 'Needs attention' : 'All caught up';
+  const label = active ? (active.state === 'paused' ? 'Paused' : workLabel(active.label)) : failed ? 'Needs attention' : 'All caught up';
   const activeTasks = status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').sort((a, b) => b.id - a.id);
   const finishedTasks = status.tasks.filter((task) => task.state !== 'running' && task.state !== 'paused').sort((a, b) => b.id - a.id);
   const activeJob = jobs.find((job) => job.id === status.activeJob);
@@ -76,7 +84,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
       </button>
       {open && (
         <div className="popover activity-dashboard" role="dialog" aria-label="Notifications and activity">
-          <div className="popover-head"><h3>Scan monitor</h3><span className={`state ${tone === 'busy' ? 'running' : tone === 'error' ? 'failed' : 'done'}`}>{label}</span></div>
+          <div className="popover-head"><h3>Background work</h3><span className={`state ${tone === 'busy' ? 'running' : tone === 'error' ? 'failed' : 'done'}`}>{active ? active.state : tone === 'error' ? 'failed' : 'done'}</span></div>
           <div className="activity-summary">
             <div><b>{activeJob && active?.total ? `${active.done.toLocaleString()} / ${active.total.toLocaleString()}` : '—'}</b><small>{activeJob ? activeJob.label : 'No active scan'}</small></div>
             <div><b>{readyModels} / {models.length}</b><small>Models ready</small></div>
@@ -87,9 +95,9 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
           {activeTasks.length === 0 && <p className="muted activity-empty">No background tasks.</p>}
           {activeTasks.map((t) => (
             <div className="task" key={t.id}>
-              <div className="task-row"><b>{t.label}</b><span className={`state ${t.state}`}>{t.state}</span></div>
+              <div className="task-row"><b>{workLabel(t.label)}</b><span className={`state ${t.state}`}>{t.state}</span></div>
               {t.total > 0 && <div className="bar"><div className="fill" style={{ width: `${pct(t.done, t.total)}%` }} /></div>}
-              <small className="muted">{t.error || t.detail || (t.total > 0 ? `${t.done.toLocaleString()} of ${t.total.toLocaleString()}` : '')}{t.eta != null && ` · ${etaText(t.eta)}`}</small>
+              <small className="muted">{t.error || (t.detail ? `Now: ${t.detail}` : t.total > 0 ? `${t.done.toLocaleString()} of ${t.total.toLocaleString()}` : '')}{t.eta != null && ` · ${etaText(t.eta)}`}</small>
             </div>
           ))}
           {(status.activeJob != null || status.operations.length > 0) && (
@@ -142,7 +150,7 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, actions
       </div>
       <nav className="tabs" aria-label="Screens">
         {TABS.map(([id, label, title]) => (
-          <button key={id} className={page === id ? 'active' : ''} title={title} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>{label}</button>
+          <button key={id} className={page === id || (page === 'Album' && id === 'Library') ? 'active' : ''} title={title} aria-current={page === id || (page === 'Album' && id === 'Library') ? 'page' : undefined} onClick={() => setPage(id)}>{label}</button>
         ))}
       </nav>
       <div className="spacer" data-tauri-drag-region />
@@ -150,7 +158,7 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, actions
         <span><b>{plural(jobs.length, 'album')}</b></span><span><b>{photos.toLocaleString()}</b> photos</span>
       </div>
       <button className="pill scan-type" title="Scan type. Click to change it" onClick={() => setPage('Scan')}>
-        {(PROFILES.find((p) => p.id === profile)?.title ?? profile).toUpperCase()}
+        {profileLabel(profile).toUpperCase()}
       </button>
       <StatusPill status={status} jobs={jobs} models={models} actions={actions} defaultOpen={popoverOpen} />
       <WindowControls />

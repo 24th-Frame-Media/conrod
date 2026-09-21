@@ -2,8 +2,12 @@
 //! scans stay here; the frontend receives data, never arbitrary SQL or paths.
 use crate::commands::{Command, KnownArgs, MarkArgs, ScanArgs};
 use crate::{FrameResult, Scan};
-use conrod_core::{profile::ScanProfile, settings::Settings, tasks::TaskHub};
-use conrod_vision::imageops::Rgb;
+use conrod_core::{
+    profile::{ScanProfile, ShootPreset},
+    settings::Settings,
+    tasks::TaskHub,
+};
+use conrod_vision::{imageops::Rgb, similarity};
 use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
@@ -197,6 +201,7 @@ impl Desktop {
             Command::ImportEntries(a) => crate::catalog::entries(self, &a.csv),
             Command::SaveKnown(a) => self.save_known(&a),
             Command::DeleteKnown(a) => self.delete_known(&a.plate),
+            Command::DeleteAllKnown {} => self.delete_all_known(),
             Command::TrainingStatus {} => crate::region_training::status(self),
             Command::TrainLabel(a) => crate::region_training::label(self, &a),
             Command::UndoLabel {} => crate::region_training::undo(self),
@@ -270,7 +275,7 @@ impl Desktop {
         if plate.is_empty() {
             return Err("Plate is required".into());
         }
-        self.db.lock().unwrap().execute("INSERT INTO known_vehicles(plate,make,model,colour,team,race_number,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(plate) DO UPDATE SET make=excluded.make,model=excluded.model,colour=excluded.colour,team=excluded.team,race_number=excluded.race_number,updated_at=excluded.updated_at",params![plate.to_uppercase(),a.make,a.model,a.colour,a.team,a.race_number,now()]).map_err(err)?;
+        self.db.lock().unwrap().execute("INSERT INTO known_vehicles(plate,make,model,colour,team,race_number,driver,country,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(plate) DO UPDATE SET make=excluded.make,model=excluded.model,colour=excluded.colour,team=excluded.team,race_number=excluded.race_number,driver=excluded.driver,country=excluded.country,updated_at=excluded.updated_at",params![plate.to_uppercase(),a.make,a.model,a.colour,a.team,a.race_number,a.driver,a.country,now()]).map_err(err)?;
         Ok(Value::Null)
     }
 
@@ -281,6 +286,16 @@ impl Desktop {
             .execute("DELETE FROM known_vehicles WHERE plate=?", [plate])
             .map_err(err)?;
         Ok(Value::Null)
+    }
+
+    fn delete_all_known(&self) -> Result<Value> {
+        let removed = self
+            .db
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM known_vehicles", [])
+            .map_err(err)?;
+        Ok(json!({"removed": removed}))
     }
 
     fn models(&self) -> Value {
@@ -312,7 +327,47 @@ impl Desktop {
         // Only what the UI reads: `SELECT *` was 17 MB and 0.8 s for 4,808
         // frames, 3.6 MB of it the raw sharpness `features`.
         let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.burst_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars FROM images i WHERE job_id=? ORDER BY path",[job])?;
-        let detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
+        let mut detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.group_key,d.group_size,d.group_agreement,d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
+        let known: Vec<(Value, Vec<f32>)> = rows(&db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
+            .into_iter()
+            .filter_map(|row| similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector)))
+            .collect();
+        let people: Vec<(Value, Vec<f32>)> =
+            rows(&db, "SELECT name,country,embedding FROM known_people", [])?
+                .into_iter()
+                .filter_map(|row| {
+                    similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector))
+                })
+                .collect();
+        for detection in &mut detections {
+            if let Some(vector) = detection["embedding"].as_str().and_then(similarity::unpack) {
+                let is_face = detection["region_type"].as_str() == Some("face");
+                let candidates = if is_face { &people } else { &known };
+                let threshold = if is_face {
+                    0.97
+                } else {
+                    conrod_core::grouping::SAME_CAR
+                };
+                let best = candidates
+                    .iter()
+                    .filter_map(|(item, candidate)| {
+                        let score = similarity::nearness(&vector, candidate);
+                        (f64::from(score) >= threshold).then_some((score, item))
+                    })
+                    .max_by(|a, b| a.0.total_cmp(&b.0));
+                if let Some((score, item)) = best {
+                    let mut item = item.clone();
+                    item.as_object_mut().map(|v| v.remove("embedding"));
+                    item["similarity"] = json!((score * 1000.0).round() / 1000.0);
+                    detection[if is_face {
+                        "known_person_match"
+                    } else {
+                        "known_match"
+                    }] = item;
+                }
+            }
+            detection.as_object_mut().map(|d| d.remove("embedding"));
+        }
         Ok(json!({"frames":frames,"detections":detections}))
     }
 
@@ -398,7 +453,7 @@ impl Desktop {
                 return Err("Choose a photo folder".into());
             }
             let profile = a.profile.as_deref().unwrap_or(&settings.scan_profile);
-            settings.scan_profile = ScanProfile::parse(profile).name().into();
+            settings.scan_profile = ShootPreset::parse(profile).name().into();
             if let Some(read) = a.read_plates {
                 settings.read_plates = read;
             }
@@ -599,6 +654,37 @@ pub fn save_jpeg(rgb: &Rgb, path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delete_all_known_removes_every_vehicle() {
+        let root =
+            std::env::temp_dir().join(format!("conrod-known-{}-{}", std::process::id(), now()));
+        let desktop = Desktop::open(root.clone()).unwrap();
+        {
+            let db = desktop.db.lock().unwrap();
+            db.execute(
+                "INSERT INTO known_vehicles(plate, updated_at) VALUES('ABC123', 1), ('XYZ789', 1)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let result = desktop.dispatch("delete_all_known", json!({})).unwrap();
+
+        assert_eq!(result["removed"], 2);
+        assert_eq!(
+            desktop
+                .db
+                .lock()
+                .unwrap()
+                .query_row("SELECT count(*) FROM known_vehicles", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        drop(desktop);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn manual_zero_and_region_label_undo_survive_reopen() {

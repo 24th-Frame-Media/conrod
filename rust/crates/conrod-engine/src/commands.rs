@@ -111,6 +111,12 @@ pub struct EditArgs {
     pub colour: Option<Option<String>>,
     #[serde(default, deserialize_with = "present")]
     pub team: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub driver: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub country: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    pub person_name: Option<Option<String>>,
     /// Digits only once stored; `number` is accepted as the Python name for it.
     #[serde(
         default,
@@ -152,6 +158,7 @@ pub struct BulkArgs {
     pub number: Option<String>,
     pub rejected: Option<bool>,
     pub bystander: Option<bool>,
+    pub reviewed: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +201,9 @@ impl EditArgs {
             ("model", &self.model),
             ("colour", &self.colour),
             ("team", &self.team),
+            ("driver", &self.driver),
+            ("country", &self.country),
+            ("person_name", &self.person_name),
             ("race_number", &self.race_number),
             ("plate", &self.plate),
             ("plate_state", &self.plate_state),
@@ -213,6 +223,8 @@ pub struct KnownArgs {
     pub colour: Option<String>,
     pub team: Option<String>,
     pub race_number: Option<String>,
+    pub driver: Option<String>,
+    pub country: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -281,6 +293,7 @@ pub enum Command {
     ImportEntries(CsvArgs),
     SaveKnown(KnownArgs),
     DeleteKnown(PlateArgs),
+    DeleteAllKnown {},
     TrainingStatus {},
     TrainLabel(LabelArgs),
     UndoLabel {},

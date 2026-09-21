@@ -9,10 +9,11 @@ export type FrameFacts = {
   plate: string | null; number: string | null; vehicle: string | null;
   colour: string | null; colourCss: string | null; team: string | null;
   panned: boolean; pick: boolean; cull: string | null; text: string;
+  reviewed: boolean;
 };
 export type FacetItem = { value: string; count: number; who: string };
 export type Filters = { search: string; minStars: number; view: View; sort: Sort; facet: Facet | null };
-export const defaultFilters: Filters = { search: '', minStars: 0, view: 'all', sort: 'frame', facet: null };
+export const defaultFilters: Filters = { search: '', minStars: 0, view: 'review', sort: 'frame', facet: null };
 
 export function parseAttributes(d: Detection): Attributes {
   let attrs: Attributes = {};
@@ -38,8 +39,9 @@ function factsFor(frame: Frame, dets: Detection[]): FrameFacts {
     dets, plates, numbers, plate: plates[0] ?? null, number: numbers[0] ?? null, vehicle, colour,
     colourCss: first(attrs.map((a) => a.colour_hex)) ?? colour, team,
     panned: dets.some((d) => d.panning), pick: dets.some((d) => d.burst_pick),
+    reviewed: dets.length > 0 && dets.every((d) => Boolean(d.reviewed)),
     cull: first(dets.map((d) => d.cull_reason)),
-    text: [frame.path, ...plates, ...numbers, vehicle, colour, team].join(' ').toLowerCase(),
+    text: [frame.path, ...plates, ...numbers, vehicle, colour, team, ...attrs.map((a) => a.driver), ...attrs.map((a) => a.country), ...attrs.map((a) => a.person_name)].join(' ').toLowerCase(),
   };
 }
 
@@ -70,15 +72,14 @@ export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Re
   };
 }
 
-/** Frames that survive the toolbar. The frame being looked at stays in the list even after it stops matching. */
-export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f: Filters, keepId: number | null): Frame[] {
+/** Frames that survive the toolbar. */
+export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f: Filters): Frame[] {
   const needle = f.search.trim().toLowerCase();
   const keep = (frame: Frame) => {
-    if (frame.id === keepId) return true;
     const x = facts.get(frame.id);
     if (needle && !x?.text.includes(needle)) return false;
     if (f.facet && !(f.facet.kind === 'number' ? x?.numbers : x?.plates)?.includes(f.facet.value)) return false;
-    if (f.view === 'review') return !frame.rejected && frame.manual_stars == null;
+    if (f.view === 'review') return !frame.rejected && !x?.reviewed;
     if (f.view === 'picks') return !frame.rejected && Boolean(x?.pick);
     return true;
   };

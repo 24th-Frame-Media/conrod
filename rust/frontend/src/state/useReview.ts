@@ -29,9 +29,13 @@ export function useReview(jobId: number | null, run: Runner) {
 
   const facts = useMemo(() => buildFacts(review), [review]);
   const facets = useMemo(() => buildFacets(review.frames, facts), [review.frames, facts]);
-  const frames = useMemo(() => visibleFrames(review.frames, facts, filters, selected), [review.frames, facts, filters, selected]);
+  const frames = useMemo(() => visibleFrames(review.frames, facts, filters), [review.frames, facts, filters]);
   const frame: Frame | null = useMemo(() => review.frames.find((f) => f.id === selected) ?? null, [review.frames, selected]);
   const patchFilters = useCallback((patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch })), []);
+
+  useEffect(() => {
+    setSelected((currentId) => frames.some((item) => item.id === currentId) ? currentId : frames[0]?.id ?? null);
+  }, [frames]);
 
   const step = useCallback((delta: number) => {
     setSelected((currentId) => {

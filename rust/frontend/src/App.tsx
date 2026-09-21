@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window';
 import { Icon, KeysDialog, Splash } from './components/basics';
 import { TitleBar, type StatusActions } from './components/TitleBar';
-import { engine, inTauri, mocked } from './lib/api';
+import { call, engine, inTauri, mocked } from './lib/api';
 import { filename } from './lib/review';
 import type { DevStart } from './lib/mock';
 import type { Page, ScanArgs } from './lib/types';
 import { Known } from './screens/Known';
+import { Album } from './screens/Album';
 import { Library } from './screens/Library';
 import { ReviewScreen } from './screens/Review';
 import { Scan, type ScanDraft } from './screens/Scan';
@@ -80,7 +81,7 @@ export function App() {
     await engine.write(id, dryRun);
     toast(dryRun ? 'Checking what would be written. The activity menu lists it and no file is touched.' : 'Writing started. Progress is in the activity menu.');
   });
-  const openJob = (id: number) => { setJobId(id); setPage('Review'); };
+  const openJob = (id: number) => { setJobId(id); setPage('Album'); };
 
   const actions: StatusActions = {
     pause: () => void run(async () => { await engine.pause(); toast('Paused. Anything mid-analysis will still finish.'); }),
@@ -118,13 +119,32 @@ export function App() {
           <Scan draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} models={eng.models} settings={eng.settings} status={status} busy={starting}
             actions={actions} onStart={(args) => void startScan(args)} onReviewActive={() => { if (status.activeJob != null) openJob(status.activeJob); }} />
         )}
+        {page === 'Album' && (
+          <Album rv={rv} jobs={eng.jobs} jobId={jobId} onPickJob={setJobId} onReview={() => setPage('Review')}
+            onIdentify={() => jobId != null && identify(jobId)} onWrite={(dryRun) => jobId != null && write(jobId, dryRun)} onOpenViewer={() => setViewer(true)} />
+        )}
         {page === 'Review' && (
-          <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} scanRunning={scanning}
-            onPickJob={setJobId} onIdentify={() => jobId != null && identify(jobId)} onWrite={(dryRun) => jobId != null && write(jobId, dryRun)}
-            overwrites={(['overwrite_rating', 'overwrite_label'] as const).filter((k) => eng.settings[k] === true).map((k) => (k === 'overwrite_rating' ? 'ratings' : 'colour labels'))}
-            onResume={() => jobId != null && void startScan({ jobId })} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
-            onLibrary={() => setPage('Library')}
-            onEdit={(id, updates) => run(async () => { await engine.editDetection(id, updates); await rv.refresh(); })} />
+          <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} status={status} settings={eng.settings}
+            onPickJob={setJobId} onIdentify={() => jobId != null && identify(jobId)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
+              onLibrary={() => setPage('Library')}
+              onAcceptAll={() => void run(async () => {
+                const ids = rv.review.detections.filter((d) => !d.reviewed).map((d) => d.id);
+                if (ids.length) await call('bulk_edit', { ids, reviewed: true });
+                await call('seed_known', { jobId });
+                await rv.refresh();
+                toast(`${ids.length.toLocaleString()} detections confirmed`, { tone: 'ok' });
+              })}
+              onSkipIdentify={() => void run(async () => {
+                if (jobId == null) return;
+                await engine.cancelOperation(`Identifying:${jobId}`);
+                eng.setStatus(await engine.status());
+                const ids = rv.review.detections.filter((d) => !d.reviewed).map((d) => d.id);
+                if (ids.length) await call('bulk_edit', { ids, reviewed: true });
+                await rv.refresh();
+                setPage('Album');
+                toast('Identification skipped. Culling results are ready in the album.', { tone: 'ok' });
+              })}
+              onEdit={(id, updates) => run(async () => { await engine.editDetection(id, updates); await rv.refresh(); })} />
         )}
         {page === 'Train' && (
           <Train rv={rv} jobs={eng.jobs} jobId={jobId} run={run} toast={toast} showBoxes={showBoxes} verbs={trainVerbs} onPickJob={setJobId}
@@ -133,7 +153,7 @@ export function App() {
         {page === 'Known vehicles' && <Known run={run} toast={toast} />}
         {page === 'Settings' && <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} />}
       </main>
-      {viewer && page === 'Review' && <Viewer rv={rv} run={run} showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} onClose={() => setViewer(false)} />}
+      {viewer && (page === 'Review' || page === 'Album') && <Viewer rv={rv} run={run} showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} onClose={() => setViewer(false)} />}
       {help && <KeysDialog onClose={() => setHelp(false)} />}
       {dropping && <div className="drop-overlay"><Icon name="drop" size={34} /><b>Drop a folder to scan it</b><span>Photos, or a folder of them</span></div>}
       <Splash gone={eng.ready} />

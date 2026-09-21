@@ -7,7 +7,7 @@
 //! holds this one up.
 
 use conrod_core::framing;
-use conrod_core::profile::ScanProfile;
+use conrod_core::profile::{ScanProfile, ShootPreset};
 use conrod_core::settings::Settings;
 use conrod_core::tasks::TaskHub;
 use conrod_io::raw;
@@ -163,19 +163,23 @@ fn thumbnail(frame: &Rgb) -> Rgb {
         .resize(w, h, Filter::Bilinear)
 }
 
-fn options(settings: &Settings, profile: ScanProfile) -> DetectOptions {
+fn options(settings: &Settings, _profile: ScanProfile) -> DetectOptions {
+    let preset = ShootPreset::parse(&settings.scan_profile);
     let mut classes = Vec::new();
-    if profile.wants_vehicles() {
+    if preset.wants_vehicles() {
         classes.extend(settings.vehicle_classes());
     }
-    if profile.wants_people() {
+    if preset.wants_people() {
         classes.push(detect::PERSON);
+    }
+    if preset.wants_pets() {
+        classes.extend(detect::PETS);
     }
     DetectOptions {
         conf: settings.detect_conf as f32,
         classes,
-        min_box_fraction: settings.min_box_fraction,
-        max_per_frame: settings.max_vehicles_per_frame.max(1) as usize,
+        min_box_fraction: preset.min_box_fraction(settings.min_box_fraction),
+        max_per_frame: preset.max_subjects(settings.max_vehicles_per_frame.max(1) as usize),
         crop_padding: settings.crop_padding,
         dominant_subject_fraction: settings.dominant_subject_fraction,
         ..DetectOptions::default()
@@ -190,6 +194,7 @@ pub fn cull_frame(
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
     faces: Option<&Mutex<FaceDetector>>,
 ) -> Result<FrameResult, String> {
+    let preset = ShootPreset::parse(&settings.scan_profile);
     let frame = raw::read(path)?;
     let image = Rgb::decode_jpeg(&frame.preview, 1)?.orient(frame.orientation);
     // Resize outside the lock: only the network itself is serial.
@@ -212,13 +217,13 @@ pub fn cull_frame(
             (det.bbox[2] - cx) * scale,
             (det.bbox[3] - cy) * scale,
         ];
-        let kind = if det.class_id == detect::PERSON {
+        let kind = if det.class_id == detect::PERSON || detect::PETS.contains(&det.class_id) {
             "person"
         } else {
             "vehicle"
         };
         let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), models.get(kind));
-        if !profile.pan_compatible() {
+        if !preset.pan_compatible() {
             focus.panning = false;
         }
         let edges = framing::assess(Some(det.bbox), fw as i64, fh as i64);
@@ -247,7 +252,7 @@ pub fn cull_frame(
             stars,
             cull_reason,
             features: focus.features,
-            region_type: if det.class_id == detect::PERSON {
+            region_type: if det.class_id == detect::PERSON || detect::PETS.contains(&det.class_id) {
                 "person"
             } else {
                 "vehicle"
@@ -340,7 +345,7 @@ pub fn cull_frame(
         let focus = sharpness::measure(&image.to_gray(), None, None);
         focus.measured.then_some(focus.score)
     };
-    let rating = profile
+    let rating = preset
         .priority()
         .iter()
         .find_map(|kind| {
@@ -449,7 +454,7 @@ pub fn scan_files(
             return;
         }
         let mut needs = setup::SCAN.to_vec();
-        if profile.wants_faces() {
+        if ShootPreset::parse(&settings.scan_profile).wants_faces() {
             needs.extend(setup::FACES);
         }
         if let Err(e) = setup::ensure(&hub, &flag, &needs) {
@@ -469,7 +474,7 @@ pub fn scan_files(
             }
         };
         let device = detector.lock().unwrap().device;
-        let faces = if profile.wants_faces() {
+        let faces = if ShootPreset::parse(&settings.scan_profile).wants_faces() {
             let task = hub.start("Loading face detector", 0);
             match FaceDetector::load(&conrod_core::models::expected(conrod_core::models::FACES)) {
                 Ok(detector) => {

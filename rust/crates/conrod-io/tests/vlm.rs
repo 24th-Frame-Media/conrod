@@ -160,18 +160,24 @@ fn settings_hosts_and_anthropic_auth_match_fixture() {
 
 #[test]
 fn schema_is_stable() {
-    assert_eq!(schema()["required"].as_array().unwrap().len(), 9);
+    assert_eq!(schema()["required"].as_array().unwrap().len(), 11);
 }
 
 #[test]
 fn vehicle_prompt_matches_the_album_targets() {
     let mut settings = Settings::default();
-    assert!(vehicle_prompt(&settings, false).contains("registered competition vehicles"));
+    let baseline = vehicle_prompt(&settings, false);
+    assert!(baseline.contains("Motorsport: capture vehicle identity"));
+    assert!(baseline.contains("separate reader handles registration plates"));
+    assert!(!baseline.contains("e.g."));
+    assert!(baseline.len() < 900, "local prompt should stay concise");
+    settings.scan_profile = "motorsport-rally".into();
+    assert!(vehicle_prompt(&settings, false).contains("Rallies:"));
     settings.read_numbers = false;
     let road = vehicle_prompt(&settings, false);
-    assert!(road.contains("registered vehicles, not race-numbered"));
     assert!(road.contains("Set race_number to null"));
     settings.read_plates = false;
-    assert!(vehicle_prompt(&settings, true)
-        .contains("not expected to contain useful registration plates or race numbers"));
+    let bike = vehicle_prompt(&settings, true);
+    assert!(bike.contains("Set body_type to motorcycle"));
+    assert!(bike.contains("ignore registration plates"));
 }

@@ -29,6 +29,8 @@ pub struct VehicleAnalysis {
     pub number_source: Option<String>,
     pub number_conf: f64,
     pub team: Option<String>,
+    pub driver: Option<String>,
+    pub country: Option<String>,
     pub team_corroborated: bool,
     pub sponsors: Vec<String>,
     pub text: Vec<String>,
@@ -52,6 +54,8 @@ impl Default for VehicleAnalysis {
             number_source: None,
             number_conf: 0.0,
             team: None,
+            driver: None,
+            country: None,
             team_corroborated: false,
             sponsors: Vec::new(),
             text: Vec::new(),
@@ -93,6 +97,8 @@ impl VehicleAnalysis {
         text("race_number", &mut a.race_number);
         text("number_source", &mut a.number_source);
         text("team", &mut a.team);
+        text("driver", &mut a.driver);
+        text("country", &mut a.country);
         if let Some(Value::String(kind)) = data.get("kind") {
             a.kind = kind.clone();
         }
