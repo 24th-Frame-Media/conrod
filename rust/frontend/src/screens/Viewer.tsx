@@ -40,10 +40,14 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
             )}
             </ZoomPanImage>
           </div>
-          <button className="frame-jump first" title="First frame" aria-label="First frame" disabled={index <= 0} onClick={() => step(Number.NEGATIVE_INFINITY)}>First</button>
-          <button className="frame-step prev" title="Previous frame (←)" aria-label="Previous frame" disabled={index <= 0} onClick={() => step(-1)}>‹</button>
-          <button className="frame-step next" title="Next frame (→)" aria-label="Next frame" disabled={index < 0 || index >= frames.length - 1} onClick={() => step(1)}>›</button>
-          <button className="frame-jump last" title="Last frame" aria-label="Last frame" disabled={index < 0 || index >= frames.length - 1} onClick={() => step(Number.POSITIVE_INFINITY)}>Last</button>
+          <div className="frame-nav previous" role="group" aria-label="Previous photos">
+            <button title="First frame" aria-label="First frame" disabled={index <= 0} onClick={() => step(Number.NEGATIVE_INFINITY)}>First</button>
+            <button className="frame-step" title="Previous frame (←)" aria-label="Previous frame" disabled={index <= 0} onClick={() => step(-1)}>‹</button>
+          </div>
+          <div className="frame-nav following" role="group" aria-label="Next photos">
+            <button className="frame-step" title="Next frame (→)" aria-label="Next frame" disabled={index < 0 || index >= frames.length - 1} onClick={() => step(1)}>›</button>
+            <button title="Last frame" aria-label="Last frame" disabled={index < 0 || index >= frames.length - 1} onClick={() => step(Number.POSITIVE_INFINITY)}>Last</button>
+          </div>
         </div>
         <aside className="frame-side">
           <div className="frame-side-head">
@@ -64,6 +68,9 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
                   {vehicle && <div className="read"><span className="lbl">Vehicle</span><span className="val">{vehicle}</span></div>}
                   {a.colour && <div className="read"><span className="lbl">Colour</span><span className="val">{a.colour}</span></div>}
                   {a.team && <div className="read"><span className="lbl">Team</span><span className="val">{a.team}</span></div>}
+                  {a.driver && <div className="read"><span className="lbl">Driver</span><span className="val">{a.driver}</span></div>}
+                  {a.country && <div className="read"><span className="lbl">Country</span><span className="val">{a.country}</span></div>}
+                  {a.person_name && <div className="read"><span className="lbl">Name</span><span className="val strong">{a.person_name}</span></div>}
                   {d.cull_reason && <div className="read"><span className="lbl">Cull</span><span className="val unverified">{d.cull_reason}</span></div>}
                 </div>
               );

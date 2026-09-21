@@ -165,8 +165,7 @@ button.small { padding: 4px 10px; font-size: 12px; }
 .zoom-pan.zoomed:active { cursor: grabbing; }
 .zoom-content { position: absolute; inset: 0; transform-origin: center; will-change: transform; }
 .zoom-content .image-load > img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; }
-.zoom-tools { position: absolute; z-index: 5; top: 10px; left: 50%; transform: translateX(-50%); display: flex; opacity: 0; transition: opacity .12s; border-radius: 7px; overflow: hidden; box-shadow: var(--shadow); }
-.zoom-pan:hover .zoom-tools, .zoom-tools:focus-within { opacity: 1; }
+.zoom-tools { position: absolute; z-index: 5; top: 10px; left: 50%; transform: translateX(-50%); display: flex; opacity: .92; border-radius: 7px; overflow: hidden; box-shadow: var(--shadow); }
 .zoom-tools button { min-width: 34px; height: 30px; padding: 0 8px; border-radius: 0; background: rgba(10,10,12,.82); border-color: var(--line); font-size: 12px; }
 
 .winctl { display: flex; align-self: stretch; margin: 0 -18px 0 4px; }

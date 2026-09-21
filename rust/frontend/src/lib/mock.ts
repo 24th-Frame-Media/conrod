@@ -33,7 +33,7 @@ function scene(hue: number, cx: number, s: number, paint: string, w: number, h: 
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-type Db = { jobs: Job[]; frames: Frame[]; dets: Detection[]; known: KnownVehicle[]; settings: Settings; labels: number; ticks: number };
+type Db = { jobs: Job[]; frames: Frame[]; dets: Detection[]; known: KnownVehicle[]; settings: Settings; labels: number; ticks: number; identifySkipped: boolean };
 let cache: Db | undefined;
 
 function makeDb(): Db {
@@ -69,10 +69,15 @@ function makeDb(): Db {
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
     overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', close_to_tray: false,
   };
-  return { jobs, frames, dets, known, settings, labels: 14, ticks: 0 };
+  return { jobs, frames, dets, known, settings, labels: 14, ticks: 0, identifySkipped: false };
 }
 
 function status(db: Db): Status {
+  if (params().has('identify') && !db.identifySkipped) {
+    db.ticks += 1;
+    const done = Math.min(1458, 118 + db.ticks * 7);
+    return { tasks: [{ id: 3, label: 'Identifying · album 1', detail: `IMG_${5289 + db.ticks}.CR3 · motorcycle`, state: 'running', done, total: 1458, eta: 420, error: null }], log: [`Reading vehicle ${done}`], activeJob: null, operations: ['Identifying:1'] };
+  }
   if (!params().has('scan')) return { tasks: [{ id: 1, label: 'Identify Bathurst 1000', detail: 'Done', state: 'done', done: 300, total: 300, eta: null, error: null }], log: ['12:02:11 scan finished', '12:04:40 identified 300 vehicles'], activeJob: null, operations: [] };
   db.ticks += 1;
   const done = Math.min(120, 62 + db.ticks);
@@ -96,7 +101,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'check_update': return out({current: '0.1.0', newer: false, installable: false});
     case 'summary': return out({images: {scanned: db.frames.length, written: 0, errors: 0}, counts: {numbered: 48, plated: 48, to_review: 12}});
     case 'rename_job': { const job = db.jobs.find(j => j.id === a.jobId); if(job) job.label = String(a.label || 'Album'); return out(null); }
-    case 'bulk_edit': { for(const d of db.dets.filter(d => (a.ids as number[]).includes(d.id))) { if('number' in a) d.number = String(a.number); } return out({updated: (a.ids as number[]).length}); }
+    case 'bulk_edit': { for(const d of db.dets.filter(d => (a.ids as number[]).includes(d.id))) { if('number' in a) d.number = String(a.number); if('reviewed' in a) d.reviewed = a.reviewed ? 1 : 0; } return out({updated: (a.ids as number[]).length}); }
     case 'seed_known': return out({written: db.known.length});
     case 'import_known': return out({written: 1});
     case 'export_known': return out('plate,make,model\nABC123,Ford,Falcon\n');
@@ -121,6 +126,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'known': return out(db.known);
     case 'save_known': { const v = args as KnownVehicle; db.known = [...db.known.filter((k) => k.plate !== v.plate), v].sort((p, q) => p.plate.localeCompare(q.plate)); return out(null); }
     case 'delete_known': db.known = db.known.filter((k) => k.plate !== a.plate); return out(null);
+    case 'delete_all_known': { const removed = db.known.length; db.known = []; return out({removed}); }
     case 'training_status': return out({ labels: db.labels, active: false, validation: null });
     case 'train_label': db.labels += 1; return out(null);
     case 'undo_label': db.labels = Math.max(0, db.labels - 1); return out(null);
@@ -129,6 +135,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'train_taste': return out({ n: 42 });
     case 'save_settings': db.settings = args as Settings; return out(db.settings);
     case 'delete_job': db.jobs = db.jobs.filter((j) => j.id !== a.jobId); return out(null);
+    case 'cancel_operation': db.identifySkipped = true; return out(null);
     default: return out(null);
   }
 }

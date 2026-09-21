@@ -99,6 +99,26 @@ a separate detector and OCR pair rather than one more thing asked of the VLM.
 
 Needs Rust (MSVC), the Visual Studio C++ build tools, Node.js and WebView2.
 
+### TL;DR: run, test and compile
+
+Run these from the repository root in PowerShell:
+
+```powershell
+npm --prefix rust/frontend ci
+npm --prefix rust/frontend run tauri -- dev       # launch a development build
+
+cargo test --manifest-path rust/Cargo.toml --workspace
+cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+npm --prefix rust/frontend test
+npm --prefix rust/frontend run build              # type-check and compile the UI
+
+npm --prefix rust/frontend run tauri -- build --ci # release installer
+```
+
+The installer is written under `rust/target/release/bundle/nsis/`.
+
+### Build from the frontend directory
+
 ```powershell
 cd rust/frontend
 npm ci

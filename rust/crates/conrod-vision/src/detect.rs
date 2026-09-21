@@ -23,6 +23,7 @@ const CLASS_OFFSET: f64 = 7680.0;
 /// COCO ids.
 pub const PERSON: usize = 0;
 pub const VEHICLES: [usize; 4] = [2, 3, 5, 7];
+pub const PETS: [usize; 2] = [15, 16];
 
 pub fn class_name(id: usize) -> &'static str {
     match id {
@@ -31,6 +32,8 @@ pub fn class_name(id: usize) -> &'static str {
         3 => "motorcycle",
         5 => "bus",
         7 => "truck",
+        15 => "cat",
+        16 => "dog",
         _ => "vehicle",
     }
 }

@@ -80,12 +80,24 @@ CREATE TABLE IF NOT EXISTS known_vehicles (
     team        TEXT,
     sponsors    TEXT,          -- comma separated, as a CSV column would be
     race_number TEXT,
+    driver      TEXT,
+    country     TEXT,
+    embedding   TEXT,          -- visual fingerprint for cross-album suggestions
     -- Other spellings of this plate seen on the same car, comma separated.
     -- Not guesses: grouping joins 43111J to 73111J only on visual evidence
     -- inside one burst, so these are readings of a plate this car was
     -- actually wearing. That makes a lookup on a misread safe here in a way
     -- that fuzzy-matching an arbitrary plate never is.
     aliases     TEXT,
+    updated_at  REAL
+);
+
+-- Confirmed people are deliberately separate from vehicle metadata. A face
+-- match is only ever surfaced as a suggestion; the reviewer supplies the name.
+CREATE TABLE IF NOT EXISTS known_people (
+    name        TEXT PRIMARY KEY,
+    country     TEXT,
+    embedding   TEXT NOT NULL,
     updated_at  REAL
 );
 
@@ -165,6 +177,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("detections", "burst_pick", "INTEGER"),
     // Other readings of the same car's plate. See known_vehicles.
     ("known_vehicles", "aliases", "TEXT"),
+    ("known_vehicles", "driver", "TEXT"),
+    ("known_vehicles", "country", "TEXT"),
+    ("known_vehicles", "embedding", "TEXT"),
     ("images", "sharpness", "REAL"),
     ("images", "rating", "REAL"),
     ("images", "rating_verdict", "TEXT"),

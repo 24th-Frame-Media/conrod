@@ -185,6 +185,77 @@ fn embed_missing(d: &Desktop, job: i64, stop: &AtomicBool, task: &Task) -> Resul
     Ok(done)
 }
 
+/// Create conservative visual fingerprints for detected faces. DINO is not a
+/// biometric identity model, so consumers must present matches as suggestions
+/// and require a human click before applying a name.
+pub(crate) fn embed_faces_missing(
+    d: &Desktop,
+    job: i64,
+    stop: &AtomicBool,
+    task: &Task,
+) -> Result<usize> {
+    let todo = rows(
+        &d.reader.lock().unwrap(),
+        "SELECT d.id,d.x1,d.y1,d.x2,d.y2,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'')='face' AND (d.embedding IS NULL OR d.embedding='') ORDER BY i.id,d.id",
+        [job],
+    )?;
+    if todo.is_empty() {
+        return Ok(0);
+    }
+    crate::setup::ensure(&d.hub, stop, crate::setup::SIMILARITY)?;
+    let mut embedder =
+        similarity::Embedder::load(&models::expected(models::SIMILARITY), Device::Cpu)?;
+    let mut current: Option<(String, Rgb)> = None;
+    let mut found = Vec::new();
+    for (index, row) in todo.iter().enumerate() {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let Some(path) = row["path"].as_str() else {
+            continue;
+        };
+        task.detail(format!(
+            "Matching face · {}",
+            std::path::Path::new(path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        ));
+        if current.as_ref().is_none_or(|(loaded, _)| loaded != path) {
+            let raw = conrod_io::raw::read(std::path::Path::new(path))?;
+            current = Some((
+                path.to_owned(),
+                Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation),
+            ));
+        }
+        let image = &current.as_ref().unwrap().1;
+        let coords = ["x1", "y1", "x2", "y2"]
+            .map(|key| row[key].as_f64().unwrap_or_default().max(0.0) as usize);
+        let [x1, y1, x2, y2] = coords;
+        if x2 <= x1 || y2 <= y1 {
+            continue;
+        }
+        let crop = image.crop(x1, y1, x2.min(image.width), y2.min(image.height));
+        let id = row["id"].as_i64().unwrap_or_default();
+        let crop_path = d.root.join(format!("cache/native/face-{id}.jpg"));
+        crate::desktop::save_jpeg(&crop, &crop_path)?;
+        let packed = similarity::pack(&embedder.embed(&crop)?);
+        found.push((id, packed, crop_path.to_string_lossy().into_owned()));
+        task.progress((index + 1) as u64, todo.len() as u64);
+    }
+    let db = d.db.lock().unwrap();
+    let tx = db.unchecked_transaction().map_err(err)?;
+    for (id, packed, crop_path) in &found {
+        tx.execute(
+            "UPDATE detections SET embedding=?,crop_path=? WHERE id=?",
+            params![packed, crop_path, id],
+        )
+        .map_err(err)?;
+    }
+    tx.commit().map_err(err)?;
+    Ok(found.len())
+}
+
 /// The group's own answer if it has one, else what this frame's reader said.
 fn agreed_or_own(agreed: &Option<String>, current: &Map<String, Value>, own: &str) -> Value {
     agreed
@@ -276,6 +347,12 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
             }
             if agreed.team.is_some() && empty(current.get("team")) {
                 current.insert("team".into(), json!(agreed.team));
+            }
+            if agreed.driver.is_some() && empty(current.get("driver")) {
+                current.insert("driver".into(), json!(agreed.driver));
+            }
+            if agreed.country.is_some() && empty(current.get("country")) {
+                current.insert("country".into(), json!(agreed.country));
             }
             if !agreed.sponsors.is_empty() {
                 current.insert("sponsors".into(), json!(agreed.sponsors));

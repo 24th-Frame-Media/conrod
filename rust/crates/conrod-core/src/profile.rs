@@ -24,6 +24,225 @@ pub enum ScanProfile {
     Mix,
 }
 
+/// A concrete kind of shoot. The parent profile supplies the broad culling
+/// behaviour; a child preset only changes the few defaults that benefit from
+/// more context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShootPreset {
+    Portrait,
+    PortraitGroup,
+    PortraitCouple,
+    PortraitPets,
+    Motorsport,
+    MotorsportBurnouts,
+    MotorsportTrack,
+    MotorsportRally,
+    MotorsportMeet,
+    Event,
+    EventShows,
+    EventParties,
+    Mix,
+}
+
+impl ShootPreset {
+    pub const ALL: [ShootPreset; 13] = [
+        ShootPreset::Portrait,
+        ShootPreset::PortraitGroup,
+        ShootPreset::PortraitCouple,
+        ShootPreset::PortraitPets,
+        ShootPreset::Motorsport,
+        ShootPreset::MotorsportBurnouts,
+        ShootPreset::MotorsportTrack,
+        ShootPreset::MotorsportRally,
+        ShootPreset::MotorsportMeet,
+        ShootPreset::Event,
+        ShootPreset::EventShows,
+        ShootPreset::EventParties,
+        ShootPreset::Mix,
+    ];
+
+    pub fn parse(name: &str) -> ShootPreset {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "portrait" => ShootPreset::Portrait,
+            "portrait-group" => ShootPreset::PortraitGroup,
+            "portrait-couple" => ShootPreset::PortraitCouple,
+            "portrait-pets" => ShootPreset::PortraitPets,
+            "motorsport-burnouts" => ShootPreset::MotorsportBurnouts,
+            "motorsport-track" => ShootPreset::MotorsportTrack,
+            "motorsport-rally" => ShootPreset::MotorsportRally,
+            "motorsport-meet" => ShootPreset::MotorsportMeet,
+            "event" => ShootPreset::Event,
+            "event-shows" => ShootPreset::EventShows,
+            "event-parties" => ShootPreset::EventParties,
+            "mix" => ShootPreset::Mix,
+            _ => ShootPreset::Motorsport,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ShootPreset::Portrait => "portrait",
+            ShootPreset::PortraitGroup => "portrait-group",
+            ShootPreset::PortraitCouple => "portrait-couple",
+            ShootPreset::PortraitPets => "portrait-pets",
+            ShootPreset::Motorsport => "motorsport",
+            ShootPreset::MotorsportBurnouts => "motorsport-burnouts",
+            ShootPreset::MotorsportTrack => "motorsport-track",
+            ShootPreset::MotorsportRally => "motorsport-rally",
+            ShootPreset::MotorsportMeet => "motorsport-meet",
+            ShootPreset::Event => "event",
+            ShootPreset::EventShows => "event-shows",
+            ShootPreset::EventParties => "event-parties",
+            ShootPreset::Mix => "mix",
+        }
+    }
+
+    pub fn profile(self) -> ScanProfile {
+        match self {
+            ShootPreset::Portrait
+            | ShootPreset::PortraitGroup
+            | ShootPreset::PortraitCouple
+            | ShootPreset::PortraitPets => ScanProfile::Portrait,
+            ShootPreset::Motorsport
+            | ShootPreset::MotorsportBurnouts
+            | ShootPreset::MotorsportTrack
+            | ShootPreset::MotorsportRally
+            | ShootPreset::MotorsportMeet => ScanProfile::Motorsport,
+            ShootPreset::Event | ShootPreset::EventShows | ShootPreset::EventParties => {
+                ScanProfile::Event
+            }
+            ShootPreset::Mix => ScanProfile::Mix,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ShootPreset::Portrait => "Portraits",
+            ShootPreset::PortraitGroup => "Group photos",
+            ShootPreset::PortraitCouple => "Couple photos",
+            ShootPreset::PortraitPets => "Pets",
+            ShootPreset::Motorsport => "Motorsport",
+            ShootPreset::MotorsportBurnouts => "Burnouts",
+            ShootPreset::MotorsportTrack => "Track days",
+            ShootPreset::MotorsportRally => "Rallies",
+            ShootPreset::MotorsportMeet => "Car meets",
+            ShootPreset::Event => "Events",
+            ShootPreset::EventShows => "Shows",
+            ShootPreset::EventParties => "Parties",
+            ShootPreset::Mix => "Mixed",
+        }
+    }
+
+    /// Concise attention guidance for a vision-language model. It deliberately
+    /// contains no sample values or scenarios for the model to imitate.
+    pub fn prompt_context(self) -> &'static str {
+        match self {
+            ShootPreset::Portrait => "Portraits: prioritise people, faces, expression, and eye focus.",
+            ShootPreset::PortraitGroup => {
+                "Group photos: inspect every visible person and group-wide focus."
+            }
+            ShootPreset::PortraitCouple => {
+                "Couple photos: prioritise both people, their expressions, and interaction."
+            }
+            ShootPreset::PortraitPets => {
+                "Pets: prioritise the animal's face, eyes, pose, and interaction."
+            }
+            ShootPreset::Motorsport => {
+                "Motorsport: capture vehicle identity, competition details, livery, and action."
+            }
+            ShootPreset::MotorsportBurnouts => {
+                "Burnouts: capture vehicle identity, tyre smoke, motion, and visible livery."
+            }
+            ShootPreset::MotorsportTrack => {
+                "Track days: capture vehicle identity, competition details, livery, and motion."
+            }
+            ShootPreset::MotorsportRally => {
+                "Rallies: capture vehicle identity, competition details, livery, and terrain action."
+            }
+            ShootPreset::MotorsportMeet => {
+                "Car meets: capture vehicle identity, modifications, finish, and visible details."
+            }
+            ShootPreset::Event => {
+                "Events: capture the main people, subjects, setting, and activity."
+            }
+            ShootPreset::EventShows => {
+                "Shows: capture performers, presentation, stage detail, and audience context."
+            }
+            ShootPreset::EventParties => {
+                "Parties: capture people, expressions, interaction, and atmosphere."
+            }
+            ShootPreset::Mix => {
+                "Mixed shoot: inspect all visible subjects without assuming a dominant type."
+            }
+        }
+    }
+
+    pub fn wants_vehicles(self) -> bool {
+        !matches!(
+            self,
+            ShootPreset::Portrait
+                | ShootPreset::PortraitGroup
+                | ShootPreset::PortraitCouple
+                | ShootPreset::PortraitPets
+                | ShootPreset::EventParties
+        )
+    }
+
+    pub fn wants_people(self) -> bool {
+        true
+    }
+
+    pub fn wants_faces(self) -> bool {
+        !matches!(
+            self,
+            ShootPreset::Motorsport
+                | ShootPreset::MotorsportBurnouts
+                | ShootPreset::MotorsportTrack
+                | ShootPreset::MotorsportRally
+        )
+    }
+
+    pub fn wants_pets(self) -> bool {
+        matches!(self, ShootPreset::PortraitPets)
+    }
+
+    pub fn priority(self) -> &'static [Subject] {
+        self.profile().priority()
+    }
+
+    pub fn pan_compatible(self) -> bool {
+        matches!(
+            self,
+            ShootPreset::Motorsport
+                | ShootPreset::MotorsportBurnouts
+                | ShootPreset::MotorsportTrack
+                | ShootPreset::MotorsportRally
+                | ShootPreset::Event
+                | ShootPreset::EventShows
+                | ShootPreset::Mix
+        )
+    }
+
+    pub fn min_box_fraction(self, baseline: f64) -> f64 {
+        let factor = match self {
+            ShootPreset::PortraitGroup | ShootPreset::EventShows | ShootPreset::EventParties => 0.5,
+            ShootPreset::MotorsportRally | ShootPreset::MotorsportTrack => 0.7,
+            _ => 1.0,
+        };
+        baseline * factor
+    }
+
+    pub fn max_subjects(self, baseline: usize) -> usize {
+        match self {
+            ShootPreset::PortraitGroup | ShootPreset::EventShows | ShootPreset::EventParties => {
+                baseline.max(24)
+            }
+            ShootPreset::MotorsportMeet => baseline.max(16),
+            _ => baseline,
+        }
+    }
+}
+
 impl ScanProfile {
     pub const ALL: [ScanProfile; 4] = [
         ScanProfile::Motorsport,
@@ -34,12 +253,7 @@ impl ScanProfile {
 
     /// The name stored in settings and on the job; unknown names are motorsport.
     pub fn parse(name: &str) -> ScanProfile {
-        match name.trim().to_ascii_lowercase().as_str() {
-            "portrait" => ScanProfile::Portrait,
-            "event" => ScanProfile::Event,
-            "mix" => ScanProfile::Mix,
-            _ => ScanProfile::Motorsport,
-        }
+        ShootPreset::parse(name).profile()
     }
 
     pub fn name(self) -> &'static str {
@@ -108,6 +322,10 @@ mod tests {
         }
         assert_eq!(ScanProfile::parse("  Portrait "), ScanProfile::Portrait);
         assert_eq!(ScanProfile::parse("wedding"), ScanProfile::Motorsport);
+        for preset in ShootPreset::ALL {
+            assert_eq!(ShootPreset::parse(preset.name()), preset);
+            assert_eq!(ScanProfile::parse(preset.name()), preset.profile());
+        }
     }
 
     #[test]

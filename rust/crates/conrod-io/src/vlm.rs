@@ -932,13 +932,19 @@ pub const BURST_PROMPT: &str = include_str!("prompts/burst.txt");
 /// decide whether incidental digits are a plate or a competition number.
 pub fn vehicle_prompt(settings: &Settings, is_bike: bool) -> String {
     let base = if is_bike { BIKE_PROMPT } else { CAR_PROMPT };
-    let context = match (settings.read_plates, settings.read_numbers) {
-        (true, true) => "This shoot contains registered competition vehicles. Look for a race number only on a door, roundel, fairing, or rider. Registration plates are handled by a separate reader: never copy plate characters into race_number.",
-        (true, false) => "This shoot contains registered vehicles, not race-numbered competition entries. Registration plates are handled by a separate reader. Set race_number to null and focus on vehicle identity, colour, body type, and visible livery.",
-        (false, true) => "This shoot contains competition vehicles without useful registration plates. Look carefully for a race number on a door, roundel, fairing, or rider, and never use unrelated background digits.",
-        (false, false) => "This shoot is not expected to contain useful registration plates or race numbers. Set race_number to null and focus on vehicle identity, colour, body type, team, and visible livery.",
+    let preset = conrod_core::profile::ShootPreset::parse(&settings.scan_profile);
+    let targets = match (settings.read_plates, settings.read_numbers) {
+        (true, true) => "A separate reader handles registration plates. Read a competition number only from the subject and never copy plate characters.",
+        (true, false) => "A separate reader handles registration plates. Set race_number to null.",
+        (false, true) => "Read a competition number only from the subject; ignore unrelated digits.",
+        (false, false) => "Set race_number to null and ignore registration plates.",
     };
-    format!("{base}\n\nAlbum context: {context}")
+    format!(
+        "{}\n\nShoot context: {} Context guides attention only; never infer unseen details. {}",
+        base.trim(),
+        preset.prompt_context(),
+        targets
+    )
 }
 
 pub fn schema() -> Value {
@@ -951,13 +957,15 @@ pub fn schema() -> Value {
             "body_type": {"type": ["string", "null"]},
             "race_number": {"type": ["string", "null"]},
             "team": {"type": ["string", "null"]},
+            "driver": {"type": ["string", "null"]},
+            "country": {"type": ["string", "null"]},
             "sponsors": {"type": "array", "items": {"type": "string"}},
             "livery_text": {"type": "array", "items": {"type": "string"}},
             "is_competition": {"type": "boolean"},
             "confidence": {"type": "number"},
         },
         "required": ["make", "model", "colour", "body_type", "race_number",
-                     "team", "sponsors", "livery_text", "confidence"],
+                     "team", "driver", "country", "sponsors", "livery_text", "confidence"],
     })
 }
 
@@ -969,6 +977,8 @@ pub struct VehicleDescription {
     pub body_type: Option<String>,
     pub race_number: Option<String>,
     pub team: Option<String>,
+    pub driver: Option<String>,
+    pub country: Option<String>,
     pub sponsors: Vec<String>,
     pub livery_text: Vec<String>,
     pub is_competition: bool,
@@ -1116,6 +1126,8 @@ fn map_vehicle(parsed: &Value, settings: &Settings, with_number: bool) -> Vehicl
             None
         },
         team: text(parsed.get("team")),
+        driver: text(parsed.get("driver")),
+        country: text(parsed.get("country")),
         sponsors: text_list(parsed.get("sponsors")),
         livery_text: text_list(parsed.get("livery_text")),
         is_competition: is_competition(parsed.get("is_competition")),
