@@ -133,7 +133,15 @@ pub fn analyze(
     // 4. Reconcile the number.
     let vlm_number = s
         .read_numbers
-        .then(|| trusted_vlm_number(&described, &roundels, &ocr_number, a.plate.as_deref(), &tokens))
+        .then(|| {
+            trusted_vlm_number(
+                &described,
+                &roundels,
+                &ocr_number,
+                a.plate.as_deref(),
+                &tokens,
+            )
+        })
         .flatten();
     let (number, source, confidence) =
         merge_number(&ocr_number, vlm_number.as_deref(), s.ocr_accept_confidence);
@@ -374,10 +382,7 @@ mod tests {
 
         // Rejected uncorroborated 3-digit number when OCR tokens are present
         let tok = vec![token("FORD", 0.9)];
-        assert_eq!(
-            trusted_vlm_number(&racer, &[], &none, None, &tok),
-            None
-        );
+        assert_eq!(trusted_vlm_number(&racer, &[], &none, None, &tok), None);
     }
 
     #[test]

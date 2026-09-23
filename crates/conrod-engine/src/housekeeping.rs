@@ -272,11 +272,18 @@ pub fn reset_ratings(d: &Desktop, job: Option<i64>) -> Result<Value> {
     let run =
         |sql: String| -> Result<usize> { tx.execute(&sql, params_from_iter(&args)).map_err(err) };
     let frames_cleared = if let Some(j) = job {
-        tx.execute("UPDATE images SET stars=NULL, rejected=0 WHERE job_id=?", [j]).map_err(err)?
+        tx.execute(
+            "UPDATE images SET stars=NULL, rejected=0 WHERE job_id=?",
+            [j],
+        )
+        .map_err(err)?
     } else {
-        tx.execute("UPDATE images SET stars=NULL, rejected=0", []).map_err(err)?
+        tx.execute("UPDATE images SET stars=NULL, rejected=0", [])
+            .map_err(err)?
     };
-    let dets_cleared = run(format!("UPDATE detections SET stars=NULL, rejected=0 WHERE {inside}"))?;
+    let dets_cleared = run(format!(
+        "UPDATE detections SET stars=NULL, rejected=0 WHERE {inside}"
+    ))?;
     tx.commit().map_err(err)?;
     drop(db);
     task.finish();
@@ -637,11 +644,12 @@ mod tests {
         let lib = Lib::new("reset-ratings");
         let (image, det) = stocked(&lib);
         lib.sql("UPDATE images SET stars=5, rejected=1 WHERE id=?", [image]);
-        lib.sql("UPDATE detections SET stars=5, rejected=1 WHERE id=?", [det]);
+        lib.sql(
+            "UPDATE detections SET stars=5, rejected=1 WHERE id=?",
+            [det],
+        );
 
-        let out = lib
-            .run("reset_ratings", json!({"jobId": lib.job}))
-            .unwrap();
+        let out = lib.run("reset_ratings", json!({"jobId": lib.job})).unwrap();
         assert_eq!(out["ok"], true);
         assert_eq!(out["frames_cleared"], 1);
         assert_eq!(out["detections_cleared"], 1);

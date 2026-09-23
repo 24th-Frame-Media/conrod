@@ -291,7 +291,11 @@ impl Desktop {
         if let Some(ref old) = a.old_plate {
             let old = old.trim();
             if !old.is_empty() && !old.eq_ignore_ascii_case(plate) {
-                db.execute("DELETE FROM known_vehicles WHERE plate=?", [old.to_uppercase()]).map_err(err)?;
+                db.execute(
+                    "DELETE FROM known_vehicles WHERE plate=?",
+                    [old.to_uppercase()],
+                )
+                .map_err(err)?;
             }
         }
         db.execute("INSERT INTO known_vehicles(plate,make,model,colour,team,race_number,driver,country,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(plate) DO UPDATE SET make=excluded.make,model=excluded.model,colour=excluded.colour,team=excluded.team,race_number=excluded.race_number,driver=excluded.driver,country=excluded.country,updated_at=excluded.updated_at",params![plate.to_uppercase(),a.make,a.model,a.colour,a.team,a.race_number,a.driver,a.country,now()]).map_err(err)?;

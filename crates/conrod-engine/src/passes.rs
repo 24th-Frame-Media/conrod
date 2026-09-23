@@ -307,10 +307,12 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
             frame_index: row["image_id"].as_i64().unwrap_or_default(),
             burst: row["burst_key"].as_i64(),
             plate: row["plate"].as_str().map(str::to_owned),
-            number: row["number"]
-                .as_str()
-                .map(str::to_owned)
-                .or_else(|| parsed.get("race_number").and_then(Value::as_str).map(str::to_owned)),
+            number: row["number"].as_str().map(str::to_owned).or_else(|| {
+                parsed
+                    .get("race_number")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            }),
             cls: row["cls"].as_str().map(str::to_owned),
         });
     }
