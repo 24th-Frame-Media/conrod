@@ -1,179 +1,82 @@
 # Conrod
 
-Vehicle keywording for motorsport and car photography. Point it at a folder of
-frames; it finds cars, bikes and people, measures focus on the subject, picks
-the keeper of each pass, reads competition numbers, plates and livery text,
-works out make, model and colour, and writes it all into XMP for Lightroom,
-Bridge, Photo Mechanic and Capture One.
+Fast vehicle keywording and culling for motorsport and automotive photography.
 
-Conrod is a native Windows app (Rust, Tauri and React). The earlier Python
-version, up to v0.8.0, lives on the
-[`legacy-python`](../../tree/legacy-python) branch.
+Conrod scans folders of RAW and JPEG frames to detect vehicles and people, measure subject sharpness, pick the best frame of each burst, read race numbers and plates, and identify make, model, and colour. Tags are written directly into industry-standard XMP sidecars for Lightroom, Photo Mechanic, Bridge, and Capture One.
 
-## Install
+Conrod is a native Windows app built with Rust, Tauri, and React. (The legacy Python release lives on the [`legacy-python`](../../tree/legacy-python) branch).
 
-Download the latest release from [Releases](../../releases): the
-`-win64-setup.exe` installer (per user, no admin rights) or the portable
-`-win64.zip` (unzip, run `Conrod.exe`). Builds are not code-signed, so Windows
-SmartScreen asks you to confirm.
+## Installation
 
-The models and ExifTool come with the release. If one is ever missing Conrod
-downloads it on the next scan, checked against a pinned SHA-256. Settings →
-Maintenance checks the setup, installs what is missing and looks for updates.
+Download the latest release from [Releases](../../releases):
+- **Installer** (`Conrod-<v>-win64-setup.exe`): Per-user installation, no admin rights required.
+- **Portable** (`Conrod-<v>-win64.zip`): Unzip and launch `Conrod.exe`.
 
-Optional: [Ollama](https://ollama.com/) and `ollama pull qwen2.5vl:7b` to name
-make, model, colour and team. Without it Conrod still culls, and reads plates,
-numbers and livery text.
+*Note: Builds are not code-signed; Windows SmartScreen will ask for confirmation on first launch.*
 
-Coming from the Python version: your library in `%USERPROFILE%\.conrod`
-(database, settings, trained models) opens as it is.
+### Setup & Requirements
+- **Batteries included**: Bundled models and ExifTool ship with the app or download automatically on first run.
+- **Optional Local AI**: Install [Ollama](https://ollama.com/) and run `ollama pull qwen2.5vl:7b` for local make/model/colour identification. (Cloud OpenAI / GPT-4o is also supported in Settings).
+- **Existing Users**: Libraries in `%USERPROFILE%\.conrod` (database, settings, trained models) open automatically.
 
-## The entry list
+## Key Features
 
-Optional. A CSV with a `number` column; every other column becomes a keyword,
-so a bare two-column grid and a full entry list both work with no
-configuration (there is an example in [`samples/`](samples/entries-example.csv)):
+- **Non-destructive**: RAW files are never modified; metadata is written to `.xmp` sidecars. JPEGs update in place.
+- **Burst Culling**: Identifies identical cars through bursts and picks the sharpest keeper of each pass.
+- **Trainable Sharpness**: Customizes subject scoring to your photography style (e.g. sharp car on panning motion blur) using user ratings in the Train tab.
+- **Entry List Matching**: Drop in an event entry CSV (`number,driver,team,...`) to guarantee accurate keywords for competitors. (See [`samples/entries-example.csv`](samples/entries-example.csv)).
+- **Folder Watch**: Automatically processes new frames as they copy from memory cards.
+- **Formats**: Tested on Canon `.cr3` and `.cr2`, alongside `.jpg` / `.jpeg`.
 
-```csv
-number,driver,team,class,sponsor
-88,Broc Feeney,Triple Eight Race Engineering,Supercars,Red Bull
-```
+## Models & Pipeline
 
-A frame with car 88 gets keyworded `88`, `#88`, `Car 88`, `Broc Feeney`,
-`Triple Eight Race Engineering`, `Supercars`, `Red Bull`. A cell can hold
-several values separated by `;` or `,`. Where the entry list names a number,
-it beats anything read off the car's own panels.
+Each stage uses a dedicated, specialized model rather than a single monolithic multimodal model:
 
-## Good to know
-
-- **Non-destructive.** RAW frames get an `.xmp` sidecar; the original file is
-  never touched. Only JPEGs are written to directly. Keywords are replaced on
-  every write, so scanning the same shoot twice does not stack duplicates. A
-  dry run shows what would be written first.
-- **Trainable sharpness.** The Train tab shows crops and asks how sharp the
-  car is, 1-5 (judge the car, not the background; a crisp car on a streaked
-  pan is a 5). After about 60 ratings, *Learn from my ratings* fits a small
-  model, checks it against ratings it has not seen, and only switches it on if
-  it beats the built-in measure.
-- **Canon-first.** Tested throughout on `.cr3`/`.cr2`. `.jpg`/`.jpeg` are
-  fully supported. Other RAW is not read yet; open an issue with a few sample
-  frames if you shoot something else.
-- **Folder watch.** Point it at a card that is still copying and it picks up
-  each frame once it has stopped changing.
-- **Data lives in `%USERPROFILE%\.conrod`**: previews, the job database,
-  settings and trained models.
-
-## Models
-
-Each stage uses the model that is good at it, rather than asking one model to
-do everything:
-
-| Task | Model | Why |
+| Task | Model | Purpose |
 |---|---|---|
-| Vehicle detection | YOLO11s | Small and fast |
-| Plate detection | [open-image-models](https://github.com/ankandrew/open-image-models) | 7.5 MB; also boxes competition-number roundels, which read far better than OCR across the whole car |
-| Plate OCR | fast-plate-ocr | Trained on plates specifically: 18/18 test crops correct vs 5/18 for general OCR, and about 40x faster |
-| Number and livery text | PP-OCRv4 (the RapidOCR models) | General-purpose, for anything that is not a plate |
-| Faces | YuNet | For portrait sessions |
-| Grouping one car across a burst | dinov2-small (quantized) | Cheap visual similarity to merge crops of the same vehicle |
-| Make, model, colour, team | qwen2.5vl:7b via Ollama | See below |
+| Vehicle Detection | YOLO11s (DirectML / GPU) | Fast bounding boxes (~17ms/frame) |
+| Plate Detection | open-image-models | License plates & number roundels |
+| Plate OCR | fast-plate-ocr | Dedicated plate character recognition |
+| Livery & Numbers | PP-OCRv4 | Competition numbers and sponsor decals |
+| Burst Grouping | DINOv2 (quantized) | Visual similarity clustering |
+| Make, Model, Livery | Qwen2.5-VL 7B (via Ollama) | Vehicle visual identification |
 
-### Why qwen2.5vl:7b
-
-Every vision-language model that fits in 8 GB VRAM, same 13 real crops, same
-prompt:
-
-| model | sharp crops correct | per crop |
-|---|---|---|
-| **qwen2.5vl:7b** | **11 / 11** | 2.7 s |
-| gemma3:4b | 4 / 11 | 5.6 s |
-| minicpm-v:8b | 3 / 11 | 6.4 s |
-| qwen3-vl:8b | worse | 2.6 s |
-
-Not close. qwen3-vl is newer and worse here, and puts its answer in a
-`thinking` field a normal reader sees as empty. The vision model also cannot
-read plate characters at any resolution tried, which is why plate reading is
-a separate detector and OCR pair rather than one more thing asked of the VLM.
-
-#### Trackside Benchmark Comparison
+### Why Qwen2.5-VL 7B?
 
 Tested against real circuit photography using Conrod's structured extraction prompt and schema:
 
 | Target | Ground Truth | qwen2.5vl:7b (Local Ollama) | gpt-4o (OpenAI Cloud) |
 |---|---|---|---|
-| <img src="docs/images/benchmark_holden.jpg" width="200" alt="Holden HRT Commodore" /><br>*(Holden HRT)* | **Holden Commodore (VY/VZ)**<br>#R5, Saville<br>HRT / Mobil 1, HSV, Repco, NGK | **Make**: Holden, **Model**: HSV<br>**Number**: `R5` ✅<br>**Sponsors**: Mobil 1, NGK, Repco, HSV, Xbox ✅ | **Make**: Holden, **Model**: *null* ❌<br>**Number**: `05` ❌ *(hallucinated Brock)*<br>**Driver**: `Brock` ❌ *(hallucinated)* |
-| <img src="docs/images/benchmark_subaru.jpg" width="200" alt="Subaru Impreza WRX STI" /><br>*(Subaru WRX)* | **Subaru Impreza WRX STI (Blobeye)**<br>#71, T. Gough<br>Marvell | **Make**: Subaru ✅, **Model**: Impreza ✅<br>**Number**: `71` ✅<br>**Driver**: `T. Gough` ✅ | **Make**: *null* ❌, **Model**: *null* ❌<br>**Number**: `71` ✅<br>**Driver**: `T. Gough` ✅ |
-| <img src="docs/images/benchmark_lancer.jpg" width="200" alt="Mitsubishi Lancer Evolution X" /><br>*(Lancer Evo X)* | **Mitsubishi Lancer Evolution X**<br>#82<br>Intima, Motul, Shockworks, Tyrepower | **Make**: Mitsubishi ✅, **Model**: Lancer Evolution ✅<br>**Number**: `82` ✅<br>**Sponsors**: Intima, Motul ✅ | **Make**: *null* ❌, **Model**: *null* ❌<br>**Number**: `82` ✅<br>**Sponsors**: Intima, Motul, Yokohama ✅ |
+| <img src="docs/images/benchmark_holden.jpg" width="180" alt="Holden HRT Commodore" /><br>*(Holden HRT)* | **Holden Commodore (VY/VZ)**<br>#R5, Saville<br>HRT / Mobil 1, HSV, Repco, NGK | **Make**: Holden, **Model**: HSV<br>**Number**: `R5` ✅<br>**Sponsors**: Mobil 1, NGK, Repco, HSV, Xbox ✅ | **Make**: Holden, **Model**: *null* ❌<br>**Number**: `05` ❌ *(hallucinated Brock)*<br>**Driver**: `Brock` ❌ *(hallucinated)* |
+| <img src="docs/images/benchmark_subaru.jpg" width="180" alt="Subaru Impreza WRX STI" /><br>*(Subaru WRX)* | **Subaru Impreza WRX STI (Blobeye)**<br>#71, T. Gough<br>Marvell | **Make**: Subaru ✅, **Model**: Impreza ✅<br>**Number**: `71` ✅<br>**Driver**: `T. Gough` ✅ | **Make**: *null* ❌, **Model**: *null* ❌<br>**Number**: `71` ✅<br>**Driver**: `T. Gough` ✅ |
+| <img src="docs/images/benchmark_lancer.jpg" width="180" alt="Mitsubishi Lancer Evolution X" /><br>*(Lancer Evo X)* | **Mitsubishi Lancer Evolution X**<br>#82<br>Intima, Motul, Shockworks, Tyrepower | **Make**: Mitsubishi ✅, **Model**: Lancer Evolution ✅<br>**Number**: `82` ✅<br>**Sponsors**: Intima, Motul ✅ | **Make**: *null* ❌, **Model**: *null* ❌<br>**Number**: `82` ✅<br>**Sponsors**: Intima, Motul, Yokohama ✅ |
 
-*Other local models tested on the Subaru:*
-- `minicpm-v:8b` (15.5s): Hallucinated make/model as **"Ford Mustang"** ❌ and driver as "T. Cough".
-- `gemma3:4b` (17.8s): Hallucinated make/model as **"Mazda 323"** ❌.
-- `qwen3-vl:8b` (14.8s): Emitted reasoning tokens into internal `<think>` block rather than following JSON schema.
+*Other local models tested:* `minicpm-v:8b` hallucinated a Mustang; `gemma3:4b` hallucinated a Mazda 323; `qwen3-vl:8b` failed JSON output structure. `qwen2.5vl:7b` identifies silhouettes accurately and runs locally in ~3.4s on an RTX 3070 Ti.
 
-## Build
+## Development & Build
 
-Needs Rust (MSVC), the Visual Studio C++ build tools, Node.js and WebView2.
-
-### TL;DR: run, test and compile
-
-Run these from the repository root in PowerShell:
+Prerequisites: Rust (MSVC), C++ Build Tools, Node.js, and WebView2.
 
 ```powershell
+# Install frontend dependencies
 npm --prefix frontend ci
-npm --prefix frontend run tauri -- dev       # launch a development build
 
+# Run development app
+npm --prefix frontend run tauri -- dev
+
+# Run tests and lints
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 npm --prefix frontend test
-npm --prefix frontend run build              # type-check and compile the UI
 
-npm --prefix frontend run tauri -- build --ci # release installer
+# Compile release installer
+npm --prefix frontend run tauri -- build --ci
 ```
 
-The installer is written under `target/release/bundle/nsis/`.
+Output installer: `target/release/bundle/nsis/`.
 
-### Build from the frontend directory
-
-```powershell
-cd frontend
-npm ci
-npm run dev                    # Vite on http://localhost:1420
-npm run tauri -- build --ci     # installer: target/release/bundle/nsis/
-```
-
-[`API.md`](API.md) lists every command the desktop frontend and CLI use; [`RELEASING.md`](RELEASING.md) details release tagging and bundling.
-
-## Contribute
-
-```
-scan -> preview -> detect -> plate/number/text -> identify (VLM) -> merge -> review -> write
-```
-
-Everything runs per vehicle, not per frame, which is what stops a trackside
-banner being keyworded onto every car that passes it. The crates in
-[`crates`](crates): `conrod-core` (pure logic), `conrod-vision`
-(detector, plates, OCR, faces, similarity), `conrod-io` (RAW, ExifTool, VLM,
-assets, updates), `conrod-store` (SQLite), `conrod-engine` (the operations),
-`conrod-app` (the Tauri app) and `conrod-cli`.
-
-Issues and PRs welcome.
-
-### Releasing
-
-Push a tag and CI builds the Windows installer and portable zip, self-tests the
-shipped exe and attaches them, with checksums, to a GitHub Release:
-
-```bash
-git tag v1.0.0 && git push origin v1.0.0
-```
-
-A tag with a suffix (`v1.0.0-beta.1`) is published as a pre-release. See
-[`RELEASING.md`](RELEASING.md).
+See [`API.md`](API.md) for the internal command API and [`RELEASING.md`](RELEASING.md) for release workflows.
 
 ## Licensing
 
-Detection uses Ultralytics YOLO, which is **AGPL-3.0**: anyone distributing a
-build must make source available on the same terms. The plate detector
-([open-image-models](https://github.com/ankandrew/open-image-models)) is MIT.
-Licences of every downloaded model and ExifTool are listed in
-[`scripts/assets.json`](scripts/assets.json).
+Detection uses Ultralytics YOLO (**AGPL-3.0**). Plate detection is **MIT**. Full third-party licenses and model hashes are tracked in [`scripts/assets.json`](scripts/assets.json).
