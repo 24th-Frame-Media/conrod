@@ -281,7 +281,7 @@ fn empty(value: Option<&Value>) -> bool {
 pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)> {
     task.detail("Sorting vehicles into cars");
     let sql = format!(
-        "SELECT d.id, d.attributes, d.colour_hex, d.plate, d.embedding, i.id AS image_id, i.burst_key \
+        "SELECT d.id, d.attributes, d.colour_hex, d.plate, d.number, d.embedding, i.id AS image_id, i.burst_key \
          FROM detections d JOIN images i ON i.id=d.image_id \
          WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'vehicle')='vehicle' \
          ORDER BY i.id, d.id"
@@ -297,7 +297,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         let mut parsed = attributes_of(row["attributes"].as_str());
         grouping::use_own_reading(&mut parsed);
         parsed.insert("colour_hex".into(), row["colour_hex"].clone());
-        attributes.insert(id, parsed);
+        attributes.insert(id, parsed.clone());
         looks.push(grouping::LookRow {
             det_id: id,
             vector: row["embedding"]
@@ -307,15 +307,19 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
             frame_index: row["image_id"].as_i64().unwrap_or_default(),
             burst: row["burst_key"].as_i64(),
             plate: row["plate"].as_str().map(str::to_owned),
+            number: row["number"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| parsed.get("race_number").and_then(Value::as_str).map(str::to_owned)),
         });
     }
     // Python falls back to a cruder shape-and-colour measure when the look model
     // has not seen most of the album; there are no crop signatures here, so the
     // album has to be looked at first.
     let usable = looks.iter().filter(|l| l.vector.is_some()).count();
-    if usable < (looks.len() / 2).max(1) {
+    if usable == 0 {
         return Err(format!(
-            "Only {usable} of {} vehicles have been looked at by the grouping model, too few to group. Install the model and group again.",
+            "Only 0 of {} vehicles have been looked at by the grouping model, too few to group. Install the model and group again.",
             looks.len()
         ));
     }
@@ -327,7 +331,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         }
     }
 
-    // (detection, attributes, group key, size, agreement, sampled colour)
+    // (detection, attributes, group key, size, agreement, sampled colour, agreed plate, agreed number)
     let mut writes = Vec::new();
     for (key, ids) in &members {
         let group: Vec<_> = ids.iter().map(|i| attributes[i].clone()).collect();
@@ -377,18 +381,20 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
                 agreed.size as i64,
                 (agreed.agreement * 1000.0).round() / 1000.0,
                 agreed.colour_hex.clone(),
+                agreed.plate.clone(),
+                agreed.race_number.clone(),
             ));
         }
     }
     let profile = ScanProfile::parse(&settings(d, job)?.scan_profile);
     let db = d.db.lock().unwrap();
     let tx = db.unchecked_transaction().map_err(err)?;
-    for (id, attrs, key, size, agreement, hex) in &writes {
+    for (id, attrs, key, size, agreement, hex, plate, number) in &writes {
         // group_colour_hex, never colour_hex: the per-frame sample is a
         // measurement and a second regroup must not average averages.
         tx.execute(
-            "UPDATE detections SET attributes=?,group_key=?,group_size=?,group_agreement=?,group_colour_hex=? WHERE id=?",
-            params![attrs, key, size, agreement, hex, id],
+            "UPDATE detections SET attributes=?,plate=COALESCE(plate,?),number=COALESCE(number,?),group_key=?,group_size=?,group_agreement=?,group_colour_hex=? WHERE id=?",
+            params![attrs, plate, number, key, size, agreement, hex, id],
         )
         .map_err(err)?;
     }
