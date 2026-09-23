@@ -111,10 +111,29 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'status': return out(status(db));
     case 'jobs': return out(db.jobs);
     case 'review': return out({ frames: db.frames, detections: db.dets });
-    case 'scan': return out({ jobId: (a.jobId as number | undefined) ?? 3 });
+    case 'scan': {
+      const jobId = (a.jobId as number | undefined) ?? 3;
+      if (a.jobId != null) {
+        for (const f of db.frames.filter((f) => !f.rejected)) f.status = 'done';
+        const job = db.jobs.find((j) => j.id === jobId);
+        if (job) { job.status = 'done'; job.done = job.total; }
+      }
+      return out({ jobId });
+    }
+    case 'identify': {
+      for (const d of db.dets) {
+        const f = db.frames.find((f) => f.id === d.image_id);
+        if (f && !f.rejected && !d.rejected && !d.bystander && (!d.cull_reason || d.stars != null || f.manual_stars != null)) d.reviewed = 1;
+      }
+      return out(null);
+    }
     case 'mark': {
       const f = db.frames.find((x) => x.id === a.imageId);
       if (f) { if ('stars' in a) f.manual_stars = (a.stars as number | null) ?? null; if ('rejected' in a) f.rejected = a.rejected ? 1 : 0; }
+      for (const d of db.dets.filter((d) => d.image_id === a.imageId)) {
+        if ('stars' in a) d.stars = (a.stars as number | null) ?? null;
+        if ('rejected' in a) { d.rejected = a.rejected ? 1 : 0; if (!a.rejected) d.cull_reason = null; }
+      }
       return out(null);
     }
     case 'edit_detection': {

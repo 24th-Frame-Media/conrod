@@ -1,7 +1,7 @@
-import { filename, filterFrames, frameStars } from '../review.mjs';
+import { filename, filterFrames, frameStars, frameExcluded } from '../review.mjs';
 import type { AttributeKey, Attributes, Detection, Facet, Frame, Review, Sort, View } from './types';
 
-export { filename, frameStars };
+export { filename, frameStars, frameExcluded };
 
 /** What a card, facet list and search need to know about one frame, read once per review load. */
 export type FrameFacts = {
@@ -13,7 +13,7 @@ export type FrameFacts = {
 };
 export type FacetItem = { value: string; count: number; who: string };
 export type Filters = { search: string; minStars: number; view: View; sort: Sort; facet: Facet | null };
-export const defaultFilters: Filters = { search: '', minStars: 0, view: 'review', sort: 'frame', facet: null };
+export const defaultFilters: Filters = { search: '', minStars: 0, view: 'all', sort: 'frame', facet: null };
 
 export function parseAttributes(d: Detection): Attributes {
   let attrs: Attributes = {};
@@ -38,9 +38,9 @@ function factsFor(frame: Frame, dets: Detection[]): FrameFacts {
   return {
     dets, plates, numbers, plate: plates[0] ?? null, number: numbers[0] ?? null, vehicle, colour,
     colourCss: first(attrs.map((a) => a.colour_hex)) ?? colour, team,
-    panned: dets.some((d) => d.panning), pick: dets.some((d) => d.burst_pick),
+    panned: dets.some((d) => d.panning), pick: dets.some((d) => Boolean(d.burst_pick)) || Boolean(frame.burst_pick),
     reviewed: dets.length > 0 && dets.every((d) => Boolean(d.reviewed)),
-    cull: first(dets.map((d) => d.cull_reason)),
+    cull: frameExcluded(frame, dets) ? (frame.rejected ? 'Rejected · excluded from ML' : 'Culled · excluded from ML') : null,
     text: [frame.path, ...plates, ...numbers, vehicle, colour, team, ...attrs.map((a) => a.driver), ...attrs.map((a) => a.country), ...attrs.map((a) => a.person_name)].join(' ').toLowerCase(),
   };
 }
@@ -79,13 +79,15 @@ export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f
     const x = facts.get(frame.id);
     if (needle && !x?.text.includes(needle)) return false;
     if (f.facet && !(f.facet.kind === 'number' ? x?.numbers : x?.plates)?.includes(f.facet.value)) return false;
-    if (f.view === 'review') return !frame.rejected && !x?.reviewed;
-    if (f.view === 'picks') return !frame.rejected && Boolean(x?.pick);
+    if (f.view === 'rejected') return Boolean(x?.cull);
+    if (f.view === 'kept') return !x?.cull;
+    if (f.view === 'review') return !x?.cull && !x?.reviewed;
+    if (f.view === 'picks') return !x?.cull && Boolean(x?.pick);
     return true;
   };
-  const reject = f.view === 'rejected' ? 'rejected' : 'all';
-  const shown = filterFrames(frames, '', f.minStars, reject).filter(keep);
-  return f.sort === 'frame' ? shown : sortFrames(shown, f.sort, facts);
+  const shown = filterFrames(frames, '', f.minStars, 'all').filter(keep);
+  const ordered = f.sort === 'frame' ? shown : sortFrames(shown, f.sort, facts);
+  return ordered.sort((a, b) => Number(Boolean(facts.get(a.id)?.cull)) - Number(Boolean(facts.get(b.id)?.cull)));
 }
 
 const uncertainty = (f: Frame) => (f.manual_stars != null ? 10 : Math.abs(frameStars(f) - 3));

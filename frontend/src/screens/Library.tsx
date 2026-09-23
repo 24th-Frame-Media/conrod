@@ -25,7 +25,7 @@ function JobCard({ job, scanning, onOpen, onIdentify, onResume, onAsk }: {
         {!cover && <div className="state">{jobState(job)}</div>}
         <span className="badge">{plural(job.total, 'photo')}</span>
         {job.status === 'scanning' && <div className="bar cover-bar"><div className="fill" style={{ width: `${pct(job.done, job.total)}%` }} /></div>}
-        {resumable && <button className="resume" onClick={(e) => { e.stopPropagation(); onResume(); }}>Resume {left.toLocaleString()}</button>}
+        {resumable && <button className="resume" onClick={(e) => { e.stopPropagation(); onResume(); }}>{job.status === 'indexed' ? 'Suggest culls' : 'Resume'}</button>}
         <div className="job-menu">
           <button className="iconbtn danger" title="Forget this album. Your photographs are not touched" onClick={(e) => { e.stopPropagation(); onAsk(); }}>Delete</button>
         </div>
@@ -35,7 +35,7 @@ function JobCard({ job, scanning, onOpen, onIdentify, onResume, onAsk }: {
       <div className="steps">
         <button className="step" onClick={(e) => { e.stopPropagation(); onOpen(); }}>Review</button>
         {job.status === 'done' && (
-          <button className="step" title="Name what survived the cull. This is the slow one." onClick={(e) => { e.stopPropagation(); onIdentify(); }}>Identify</button>
+          <button className="step" title="Name what survived the cull. This is the slow one." onClick={(e) => { e.stopPropagation(); onIdentify(); }}>Identify kept photos</button>
         )}
       </div>
     </article>
@@ -55,10 +55,10 @@ export function Library({ jobs, models, scanning, onOpen, onNewScan, onIdentify,
           <div className="new-scan">
             <div className="new-scan-head">
               <div>
-                <h4>Scan a shoot</h4>
-                <p>Point it at a folder. It measures focus on the subject, finds your keepers, reads numbers and plates, and writes XMP.</p>
+                <h4>Import a shoot</h4>
+                <p>Copy your SD card to your PC, import the folder, then cull before running ML on your keepers.</p>
               </div>
-              <button className="primary" onClick={onNewScan}>+ New scan</button>
+              <button className="primary" onClick={onNewScan}>+ Import photos</button>
             </div>
           </div>
           <div className="section-label"><span>Albums</span><span>{jobs.length || ''}</span></div>
@@ -71,7 +71,7 @@ export function Library({ jobs, models, scanning, onOpen, onNewScan, onIdentify,
             </div>
           ) : (
             <Empty icon="folder" title="No albums yet.">
-              <p>Drop a folder anywhere on this window, or press <b>New scan</b>.</p>
+              <p>Drop a folder anywhere on this window, or press <b>Import photos</b>.</p>
             </Empty>
           )}
         </div>

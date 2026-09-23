@@ -8,11 +8,9 @@ import { Icon, Mark } from './basics';
 
 const TABS: [Page, string, string][] = [
   ['Library', 'Library', 'Your albums'],
-  ['Scan', 'Scan', 'Add a shoot'],
-  ['Review', 'Review', 'Cull and label'],
+  ['Review', 'Review', 'Cull, identify and export'],
   ['Train', 'Train', 'Teach it your eye'],
-  ['Known vehicles', 'Vehicles', 'Known vehicles'],
-  ['Settings', 'Settings', 'Settings'],
+  ['Settings', 'Settings', 'Settings and vehicles'],
 ];
 
 export type StatusActions = { pause: () => void; resume: () => void; stop: () => void; cancel: (key: string) => void };
@@ -37,6 +35,7 @@ function WindowControls() {
     let dead = false;
     void win.isDecorated().then(setDecorated);
     sync();
+
     void win.onResized(sync).then((u) => { if (dead) u(); else off = u; });
     return () => { dead = true; off?.(); };
   }, []);
@@ -54,8 +53,10 @@ function WindowControls() {
 /** The health light of the Python header, grown into a popover: tasks, pause / stop, cancel, event log. */
 function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: Status; jobs: Job[]; models: ModelInfo[]; actions: StatusActions; defaultOpen: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [stopping, setStopping] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
+  useEffect(() => { if (status.activeJob == null) setStopping(false); }, [status.activeJob]);
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const failed = status.tasks.find((t) => t.state === 'failed' && t.error !== 'stopped');
   const tone = active ? (active.state === 'paused' ? 'warn' : 'busy') : failed ? 'error' : 'ok';
@@ -105,7 +106,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
               {status.activeJob != null && (
                 <>
                   <button className="ghost small" onClick={active?.state === 'paused' ? actions.resume : actions.pause}>{active?.state === 'paused' ? 'Resume' : 'Pause'}</button>
-                  <button className="ghost small danger" onClick={actions.stop}>Stop scan</button>
+                  <button className="ghost small danger" disabled={stopping} onClick={() => { setStopping(true); actions.stop(); }}>{stopping ? 'Stopping…' : 'Stop scan'}</button>
                 </>
               )}
               {status.operations.map((key) => <button key={key} className="ghost small" onClick={() => actions.cancel(key)}>Cancel {key}</button>)}
@@ -150,16 +151,13 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, actions
       </div>
       <nav className="tabs" aria-label="Screens">
         {TABS.map(([id, label, title]) => (
-          <button key={id} className={page === id || (page === 'Album' && id === 'Library') ? 'active' : ''} title={title} aria-current={page === id || (page === 'Album' && id === 'Library') ? 'page' : undefined} onClick={() => setPage(id)}>{label}</button>
+          <button key={id} className={page === id ? 'active' : ''} title={title} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>{label}</button>
         ))}
       </nav>
       <div className="spacer" data-tauri-drag-region />
       <div className="stats" data-tauri-drag-region>
         <span><b>{plural(jobs.length, 'album')}</b></span><span><b>{photos.toLocaleString()}</b> photos</span>
       </div>
-      <button className="pill scan-type" title="Scan type. Click to change it" onClick={() => setPage('Scan')}>
-        {profileLabel(profile).toUpperCase()}
-      </button>
       <StatusPill status={status} jobs={jobs} models={models} actions={actions} defaultOpen={popoverOpen} />
       <WindowControls />
       {active && active.total > 0 && <i className="topbar-progress" style={{ width: `${pct(active.done, active.total)}%` }} />}
