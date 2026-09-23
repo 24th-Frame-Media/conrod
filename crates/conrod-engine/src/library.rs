@@ -45,7 +45,11 @@ pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Val
     require_job(d, a.job_id)?;
     let db = d.db.lock().unwrap();
     let current_raw: Option<String> = db
-        .query_row("SELECT settings_json FROM jobs WHERE id=?", [a.job_id], |r| r.get(0))
+        .query_row(
+            "SELECT settings_json FROM jobs WHERE id=?",
+            [a.job_id],
+            |r| r.get(0),
+        )
         .map_err(err)?;
     let mut map: Map<String, Value> = current_raw
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -396,7 +400,7 @@ mod tests {
 
         let settings = crate::operations::settings(lib.d(), lib.job).unwrap();
         assert_eq!(settings.scan_profile, "motorsport-track");
-        assert_eq!(settings.read_numbers, false);
-        assert_eq!(settings.read_plates, false);
+        assert!(!settings.read_numbers);
+        assert!(!settings.read_plates);
     }
 }

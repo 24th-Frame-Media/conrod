@@ -118,6 +118,7 @@ pub struct Group {
 /// same car. See `conrod/grouping.py` for the measurement behind it.
 pub const SAME_CAR: f64 = 0.90;
 
+#[allow(clippy::too_many_arguments)]
 fn join(
     group: &mut Group,
     det_id: i64,
@@ -195,7 +196,11 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
         for row in entries {
             let vector = row.vector.as_ref().unwrap();
             let plate = tidy_plate(row.plate.as_deref());
-            let number = row.number.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            let number = row
+                .number
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
             let mut best: Option<usize> = None;
             let mut best_score = 0.0_f64;
             for &gi in &in_burst {
