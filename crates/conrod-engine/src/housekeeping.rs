@@ -257,6 +257,35 @@ pub fn reset_identifications(d: &Desktop, job: Option<i64>) -> Result<Value> {
     Ok(json!({"ok": true, "identifications_cleared": cleared, "kept_reviewed": kept}))
 }
 
+/// Clear manual star ratings and rejection flags across the album, restoring
+/// frames and detections to the automated baseline measurements.
+pub fn reset_ratings(d: &Desktop, job: Option<i64>) -> Result<Value> {
+    ensure_idle(d, job)?;
+    if let Some(job) = job {
+        require_job(d, job)?;
+    }
+    let task = d.hub.start("Resetting ratings", 0);
+    let (filter, args) = scope(job);
+    let inside = format!("image_id IN (SELECT i.id FROM images i {filter})");
+    let db = d.db.lock().unwrap();
+    let tx = db.unchecked_transaction().map_err(err)?;
+    let run =
+        |sql: String| -> Result<usize> { tx.execute(&sql, params_from_iter(&args)).map_err(err) };
+    let frames_cleared = if let Some(j) = job {
+        tx.execute("UPDATE images SET stars=NULL, rejected=0 WHERE job_id=?", [j]).map_err(err)?
+    } else {
+        tx.execute("UPDATE images SET stars=NULL, rejected=0", []).map_err(err)?
+    };
+    let dets_cleared = run(format!("UPDATE detections SET stars=NULL, rejected=0 WHERE {inside}"))?;
+    tx.commit().map_err(err)?;
+    drop(db);
+    task.finish();
+    if let Some(j) = job {
+        let _ = crate::passes::pick_keepers(d, j);
+    }
+    Ok(json!({"ok": true, "frames_cleared": frames_cleared, "detections_cleared": dets_cleared}))
+}
+
 /// Throw away every detection and identification, keeping the albums and the
 /// frames in them. The frames go back to waiting, so scanning the album again
 /// finds the subjects afresh without indexing the folder again.
@@ -601,5 +630,42 @@ mod tests {
             .root
             .join(format!("cache/native/thumb-{image}.jpg"))
             .exists());
+    }
+
+    #[test]
+    fn reset_ratings_clears_manual_stars_and_rejections() {
+        let lib = Lib::new("reset-ratings");
+        let (image, det) = stocked(&lib);
+        lib.sql("UPDATE images SET stars=5, rejected=1 WHERE id=?", [image]);
+        lib.sql("UPDATE detections SET stars=5, rejected=1 WHERE id=?", [det]);
+
+        let out = lib
+            .run("reset_ratings", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(out["ok"], true);
+        assert_eq!(out["frames_cleared"], 1);
+        assert_eq!(out["detections_cleared"], 1);
+
+        let (stars, rejected): (Option<i64>, i64) = lib
+            .db()
+            .query_row(
+                "SELECT stars, rejected FROM images WHERE id=?",
+                [image],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stars, None);
+        assert_eq!(rejected, 0);
+
+        let (det_stars, det_rejected): (Option<i64>, i64) = lib
+            .db()
+            .query_row(
+                "SELECT stars, rejected FROM detections WHERE id=?",
+                [det],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(det_stars, None);
+        assert_eq!(det_rejected, 0);
     }
 }

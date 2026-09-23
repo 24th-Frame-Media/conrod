@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { asset } from '../lib/api';
 import { filename, frameStars, frameExcluded } from '../lib/review';
 import type { Detection, Frame, KnownVehicle, MarkValues } from '../lib/types';
@@ -18,6 +18,21 @@ type Props = {
   onEdit: (id: number, updates: Record<string, string | string[] | null>) => unknown;
 };
 
+const DEFAULT_WIDTH = 360;
+const MIN_WIDTH = 280;
+const MAX_WIDTH = 800;
+
+function getStoredWidth(): number {
+  try {
+    const val = localStorage.getItem('conrod:inspector-width');
+    if (val) {
+      const n = Number(val);
+      if (Number.isFinite(n) && n >= MIN_WIDTH && n <= MAX_WIDTH) return n;
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_WIDTH;
+}
+
 /** The selected photograph: thumbnail, stars, reject, measurements, and expandable detections table. */
 export function Inspector({
   frame,
@@ -33,15 +48,53 @@ export function Inspector({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
+  const [width, setWidth] = useState<number>(getStoredWidth);
+  const [resizing, setResizing] = useState(false);
+  const widthRef = useRef(width);
+  widthRef.current = width;
 
-  // Reset selected detection when navigating to another frame
   useEffect(() => {
-    setSelectedId(null);
-  }, [frame?.id]);
+    try {
+      localStorage.setItem('conrod:inspector-width', String(width));
+    } catch { /* ignore */ }
+  }, [width]);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setResizing(true);
+    const startX = e.clientX;
+    const startWidth = widthRef.current;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const delta = startX - ev.clientX;
+      const maxAllowed = Math.min(MAX_WIDTH, Math.round(window.innerWidth * 0.65));
+      const newWidth = Math.max(MIN_WIDTH, Math.min(maxAllowed, startWidth + delta));
+      setWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      setResizing(false);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  const handleResetWidth = () => {
+    setWidth(DEFAULT_WIDTH);
+  };
 
   if (!frame) {
     return (
-      <aside className="inspector">
+      <aside className={`inspector${resizing ? ' resizing' : ''}`} style={{ width: `${width}px`, flex: `0 0 ${width}px` }}>
+        <div
+          className="inspector-resizer"
+          onMouseDown={handleMouseDown}
+          onDoubleClick={handleResetWidth}
+          title="Drag to resize inspector · Double-click to reset"
+        />
         <p className="muted">{scanning ? 'Results appear here while the scan runs.' : 'Select a photograph.'}</p>
       </aside>
     );
@@ -50,7 +103,17 @@ export function Inspector({
   const stars = frameStars(frame);
 
   return (
-    <aside className="inspector" aria-label="Selected photograph">
+    <aside
+      className={`inspector${resizing ? ' resizing' : ''}`}
+      style={{ width: `${width}px`, flex: `0 0 ${width}px` }}
+      aria-label="Selected photograph"
+    >
+      <div
+        className="inspector-resizer"
+        onMouseDown={handleMouseDown}
+        onDoubleClick={handleResetWidth}
+        title="Drag to resize inspector · Double-click to reset"
+      />
       <div className="frame-side-head">
         <h3 title={frame.path}>{filename(frame.path)}</h3>
         {frame.status !== 'done' && <span className="tag">{frame.status}</span>}

@@ -209,7 +209,7 @@ export function DetectionsTable({
               onClick={() => onFilterChange('vehicles')}
               title="Show vehicle detections"
             >
-              Cars <span className="det-count">{counts.vehicles}</span>
+              Vehicles <span className="det-count">{counts.vehicles}</span>
             </button>
           )}
           {counts.people > 0 && (

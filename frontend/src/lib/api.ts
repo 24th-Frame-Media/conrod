@@ -48,4 +48,5 @@ export const engine = {
   forgetModel: (region: Region) => call<Training>('forget_model', { region }),
   trainTaste: () => call<Record<string, unknown>>('train_taste'),
   deleteJob: (jobId: number) => call('delete_job', { jobId }),
+  updateJobSettings: (jobId: number, patch: Record<string, unknown>) => call('update_job_settings', { jobId, patch }),
 };

@@ -118,13 +118,11 @@ pub struct Group {
 /// same car. See `conrod/grouping.py` for the measurement behind it.
 pub const SAME_CAR: f64 = 0.90;
 
-/// Threshold for matching frames within the same burst where motion/panning shifts perspective.
-pub const SAME_BURST_SAME_CAR: f64 = 0.82;
-
 fn join(
     group: &mut Group,
     det_id: i64,
     frame_index: i64,
+    cls: Option<&str>,
     make: Option<&str>,
     plate: Option<&str>,
     number: Option<&str>,
@@ -134,6 +132,9 @@ fn join(
     group.members.push(det_id);
     group.last_frame = group.last_frame.max(frame_index);
     group.frames.insert(frame_index);
+    if given(group.cls.as_deref()).is_none() {
+        group.cls = cls.map(str::to_string);
+    }
     // `group.make = group.make or make`: only replaces an absent make, and
     // may replace it with another absent one.
     if given(group.make.as_deref()).is_none() {
@@ -154,7 +155,7 @@ fn join(
 // --- cluster_by_look ---------------------------------------------------------
 
 /// One row of `cluster_by_look`'s input: a detection, its embedding, which
-/// frame and burst it came from, and any plate read off it.
+/// frame and burst it came from, vehicle class, and any plate read off it.
 #[derive(Debug, Clone)]
 pub struct LookRow {
     pub det_id: i64,
@@ -163,6 +164,7 @@ pub struct LookRow {
     pub burst: Option<i64>,
     pub plate: Option<String>,
     pub number: Option<String>,
+    pub cls: Option<String>,
 }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
@@ -202,6 +204,12 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
                 if group.frames.contains(&row.frame_index) {
                     continue;
                 }
+                // Different vehicle classes (e.g. motorcycle vs car) cannot merge.
+                if let (Some(c), Some(gc)) = (row.cls.as_deref(), group.cls.as_deref()) {
+                    if c != gc {
+                        continue;
+                    }
+                }
                 // Two plates that are genuinely different settle it outright.
                 if plate_verdict(plate.as_deref(), &group.plates) == Some(false) {
                     continue;
@@ -209,14 +217,6 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
                 // If plates match directly, instant match within same burst
                 if let Some(ref p) = plate {
                     if group.plates.contains(p) || nearly_seen(Some(p), &group.plates) {
-                        best = Some(gi);
-                        best_score = 1.0;
-                        break;
-                    }
-                }
-                // If race numbers match directly in the same burst (and no plate conflict)
-                if let Some(num) = number {
-                    if group.numbers.contains(num) {
                         best = Some(gi);
                         best_score = 1.0;
                         break;
@@ -238,6 +238,7 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
                         &mut groups[gi],
                         row.det_id,
                         row.frame_index,
+                        row.cls.as_deref(),
                         None,
                         plate.as_deref(),
                         number,
@@ -252,12 +253,14 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
             let mut group = Group {
                 key,
                 vectors: vec![vector.clone()],
+                cls: row.cls.clone(),
                 ..Default::default()
             };
             join(
                 &mut group,
                 row.det_id,
                 row.frame_index,
+                row.cls.as_deref(),
                 None,
                 plate.as_deref(),
                 number,
@@ -270,7 +273,6 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
     }
 
     merge_on_plates(&mut groups, &mut assignment);
-    merge_on_numbers(&mut groups, &mut assignment);
     assignment
 }
 
@@ -288,6 +290,11 @@ fn merge_on_plates(groups: &mut [Group], assignment: &mut HashMap<i64, i64>) {
             }
             if !groups[i].frames.is_disjoint(&groups[j].frames) {
                 continue; // same photo cannot hold the same car twice
+            }
+            if let (Some(ref ci), Some(ref cj)) = (&groups[i].cls, &groups[j].cls) {
+                if ci != cj {
+                    continue;
+                }
             }
             let should_merge = groups[j]
                 .plates
@@ -307,67 +314,9 @@ fn merge_on_plates(groups: &mut [Group], assignment: &mut HashMap<i64, i64>) {
             gi.bursts.extend(gj.bursts.iter().cloned());
             gi.frames.extend(gj.frames.iter().cloned());
             gi.members.extend(gj.members.iter().cloned());
-        }
-    }
-    if merged.is_empty() {
-        return;
-    }
-    for key in assignment.values_mut() {
-        let mut seen = HashSet::new();
-        while let Some(&next) = merged.get(key) {
-            if !seen.insert(*key) {
-                break;
+            if gi.cls.is_none() {
+                gi.cls = gj.cls.clone();
             }
-            *key = next;
-        }
-    }
-}
-
-/// Join groups that share a competition race number, provided they have no plate conflict,
-/// share the same make/model (or one is unset), and are in disjoint frames.
-fn merge_on_numbers(groups: &mut [Group], assignment: &mut HashMap<i64, i64>) {
-    let mut merged: HashMap<i64, i64> = HashMap::new();
-    for i in 0..groups.len() {
-        if groups[i].numbers.is_empty() || merged.contains_key(&groups[i].key) {
-            continue;
-        }
-        for j in (i + 1)..groups.len() {
-            if groups[j].numbers.is_empty() || merged.contains_key(&groups[j].key) {
-                continue;
-            }
-            if !groups[i].frames.is_disjoint(&groups[j].frames) {
-                continue;
-            }
-            // Plates that conflict must not merge
-            let plates_conflict = groups[i].plates.iter().any(|pi| {
-                groups[j]
-                    .plates
-                    .iter()
-                    .any(|pj| pi != pj && !nearly_seen(Some(pi), &groups[j].plates))
-            });
-            if plates_conflict {
-                continue;
-            }
-            let shares_number = groups[j]
-                .numbers
-                .iter()
-                .any(|n| groups[i].numbers.contains(n));
-            if !shares_number {
-                continue;
-            }
-            if let (Some(ref mi), Some(ref mj)) = (&groups[i].make, &groups[j].make) {
-                if !mi.eq_ignore_ascii_case(mj) {
-                    continue;
-                }
-            }
-            merged.insert(groups[j].key, groups[i].key);
-            let (head, tail) = groups.split_at_mut(j);
-            let (gi, gj) = (&mut head[i], &tail[0]);
-            gi.plates.extend(gj.plates.iter().cloned());
-            gi.numbers.extend(gj.numbers.iter().cloned());
-            gi.bursts.extend(gj.bursts.iter().cloned());
-            gi.frames.extend(gj.frames.iter().cloned());
-            gi.members.extend(gj.members.iter().cloned());
         }
     }
     if merged.is_empty() {
@@ -454,6 +403,7 @@ pub fn cluster(rows: &[SignatureRow], options: &ClusterOptions) -> HashMap<i64, 
                     group,
                     row.det_id,
                     row.frame_index,
+                    row.cls.as_deref(),
                     row.make.as_deref(),
                     plate.as_deref(),
                     None,
@@ -504,6 +454,7 @@ pub fn cluster(rows: &[SignatureRow], options: &ClusterOptions) -> HashMap<i64, 
                     group,
                     row.det_id,
                     row.frame_index,
+                    row.cls.as_deref(),
                     row.make.as_deref(),
                     plate.as_deref(),
                     None,

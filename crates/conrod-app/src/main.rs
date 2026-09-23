@@ -144,7 +144,13 @@ fn tray_tooltip(desktop: &Desktop) -> String {
         .iter()
         .find(|task| matches!(task.state, State::Running | State::Paused))
     else {
-        return "Conrod · All caught up".into();
+        let has_failed = tasks
+            .iter()
+            .any(|task| task.state == State::Failed && task.error.as_deref() != Some("stopped"));
+        if has_failed {
+            return "Conrod · Error".into();
+        }
+        return "Conrod · Ready".into();
     };
     let state = if task.state == State::Paused {
         "Paused"

@@ -137,9 +137,11 @@ impl Desktop {
                 "edit_detection",
                 "bulk_edit",
                 "rename_job",
+                "update_job_settings",
                 "reset_all",
                 "reset_detections",
                 "reset_identifications",
+                "reset_ratings",
                 "save_settings",
                 "delete_job",
             ]
@@ -221,6 +223,7 @@ impl Desktop {
             }
             Command::BulkEdit(a) => crate::edits::bulk_edit(self, &a),
             Command::RenameJob(a) => crate::library::rename_job(self, &a),
+            Command::UpdateJobSettings(a) => crate::library::update_job_settings(self, &a),
             Command::Summary(a) => crate::library::summary(self, a.job_id),
             Command::Filling(a) => crate::library::filling(self, a.job_id),
             Command::Cover(a) => crate::library::cover(self, a.job_id),
@@ -229,6 +232,7 @@ impl Desktop {
             Command::ResetIdentifications(a) => {
                 crate::housekeeping::reset_identifications(self, a.job_id)
             }
+            Command::ResetRatings(a) => crate::housekeeping::reset_ratings(self, a.job_id),
             Command::ResetDetections(a) => crate::housekeeping::reset_detections(self, a.job_id),
             Command::ResetAll {} => crate::housekeeping::reset_all(self),
             Command::CheckUpdate {} => Ok(crate::updating::check()),

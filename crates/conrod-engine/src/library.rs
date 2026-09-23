@@ -1,7 +1,7 @@
 //! The album's own sheet: rename it, summarise it, pick its cover. Ports
 //! `POST /api/jobs/{id}`, `GET /api/jobs/{id}/summary` and `.../cover`.
 //! Missing thumbnails are filled on demand when an album opens.
-use crate::commands::RenameArgs;
+use crate::commands::{RenameArgs, UpdateJobSettingsArgs};
 use crate::desktop::{rows, Desktop, Result};
 use rusqlite::params;
 use serde_json::{json, Map, Value};
@@ -39,6 +39,37 @@ pub fn rename_job(d: &Desktop, a: &RenameArgs) -> Result<Value> {
         return Err("No such album".into());
     }
     Ok(json!({ "label": label }))
+}
+
+pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Value> {
+    require_job(d, a.job_id)?;
+    let db = d.db.lock().unwrap();
+    let current_raw: Option<String> = db
+        .query_row("SELECT settings_json FROM jobs WHERE id=?", [a.job_id], |r| r.get(0))
+        .map_err(err)?;
+    let mut map: Map<String, Value> = current_raw
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+
+    for (k, v) in &a.patch {
+        if k == "scan_profile" {
+            if let Some(s) = v.as_str() {
+                let preset = conrod_core::profile::ShootPreset::parse(s);
+                map.insert(k.clone(), Value::String(preset.name().into()));
+                continue;
+            }
+        }
+        map.insert(k.clone(), v.clone());
+    }
+
+    let updated_json = serde_json::to_string(&map).map_err(err)?;
+    db.execute(
+        "UPDATE jobs SET settings_json=? WHERE id=?",
+        params![updated_json, a.job_id],
+    )
+    .map_err(err)?;
+
+    Ok(json!({ "ok": true, "jobId": a.job_id, "settings": map }))
 }
 
 const VEHICLE: &str = "COALESCE(d.region_type,'vehicle')='vehicle'";
@@ -340,5 +371,32 @@ mod tests {
             out["path"].as_str().map(std::path::Path::new),
             Some(present.as_path())
         );
+    }
+
+    #[test]
+    fn update_job_settings_persists_preset_and_toggles() {
+        let lib = Lib::new("update_settings");
+        let res = lib
+            .run(
+                "update_job_settings",
+                json!({
+                    "jobId": lib.job,
+                    "patch": {
+                        "scan_profile": "motorsport-track",
+                        "read_numbers": false,
+                        "read_plates": false
+                    }
+                }),
+            )
+            .unwrap();
+        assert_eq!(res["ok"], true);
+        assert_eq!(res["settings"]["scan_profile"], "motorsport-track");
+        assert_eq!(res["settings"]["read_numbers"], false);
+        assert_eq!(res["settings"]["read_plates"], false);
+
+        let settings = crate::operations::settings(lib.d(), lib.job).unwrap();
+        assert_eq!(settings.scan_profile, "motorsport-track");
+        assert_eq!(settings.read_numbers, false);
+        assert_eq!(settings.read_plates, false);
     }
 }
