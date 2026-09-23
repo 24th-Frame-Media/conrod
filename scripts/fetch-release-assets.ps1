@@ -2,7 +2,7 @@
 CI step: download every asset in assets.json into the app's resources/ folder and
 FAIL CLOSED: an asset is only used if its SHA-256 equals the pinned value.
 
-    powershell -File rust/scripts/fetch-release-assets.ps1
+    powershell -File scripts/fetch-release-assets.ps1
 #>
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path

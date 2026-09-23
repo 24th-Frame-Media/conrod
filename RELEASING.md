@@ -19,15 +19,15 @@ Missing models and ExifTool are installed at run time from the SHA-256-pinned ma
 
 ## The pinned assets (published 20 Sept 2026 as `assets-v1`)
 
-Models and ExifTool are pinned by SHA-256 in `rust/scripts/assets.json`; CI refuses anything else. `assets-v1` is
+Models and ExifTool are pinned by SHA-256 in `scripts/assets.json`; CI refuses anything else. `assets-v1` is
 published (8 files, each re-downloaded from its public URL and checked against the manifest; a first run on an empty
 library installed the missing models from it). To publish a new set:
 
 ```powershell
-powershell -File rust/scripts/stage-assets.ps1        # collects the tested files, rewrites assets.json
-gh release create assets-v2 rust/dist/assets-v2/* --title "Conrod assets v2" --notes-file notes.md `
+powershell -File scripts/stage-assets.ps1        # collects the tested files, rewrites assets.json
+gh release create assets-v2 dist/assets-v2/* --title "Conrod assets v2" --notes-file notes.md `
   --prerelease --latest=false
-git add rust/scripts/assets.json && git commit -m "Pin release assets"
+git add scripts/assets.json && git commit -m "Pin release assets"
 ```
 
 **Always `--prerelease --latest=false`.** The Python app's updater reads GitHub's *latest* release; an assets release
@@ -38,9 +38,9 @@ Licences are recorded per asset in `assets.json`; ExifTool's own licence files s
 
 ## Cut a beta
 
-1. Bump the version in **three** places: `rust/Cargo.toml` (`[workspace.package]`),
-   `rust/crates/conrod-app/tauri.conf.json`, `rust/frontend/package.json` (and `package-lock.json`).
-   `node rust/scripts/check-version.mjs` must pass; CI runs it too. The native line continues above the Python
+1. Bump the version in **three** places: `Cargo.toml` (`[workspace.package]`),
+   `crates/conrod-app/tauri.conf.json`, `frontend/package.json` (and `package-lock.json`).
+   `node scripts/check-version.mjs` must pass; CI runs it too. The native line continues above the Python
    app's 0.8.x, so the betas are `1.0.0-beta.N` and the first stable release is `1.0.0`.
 2. On `main`, `git tag v1.0.0-beta.1 && git push origin v1.0.0-beta.1`.
 3. `.github/workflows/release.yml` fetches the pinned assets, builds the frontend, runs fmt, clippy and
@@ -86,10 +86,10 @@ the Python app ignores, so switching back is safe.
 
 ## Local build
 
-From `rust/frontend`, run `npm ci` and `npm run tauri -- build --ci`.
+From `frontend`, run `npm ci` and `npm run tauri -- build --ci`.
 The build hook runs TypeScript checking and Vite before compiling the app. NSIS is downloaded
-by the official Tauri bundler on first use. Output: `rust/target/release/bundle/nsis/`.
-The release executable is `rust/target/release/Conrod.exe`.
+by the official Tauri bundler on first use. Output: `target/release/bundle/nsis/`.
+The release executable is `target/release/Conrod.exe`.
 
 Settings → Maintenance provides setup checks, missing-model installation and update checking.
 Update installation is available only for an installed copy, requires idle work, verifies the

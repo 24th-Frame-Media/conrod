@@ -3,9 +3,9 @@ Maintainer step: collect the model files and ExifTool that Conrod was TESTED wit
 pin them by SHA-256 in assets.json (committed), and populate the app's resources/
 folder for a local build.
 
-    powershell -File rust/scripts/stage-assets.ps1 [-PythonRelease <folder of a Python Conrod build>]
+    powershell -File scripts/stage-assets.ps1 [-PythonRelease <folder of a Python Conrod build>]
 
-Then publish rust/dist/assets-v1/* as a GitHub release named assets-v1 (see
+Then publish dist/assets-v1/* as a GitHub release named assets-v1 (see
 RELEASING.md); CI's fetch-release-assets.ps1 downloads from there and refuses
 anything whose hash differs from assets.json.
 #>
@@ -63,4 +63,4 @@ foreach ($a in $assets) {
 }
 $manifest = [ordered]@{ release = 'https://github.com/kapsikkum/conrod/releases/download/assets-v1'; assets = $assets }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $PSScriptRoot 'assets.json') -Encoding UTF8
-"staged $($assets.Count) assets -> $out ; manifest rust/scripts/assets.json ; resources populated"
+"staged $($assets.Count) assets -> $out ; manifest scripts/assets.json ; resources populated"

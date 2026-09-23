@@ -1,6 +1,6 @@
 //! Installing what is missing: the models and ExifTool, from the pinned manifest.
 //!
-//! `rust/scripts/assets.json` is both what CI bundles into a release and what the
+//! `scripts/assets.json` is both what CI bundles into a release and what the
 //! app installs from when a file is absent (a developer checkout, or a library
 //! whose model was deleted). Every download is hashed as it streams and is renamed
 //! into place only if it equals the pin, so a truncated, swapped or tampered file

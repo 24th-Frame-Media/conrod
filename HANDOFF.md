@@ -28,7 +28,7 @@ continues above Python's 0.8.x); change it in the three places `scripts/check-ve
 
 Green at the end of this pass: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
 `cargo test --workspace` (engine 40 tests, io 18, core parity 22, store 10, vision 15+ and fixtures),
-`npm run build` and `npm test` in `rust/frontend`.
+`npm run build` and `npm test` in `frontend`.
 
 Every Python route now has a Rust command (see the table in section 3). Codex added: album operations (`rescore`,
 `pick_keepers`, `group`/`regroup`, `bulk_edit`, `rename_job`, `summary`, `cover`, `filling`), cache and the three
@@ -47,7 +47,7 @@ non-installed copy, and **folder watch**: a JPEG dropped into the watched folder
 album resumed through the saved stage; deleting a watched album stopped the watch and removed it from settings.
 
 **Real NSIS installer** (built 20 Sept with `node ../../frontend/node_modules/@tauri-apps/cli/tauri.js build` from
-`rust/crates/conrod-app`, as CI does; Tauri downloaded NSIS 3.11 and the WebView2 bootstrapper): `Conrod_0.1.0_x64-setup.exe`,
+`crates/conrod-app`, as CI does; Tauri downloaded NSIS 3.11 and the WebView2 bootstrapper): `Conrod_0.1.0_x64-setup.exe`,
 93.7 MB. Silent `/S` install took 11 s, per-user with no admin prompt, into `%LOCALAPPDATA%\Conrod` (`Conrod.exe`,
 `uninstall.exe`, `resources` with the 7 model files and ExifTool), a Start Menu shortcut and an Add/Remove Programs entry
 (Conrod 0.1.0, kapsikkum). `Conrod.exe --selftest` passes from the installed folder and the installed app reports no
@@ -149,7 +149,7 @@ matched the manifest size and SHA-256; a first run on an empty library installed
 
 ## 4. Release (see RELEASING.md)
 
-Ready: `assets-v1` published, pinned manifest `rust/scripts/assets.json`, `stage-assets.ps1`,
+Ready: `assets-v1` published, pinned manifest `scripts/assets.json`, `stage-assets.ps1`,
 `fetch-release-assets.ps1`, `check-version.mjs`, `.github/workflows/release.yml` (tag `v*`, a suffix makes it a
 pre-release, `SHA256SUMS.txt`, runs the shipped exe's selftest), `check.yml` (the Rust checks on every push to `main` and
 every pull request), the installer (built and tested locally, unsigned by decision) and the version `1.0.0-beta.1`.
@@ -169,7 +169,7 @@ their own updater when a stable `v*` release appears (RELEASING.md); that path c
 ## 6. How to verify
 
 ```bash
-cd rust && node scripts/check-version.mjs && cargo fmt --all --check
+node scripts/check-version.mjs && cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 (cd frontend && npm ci && npm run build && npm test)
 cargo build --release -p conrod-app --features tauri/custom-protocol   # needs frontend/dist first
@@ -185,7 +185,7 @@ cargo build --release -p conrod-app --features tauri/custom-protocol   # needs f
   `Conrod-9.9.9-win64-setup.exe` and `SHA256SUMS.txt`) on localhost, copy the release exe to a folder with a dummy
   `uninstall.exe` beside it, and start it with `CONROD_UPDATE_API=http://127.0.0.1:<port>`.
 - **Parity on real data** (from a `legacy-python` worktree, see `fixtures/README.md`):
-  `CONROD_CLI=<repo>/rust/target/release/conrod-cli.exe python tools/parity_ops.py pick|pick-py|group|rescore <job>` (needs
+  `CONROD_CLI=<repo>/target/release/conrod-cli.exe python tools/parity_ops.py pick|pick-py|group|rescore <job>` (needs
   `cargo build --release -p conrod-cli`); it backs the real DB up into `%TEMP%` read-only and never writes to `~/.conrod`.
   Jobs: 15 fully identified (17,587 detections), 38 cull-only Museum (4,713 CR3, Python picks), 39 (Python groups),
   95 (only one with stored features).

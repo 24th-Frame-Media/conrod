@@ -13,7 +13,7 @@ git worktree add ../conrod-legacy legacy-python
 cd ../conrod-legacy
 python -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt
 .venv/Scripts/python tools/gen_golden.py            # also: gen_ocr_local, gen_plates_local, gen_vision_local, ...
-CONROD_CLI=<this repo>/rust/target/release/conrod-cli.exe .venv/Scripts/python tools/parity_ops.py group 39
+CONROD_CLI=<this repo>/target/release/conrod-cli.exe .venv/Scripts/python tools/parity_ops.py group 39
 ```
 
 `parity_ops.py` compares a Rust operation with Python's stored result on a private backup copy (in `%TEMP%`) of
