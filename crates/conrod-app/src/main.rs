@@ -199,8 +199,12 @@ fn main() {
                 .allow_directory(desktop.root.join("cache"), true)?;
             app.manage(desktop);
             app.manage(Remembered(Mutex::new(None)));
-            if let (Some(window), Some(bounds)) = (app.get_webview_window("main"), load_bounds()) {
-                restore(&window, bounds);
+            if let Some(window) = app.get_webview_window("main") {
+                if let Some(bounds) = load_bounds() {
+                    restore(&window, bounds);
+                }
+                let _ = window.show();
+                let _ = window.set_focus();
             }
             let (handle, worker) = (
                 app.handle().clone(),
@@ -245,6 +249,18 @@ fn main() {
                     } else if let Some(window) = app.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.set_focus();
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Left,
+                        ..
+                    } = event
+                    {
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
                     }
                 });
             if let Some(icon) = app.default_window_icon() {

@@ -5,7 +5,7 @@
 use crate::desktop::{rows, Desktop, Result};
 use crate::edits::attributes_of;
 use crate::library::require_job;
-use crate::operations::{launch, settings};
+use crate::operations::{launch, ml_eligible, settings, ML_ELIGIBLE};
 use conrod_core::{
     grouping, models,
     profile::{ScanProfile, Subject},
@@ -141,7 +141,7 @@ pub fn group(d: &Arc<Desktop>, job: i64) -> Result<Value> {
 fn embed_missing(d: &Desktop, job: i64, stop: &AtomicBool, task: &Task) -> Result<usize> {
     let todo = rows(
         &d.reader.lock().unwrap(),
-        "SELECT d.id, d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND d.crop_path IS NOT NULL AND (d.embedding IS NULL OR d.embedding='') AND COALESCE(d.region_type,'vehicle')='vehicle' ORDER BY d.id",
+        &format!("SELECT d.id, d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {ML_ELIGIBLE} AND d.crop_path IS NOT NULL AND (d.embedding IS NULL OR d.embedding='') AND COALESCE(d.region_type,'vehicle')='vehicle' ORDER BY d.id"),
         [job],
     )?;
     if todo.is_empty() {
@@ -156,6 +156,9 @@ fn embed_missing(d: &Desktop, job: i64, stop: &AtomicBool, task: &Task) -> Resul
         for row in chunk {
             if stop.load(Ordering::Relaxed) {
                 break;
+            }
+            if !ml_eligible(d, row["id"].as_i64().ok_or("Invalid detection")?)? {
+                continue;
             }
             let vector = row["crop_path"]
                 .as_str()
@@ -196,7 +199,7 @@ pub(crate) fn embed_faces_missing(
 ) -> Result<usize> {
     let todo = rows(
         &d.reader.lock().unwrap(),
-        "SELECT d.id,d.x1,d.y1,d.x2,d.y2,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'')='face' AND (d.embedding IS NULL OR d.embedding='') ORDER BY i.id,d.id",
+        &format!("SELECT d.id,d.x1,d.y1,d.x2,d.y2,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'')='face' AND (d.embedding IS NULL OR d.embedding='') ORDER BY i.id,d.id"),
         [job],
     )?;
     if todo.is_empty() {
@@ -210,6 +213,9 @@ pub(crate) fn embed_faces_missing(
     for (index, row) in todo.iter().enumerate() {
         if stop.load(Ordering::Relaxed) {
             break;
+        }
+        if !ml_eligible(d, row["id"].as_i64().ok_or("Invalid detection")?)? {
+            continue;
         }
         let Some(path) = row["path"].as_str() else {
             continue;
@@ -274,11 +280,13 @@ fn empty(value: Option<&Value>) -> bool {
 /// Returns (cars, vehicles). Then re-picks the keepers, which are per car.
 pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)> {
     task.detail("Sorting vehicles into cars");
-    let found = rows(
-        &d.reader.lock().unwrap(),
-        "SELECT d.id, d.attributes, d.colour_hex, d.plate, d.embedding, i.id AS image_id, i.burst_key FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND d.rejected=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(d.region_type,'vehicle')='vehicle' ORDER BY i.id, d.id",
-        [job],
-    )?;
+    let sql = format!(
+        "SELECT d.id, d.attributes, d.colour_hex, d.plate, d.embedding, i.id AS image_id, i.burst_key \
+         FROM detections d JOIN images i ON i.id=d.image_id \
+         WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'vehicle')='vehicle' \
+         ORDER BY i.id, d.id"
+    );
+    let found = rows(&d.reader.lock().unwrap(), &sql, [job])?;
     if found.is_empty() {
         return Ok((0, 0));
     }

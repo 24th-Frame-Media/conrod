@@ -554,12 +554,28 @@ pub fn openai_request(
         }));
     }
     // Strict structured outputs require every property listed as required
-    // and additionalProperties set explicitly -- both already true of the
-    // schema except the second, so it is added to a clone rather than the
-    // shared schema every other provider also uses as-is.
+    // and additionalProperties set explicitly.
     let mut strict_schema = schema.clone();
     if let Value::Object(map) = &mut strict_schema {
         map.insert("additionalProperties".into(), Value::Bool(false));
+        if let Some(Value::Object(props)) = map.get("properties") {
+            let mut req_set: Vec<String> = match map.get("required").and_then(Value::as_array) {
+                Some(arr) => arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect(),
+                None => Vec::new(),
+            };
+            for k in props.keys() {
+                if !req_set.iter().any(|existing| existing == k) {
+                    req_set.push(k.clone());
+                }
+            }
+            map.insert(
+                "required".into(),
+                Value::Array(req_set.into_iter().map(Value::String).collect()),
+            );
+        }
     }
     ProviderRequest {
         url: OPENAI_URL.into(),
@@ -964,8 +980,11 @@ pub fn schema() -> Value {
             "is_competition": {"type": "boolean"},
             "confidence": {"type": "number"},
         },
-        "required": ["make", "model", "colour", "body_type", "race_number",
-                     "team", "driver", "country", "sponsors", "livery_text", "confidence"],
+        "required": [
+            "make", "model", "colour", "body_type", "race_number",
+            "team", "driver", "country", "sponsors", "livery_text",
+            "is_competition", "confidence"
+        ],
     })
 }
 

@@ -173,7 +173,10 @@ impl Desktop {
             Command::Scan(a) => self.start_scan(&a),
             Command::Pause {} => self.control(|scan| scan.pause(true)),
             Command::ResumeScan {} => self.control(|scan| scan.pause(false)),
-            Command::Stop {} => self.control(Scan::cancel),
+            Command::Stop {} => {
+                self.hub.note("Stopping scan...");
+                self.control(Scan::cancel)
+            }
             Command::DeleteJob(a) => self.delete_job(a.job_id),
             Command::Identify(a) => crate::operations::identify(self, a.job_id),
             Command::Write(a) => {
@@ -210,7 +213,12 @@ impl Desktop {
             Command::TrainTaste {} => crate::region_training::taste(self),
             Command::Rescore(a) => crate::rescore::rescore(self, a.job_id),
             Command::PickKeepers(a) => crate::passes::pick_keepers(self, a.job_id),
-            Command::Group(a) | Command::Regroup(a) => crate::passes::group(self, a.job_id),
+            Command::Group(a) => crate::passes::group(self, a.job_id),
+            Command::Regroup(a) => {
+                let gap = self.settings.lock().unwrap().burst_gap;
+                let _ = self.regroup(a.job_id, gap);
+                crate::passes::group(self, a.job_id)
+            }
             Command::BulkEdit(a) => crate::edits::bulk_edit(self, &a),
             Command::RenameJob(a) => crate::library::rename_job(self, &a),
             Command::Summary(a) => crate::library::summary(self, a.job_id),
@@ -275,7 +283,14 @@ impl Desktop {
         if plate.is_empty() {
             return Err("Plate is required".into());
         }
-        self.db.lock().unwrap().execute("INSERT INTO known_vehicles(plate,make,model,colour,team,race_number,driver,country,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(plate) DO UPDATE SET make=excluded.make,model=excluded.model,colour=excluded.colour,team=excluded.team,race_number=excluded.race_number,driver=excluded.driver,country=excluded.country,updated_at=excluded.updated_at",params![plate.to_uppercase(),a.make,a.model,a.colour,a.team,a.race_number,a.driver,a.country,now()]).map_err(err)?;
+        let db = self.db.lock().unwrap();
+        if let Some(ref old) = a.old_plate {
+            let old = old.trim();
+            if !old.is_empty() && !old.eq_ignore_ascii_case(plate) {
+                db.execute("DELETE FROM known_vehicles WHERE plate=?", [old.to_uppercase()]).map_err(err)?;
+            }
+        }
+        db.execute("INSERT INTO known_vehicles(plate,make,model,colour,team,race_number,driver,country,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(plate) DO UPDATE SET make=excluded.make,model=excluded.model,colour=excluded.colour,team=excluded.team,race_number=excluded.race_number,driver=excluded.driver,country=excluded.country,updated_at=excluded.updated_at",params![plate.to_uppercase(),a.make,a.model,a.colour,a.team,a.race_number,a.driver,a.country,now()]).map_err(err)?;
         Ok(Value::Null)
     }
 
@@ -318,6 +333,13 @@ impl Desktop {
                     .unwrap_or_default()
                     .to_string_lossy());
             }
+            if let Some(sj) = job.get("settings_json").and_then(|v| v.as_str()) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(sj) {
+                    if let Some(profile) = val.get("scan_profile").and_then(|p| p.as_str()) {
+                        job["scan_profile"] = json!(profile);
+                    }
+                }
+            }
         }
         Ok(jobs)
     }
@@ -326,8 +348,8 @@ impl Desktop {
         let db = self.reader.lock().unwrap();
         // Only what the UI reads: `SELECT *` was 17 MB and 0.8 s for 4,808
         // frames, 3.6 MB of it the raw sharpness `features`.
-        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.burst_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars FROM images i WHERE job_id=? ORDER BY path",[job])?;
-        let mut detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.group_key,d.group_size,d.group_agreement,d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
+        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.burst_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, (SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id) AS burst_pick FROM images i WHERE job_id=? ORDER BY path",[job])?;
+        let mut detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
         let known: Vec<(Value, Vec<f32>)> = rows(&db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
             .into_iter()
             .filter_map(|row| similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector)))
@@ -386,7 +408,7 @@ impl Desktop {
             )
             .map_err(err)?;
             tx.execute(
-                "UPDATE detections SET stars=?,reviewed=1 WHERE image_id=?",
+                "UPDATE detections SET stars=? WHERE image_id=?",
                 params![stars, a.image_id],
             )
             .map_err(err)?;
@@ -398,7 +420,7 @@ impl Desktop {
             )
             .map_err(err)?;
             tx.execute(
-                "UPDATE detections SET rejected=?,reviewed=1 WHERE image_id=?",
+                "UPDATE detections SET rejected=?,cull_reason=CASE WHEN ?1=0 THEN NULL ELSE cull_reason END WHERE image_id=?2",
                 params![rejected, a.image_id],
             )
             .map_err(err)?;
@@ -436,7 +458,7 @@ impl Desktop {
             }
             let paths = rows(
                 &db,
-                "SELECT path FROM images WHERE job_id=? AND status!='done'",
+                "SELECT path FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0",
                 [job],
             )?
             .iter()
@@ -496,11 +518,24 @@ impl Desktop {
             .map_err(err)?;
         task.finish();
         let desktop = self.clone();
-        let scan = Arc::new(crate::scan_files(
+        let eligibility = self.clone();
+        let scan = Arc::new(crate::scan_files_filtered(
             paths,
             settings.clone(),
             ScanProfile::parse(&settings.scan_profile),
             self.hub.clone(),
+            move |path| {
+                eligibility
+                    .reader
+                    .lock()
+                    .unwrap()
+                    .query_row(
+                        "SELECT COALESCE(rejected,0)=0 FROM images WHERE job_id=? AND path=?",
+                        params![job, path.to_string_lossy()],
+                        |r| r.get::<_, bool>(0),
+                    )
+                    .unwrap_or(false)
+            },
             move |result| match result {
                 Ok(frame) => {
                     if let Err(e) = desktop.persist_frame(job, &frame) {
@@ -523,38 +558,50 @@ impl Desktop {
             while !scan.is_finished() {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            let status = if scan.stop.load(Ordering::Relaxed) {
+            let stopped = scan.stop.load(Ordering::Relaxed);
+            let status = if stopped {
                 "stopped"
             } else if scan.error.lock().unwrap().is_some() {
                 "error"
             } else {
                 "done"
             };
-            if let Err(e) = desktop.regroup(job, settings.burst_gap) {
-                desktop.hub.start("Grouping album", 0).fail(e);
+            if !stopped {
+                if let Err(e) = desktop.regroup(job, settings.burst_gap) {
+                    desktop.hub.start("Grouping album", 0).fail(e);
+                }
             }
             let db = desktop.db.lock().unwrap();
             let incomplete: i64 = db
                 .query_row(
-                    "SELECT count(*) FROM images WHERE job_id=? AND status!='done'",
+                    "SELECT count(*) FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0",
                     [job],
                     |r| r.get(0),
                 )
                 .unwrap_or(1);
-            let status = if status == "done" && incomplete > 0 {
+            let final_status = if stopped {
+                "stopped"
+            } else if status == "done" && incomplete > 0 {
                 "error"
             } else {
                 status
             };
-            let _ = db.execute("UPDATE jobs SET status=? WHERE id=?", params![status, job]);
+            let _ = db.execute(
+                "UPDATE jobs SET status=? WHERE id=?",
+                params![final_status, job],
+            );
             drop(db);
-            if identify_after && status == "done" {
+            if identify_after && final_status == "done" {
                 if let Err(e) = crate::operations::identify(&desktop, job) {
                     desktop.hub.start("Identification", 0).fail(e);
                 }
             }
             desktop.finishing.store(false, Ordering::Release);
-            desktop.hub.note("Album processing updated");
+            desktop.hub.note(if stopped {
+                "Scan stopped"
+            } else {
+                "Album processing updated"
+            });
         });
         Ok(json!({"jobId":job}))
     }
@@ -604,7 +651,12 @@ impl Desktop {
                 burst: 0,
             })
             .collect();
-        conrod_core::bursts::assign_bursts(&mut frames, gap);
+        let effective_gap = if (gap - 4.0).abs() < f64::EPSILON || gap <= 0.0 {
+            1.5
+        } else {
+            gap
+        };
+        conrod_core::bursts::assign_bursts(&mut frames, effective_gap);
         let tx = db.unchecked_transaction().map_err(err)?;
         for frame in frames {
             tx.execute(
@@ -614,7 +666,7 @@ impl Desktop {
             .map_err(err)?;
         }
         tx.execute("UPDATE detections SET burst_pick=0 WHERE image_id IN(SELECT id FROM images WHERE job_id=?)",[job]).map_err(err)?;
-        tx.execute("UPDATE detections SET burst_pick=1 WHERE image_id IN(SELECT id FROM (SELECT id, ROW_NUMBER() OVER(PARTITION BY burst_key ORDER BY COALESCE(stars,rating*5) DESC,id) AS rank FROM images WHERE job_id=? AND status='done' AND rejected=0) WHERE rank=1)",[job]).map_err(err)?;
+        tx.execute("UPDATE detections SET burst_pick=1 WHERE image_id IN(SELECT id FROM (SELECT id, ROW_NUMBER() OVER(PARTITION BY burst_key ORDER BY COALESCE(stars,rating*5,0) DESC, COALESCE(sharpness,0) DESC, id) AS rank FROM images WHERE job_id=? AND status='done' AND rejected=0) WHERE rank=1)",[job]).map_err(err)?;
         tx.commit().map_err(err)?;
         task.finish();
         Ok(())

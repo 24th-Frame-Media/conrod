@@ -8,8 +8,12 @@ pub const ORIENTATION: u16 = 0x0112;
 pub const STRIP_OFFSETS: u16 = 0x0111;
 pub const STRIP_BYTE_COUNTS: u16 = 0x0117;
 pub const EXIF_IFD: u16 = 0x8769;
+pub const DATE_TIME: u16 = 0x0132;
 pub const DATE_TIME_ORIGINAL: u16 = 0x9003;
+pub const DATE_TIME_DIGITIZED: u16 = 0x9004;
+pub const SUB_SEC_TIME: u16 = 0x9290;
 pub const SUB_SEC_TIME_ORIGINAL: u16 = 0x9291;
+pub const SUB_SEC_TIME_DIGITIZED: u16 = 0x9292;
 pub const BODY_SERIAL_NUMBER: u16 = 0xA431;
 pub const LENS_MODEL: u16 = 0xA434;
 

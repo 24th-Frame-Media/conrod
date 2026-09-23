@@ -160,7 +160,9 @@ fn settings_hosts_and_anthropic_auth_match_fixture() {
 
 #[test]
 fn schema_is_stable() {
-    assert_eq!(schema()["required"].as_array().unwrap().len(), 11);
+    let req = schema()["required"].as_array().unwrap().clone();
+    assert_eq!(req.len(), 12);
+    assert!(req.iter().any(|v| v.as_str() == Some("is_competition")));
 }
 
 #[test]
@@ -180,4 +182,27 @@ fn vehicle_prompt_matches_the_album_targets() {
     let bike = vehicle_prompt(&settings, true);
     assert!(bike.contains("Set body_type to motorcycle"));
     assert!(bike.contains("ignore registration plates"));
+}
+
+#[test]
+fn openai_schema_has_all_properties_in_required() {
+    let s = schema();
+    let req = conrod_io::vlm::openai_request("gpt-4o", "sk-test", "describe", &[], &s, 500);
+    let strict_schema = &req.json["response_format"]["json_schema"]["schema"];
+    assert_eq!(strict_schema["additionalProperties"], false);
+
+    let props = strict_schema["properties"].as_object().unwrap();
+    let required: Vec<String> = strict_schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+
+    for key in props.keys() {
+        assert!(
+            required.contains(key),
+            "Property '{key}' missing from required in OpenAI schema"
+        );
+    }
 }

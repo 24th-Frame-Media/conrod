@@ -218,6 +218,8 @@ impl EditArgs {
 #[derive(Debug, Deserialize)]
 pub struct KnownArgs {
     pub plate: String,
+    #[serde(default)]
+    pub old_plate: Option<String>,
     pub make: Option<String>,
     pub model: Option<String>,
     pub colour: Option<String>,
@@ -300,7 +302,7 @@ pub enum Command {
     TrainModel(RegionArgs),
     ForgetModel(RegionArgs),
     TrainTaste {},
-    // Album operations (see rust/API.md).
+    // Album operations (see API.md).
     Rescore(JobArgs),
     PickKeepers(JobArgs),
     Group(JobArgs),

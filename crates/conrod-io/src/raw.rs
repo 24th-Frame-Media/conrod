@@ -5,7 +5,7 @@
 //! Only the preview's byte range is read, not the whole RAW: on a slow card
 //! that is a few MB a frame instead of thirty. Serial and capture time come
 //! from rawler, which decodes the Canon makernotes; checked against exiftool
-//! in rust/SPIKES.md (spike C).
+//! in SPIKES.md (spike C).
 
 use crate::tiff::{self, Tiff};
 use conrod_core::bursts::{self, Tags};
@@ -79,13 +79,21 @@ pub fn read(path: &Path) -> Result<Frame> {
             let exif = t.ifd(exif as usize);
             for (tag, name) in [
                 (tiff::DATE_TIME_ORIGINAL, "DateTimeOriginal"),
+                (tiff::DATE_TIME_DIGITIZED, "DateTimeDigitized"),
                 (tiff::SUB_SEC_TIME_ORIGINAL, "SubSecTimeOriginal"),
+                (tiff::SUB_SEC_TIME, "SubSecTime"),
+                (tiff::SUB_SEC_TIME_DIGITIZED, "SubSecTimeDigitized"),
                 (tiff::BODY_SERIAL_NUMBER, "SerialNumber"),
                 (tiff::LENS_MODEL, "LensModel"),
             ] {
                 if let Some(v) = exif.get(&tag).and_then(tiff::Value::text) {
                     tags.insert(name.into(), Value::String(v.to_string()));
                 }
+            }
+        }
+        if !tags.contains_key("DateTimeOriginal") {
+            if let Some(dt) = ifd0.get(&tiff::DATE_TIME).and_then(tiff::Value::text) {
+                tags.insert("DateTimeOriginal".into(), Value::String(dt.to_string()));
             }
         }
     }

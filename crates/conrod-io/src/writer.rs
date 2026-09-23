@@ -566,10 +566,10 @@ fn xmp_packet(
         packet.push_str("</rdf:li></rdf:Alt></dc:description>\n");
     }
     if let Some(rating) = rating {
-        let _ = writeln!(packet, "   <xmp:rating>{rating}</xmp:rating>");
+        let _ = writeln!(packet, "   <xmp:Rating>{rating}</xmp:Rating>");
     }
     if let Some(label) = label {
-        let _ = writeln!(packet, "   <xmp:label>{}</xmp:label>", xml_escape(label));
+        let _ = writeln!(packet, "   <xmp:Label>{}</xmp:Label>", xml_escape(label));
     }
     packet.push_str("  </rdf:Description>\n </rdf:RDF>\n</x:xmpmeta>\n<?xpacket end=\"w\"?>\n");
     packet
@@ -613,6 +613,10 @@ mod tests {
         assert!(first.contains("A&amp;B &lt;team&gt;"));
         assert!(first.contains("Caption &quot;quoted&quot;"));
         assert!(first.contains("Red &amp; blue"));
+        assert!(first.contains("<xmp:Rating>4</xmp:Rating>"));
+        assert!(first.contains("<xmp:Label>Red &amp; blue</xmp:Label>"));
+        assert!(!first.contains("<xmp:rating>"));
+        assert!(!first.contains("<xmp:label>"));
         assert!(!create_sidecar_fast(
             &sidecar,
             &["replacement".to_string()],
