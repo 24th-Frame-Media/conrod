@@ -16,10 +16,10 @@ const TABS: [Page, string, string][] = [
 export type StatusActions = { pause: () => void; resume: () => void; stop: () => void; cancel: (key: string) => void };
 
 function workLabel(label: string): string {
-  if (label.startsWith('Identifying')) return 'Reading vehicle details';
-  if (label.startsWith('Grouping')) return 'Grouping similar vehicles';
-  if (label.startsWith('Culling')) return 'Measuring and culling photos';
-  if (label.startsWith('Loading')) return label;
+  if (label.startsWith('Identifying')) return 'Identifying';
+  if (label.startsWith('Grouping')) return 'Grouping';
+  if (label.startsWith('Culling')) return 'Culling';
+  if (label.startsWith('Loading')) return 'Loading';
   return label.replace(/\s*[·-]\s*album\s+\d+$/i, '');
 }
 
@@ -60,7 +60,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const failed = status.tasks.find((t) => t.state === 'failed' && t.error !== 'stopped');
   const tone = active ? (active.state === 'paused' ? 'warn' : 'busy') : failed ? 'error' : 'ok';
-  const label = active ? (active.state === 'paused' ? 'Paused' : workLabel(active.label)) : failed ? 'Needs attention' : 'All caught up';
+  const label = active ? (active.state === 'paused' ? 'Paused' : workLabel(active.label)) : failed ? 'Error' : 'Ready';
   const activeTasks = status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').sort((a, b) => b.id - a.id);
   const finishedTasks = status.tasks.filter((task) => task.state !== 'running' && task.state !== 'paused').sort((a, b) => b.id - a.id);
   const activeJob = jobs.find((job) => job.id === status.activeJob);
@@ -85,7 +85,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
       </button>
       {open && (
         <div className="popover activity-dashboard" role="dialog" aria-label="Notifications and activity">
-          <div className="popover-head"><h3>Background work</h3><span className={`state ${tone === 'busy' ? 'running' : tone === 'error' ? 'failed' : 'done'}`}>{active ? active.state : tone === 'error' ? 'failed' : 'done'}</span></div>
+          <div className="popover-head"><h3>Background work</h3><span className={`state ${tone === 'busy' ? 'running' : tone === 'error' ? 'failed' : 'done'}`}>{active ? (active.state === 'paused' ? 'Paused' : 'Running') : tone === 'error' ? 'Error' : 'Ready'}</span></div>
           <div className="activity-summary">
             <div><b>{activeJob && active?.total ? `${active.done.toLocaleString()} / ${active.total.toLocaleString()}` : '—'}</b><small>{activeJob ? activeJob.label : 'No active scan'}</small></div>
             <div><b>{readyModels} / {models.length}</b><small>Models ready</small></div>

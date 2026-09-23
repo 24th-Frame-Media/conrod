@@ -170,6 +170,14 @@ pub struct RenameArgs {
     pub label: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateJobSettingsArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    pub patch: Map<String, Value>,
+}
+
 /// One album, or every album when `jobId` is left out.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -310,6 +318,7 @@ pub enum Command {
     Regroup(JobArgs),
     BulkEdit(BulkArgs),
     RenameJob(RenameArgs),
+    UpdateJobSettings(UpdateJobSettingsArgs),
     Summary(JobArgs),
     Cover(JobArgs),
     Filling(JobArgs),
@@ -317,6 +326,7 @@ pub enum Command {
     CacheClear(CacheClearArgs),
     ResetIdentifications(AlbumScope),
     ResetDetections(AlbumScope),
+    ResetRatings(AlbumScope),
     ResetAll {},
     CheckUpdate {},
     InstallUpdate {},

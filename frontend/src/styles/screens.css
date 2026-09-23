@@ -126,9 +126,56 @@
 .review { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .toolbar { display: flex; align-items: center; flex-wrap: wrap; row-gap: 8px; gap: 10px; padding: 10px 18px; flex: none; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
 .toolbar .tabs.sub button { padding: 6px 11px; font-size: 13px; white-space: nowrap; }
-.toolbar select { padding: 6px 8px; font-size: 12.5px; max-width: 200px; }
+.toolbar select { padding: 6px 8px; font-size: 12.5px; max-width: 200px; cursor: pointer; }
 .toolbar #search { width: 220px; padding: 6px 10px; }
 .toolbar .icon { padding: 6px 9px; display: grid; place-items: center; }
+
+/* split button */
+.split-button { display: inline-flex; align-items: stretch; border-radius: 8px; overflow: hidden; vertical-align: middle; }
+.split-button > .split-main { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: 0; font-weight: 600; white-space: nowrap; padding: 7px 13px; font-size: 13px; }
+.split-button > .split-toggle { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 1px solid rgba(255, 255, 255, 0.25); padding: 0 10px; display: grid; place-items: center; font-size: 11px; cursor: pointer; }
+.split-button > .split-toggle:hover, .split-button > .split-toggle.active { background: var(--accent-hover); }
+
+/* custom menu dropdown */
+.menu-dropdown { position: relative; display: inline-flex; }
+.menu-trigger { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 13px; padding: 7px 11px; }
+.menu-caret { font-size: 10px; opacity: 0.8; margin-left: 2px; }
+.menu-popover { position: absolute; top: calc(100% + 6px); z-index: 120; min-width: 240px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.35); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.menu-popover.align-right { right: 0; }
+.menu-popover.align-left { left: 0; }
+.menu-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 13px; text-align: left; cursor: pointer; transition: background .08s; }
+.menu-item:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
+.menu-item.danger { color: var(--bad); }
+.menu-item.danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.12); color: #ff7b7b; }
+.menu-item.highlight { color: var(--accent); font-weight: 500; }
+.menu-item.highlight:hover:not(:disabled) { background: rgba(47, 109, 246, 0.12); color: var(--accent-hover); }
+.menu-item-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.menu-item-title { white-space: nowrap; font-weight: 500; }
+.menu-item-hint { font-size: 11px; color: var(--text-dim); line-height: 1.25; }
+.menu-item-badge { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 10px; background: var(--surface-3); color: var(--text-dim); flex-shrink: 0; }
+.menu-checkbox-item { display: flex; align-items: flex-start; gap: 9px; padding: 7px 10px; border-radius: 6px; cursor: pointer; transition: background .08s; font-size: 13px; color: var(--text); }
+.menu-checkbox-item:hover { background: var(--surface-3); }
+.menu-checkbox-item input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; }
+.menu-divider { height: 1px; background: var(--line-soft); margin: 4px 0; }
+.menu-header { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-mute); padding: 5px 10px 3px; font-weight: 600; }
+
+/* clickable scan-type pill */
+.pill.scan-type.clickable { cursor: pointer; transition: background .12s, border-color .12s, transform .08s; pointer-events: auto !important; }
+.pill.scan-type.clickable:hover { border-color: var(--accent); background: rgba(47, 109, 246, .14); color: #fff; }
+
+/* shoot settings modal */
+.shoot-settings-body { display: flex; flex-direction: column; gap: 16px; margin: 16px 0; text-align: left; }
+.shoot-preset-select { width: 100%; padding: 8px 12px; font-size: 13.5px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; color: var(--text); }
+.field-group { display: flex; flex-direction: column; gap: 6px; }
+.field-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; color: var(--text-dim); }
+.shoot-toggle-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); cursor: pointer; transition: border-color .12s, background .12s; }
+.shoot-toggle-row:hover { border-color: var(--line); background: var(--surface-2); }
+.shoot-toggle-row input[type="checkbox"] { margin-top: 3px; flex-shrink: 0; }
+.shoot-toggle-row .toggle-text { display: flex; flex-direction: column; gap: 3px; }
+.shoot-toggle-row .toggle-text b { font-size: 13.5px; color: var(--text); }
+.shoot-toggle-row .toggle-text span { font-size: 12px; color: var(--text-dim); line-height: 1.35; }
+
 .review-note { flex: none; margin: 12px 18px 0; padding: 10px 14px; border: 1px solid #24365a; border-left-width: 3px; border-radius: 6px; background: #131a29; color: var(--text-dim); font-size: 13px; }
 .review-main { flex: 1; min-height: 0; display: flex; }
 .facets { width: 230px; flex: none; padding: 16px 14px; border-right: 1px solid var(--line-soft); overflow-y: auto; background: var(--surface); }
@@ -175,7 +222,10 @@
 .card .cap { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .chips { display: flex; align-items: center; gap: 4px; margin-top: 5px; overflow: hidden; }
 
-.inspector { width: 330px; flex: none; display: flex; flex-direction: column; padding: 14px 16px; gap: 10px; overflow-y: auto; background: var(--surface); border-left: 1px solid var(--line-soft); }
+.inspector { position: relative; width: 360px; flex: none; display: flex; flex-direction: column; padding: 14px 16px; gap: 10px; overflow-y: auto; background: var(--surface); border-left: 1px solid var(--line-soft); box-sizing: border-box; }
+.inspector.resizing { user-select: none; }
+.inspector-resizer { position: absolute; top: 0; left: -4px; bottom: 0; width: 8px; cursor: col-resize; z-index: 10; background: transparent; transition: background 0.15s ease; }
+.inspector-resizer:hover, .inspector.resizing .inspector-resizer { background: var(--accent); }
 .inspector > * { flex-shrink: 0; }
 
 .frame-side {
@@ -839,6 +889,7 @@ dialog.viewer { padding: 0; max-width: 96vw; max-height: 94vh; overflow: hidden;
 .burst-stack { min-width: 0; padding: 0; overflow: visible; text-align: left; background: transparent; border: 0; cursor: pointer; }
 .burst-layers { position: relative; aspect-ratio: 3 / 2; margin: 0 8px 9px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 3px 3px 0 var(--surface-2), 6px 6px 0 #24242a, 9px 9px 0 #19191e; overflow: hidden; }
 .burst-stack:hover .burst-layers, .burst-stack.open .burst-layers { border-color: var(--accent); }
+.burst-stack.selected .burst-layers { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), 3px 3px 0 var(--surface-2), 6px 6px 0 #24242a, 9px 9px 0 #19191e; }
 .burst-layers .image-load, .burst-layers img { width: 100%; height: 100%; object-fit: cover; }
 .burst-layers .stack-count { top: 8px; right: 8px; bottom: auto; font-size: 12px; }
 .burst-caption { display: grid; gap: 2px; padding: 0 4px; }
@@ -853,6 +904,7 @@ dialog.viewer { padding: 0; max-width: 96vw; max-height: 94vh; overflow: hidden;
 .burst-strip img { width: 100%; height: 100%; object-fit: cover; }
 .burst-strip input { position: absolute; z-index: 4; top: 7px; left: 7px; }
 .burst-strip small { display: block; padding: 6px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.burst-strip .cull-tag { position: absolute; bottom: 6px; left: 6px; z-index: 2; font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(220, 38, 38, 0.85); color: #fff; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 
 /* ── compact identify strip in review ── */
 .identify-strip {
