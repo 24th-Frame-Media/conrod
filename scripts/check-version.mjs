@@ -1,4 +1,4 @@
-// node rust/scripts/check-version.mjs [tag]   e.g. v1.0.0-beta.1
+// node scripts/check-version.mjs [tag]   e.g. v1.0.0-beta.1
 // One version across the workspace, the Tauri config and the frontend package.
 import { readFileSync } from 'node:fs'
 

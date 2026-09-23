@@ -1,5 +1,5 @@
 //! The detector against ultralytics' own boxes on real frames. Local-only:
-//! needs tools/export_onnx.py's model and rust/fixtures/detector_local.json.
+//! needs tools/export_onnx.py's model and fixtures/detector_local.json.
 
 use conrod_vision::detect::{DetectOptions, Detector, Device};
 use conrod_vision::imageops::Rgb;

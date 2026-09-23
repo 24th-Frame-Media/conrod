@@ -1,7 +1,7 @@
 //! The similarity embedding and the colour swatch against Python, on the
 //! photographer's own crops.
 //!
-//! `rust/fixtures/vision_local.json`, when present, points at real crops
+//! `fixtures/vision_local.json`, when present, points at real crops
 //! (`tools/gen_vision_local.py`) and is the parity gate that counts; without
 //! it, or without the model file, this prints why and returns rather than
 //! failing a build that simply has neither.

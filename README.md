@@ -104,30 +104,29 @@ Needs Rust (MSVC), the Visual Studio C++ build tools, Node.js and WebView2.
 Run these from the repository root in PowerShell:
 
 ```powershell
-npm --prefix rust/frontend ci
-npm --prefix rust/frontend run tauri -- dev       # launch a development build
+npm --prefix frontend ci
+npm --prefix frontend run tauri -- dev       # launch a development build
 
-cargo test --manifest-path rust/Cargo.toml --workspace
-cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
-npm --prefix rust/frontend test
-npm --prefix rust/frontend run build              # type-check and compile the UI
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+npm --prefix frontend test
+npm --prefix frontend run build              # type-check and compile the UI
 
-npm --prefix rust/frontend run tauri -- build --ci # release installer
+npm --prefix frontend run tauri -- build --ci # release installer
 ```
 
-The installer is written under `rust/target/release/bundle/nsis/`.
+The installer is written under `target/release/bundle/nsis/`.
 
 ### Build from the frontend directory
 
 ```powershell
-cd rust/frontend
+cd frontend
 npm ci
-npm run tauri -- build --ci     # installer: rust/target/release/bundle/nsis/
+npm run dev                    # Vite on http://localhost:1420
+npm run tauri -- build --ci     # installer: target/release/bundle/nsis/
 ```
 
-[`rust/README.md`](rust/README.md) has development, checks and the
-`conrod-cli` command line; [`rust/API.md`](rust/API.md) lists every command the
-app exposes.
+[`API.md`](API.md) lists every command the desktop frontend and CLI use; [`RELEASING.md`](RELEASING.md) details release tagging and bundling.
 
 ## Contribute
 
@@ -137,7 +136,7 @@ scan -> preview -> detect -> plate/number/text -> identify (VLM) -> merge -> rev
 
 Everything runs per vehicle, not per frame, which is what stops a trackside
 banner being keyworded onto every car that passes it. The crates in
-[`rust/crates`](rust/crates): `conrod-core` (pure logic), `conrod-vision`
+[`crates`](crates): `conrod-core` (pure logic), `conrod-vision`
 (detector, plates, OCR, faces, similarity), `conrod-io` (RAW, ExifTool, VLM,
 assets, updates), `conrod-store` (SQLite), `conrod-engine` (the operations),
 `conrod-app` (the Tauri app) and `conrod-cli`.
@@ -154,7 +153,7 @@ git tag v1.0.0 && git push origin v1.0.0
 ```
 
 A tag with a suffix (`v1.0.0-beta.1`) is published as a pre-release. See
-[`rust/RELEASING.md`](rust/RELEASING.md).
+[`RELEASING.md`](RELEASING.md).
 
 ## Licensing
 
@@ -162,4 +161,4 @@ Detection uses Ultralytics YOLO, which is **AGPL-3.0**: anyone distributing a
 build must make source available on the same terms. The plate detector
 ([open-image-models](https://github.com/ankandrew/open-image-models)) is MIT.
 Licences of every downloaded model and ExifTool are listed in
-[`rust/scripts/assets.json`](rust/scripts/assets.json).
+[`scripts/assets.json`](scripts/assets.json).

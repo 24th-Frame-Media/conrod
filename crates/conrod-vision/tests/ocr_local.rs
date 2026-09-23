@@ -1,6 +1,6 @@
 //! The OCR port against RapidOCR (PP-OCRv4) on real vehicle crops.
 //!
-//! Local-only: needs `rust/fixtures/ocr_local.json` (tools/gen_ocr_local.py)
+//! Local-only: needs `fixtures/ocr_local.json` (tools/gen_ocr_local.py)
 //! and the PP-OCRv4 model files, looked up in `$CONROD_MODELS`, the data
 //! directory's `models/`, then the Python release's bundled copy. Without
 //! either it prints why and returns, so CI (which has neither) is unaffected.

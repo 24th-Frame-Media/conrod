@@ -12,7 +12,7 @@ conrod-core = { path = "../conrod-core" }
 conrod-vision = { path = "../conrod-vision" }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # Serial number and capture time, including Canon makernotes; checked against
-# exiftool on 100 of the owner's CR3/CR2 files (rust/SPIKES.md, spike C).
+# exiftool on 100 of the owner's CR3/CR2 files (SPIKES.md, spike C).
 rawler = "0.8"
 serde_json = "1"
 # Blocking HTTP for the VLM providers: this crate has no async runtime

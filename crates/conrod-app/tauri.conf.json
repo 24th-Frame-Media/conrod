@@ -5,8 +5,7 @@
   "identifier": "com.kapsikkum.conrod",
   "build": {
     "frontendDist": "../../frontend/dist",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm --prefix ../frontend run build"
+    "beforeBuildCommand": "npm --prefix ../../frontend run build"
   },
   "app": {
     "windows": [
@@ -19,7 +18,9 @@
         "minHeight": 620,
         "decorations": false,
         "backgroundColor": "#0b0b0d",
-        "center": true
+        "center": true,
+        "visible": true,
+        "focus": true
       }
     ],
     "security": {
@@ -54,6 +55,6 @@
         "type": "embedBootstrapper"
       }
     },
-    "licenseFile": "../../../LICENSE"
+    "licenseFile": "../../LICENSE"
   }
 }

@@ -1,5 +1,5 @@
 //! Reading the photographer's own files, when a list of them is available:
-//! `rust/fixtures/raw_local.json`, written by tools/gen_golden.py --raw,
+//! `fixtures/raw_local.json`, written by tools/gen_golden.py --raw,
 //! holds paths with the camera and capture time exiftool recorded.
 
 use conrod_io::raw;

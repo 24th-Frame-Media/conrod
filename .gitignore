@@ -15,15 +15,14 @@ Thumbs.db
 __pycache__/
 build/
 
-# Rust build output. Keep it out of OneDrive: set CARGO_TARGET_DIR to a local folder.
-rust/target/
-rust/frontend/node_modules/
-rust/frontend/dist/
-rust/crates/conrod-app/gen/
+# Rust and frontend build output. Keep it out of OneDrive: set CARGO_TARGET_DIR to a local folder.
+target/
+frontend/node_modules/
+frontend/dist/
+crates/conrod-app/gen/
 # Fixtures that point at the photographer's own frames; never committed.
-rust/fixtures/*_local.json
+fixtures/*_local.json
 
-# Release assets are fetched, not committed (see rust/scripts/README.md)
-rust/crates/conrod-app/resources/models/
-rust/crates/conrod-app/resources/exiftool/
-rust/dist/
+# Release assets are fetched, not committed (see scripts/README.md)
+crates/conrod-app/resources/models/
+crates/conrod-app/resources/exiftool/

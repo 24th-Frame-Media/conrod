@@ -35,39 +35,36 @@ jobs:
       # One version across Cargo.toml, tauri.conf.json, package.json and the tag,
       # so an installer never says one thing and its filename another.
       - name: Check the version everywhere
-        run: node rust/scripts/check-version.mjs "v${{ steps.version.outputs.value }}"
+        run: node scripts/check-version.mjs "v${{ steps.version.outputs.value }}"
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: rust/frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
-      # Models and ExifTool, pinned by SHA-256 in rust/scripts/assets.json. A
+      # Models and ExifTool, pinned by SHA-256 in scripts/assets.json. A
       # download whose hash differs fails the release rather than shipping it.
       - name: Fetch the pinned release assets
-        run: powershell -NoProfile -File rust/scripts/fetch-release-assets.ps1
+        run: powershell -NoProfile -File scripts/fetch-release-assets.ps1
 
       - name: Build the frontend
-        working-directory: rust/frontend
+        working-directory: frontend
         run: |
           npm ci
           npm run build
           npm test
 
       - name: Test
-        working-directory: rust
         run: |
           cargo fmt --all --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
 
       - name: Build the app and the installer
-        working-directory: rust/crates/conrod-app
+        working-directory: crates/conrod-app
         run: node ../../frontend/node_modules/@tauri-apps/cli/tauri.js build
 
       - name: Assemble the portable folder
@@ -75,10 +72,10 @@ jobs:
         run: |
           $v = "${{ steps.version.outputs.value }}"
           New-Item -ItemType Directory -Force dist/Conrod | Out-Null
-          Copy-Item rust/target/release/Conrod.exe dist/Conrod/
-          Copy-Item rust/crates/conrod-app/resources dist/Conrod/resources -Recurse
+          Copy-Item target/release/Conrod.exe dist/Conrod/
+          Copy-Item crates/conrod-app/resources dist/Conrod/resources -Recurse
           Copy-Item LICENSE dist/Conrod/
-          Copy-Item (Get-ChildItem rust/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1) "dist/Conrod-$v-win64-setup.exe"
+          Copy-Item (Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1) "dist/Conrod-$v-win64-setup.exe"
           Compress-Archive -Path dist/Conrod -DestinationPath "dist/Conrod-$v-win64.zip"
 
       # Importing proves nothing about a bundle. This runs the shipped exe from the
@@ -104,7 +101,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Conrod-rust-windows
+          name: Conrod-windows
           path: |
             dist/Conrod-*-win64.zip
             dist/Conrod-*-win64-setup.exe
