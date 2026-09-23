@@ -1095,6 +1095,11 @@ fn digits(value: Option<&Value>, settings: &Settings) -> Option<String> {
     if !(settings.number_min_len..=settings.number_max_len).contains(&token.len()) {
         return None;
     }
+    if let Ok(y) = token.parse::<u32>() {
+        if (1900..=2099).contains(&y) {
+            return None;
+        }
+    }
     Some(token)
 }
 

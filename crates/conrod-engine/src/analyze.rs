@@ -133,7 +133,7 @@ pub fn analyze(
     // 4. Reconcile the number.
     let vlm_number = s
         .read_numbers
-        .then(|| trusted_vlm_number(&described, &roundels, &ocr_number))
+        .then(|| trusted_vlm_number(&described, &roundels, &ocr_number, a.plate.as_deref(), &tokens))
         .flatten();
     let (number, source, confidence) =
         merge_number(&ocr_number, vlm_number.as_deref(), s.ocr_accept_confidence);
@@ -213,7 +213,21 @@ fn ocr_number(
         },
     };
     match reading.number.as_deref() {
-        Some(n) if Some(n) == plate || plates::looks_like_plate(n) => OcrReading::default(),
+        Some(n) => {
+            if Some(n) == plate || plates::looks_like_plate(n) {
+                return OcrReading::default();
+            }
+            if let Some(p) = plate {
+                let p_digits: String = p.chars().filter(|c| c.is_ascii_digit()).collect();
+                if !p_digits.is_empty()
+                    && (p_digits == n
+                        || p_digits.trim_start_matches('0') == n.trim_start_matches('0'))
+                {
+                    return OcrReading::default();
+                }
+            }
+            reading
+        }
         _ => reading,
     }
 }
@@ -226,8 +240,35 @@ fn trusted_vlm_number(
     described: &VehicleDescription,
     roundels: &[(String, f64)],
     ocr_number: &OcrReading,
+    plate: Option<&str>,
+    tokens: &[ocr::Token],
 ) -> Option<String> {
     let claim = described.race_number.clone()?;
+    let digits: String = claim.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() || digits.len() > 3 {
+        return None;
+    }
+    if let Ok(y) = digits.parse::<u32>() {
+        if (1900..=2099).contains(&y) {
+            return None;
+        }
+    }
+    if let Some(p) = plate {
+        let p_digits: String = p.chars().filter(|c| c.is_ascii_digit()).collect();
+        if !p_digits.is_empty()
+            && (p_digits == digits
+                || p_digits.trim_start_matches('0') == digits.trim_start_matches('0'))
+        {
+            return None;
+        }
+    }
+    if !tokens.is_empty()
+        && digits.len() >= 3
+        && roundels.is_empty()
+        && ocr_number.number.as_deref() != Some(&claim)
+    {
+        return None;
+    }
     let disowned = !described.is_competition
         && roundels.is_empty()
         && ocr_number.number.as_deref() != Some(&claim);
@@ -284,7 +325,7 @@ mod tests {
             ..VehicleDescription::default()
         };
         let none = OcrReading::default();
-        assert_eq!(trusted_vlm_number(&road_car, &[], &none), None);
+        assert_eq!(trusted_vlm_number(&road_car, &[], &none, None, &[]), None);
         // ...unless OCR read the same number, or a roundel was found.
         let same = OcrReading {
             number: Some("220".into()),
@@ -292,11 +333,11 @@ mod tests {
             source: "ocr".into(),
         };
         assert_eq!(
-            trusted_vlm_number(&road_car, &[], &same).as_deref(),
+            trusted_vlm_number(&road_car, &[], &same, None, &[]).as_deref(),
             Some("220")
         );
         assert_eq!(
-            trusted_vlm_number(&road_car, &[("5".into(), 0.5)], &none).as_deref(),
+            trusted_vlm_number(&road_car, &[("5".into(), 0.5)], &none, None, &[]).as_deref(),
             Some("220")
         );
         let racer = VehicleDescription {
@@ -304,8 +345,38 @@ mod tests {
             ..road_car
         };
         assert_eq!(
-            trusted_vlm_number(&racer, &[], &none).as_deref(),
+            trusted_vlm_number(&racer, &[], &none, None, &[]).as_deref(),
             Some("220")
+        );
+    }
+
+    #[test]
+    fn trusted_vlm_number_rejects_hallucinations_and_plate_substrings() {
+        let racer = VehicleDescription {
+            race_number: Some("100".into()),
+            is_competition: true,
+            ..VehicleDescription::default()
+        };
+        let none = OcrReading::default();
+        // Rejected because "100" is part of registration plate "TZ100"
+        assert_eq!(
+            trusted_vlm_number(&racer, &[], &none, Some("TZ100"), &[]),
+            None
+        );
+
+        // Rejected because 4-digit year
+        let year_car = VehicleDescription {
+            race_number: Some("2023".into()),
+            is_competition: true,
+            ..VehicleDescription::default()
+        };
+        assert_eq!(trusted_vlm_number(&year_car, &[], &none, None, &[]), None);
+
+        // Rejected uncorroborated 3-digit number when OCR tokens are present
+        let tok = vec![token("FORD", 0.9)];
+        assert_eq!(
+            trusted_vlm_number(&racer, &[], &none, None, &tok),
+            None
         );
     }
 

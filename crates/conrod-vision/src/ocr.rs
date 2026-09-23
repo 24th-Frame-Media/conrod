@@ -101,10 +101,16 @@ pub fn read_number(tokens: &[Token], settings: &Settings) -> Option<(String, f64
             let n = candidate.len() as i64;
             if n < settings.number_min_len
                 || n > settings.number_max_len
+                || n > 3
                 || candidate.starts_with("00")
                 || !candidate.chars().all(|c| c.is_ascii_digit())
             {
                 return None;
+            }
+            if let Ok(val) = candidate.parse::<i64>() {
+                if (1900..=2099).contains(&val) {
+                    return None;
+                }
             }
             Some((candidate, t.confidence * (1.0 + t.area)))
         })

@@ -454,6 +454,24 @@ pub fn scan_regions(
             numbers.push((digits, score * weight));
         }
     }
+    if let Some(ref plate_text) = best.text {
+        let clean_plate: String = plate_text
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect();
+        numbers.retain(|(num, _)| !clean_plate.contains(num.as_str()));
+    }
+    numbers.retain(|(num, _)| {
+        if num.len() > 3 {
+            return false;
+        }
+        if let Ok(val) = num.parse::<i64>() {
+            if (1900..=2099).contains(&val) {
+                return false;
+            }
+        }
+        true
+    });
     numbers.sort_by(|a, b| b.1.total_cmp(&a.1));
     Ok((best, numbers))
 }
