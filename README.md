@@ -95,6 +95,21 @@ Not close. qwen3-vl is newer and worse here, and puts its answer in a
 read plate characters at any resolution tried, which is why plate reading is
 a separate detector and OCR pair rather than one more thing asked of the VLM.
 
+#### Trackside Benchmark Comparison
+
+Tested against real circuit photography using Conrod's structured extraction prompt and schema:
+
+| Target | Ground Truth | qwen2.5vl:7b (Local Ollama) | gpt-4o (OpenAI Cloud) |
+|---|---|---|---|
+| <img src="docs/images/benchmark_holden.jpg" width="200" alt="Holden HRT Commodore" /><br>*(Holden HRT)* | **Holden Commodore (VY/VZ)**<br>#R5, Saville<br>HRT / Mobil 1, HSV, Repco, NGK | **Make**: Holden, **Model**: HSV<br>**Number**: `R5` ✅<br>**Sponsors**: Mobil 1, NGK, Repco, HSV, Xbox ✅ | **Make**: Holden, **Model**: *null* ❌<br>**Number**: `05` ❌ *(hallucinated Brock)*<br>**Driver**: `Brock` ❌ *(hallucinated)* |
+| <img src="docs/images/benchmark_subaru.jpg" width="200" alt="Subaru Impreza WRX STI" /><br>*(Subaru WRX)* | **Subaru Impreza WRX STI (Blobeye)**<br>#71, T. Gough<br>Marvell | **Make**: Subaru ✅, **Model**: Impreza ✅<br>**Number**: `71` ✅<br>**Driver**: `T. Gough` ✅ | **Make**: *null* ❌, **Model**: *null* ❌<br>**Number**: `71` ✅<br>**Driver**: `T. Gough` ✅ |
+| <img src="docs/images/benchmark_lancer.jpg" width="200" alt="Mitsubishi Lancer Evolution X" /><br>*(Lancer Evo X)* | **Mitsubishi Lancer Evolution X**<br>#82<br>Intima, Motul, Shockworks, Tyrepower | **Make**: Mitsubishi ✅, **Model**: Lancer Evolution ✅<br>**Number**: `82` ✅<br>**Sponsors**: Intima, Motul ✅ | **Make**: *null* ❌, **Model**: *null* ❌<br>**Number**: `82` ✅<br>**Sponsors**: Intima, Motul, Yokohama ✅ |
+
+*Other local models tested on the Subaru:*
+- `minicpm-v:8b` (15.5s): Hallucinated make/model as **"Ford Mustang"** ❌ and driver as "T. Cough".
+- `gemma3:4b` (17.8s): Hallucinated make/model as **"Mazda 323"** ❌.
+- `qwen3-vl:8b` (14.8s): Emitted reasoning tokens into internal `<think>` block rather than following JSON schema.
+
 ## Build
 
 Needs Rust (MSVC), the Visual Studio C++ build tools, Node.js and WebView2.
