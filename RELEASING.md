@@ -94,6 +94,29 @@ The release executable is `target/release/Conrod.exe`.
 Settings → Maintenance provides setup checks, missing-model installation and update checking.
 Update installation is available only for an installed copy, requires idle work, verifies the
 release checksum and requests app exit after launching the installer helper. Portable builds
-remain manual downloads. The silent upgrade and relaunch were exercised on 20 Sept 2026 with the real NSIS
-installer served by a local fake release server (`CONROD_UPDATE_API`).
+remain manual downloads.
+
+## QA and Verification
+
+### Installer Testing on Windows
+- When testing silent installation (`/S /D=<dir>`), pass **long paths** to `/D=`. An 8.3 short path (such as `KAPSIK~1`) can cause uninstaller shortcut comparisons to fail and leave orphaned Start Menu shortcuts.
+- The NSIS uninstaller preserves `HKCU\Software\kapsikkum\Conrod` (the remembered install folder) unless the "delete app data" box is ticked. Clear that registry entry if testing temporary installation paths.
+
+### Testing the In-App Updater Locally
+- To test the updater against a mock release server, run a local HTTP server that responds to `/releases?per_page=15` with a release JSON containing `Conrod-<version>-win64-setup.exe` and `SHA256SUMS.txt`.
+- Copy the release executable to a folder with a mock `uninstall.exe` beside it and start the app with:
+  ```powershell
+  $env:CONROD_UPDATE_API = "http://127.0.0.1:<port>"
+  .\Conrod.exe
+  ```
+
+### Isolated QA and Headless CDP Automation
+- Launch the release executable with isolated temporary directories and an open debugging port:
+  ```powershell
+  $env:CONROD_HOME = "$env:TEMP\conrod-qa"
+  $env:WEBVIEW2_USER_DATA_FOLDER = "$env:TEMP\conrod-webview"
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+  .\Conrod.exe
+  ```
+- Commands can then be driven via Chrome DevTools Protocol or directly via `window.__TAURI_INTERNALS__.invoke('command', {action, args})`.
 
