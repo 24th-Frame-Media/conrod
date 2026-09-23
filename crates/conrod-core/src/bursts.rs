@@ -79,12 +79,23 @@ pub fn camera_of(tags: &Tags, fallback: &str) -> String {
 
 /// When the shutter fired, in seconds, with sub-seconds where recorded.
 pub fn taken_at(tags: &Tags) -> Option<f64> {
-    let stamp = first(tags, &["SubSecDateTimeOriginal", "DateTimeOriginal"])?;
+    let stamp = first(
+        tags,
+        &[
+            "SubSecDateTimeOriginal",
+            "DateTimeOriginal",
+            "DateTimeDigitized",
+            "DateTime",
+        ],
+    )?;
     let mut seconds = parse_stamp(&py::str_of(stamp))?;
     // Presence of the key, not its value: an empty combined tag still means
     // the camera chose not to split the sub-second out.
     if !tags.contains_key("SubSecDateTimeOriginal") {
-        if let Some(sub) = first(tags, &["SubSecTimeOriginal"]) {
+        if let Some(sub) = first(
+            tags,
+            &["SubSecTimeOriginal", "SubSecTime", "SubSecTimeDigitized"],
+        ) {
             if let Some(fraction) = py::float(&format!("0.{}", py::str_of(sub).trim())) {
                 seconds += fraction;
             }

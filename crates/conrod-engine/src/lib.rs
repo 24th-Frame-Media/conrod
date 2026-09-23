@@ -432,6 +432,17 @@ pub fn scan_files(
     hub: TaskHub,
     on_frame: impl Fn(ScanResult) + Send + Sync + 'static,
 ) -> Scan {
+    scan_files_filtered(paths, settings, profile, hub, |_| true, on_frame)
+}
+
+pub(crate) fn scan_files_filtered(
+    paths: Vec<PathBuf>,
+    settings: Settings,
+    profile: ScanProfile,
+    hub: TaskHub,
+    should_scan: impl Fn(&Path) -> bool + Send + Sync + 'static,
+    on_frame: impl Fn(ScanResult) + Send + Sync + 'static,
+) -> Scan {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = stop.clone();
     let finished = Arc::new(AtomicBool::new(false));
@@ -525,6 +536,11 @@ pub fn scan_files(
                     }
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(path) = paths.get(i) else { break };
+                    if !should_scan(path) {
+                        let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                        task.progress(n as u64, paths.len() as u64);
+                        continue;
+                    }
                     match cull_frame(path, &detector, &settings, profile, &models, faces.as_ref()) {
                         Ok(result) => on_frame(Ok(result)),
                         Err(e) => {

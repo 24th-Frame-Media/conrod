@@ -29,6 +29,17 @@ use std::{
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
+
+// All identification and embedding entry points share this rule. A manual
+// rating can rescue an automatic cull, but never a deliberate reject.
+pub(crate) const ML_ELIGIBLE: &str = "COALESCE(i.rejected,0)=0 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND (COALESCE(d.cull_reason,'')='' OR d.stars IS NOT NULL OR i.stars IS NOT NULL)";
+
+pub(crate) fn ml_eligible(d: &Desktop, id: i64) -> Result<bool> {
+    d.reader.lock().unwrap().query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM detections d JOIN images i ON i.id=d.image_id WHERE d.id=? AND {ML_ELIGIBLE})"),
+        [id], |r| r.get(0),
+    ).map_err(err)
+}
 pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
     crate::library::require_job(d, job)?; // "No such album", not a bare "Query returned no rows"
     let raw: Option<String> =
@@ -150,14 +161,12 @@ impl Run<'_> {
         embedder: &mut Option<similarity::Embedder>,
     ) -> Result<()> {
         let s = self.settings;
-        let wanted: Vec<&Value> = rows
-            .iter()
-            .filter(|r| {
-                !(s.respect_culling
-                    && r["stars"].is_null()
-                    && r["cull_reason"].as_str().is_some_and(|c| !c.is_empty()))
-            })
-            .collect();
+        let mut wanted = Vec::new();
+        for row in rows {
+            if ml_eligible(self.d, row["id"].as_i64().ok_or("Invalid detection")?)? {
+                wanted.push(row);
+            }
+        }
         self.advance(rows.len() - wanted.len());
         if wanted.is_empty() {
             return Ok(());
@@ -171,6 +180,10 @@ impl Run<'_> {
         let image = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
         for row in wanted {
             let id = row["id"].as_i64().ok_or("Invalid detection")?;
+            if !ml_eligible(self.d, id)? {
+                self.advance(1);
+                continue;
+            }
             let subject = ["x1", "y1", "x2", "y2"].map(|k| row[k].as_f64().unwrap_or(0.0).max(0.0));
             let bbox = subject.map(|v| v as usize);
             let tight = image.crop(
@@ -264,6 +277,12 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             task.detail(format!("Prepared {faces} faces for name suggestions"));
             return Ok(());
         }
+        let pending = rows(&d.reader.lock().unwrap(), &format!("SELECT d.*,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND {ML_ELIGIBLE} ORDER BY i.id,d.id"), [job])?;
+        if pending.is_empty() {
+            crate::passes::embed_faces_missing(d, job, stop, task)?;
+            task.detail("No kept subjects need identification");
+            return Ok(());
+        }
         let reads_text = settings.read_plates || settings.read_numbers || settings.read_text;
         let mut needs: Vec<&str> = Vec::new();
         if settings.read_plates {
@@ -292,7 +311,6 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         } else {
             HashMap::new()
         };
-        let pending=rows(&d.reader.lock().unwrap(),"SELECT d.*,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND d.rejected=0 ORDER BY i.id,d.id",[job])?;
         let opts = plates::PlateOptions {
             plate_conf: settings.plate_conf as f32,
             plate_reader: settings.plate_reader,
@@ -428,6 +446,29 @@ fn exiftool() -> String {
     models::exiftool().map_or_else(|| "exiftool".into(), |p| p.to_string_lossy().into_owned())
 }
 
+fn metadata_verdict(
+    rejected: bool,
+    auto_rejected: bool,
+    manual_stars: Option<i64>,
+    rating: f64,
+    settings: &Settings,
+) -> (i32, &'static str, bool) {
+    let culled = rejected || (settings.respect_culling && manual_stars.is_none() && auto_rejected);
+    if culled {
+        (-1, "Red", true)
+    } else {
+        (
+            manual_stars.unwrap_or_else(|| i64::from(sharpness::stars_for(rating))) as i32,
+            sharpness::label_for(sharpness::rating_for(
+                rating,
+                settings.sharp_at,
+                settings.blurred_below,
+            )),
+            false,
+        )
+    }
+}
+
 pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> Result<Value> {
     let mut settings = settings(d, job)?;
     if embed_in_raw {
@@ -467,16 +508,18 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
                 && detections
                     .iter()
                     .all(|d| d["cull_reason"].as_str().is_some_and(|s| !s.is_empty()));
-            if (settings.skip_rejected && rejected)
-                || (settings.respect_culling && frame["stars"].is_null() && auto_rejected)
-            {
-                task.progress((i + 1) as u64, images.len() as u64);
-                continue;
-            }
+            let (rating, label, culled) = metadata_verdict(
+                rejected,
+                auto_rejected,
+                frame["stars"].as_i64(),
+                frame["rating"].as_f64().unwrap_or(0.0),
+                &settings,
+            );
             let analyses: Vec<_> = detections
                 .iter()
                 .filter(|v| {
-                    v["rejected"].as_i64() != Some(1)
+                    !culled
+                        && v["rejected"].as_i64() != Some(1)
                         && v["region_type"].as_str().unwrap_or("vehicle") == "vehicle"
                 })
                 .map(|v| {
@@ -488,24 +531,6 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
                 .collect();
             let keywords = keywords::for_frame(&analyses, &options, mapping.as_ref());
             let caption = keywords::caption_for(&analyses);
-            let rating = if rejected {
-                -1
-            } else {
-                frame["stars"].as_i64().unwrap_or_else(|| {
-                    i64::from(sharpness::stars_for(
-                        frame["rating"].as_f64().unwrap_or(0.0),
-                    ))
-                }) as i32
-            };
-            let label = if rejected {
-                "Red"
-            } else {
-                sharpness::label_for(sharpness::rating_for(
-                    frame["rating"].as_f64().unwrap_or(0.0),
-                    settings.sharp_at,
-                    settings.blurred_below,
-                ))
-            };
             let path = Path::new(frame["path"].as_str().ok_or("Missing image path")?);
             task.detail(path.display().to_string());
             if dry_run {
@@ -541,4 +566,26 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_marks_manual_and_automatic_culls_as_rejected() {
+        let settings = Settings::default();
+        assert_eq!(
+            metadata_verdict(true, false, Some(5), 1.0, &settings),
+            (-1, "Red", true)
+        );
+        assert_eq!(
+            metadata_verdict(false, true, None, 0.2, &settings),
+            (-1, "Red", true)
+        );
+        assert_eq!(
+            metadata_verdict(false, true, Some(4), 0.2, &settings),
+            (4, "Red", false)
+        );
+    }
 }
