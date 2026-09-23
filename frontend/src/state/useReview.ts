@@ -19,7 +19,7 @@ export function useReview(jobId: number | null, run: Runner) {
     const r = await engine.review(jobId);
     if (current.current !== jobId) return; // the album changed while this was in flight
     setReview(r);
-    setSelected((s) => (r.frames.some((f) => f.id === s) ? s : r.frames[0]?.id ?? null));
+    setSelected((s) => (r.frames.some((f) => f.id === s) ? s : null));
   }, [jobId]);
 
   useEffect(() => {
@@ -51,8 +51,18 @@ export function useReview(jobId: number | null, run: Runner) {
     if (id == null) return Promise.resolve(undefined);
     return run(async () => {
       await engine.mark(id, values);
+      if (values.rejected && id === selected) {
+        const kept = frames.filter((f) => f.id !== id && !facts.get(f.id)?.cull);
+        const index = frames.findIndex((f) => f.id === id);
+        setSelected(frames.slice(index + 1).find((f) => f.id !== id && !facts.get(f.id)?.cull)?.id ?? kept.at(-1)?.id ?? id);
+      }
       setReview((r) => ({
         ...r,
+        detections: r.detections.map((d) => d.image_id !== id ? d : {
+          ...d,
+          ...('stars' in values ? { stars: values.stars ?? null } : {}),
+          ...('rejected' in values ? { rejected: values.rejected ? 1 : 0, ...(!values.rejected ? { cull_reason: null } : {}) } : {}),
+        }),
         frames: r.frames.map((f) => (f.id !== id ? f : {
           ...f,
           ...('stars' in values ? { manual_stars: values.stars ?? null } : {}),
@@ -60,7 +70,7 @@ export function useReview(jobId: number | null, run: Runner) {
         })),
       }));
     });
-  }, [selected, run]);
+  }, [selected, run, frames, facts]);
 
   return { review, refresh, selected, setSelected, filters, patchFilters, facts, facets, frames, frame, step, mark };
 }

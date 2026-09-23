@@ -1,90 +1,244 @@
-import type { CSSProperties } from 'react';
+import { useState, useEffect, useMemo, type CSSProperties } from 'react';
 import { Modal } from '../components/basics';
 import { StarControl } from '../components/Stars';
 import { asset } from '../lib/api';
-import { boxOf, filename, frameStars, parseAttributes } from '../lib/review';
+import { boxOf, filename, frameStars, frameExcluded } from '../lib/review';
 import type { ReviewModel } from '../state/useReview';
 import { usePreview, type Runner } from '../state/hooks';
 import { ZoomPanImage } from '../components/Media';
+import { DetectionsTable, getCategory, type CategoryFilter } from '../components/DetectionsTable';
 
-type Props = { rv: ReviewModel; run: Runner; showBoxes: boolean; onToggleBoxes: () => void; onClose: () => void };
+type Props = {
+  rv: ReviewModel;
+  run: Runner;
+  showBoxes: boolean;
+  onToggleBoxes: () => void;
+  onClose: () => void;
+};
 
-/** The full frame, with what was read off it down the side. Arrows walk the album without closing. */
+/** The full frame, with interactive detections table and color-coded outline overlay. */
 export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
   const { frame, frames, facts, step, mark } = rv;
   const preview = usePreview(frame?.id ?? null, run);
+  const [selectedDetId, setSelectedDetId] = useState<number | null>(null);
+  const [hoveredDetId, setHoveredDetId] = useState<number | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
+  const [showLabels, setShowLabels] = useState(true);
+
+  // Keyboard shortcut: 'L' toggles box labels
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'l' || e.key === 'L') {
+        e.preventDefault();
+        setShowLabels((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   if (!frame) return null;
   const dets = facts.get(frame.id)?.dets ?? [];
   const index = frames.findIndex((f) => f.id === frame.id);
   const ratio = frame.width && frame.height ? frame.width / frame.height : 3 / 2;
   const stars = frameStars(frame);
+
+  // Filter which bounding boxes are rendered on the photo stage
+  const visibleBoxes = useMemo(() => {
+    return dets.filter((d) => {
+      const cat = getCategory(d);
+      if (categoryFilter === 'vehicles') return cat === 'vehicle' || cat === 'plate';
+      if (categoryFilter === 'people') return cat === 'person';
+      if (categoryFilter === 'landmarks') return cat === 'landmark';
+      // 'all': show vehicles, people, and plates; landmarks (eyes) are hidden by default
+      // to avoid obscuring faces with dozens of overlapping badges unless selected or in landmark tab
+      if (cat === 'landmark') return selectedDetId === d.id || hoveredDetId === d.id;
+      return true;
+    });
+  }, [dets, categoryFilter, selectedDetId, hoveredDetId]);
+
   return (
     <Modal label="Photo viewer" className="viewer" onClose={onClose}>
       <div className="frame-view">
         <div className="frame-stage-big">
           <div className="stage-inner" style={{ '--ar': ratio } as CSSProperties}>
-            <ZoomPanImage src={asset(preview) ?? asset(frame.thumb_path)} alt={filename(frame.path)}>
-            {showBoxes && (
-              <div className="overlay">
-                {dets.map((d) => {
-                  const b = boxOf(d, frame);
-                  if (!b) return null;
-                  return (
-                    <div key={d.id} className={`box${d.panning ? ' pan' : ''}`}
-                      style={{ left: `${b[0] * 100}%`, top: `${b[1] * 100}%`, width: `${(b[2] - b[0]) * 100}%`, height: `${(b[3] - b[1]) * 100}%` }}>
-                      <span className="box-label">{d.cls} {d.sharpness.toFixed(2)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <ZoomPanImage
+              src={asset(preview) ?? asset(frame.thumb_path)}
+              alt={filename(frame.path)}
+            >
+              {showBoxes && (
+                <div className="overlay">
+                  {visibleBoxes.map((d) => {
+                    const b = boxOf(d, frame);
+                    if (!b) return null;
+                    const cat = getCategory(d);
+                    const isSelected = selectedDetId === d.id;
+                    const isHovered = hoveredDetId === d.id;
+                    const shouldShowLabel = showLabels || isSelected || isHovered;
+
+                    return (
+                      <div
+                        key={d.id}
+                        className={`box box-${cat}${d.panning ? ' pan' : ''}${isSelected ? ' active-box' : ''}${isHovered ? ' hovered' : ''}`}
+                        style={{
+                          left: `${b[0] * 100}%`,
+                          top: `${b[1] * 100}%`,
+                          width: `${(b[2] - b[0]) * 100}%`,
+                          height: `${(b[3] - b[1]) * 100}%`,
+                          pointerEvents: 'auto',
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedDetId(isSelected ? null : d.id);
+                        }}
+                        onMouseEnter={() => setHoveredDetId(d.id)}
+                        onMouseLeave={() => setHoveredDetId(null)}
+                      >
+                        {shouldShowLabel && (
+                          <span className={`box-label label-${cat}`}>
+                            {d.cls} {d.sharpness.toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </ZoomPanImage>
           </div>
+
+          {/* Quick viewer controls floating over bottom of stage */}
+          <div className="viewer-stage-controls">
+            <button
+              type="button"
+              className={`stage-pill-btn${showBoxes ? ' on' : ''}`}
+              onClick={onToggleBoxes}
+              title="Toggle detection boxes (B)"
+            >
+              Outlines <kbd>B</kbd>
+            </button>
+            {showBoxes && (
+              <button
+                type="button"
+                className={`stage-pill-btn${showLabels ? ' on' : ''}`}
+                onClick={() => setShowLabels((v) => !v)}
+                title="Toggle box text labels (L)"
+              >
+                Labels <kbd>L</kbd>
+              </button>
+            )}
+          </div>
+
           <div className="frame-nav previous" role="group" aria-label="Previous photos">
-            <button title="First frame" aria-label="First frame" disabled={index <= 0} onClick={() => step(Number.NEGATIVE_INFINITY)}>First</button>
-            <button className="frame-step" title="Previous frame (←)" aria-label="Previous frame" disabled={index <= 0} onClick={() => step(-1)}>‹</button>
+            <button
+              title="First frame"
+              aria-label="First frame"
+              disabled={index <= 0}
+              onClick={() => {
+                setSelectedDetId(null);
+                step(Number.NEGATIVE_INFINITY);
+              }}
+            >
+              First
+            </button>
+            <button
+              className="frame-step"
+              title="Previous frame (←)"
+              aria-label="Previous frame"
+              disabled={index <= 0}
+              onClick={() => {
+                setSelectedDetId(null);
+                step(-1);
+              }}
+            >
+              ‹
+            </button>
           </div>
           <div className="frame-nav following" role="group" aria-label="Next photos">
-            <button className="frame-step" title="Next frame (→)" aria-label="Next frame" disabled={index < 0 || index >= frames.length - 1} onClick={() => step(1)}>›</button>
-            <button title="Last frame" aria-label="Last frame" disabled={index < 0 || index >= frames.length - 1} onClick={() => step(Number.POSITIVE_INFINITY)}>Last</button>
+            <button
+              className="frame-step"
+              title="Next frame (→)"
+              aria-label="Next frame"
+              disabled={index < 0 || index >= frames.length - 1}
+              onClick={() => {
+                setSelectedDetId(null);
+                step(1);
+              }}
+            >
+              ›
+            </button>
+            <button
+              title="Last frame"
+              aria-label="Last frame"
+              disabled={index < 0 || index >= frames.length - 1}
+              onClick={() => {
+                setSelectedDetId(null);
+                step(Number.POSITIVE_INFINITY);
+              }}
+            >
+              Last
+            </button>
           </div>
         </div>
+
         <aside className="frame-side">
           <div className="frame-side-head">
-            <h3 title={frame.path}>{filename(frame.path)}</h3>
-            <button className="ghost small" autoFocus onClick={onClose}>Close</button>
+            <div className="frame-title-wrap">
+              <h3 title={frame.path}>{filename(frame.path)}</h3>
+              <p className="frame-meta-sub">
+                {frame.width ? `${frame.width} × ${frame.height}` : '—'}
+                {frame.rating != null ? ` · Focus ${frame.rating.toFixed(3)}` : ''}
+                {frame.burst_key != null ? ` · Burst #${frame.burst_key}` : ''}
+              </p>
+            </div>
+            <button className="ghost small" autoFocus onClick={onClose}>
+              Close
+            </button>
           </div>
-          <div className="readout">
-            <div className="read"><span className="lbl">Size</span><span className="val">{frame.width ? `${frame.width} × ${frame.height}` : '—'}</span></div>
-            <div className="read"><span className="lbl">Focus</span><span className="val">{frame.rating != null ? frame.rating.toFixed(3) : '—'}</span></div>
-            {dets.map((d) => {
-              const a = parseAttributes(d);
-              const vehicle = [a.make, a.model].filter(Boolean).join(' ');
-              return (
-                <div className="viewer-subject" key={d.id}>
-                  <div className="read"><span className="lbl">{d.cls}</span><span className="val">focus {d.sharpness.toFixed(3)}{d.panning ? ' · panned' : ''}{d.burst_pick ? ' · keeper' : ''}</span></div>
-                  {a.plate && <div className="read"><span className="lbl">Plate</span><span className="val strong">{a.plate}</span></div>}
-                  {a.race_number && <div className="read"><span className="lbl">No.</span><span className="val strong">{a.race_number}</span></div>}
-                  {vehicle && <div className="read"><span className="lbl">Vehicle</span><span className="val">{vehicle}</span></div>}
-                  {a.colour && <div className="read"><span className="lbl">Colour</span><span className="val">{a.colour}</span></div>}
-                  {a.team && <div className="read"><span className="lbl">Team</span><span className="val">{a.team}</span></div>}
-                  {a.driver && <div className="read"><span className="lbl">Driver</span><span className="val">{a.driver}</span></div>}
-                  {a.country && <div className="read"><span className="lbl">Country</span><span className="val">{a.country}</span></div>}
-                  {a.person_name && <div className="read"><span className="lbl">Name</span><span className="val strong">{a.person_name}</span></div>}
-                  {d.cull_reason && <div className="read"><span className="lbl">Cull</span><span className="val unverified">{d.cull_reason}</span></div>}
-                </div>
-              );
-            })}
-          </div>
-          <p id="frame-caption" className="muted mono">{frame.path}</p>
+
+          <DetectionsTable
+            detections={dets}
+            selectedId={selectedDetId}
+            hoveredId={hoveredDetId}
+            categoryFilter={categoryFilter}
+            onSelect={setSelectedDetId}
+            onHover={setHoveredDetId}
+            onFilterChange={setCategoryFilter}
+          />
+
+          <p id="frame-caption" className="muted mono" title={frame.path}>
+            {frame.path}
+          </p>
+
           <div className="frame-side-foot">
             <StarControl value={stars} onChange={(n) => void mark({ stars: n })} />
-            <button className="ghost small" title="Back to the measured rating (U)" onClick={() => void mark({ stars: null, rejected: false })}>Clear</button>
+            <button
+              className="ghost small"
+              title="Back to the measured rating (U)"
+              onClick={() => void mark({ stars: null, rejected: false })}
+            >
+              Clear
+            </button>
             <div className="spacer" />
-            <button className={`ghost danger cut${frame.rejected ? ' on' : ''}`} onClick={() => void mark({ rejected: !frame.rejected })}>{frame.rejected ? 'Put back' : 'Reject'}</button>
+            <button
+              className={`ghost danger cut${frameExcluded(frame, dets) ? ' on' : ''}`}
+              onClick={() => void mark({ rejected: !frameExcluded(frame, dets) })}
+            >
+              {frameExcluded(frame, dets) ? 'Restore for ML' : 'Reject'}
+            </button>
           </div>
-          <label className="check-line"><input type="checkbox" checked={showBoxes} onChange={onToggleBoxes} /> Show detection outlines <kbd>B</kbd></label>
-          <p className="muted frame-pos">{index >= 0 ? `${(index + 1).toLocaleString()} / ${frames.length.toLocaleString()}` : ''}</p>
+
+          <div className="frame-side-bottom-info">
+            <label className="check-line">
+              <input type="checkbox" checked={showBoxes} onChange={onToggleBoxes} />
+              Show outlines <kbd>B</kbd>
+            </label>
+            <p className="muted frame-pos">
+              {index >= 0 ? `${(index + 1).toLocaleString()} / ${frames.length.toLocaleString()}` : ''}
+            </p>
+          </div>
         </aside>
       </div>
     </Modal>

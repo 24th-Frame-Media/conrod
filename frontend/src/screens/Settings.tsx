@@ -1,4 +1,5 @@
 import { Maintenance } from '../components/Maintenance';
+import { Known } from './Known';
 import { useEffect, useState } from 'react';
 import { engine } from '../lib/api';
 import { words } from '../lib/format';
@@ -22,8 +23,12 @@ const META: Record<string, [string, string?]> = {
   cull_blurred: ['Cull blurred frames', 'A red rating, never a deletion.'],
   burst_gap: ['Burst gap (seconds)', 'Frames closer than this belong to one pass.'],
   use_vlm: ['Use the vision model', 'Names make, model, colour and team.'],
-  vlm_provider: ['Vision provider'], vlm_model: ['Vision model'], vlm_host: ['Vision host'], vlm_extra_hosts: ['Extra hosts'],
-  vlm_api_key: ['API key', 'Stored on this computer only.'], vlm_timeout: ['Timeout (seconds)'],
+  vlm_provider: ['Vision provider', 'Ollama (local), or OpenAI, Anthropic, Gemini'],
+  vlm_model: ['Vision model', 'e.g. qwen2.5vl:7b for Ollama, gpt-4o, claude-3-7-sonnet, gemini-1.5-flash'],
+  vlm_host: ['Vision host', 'For Ollama or custom local server (default http://127.0.0.1:11434)'],
+  vlm_extra_hosts: ['Extra hosts'],
+  vlm_api_key: ['API key', 'Required for cloud providers (OpenAI, Anthropic, Gemini). Stored locally.'],
+  vlm_timeout: ['Timeout (seconds)'],
   use_known_vehicles: ['Use known vehicles', 'Fill blanks from cars you have met.'],
   normalise_names: ['Tidy makes and models'],
   write_sidecar_for_raw: ['Write sidecars next to RAW files'],
@@ -32,7 +37,46 @@ const META: Record<string, [string, string?]> = {
 };
 const labelOf = (key: string) => META[key]?.[0] ?? words(key).replace(/^./, (c) => c.toUpperCase());
 
-function Control({ name, value, onChange }: { name: string; value: SettingValue; onChange: (v: SettingValue) => void }) {
+const VLM_PROVIDERS = [
+  { id: 'ollama', name: 'Ollama (Local / Self-hosted)', defaultModel: 'qwen2.5vl:7b' },
+  { id: 'openai', name: 'OpenAI (GPT-4o, etc.)', defaultModel: 'gpt-4o' },
+  { id: 'anthropic', name: 'Anthropic (Claude 3.5 / 3.7)', defaultModel: 'claude-3-7-sonnet-20250219' },
+  { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini-1.5-flash' },
+];
+
+function Control({
+  name,
+  value,
+  onChange,
+  onProviderChange,
+}: {
+  name: string;
+  value: SettingValue;
+  onChange: (v: SettingValue) => void;
+  onProviderChange?: (provider: string, defaultModel: string) => void;
+}) {
+  if (name === 'vlm_provider') {
+    return (
+      <select
+        aria-label={labelOf(name)}
+        value={String(value).toLowerCase()}
+        onChange={(e) => {
+          const p = e.target.value;
+          onChange(p);
+          const found = VLM_PROVIDERS.find((item) => item.id === p);
+          if (found && onProviderChange) {
+            onProviderChange(p, found.defaultModel);
+          }
+        }}
+      >
+        {VLM_PROVIDERS.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+    );
+  }
   if (typeof value === 'boolean') return <input type="checkbox" aria-label={labelOf(name)} checked={value} onChange={(e) => onChange(e.target.checked)} />;
   if (typeof value === 'number') return <input type="number" step="any" aria-label={labelOf(name)} value={value} onChange={(e) => onChange(Number(e.target.value))} />;
   return <input type={name.includes('api_key') ? 'password' : 'text'} aria-label={labelOf(name)} value={value} spellCheck={false} onChange={(e) => onChange(e.target.value)} />;
@@ -77,6 +121,11 @@ export function Settings({ settings, onSaved, run, toast }: Props) {
           {dirty && <span className="muted">Unsaved changes</span>}
         </div>
       </div>
+      <section className="settings-section">
+        <h3>Known vehicles</h3>
+        <p className="muted">Vehicles identified across albums. Used to auto-fill details when the same car appears in a new shoot.</p>
+        <Known run={run} toast={toast} />
+      </section>
     </div>
   );
 }

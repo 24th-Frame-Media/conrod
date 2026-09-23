@@ -28,8 +28,8 @@ const Card = memo(function Card({ frame, facts, selected, left, top, width, heig
         <StarPill frame={frame} />
         {facts?.panned && <span className="focus panning" title="Subject sharp against a blurred background. Kept, never auto-culled">panned</span>}
         {facts?.pick && <span className="focus keeper" title="The sharpest frame of this pass">keeper</span>}
-        <button className="icon-btn" aria-label={frame.rejected ? 'Put back' : 'Reject'} title={frame.rejected ? 'Put back (X)' : 'Reject (X)'}
-          onClick={(e) => { e.stopPropagation(); onReject(frame.id, !frame.rejected); }}>{frame.rejected ? '↺' : '✕'}</button>
+        <button className="icon-btn" aria-label={facts?.cull ? 'Restore for ML' : 'Reject'} title={facts?.cull ? 'Restore for ML (U)' : 'Reject (X)'}
+          onClick={(e) => { e.stopPropagation(); onReject(frame.id, !facts?.cull); }}>{facts?.cull ? '↺' : '✕'}</button>
         {facts?.cull && <div className="culled-note">{facts.cull}</div>}
         {frame.status !== 'done' && <span className="stack-count">{frame.status}</span>}
       </div>
