@@ -107,6 +107,7 @@ pub struct Group {
     pub cls: Option<String>,
     pub make: Option<String>,
     pub plates: HashSet<String>,
+    pub numbers: HashSet<String>,
     pub bursts: HashSet<i64>,
     /// Every member's embedding, so a candidate is compared against the whole
     /// group rather than against one representative.
@@ -117,12 +118,16 @@ pub struct Group {
 /// same car. See `conrod/grouping.py` for the measurement behind it.
 pub const SAME_CAR: f64 = 0.90;
 
+/// Threshold for matching frames within the same burst where motion/panning shifts perspective.
+pub const SAME_BURST_SAME_CAR: f64 = 0.82;
+
 fn join(
     group: &mut Group,
     det_id: i64,
     frame_index: i64,
     make: Option<&str>,
     plate: Option<&str>,
+    number: Option<&str>,
     assignment: &mut HashMap<i64, i64>,
     burst: Option<i64>,
 ) {
@@ -136,6 +141,9 @@ fn join(
     }
     if let Some(p) = given(plate) {
         group.plates.insert(p.to_string());
+    }
+    if let Some(n) = given(number) {
+        group.numbers.insert(n.to_string());
     }
     if let Some(b) = burst {
         group.bursts.insert(b);
@@ -154,6 +162,7 @@ pub struct LookRow {
     pub frame_index: i64,
     pub burst: Option<i64>,
     pub plate: Option<String>,
+    pub number: Option<String>,
 }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
@@ -184,6 +193,7 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
         for row in entries {
             let vector = row.vector.as_ref().unwrap();
             let plate = tidy_plate(row.plate.as_deref());
+            let number = row.number.as_deref().map(str::trim).filter(|s| !s.is_empty());
             let mut best: Option<usize> = None;
             let mut best_score = 0.0_f64;
             for &gi in &in_burst {
@@ -195,6 +205,22 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
                 // Two plates that are genuinely different settle it outright.
                 if plate_verdict(plate.as_deref(), &group.plates) == Some(false) {
                     continue;
+                }
+                // If plates match directly, instant match within same burst
+                if let Some(ref p) = plate {
+                    if group.plates.contains(p) || nearly_seen(Some(p), &group.plates) {
+                        best = Some(gi);
+                        best_score = 1.0;
+                        break;
+                    }
+                }
+                // If race numbers match directly in the same burst (and no plate conflict)
+                if let Some(num) = number {
+                    if group.numbers.contains(num) {
+                        best = Some(gi);
+                        best_score = 1.0;
+                        break;
+                    }
                 }
                 let score = group
                     .vectors
@@ -214,6 +240,7 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
                         row.frame_index,
                         None,
                         plate.as_deref(),
+                        number,
                         &mut assignment,
                         burst,
                     );
@@ -233,6 +260,7 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
                 row.frame_index,
                 None,
                 plate.as_deref(),
+                number,
                 &mut assignment,
                 burst,
             );
@@ -242,11 +270,12 @@ pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
     }
 
     merge_on_plates(&mut groups, &mut assignment);
+    merge_on_numbers(&mut groups, &mut assignment);
     assignment
 }
 
-/// `_merge_on_plates`: join groups from different bursts that read the same
-/// plate, allowing for the characters a reader confuses.
+/// `_merge_on_plates`: join groups that read the same plate, allowing for the
+/// characters a reader confuses, as long as frames are disjoint.
 fn merge_on_plates(groups: &mut [Group], assignment: &mut HashMap<i64, i64>) {
     let mut merged: HashMap<i64, i64> = HashMap::new();
     for i in 0..groups.len() {
@@ -257,8 +286,8 @@ fn merge_on_plates(groups: &mut [Group], assignment: &mut HashMap<i64, i64>) {
             if groups[j].plates.is_empty() || merged.contains_key(&groups[j].key) {
                 continue;
             }
-            if !groups[i].bursts.is_disjoint(&groups[j].bursts) {
-                continue; // same burst, already decided
+            if !groups[i].frames.is_disjoint(&groups[j].frames) {
+                continue; // same photo cannot hold the same car twice
             }
             let should_merge = groups[j]
                 .plates
@@ -274,7 +303,70 @@ fn merge_on_plates(groups: &mut [Group], assignment: &mut HashMap<i64, i64>) {
             let (head, tail) = groups.split_at_mut(j);
             let (gi, gj) = (&mut head[i], &tail[0]);
             gi.plates.extend(gj.plates.iter().cloned());
+            gi.numbers.extend(gj.numbers.iter().cloned());
             gi.bursts.extend(gj.bursts.iter().cloned());
+            gi.frames.extend(gj.frames.iter().cloned());
+            gi.members.extend(gj.members.iter().cloned());
+        }
+    }
+    if merged.is_empty() {
+        return;
+    }
+    for key in assignment.values_mut() {
+        let mut seen = HashSet::new();
+        while let Some(&next) = merged.get(key) {
+            if !seen.insert(*key) {
+                break;
+            }
+            *key = next;
+        }
+    }
+}
+
+/// Join groups that share a competition race number, provided they have no plate conflict,
+/// share the same make/model (or one is unset), and are in disjoint frames.
+fn merge_on_numbers(groups: &mut [Group], assignment: &mut HashMap<i64, i64>) {
+    let mut merged: HashMap<i64, i64> = HashMap::new();
+    for i in 0..groups.len() {
+        if groups[i].numbers.is_empty() || merged.contains_key(&groups[i].key) {
+            continue;
+        }
+        for j in (i + 1)..groups.len() {
+            if groups[j].numbers.is_empty() || merged.contains_key(&groups[j].key) {
+                continue;
+            }
+            if !groups[i].frames.is_disjoint(&groups[j].frames) {
+                continue;
+            }
+            // Plates that conflict must not merge
+            let plates_conflict = groups[i].plates.iter().any(|pi| {
+                groups[j]
+                    .plates
+                    .iter()
+                    .any(|pj| pi != pj && !nearly_seen(Some(pi), &groups[j].plates))
+            });
+            if plates_conflict {
+                continue;
+            }
+            let shares_number = groups[j]
+                .numbers
+                .iter()
+                .any(|n| groups[i].numbers.contains(n));
+            if !shares_number {
+                continue;
+            }
+            if let (Some(ref mi), Some(ref mj)) = (&groups[i].make, &groups[j].make) {
+                if !mi.eq_ignore_ascii_case(mj) {
+                    continue;
+                }
+            }
+            merged.insert(groups[j].key, groups[i].key);
+            let (head, tail) = groups.split_at_mut(j);
+            let (gi, gj) = (&mut head[i], &tail[0]);
+            gi.plates.extend(gj.plates.iter().cloned());
+            gi.numbers.extend(gj.numbers.iter().cloned());
+            gi.bursts.extend(gj.bursts.iter().cloned());
+            gi.frames.extend(gj.frames.iter().cloned());
             gi.members.extend(gj.members.iter().cloned());
         }
     }
@@ -364,6 +456,7 @@ pub fn cluster(rows: &[SignatureRow], options: &ClusterOptions) -> HashMap<i64, 
                     row.frame_index,
                     row.make.as_deref(),
                     plate.as_deref(),
+                    None,
                     &mut assignment,
                     row.burst,
                 );
@@ -413,6 +506,7 @@ pub fn cluster(rows: &[SignatureRow], options: &ClusterOptions) -> HashMap<i64, 
                     row.frame_index,
                     row.make.as_deref(),
                     plate.as_deref(),
+                    None,
                     &mut assignment,
                     row.burst,
                 );

@@ -694,6 +694,7 @@ fn cluster_by_look_matches_python() {
                 frame_index: r["frame_index"].as_i64().unwrap(),
                 burst: r["burst"].as_i64(),
                 plate: r["plate"].as_str().map(str::to_string),
+                number: None,
             })
             .collect();
         let same_car = case["same_car"].as_f64().unwrap();
