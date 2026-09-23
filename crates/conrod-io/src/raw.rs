@@ -4,8 +4,7 @@
 //! Replaces exiftool's preview extraction and tag read (`conrod/exif.py`).
 //! Only the preview's byte range is read, not the whole RAW: on a slow card
 //! that is a few MB a frame instead of thirty. Serial and capture time come
-//! from rawler, which decodes the Canon makernotes; checked against exiftool
-//! in SPIKES.md (spike C).
+//! from rawler, which decodes the Canon makernotes; verified against exiftool.
 
 use crate::tiff::{self, Tiff};
 use conrod_core::bursts::{self, Tags};
