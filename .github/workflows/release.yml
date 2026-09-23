@@ -65,7 +65,7 @@ jobs:
 
       - name: Build the app and the installer
         working-directory: crates/conrod-app
-        run: node ../../frontend/node_modules/@tauri-apps/cli/tauri.js build
+        run: node ../../frontend/node_modules/@tauri-apps/cli/tauri.js build --ci
 
       - name: Assemble the portable folder
         shell: powershell

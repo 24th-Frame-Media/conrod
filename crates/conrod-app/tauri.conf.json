@@ -5,7 +5,7 @@
   "identifier": "com.kapsikkum.conrod",
   "build": {
     "frontendDist": "../../frontend/dist",
-    "beforeBuildCommand": "npm --prefix ../../frontend run build"
+    "beforeBuildCommand": "npm --prefix ../frontend run build"
   },
   "app": {
     "windows": [
