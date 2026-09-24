@@ -31,9 +31,9 @@ fn installable() -> bool {
 }
 
 /// Is there a newer release? Pre-releases count: until 1.0 they are the only ones.
-pub fn check() -> Value {
+pub fn check(force: bool) -> Value {
     let current = current();
-    match update::latest(&api(), &current, true) {
+    match update::latest_with_cache(&api(), &current, true, force) {
         Ok(found) => json!({
             "ok": true,
             "current": current.to_string(),
@@ -47,7 +47,7 @@ pub fn check() -> Value {
         Err(e) => json!({
             "ok": false,
             "current": current.to_string(),
-            "error": format!("Could not reach GitHub: {e}"),
+            "error": e.to_string(),
         }),
     }
 }

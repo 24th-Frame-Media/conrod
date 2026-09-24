@@ -49,4 +49,7 @@ export const engine = {
   trainTaste: () => call<Record<string, unknown>>('train_taste'),
   deleteJob: (jobId: number) => call('delete_job', { jobId }),
   updateJobSettings: (jobId: number, patch: Record<string, unknown>) => call('update_job_settings', { jobId, patch }),
+  checkUpdate: (force = false) => call<import('./types').UpdateInfo>('check_update', { force }),
+  installUpdate: () => call<{ operation: string }>('install_update'),
+  ollamaModels: (host?: string) => call<import('./types').OllamaModelsResponse>('ollama_models', { host }),
 };
