@@ -24,10 +24,11 @@ export function LoadableImage(props: ImageProps) {
 
 type ZoomProps = {
   src?: string; alt: string; children?: ReactNode; className?: string; zoomed?: boolean;
+  focusBox?: [number, number, number, number] | null;
 };
 
 /** Shared wheel/button zoom and pointer pan for the review viewer and training area. */
-export function ZoomPanImage({ src, alt, children, className = '', zoomed }: ZoomProps) {
+export function ZoomPanImage({ src, alt, children, className = '', zoomed, focusBox }: ZoomProps) {
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
   const root = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: number; x: number; y: number; ox: number; oy: number } | null>(null);
@@ -46,8 +47,28 @@ export function ZoomPanImage({ src, alt, children, className = '', zoomed }: Zoo
     });
   };
 
-  useEffect(reset, [src]);
-  useEffect(() => { if (zoomed !== undefined) setView(zoomed ? { scale: 2.5, x: 0, y: 0 } : { scale: 1, x: 0, y: 0 }); }, [zoomed]);
+  useEffect(() => {
+    if (zoomed) {
+      if (focusBox) {
+        const [x1, y1, x2, y2] = focusBox;
+        const cx = (x1 + x2) / 2;
+        const cy = (y1 + y2) / 2;
+        const bw = Math.max(0.01, x2 - x1);
+        const bh = Math.max(0.01, y2 - y1);
+        const targetScale = clamp(Math.min(6, Math.max(2, 0.75 / Math.max(bw, bh))));
+        const box = root.current?.getBoundingClientRect();
+        const w = box?.width ?? 800;
+        const h = box?.height ?? 600;
+        const targetX = -(cx - 0.5) * w * targetScale;
+        const targetY = -(cy - 0.5) * h * targetScale;
+        setView({ scale: targetScale, x: targetX, y: targetY });
+      } else {
+        setView({ scale: 2.5, x: 0, y: 0 });
+      }
+    } else {
+      reset();
+    }
+  }, [src, zoomed, focusBox]);
 
   const down = (event: PointerEvent<HTMLDivElement>) => {
     if (view.scale <= 1 || event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
