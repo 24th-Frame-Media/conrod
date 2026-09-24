@@ -71,8 +71,13 @@ export function Train({ rv, jobs, jobId, run, toast, showBoxes, verbs, onPickJob
       <div className="train-stage">
         {subject && frame ? (
           <div className="train-frame" style={{ '--ar': frame.width && frame.height ? frame.width / frame.height : 1.5 } as CSSProperties}>
-            <ZoomPanImage src={asset(preview) ?? asset(frame.thumb_path)} alt={filename(frame.path)} zoomed={zoom}>
-            {showBoxes && box && <div className="train-box" style={{ left: `${box[0] * 100}%`, top: `${box[1] * 100}%`, width: `${(box[2] - box[0]) * 100}%`, height: `${(box[3] - box[1]) * 100}%` }} />}
+            <ZoomPanImage
+              src={asset(preview) ?? (subject?.crop_path ? asset(subject.crop_path) : asset(frame.thumb_path))}
+              alt={filename(frame.path)}
+              zoomed={zoom}
+              focusBox={box}
+            >
+              {showBoxes && box && <div className="train-box" style={{ left: `${box[0] * 100}%`, top: `${box[1] * 100}%`, width: `${(box[2] - box[0]) * 100}%`, height: `${(box[3] - box[1]) * 100}%` }} />}
             </ZoomPanImage>
           </div>
         ) : (
@@ -90,11 +95,14 @@ export function Train({ rv, jobs, jobId, run, toast, showBoxes, verbs, onPickJob
           {WORDS.map((word, i) => <button key={word} disabled={!subject} onClick={() => void rate(i + 1)}><b>{i + 1}</b><small>{word}</small></button>)}
         </div>
         <div className="train-row">
+          <button className={zoom ? 'on' : ''} aria-pressed={zoom} onClick={() => setZoom((z) => !z)}>
+            {zoom ? 'Full photo' : 'Zoom subject'} <kbd>Z</kbd>
+          </button>
           <button className={pan ? 'on' : ''} aria-pressed={pan} onClick={() => setPan((p) => !p)}>Pan <kbd>P</kbd></button>
           <button disabled={!subject} onClick={() => void rate(0)}>Can&apos;t tell <kbd>X</kbd></button>
           <button onClick={undo}>Undo <kbd>U</kbd></button>
         </div>
-        <p className="muted small">Press 1&ndash;5 to rate and move on. Use the mouse wheel to zoom and drag to pan; <kbd>Z</kbd> toggles 200%. <kbd>B</kbd> hides the outline.</p>
+        <p className="muted small">Press 1&ndash;5 to rate and move on. Use the mouse wheel to zoom and drag to pan; <kbd>Z</kbd> zooms to subject. <kbd>B</kbd> hides the outline.</p>
         <div className="train-progress"><b>{training?.labels ?? 0}</b> rated · {training?.active ? 'learned model active' : 'built-in focus measure'} · {queue.length.toLocaleString()} to go</div>
         <div className="train-fit">
           <button className="primary" onClick={fit}>Learn from my ratings</button>

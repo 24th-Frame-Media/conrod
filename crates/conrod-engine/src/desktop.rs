@@ -691,7 +691,7 @@ impl Desktop {
                 .query_row("SELECT path FROM images WHERE id=?", [image], |r| r.get(0))
                 .map_err(err)?;
             let raw = conrod_io::raw::read(Path::new(&path))?;
-            let rgb = Rgb::decode_jpeg(&raw.preview, 2)?.orient(raw.orientation);
+            let rgb = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
             save_jpeg(&rgb, &output)?;
             task.finish();
         }
