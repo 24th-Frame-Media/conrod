@@ -7,7 +7,7 @@ default-members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-
 
 
 [workspace.package]
-version = "1.0.0-beta.4"
+version = "1.0.0-beta.5"
 edition = "2021"
 license = "AGPL-3.0-only"
 repository = "https://github.com/kapsikkum/conrod"
