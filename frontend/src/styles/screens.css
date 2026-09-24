@@ -237,8 +237,11 @@
   gap: 8px;
   background: var(--surface);
   border-left: 1px solid var(--line-soft);
-  max-height: 94vh;
+  border-radius: 0;
+  height: 100vh;
+  max-height: 100vh;
   overflow: hidden;
+  box-sizing: border-box;
 }
 .frame-side-head { display: flex; align-items: flex-start; gap: 10px; flex-shrink: 0; }
 .frame-side-head h3 { flex: 1; margin: 0; font-size: 15px; font-weight: 650; color: var(--text); text-transform: none; letter-spacing: 0; line-height: 1.35; word-break: break-all; }
@@ -264,10 +267,46 @@
 .error-text { color: var(--bad); font-size: 12px; }
 
 /* ── viewer ── */
-dialog.viewer { padding: 0; max-width: 96vw; max-height: 94vh; overflow: hidden; }
-.frame-view { display: flex; align-items: stretch; max-height: 94vh; }
-.frame-stage-big { position: relative; flex: 1 1 auto; min-width: 360px; min-height: 360px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #08080a; }
-.stage-inner { position: relative; width: min(calc(96vw - 382px), calc(94vh * var(--ar)), 1500px); aspect-ratio: var(--ar); }
+dialog.viewer {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  margin: 0;
+  top: 0;
+  left: 0;
+  position: fixed;
+  overflow: hidden;
+  background: #08080a;
+  box-shadow: none;
+}
+.frame-view {
+  display: flex;
+  align-items: stretch;
+  width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+}
+.frame-stage-big {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 360px;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #08080a;
+}
+.stage-inner {
+  position: relative;
+  width: min(calc(100vw - 380px), calc(100vh * var(--ar)));
+  height: min(calc((100vw - 380px) / var(--ar)), 100vh);
+  aspect-ratio: var(--ar);
+}
 .overlay { position: absolute; inset: 0; pointer-events: none; }
 
 .box {
@@ -1406,29 +1445,42 @@ dialog.viewer { padding: 0; max-width: 96vw; max-height: 94vh; overflow: hidden;
 }
 
 /* Settings Layout with Right Stats Sidebar */
+.settings-screen {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
 .settings-layout {
   display: flex;
   gap: 32px;
   align-items: flex-start;
   width: 100%;
-  max-width: 1480px;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 0 24px 32px 0;
 }
 .settings-main {
   flex: 1;
   min-width: 0;
-  max-width: 900px;
+  max-width: none;
+}
+.settings-main .setting-group {
+  max-width: 960px;
 }
 .settings-layout.known-layout .settings-main {
   max-width: none;
 }
 .settings-sidebar {
-  width: 330px;
+  width: 340px;
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 14px;
   position: sticky;
   top: 16px;
+  margin-left: auto;
 }
 .sidebar-card {
   background: var(--surface-2);
