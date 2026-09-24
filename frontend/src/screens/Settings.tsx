@@ -9,6 +9,8 @@ import type {
   Toaster,
   UpdateInfo,
   OllamaModel,
+  Job,
+  ModelInfo,
 } from '../lib/types';
 import type { Runner } from '../state/hooks';
 
@@ -50,7 +52,14 @@ const VLM_PROVIDERS = [
   { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini-1.5-flash' },
 ];
 
-type Props = { settings: SettingsMap; onSaved: (s: SettingsMap) => void; run: Runner; toast: Toaster };
+type Props = {
+  settings: SettingsMap;
+  onSaved: (s: SettingsMap) => void;
+  run: Runner;
+  toast: Toaster;
+  jobs?: Job[];
+  models?: ModelInfo[];
+};
 
 type SettingsTab = 'detection' | 'vlm' | 'metadata' | 'maintenance' | 'known';
 
@@ -63,11 +72,20 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 ];
 
 /** Settings shared with the Python library; Save writes the whole block back. */
-export function Settings({ settings, onSaved, run, toast }: Props) {
+export function Settings({ settings, onSaved, run, toast, jobs = [], models = [] }: Props) {
   const [draft, setDraft] = useState<SettingsMap>(settings);
   useEffect(() => setDraft(settings), [settings]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
   const [activeTab, setActiveTab] = useState<SettingsTab>('detection');
+  const [knownCount, setKnownCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void engine.known().then((rows) => {
+      if (active) setKnownCount(rows.length);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [activeTab]);
 
   const isTabDirty = useCallback((tabId: SettingsTab): boolean => {
     let keys: string[] = [];
@@ -284,215 +302,326 @@ export function Settings({ settings, onSaved, run, toast }: Props) {
     return <input type={name.includes('api_key') ? 'password' : 'text'} aria-label={labelOf(name)} value={value} spellCheck={false} onChange={(e) => onChange(e.target.value)} />;
   }
 
+  const totalPhotos = jobs.reduce((n, j) => n + j.total, 0);
+
   return (
-    <div className="screen">
-      <div className="pane wide">
-        <h2>Settings</h2>
-        <p className="lede">Shared with your existing Conrod library. Defaults are what measured best on real frames.</p>
+    <div className="screen settings-screen">
+      <div className={`settings-layout ${activeTab === 'known' ? 'known-layout' : ''}`}>
+        <div className={`pane settings-main ${activeTab === 'known' ? 'known-pane' : ''}`}>
+          <h2>Settings</h2>
+          <p className="lede">Shared with your existing Conrod library. Defaults are what measured best on real frames.</p>
 
-        {/* Dedicated App Updates Hero Card */}
-        <div className="update-hero-card">
-          <div className="update-hero-main">
-            <div className="update-brand">
-              <span className="app-name">Conrod</span>
-              <span className="app-version">v{updateInfo?.current ?? '1.0.0-beta.4'}</span>
-              {updateInfo?.newer ? (
-                <span className="pill-badge update-ready">Update Available: v{updateInfo.latest}</span>
-              ) : updateInfo?.ok ? (
-                <span className="pill-badge up-to-date">Up to date</span>
-              ) : null}
-            </div>
-            <div className="update-controls">
+          {/* Settings Navigation Tabs */}
+          <nav className="settings-tabs" role="tablist" aria-label="Settings categories">
+            {SETTINGS_TABS.map((t) => (
               <button
-                type="button"
-                className="secondary"
-                disabled={checkingUpdate || installingUpdate}
-                onClick={() => void checkForUpdates(true)}
+                key={t.id}
+                role="tab"
+                aria-selected={activeTab === t.id}
+                className={`settings-tab-btn ${activeTab === t.id ? 'active' : ''}`}
+                onClick={() => setActiveTab(t.id)}
               >
-                {checkingUpdate ? 'Checking…' : 'Check for updates'}
+                <span>{t.label}</span>
+                {isTabDirty(t.id) && <span className="tab-dirty-dot" title="Unsaved changes in this tab" />}
               </button>
-            </div>
-          </div>
+            ))}
+          </nav>
 
-          {updateInfo?.newer && (
-            <div className="update-banner">
-              <div className="update-banner-info">
-                <strong>New Version {updateInfo.latest} is ready to install</strong>
-                {updateInfo.size ? (
-                  <span className="muted small"> · {(updateInfo.size / (1024 * 1024)).toFixed(1)} MB</span>
-                ) : null}
-                {updateInfo.notes && (
-                  <div className="update-notes-box">
-                    <pre className="update-notes-content">{updateInfo.notes}</pre>
-                  </div>
-                )}
-              </div>
-              <div className="update-banner-actions">
-                {updateInfo.installable ? (
-                  <button
-                    type="button"
-                    className="primary"
-                    disabled={installingUpdate}
-                    onClick={handleInstallUpdate}
-                  >
-                    {installingUpdate ? 'Installing…' : 'Update and restart'}
-                  </button>
-                ) : (
-                  <a
-                    className="button primary"
-                    href={`https://github.com/kapsikkum/conrod/releases/tag/${updateInfo.tag ?? `v${updateInfo.latest}`}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Download v{updateInfo.latest} from GitHub ↗
-                  </a>
-                )}
+          {/* Tab 1: Detection & Culling */}
+          {activeTab === 'detection' && (
+            <div className="settings-tab-content">
+              <section className="setting-group">
+                <h3>Detection & Culling</h3>
+                {GROUPS[0][1].filter((k) => draft[k] !== undefined).map((k) => (
+                  <label className="setting" key={k}>
+                    <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
+                    <Control
+                      name={k}
+                      value={draft[k]}
+                      onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
+                    />
+                  </label>
+                ))}
+              </section>
+              <div className="actions-row">
+                <button className="primary" disabled={!dirty} onClick={save}>Save</button>
+                <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
+                <button className="ghost" title="Fit Conrod's star ratings to the ones you have given by hand." onClick={learn}>Learn from my ratings</button>
+                {dirty && <span className="muted">Unsaved changes</span>}
               </div>
             </div>
           )}
 
-          {updateInfo?.error && (
-            <div className="update-error-note">
-              <span>{updateInfo.error}</span>
-              <a
-                href="https://github.com/kapsikkum/conrod/releases"
-                target="_blank"
-                rel="noreferrer"
-                className="small"
-              >
-                GitHub Releases ↗
-              </a>
+          {/* Tab 2: Vision & AI */}
+          {activeTab === 'vlm' && (
+            <div className="settings-tab-content">
+              <section className="setting-group">
+                <h3>Vision & AI</h3>
+                {GROUPS[1][1].filter((k) => draft[k] !== undefined).map((k) => (
+                  <label className="setting" key={k}>
+                    <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
+                    <Control
+                      name={k}
+                      value={draft[k]}
+                      onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
+                      onProviderChange={(provider, defaultModel) => {
+                        setDraft((d) => ({ ...d, vlm_provider: provider, vlm_model: defaultModel }));
+                      }}
+                    />
+                  </label>
+                ))}
+              </section>
+              <div className="actions-row">
+                <button className="primary" disabled={!dirty} onClick={save}>Save</button>
+                <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
+                {dirty && <span className="muted">Unsaved changes</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Tab 3: Metadata & Desktop */}
+          {activeTab === 'metadata' && (
+            <div className="settings-tab-content">
+              <section className="setting-group">
+                <h3>Metadata & Desktop</h3>
+                {GROUPS[2][1].filter((k) => draft[k] !== undefined).map((k) => (
+                  <label className="setting" key={k}>
+                    <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
+                    <Control
+                      name={k}
+                      value={draft[k]}
+                      onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
+                    />
+                  </label>
+                ))}
+              </section>
+              <div className="actions-row">
+                <button className="primary" disabled={!dirty} onClick={save}>Save</button>
+                <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
+                {dirty && <span className="muted">Unsaved changes</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Tab 4: System & Maintenance */}
+          {activeTab === 'maintenance' && (
+            <div className="settings-tab-content">
+              <Maintenance />
+              {dirty && (
+                <div className="unsaved-floating-bar">
+                  <span>You have unsaved changes in your settings.</span>
+                  <div className="actions-row" style={{ marginTop: 0 }}>
+                    <button className="primary small" onClick={save}>Save</button>
+                    <button className="ghost small" onClick={() => setDraft(settings)}>Discard</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tab 5: Known Vehicles */}
+          {activeTab === 'known' && (
+            <div className="settings-tab-content settings-known-tab">
+              <div className="known-tab-intro">
+                <h3>Known vehicles</h3>
+                <p className="muted">Vehicles identified across albums. Used to auto-fill details when the same car appears in a new shoot.</p>
+              </div>
+              <Known run={run} toast={toast} />
+              {dirty && (
+                <div className="unsaved-floating-bar">
+                  <span>You have unsaved changes in your settings.</span>
+                  <div className="actions-row" style={{ marginTop: 0 }}>
+                    <button className="primary small" onClick={save}>Save</button>
+                    <button className="ghost small" onClick={() => setDraft(settings)}>Discard</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Settings Navigation Tabs */}
-        <nav className="settings-tabs" role="tablist" aria-label="Settings categories">
-          {SETTINGS_TABS.map((t) => (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={activeTab === t.id}
-              className={`settings-tab-btn ${activeTab === t.id ? 'active' : ''}`}
-              onClick={() => setActiveTab(t.id)}
-            >
-              <span>{t.label}</span>
-              {isTabDirty(t.id) && <span className="tab-dirty-dot" title="Unsaved changes in this tab" />}
-            </button>
-          ))}
-        </nav>
-
-        {/* Tab 1: Detection & Culling */}
-        {activeTab === 'detection' && (
-          <div className="settings-tab-content">
-            <section className="setting-group">
-              <h3>Detection & Culling</h3>
-              {GROUPS[0][1].filter((k) => draft[k] !== undefined).map((k) => (
-                <label className="setting" key={k}>
-                  <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
-                  <Control
-                    name={k}
-                    value={draft[k]}
-                    onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
-                  />
-                </label>
-              ))}
-            </section>
-            <div className="actions-row">
-              <button className="primary" disabled={!dirty} onClick={save}>Save</button>
-              <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
-              <button className="ghost" title="Fit Conrod's star ratings to the ones you have given by hand." onClick={learn}>Learn from my ratings</button>
-              {dirty && <span className="muted">Unsaved changes</span>}
-            </div>
-          </div>
-        )}
-
-        {/* Tab 2: Vision & AI */}
-        {activeTab === 'vlm' && (
-          <div className="settings-tab-content">
-            <section className="setting-group">
-              <h3>Vision & AI</h3>
-              {GROUPS[1][1].filter((k) => draft[k] !== undefined).map((k) => (
-                <label className="setting" key={k}>
-                  <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
-                  <Control
-                    name={k}
-                    value={draft[k]}
-                    onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
-                    onProviderChange={(provider, defaultModel) => {
-                      setDraft((d) => ({ ...d, vlm_provider: provider, vlm_model: defaultModel }));
-                    }}
-                  />
-                </label>
-              ))}
-            </section>
-            <div className="actions-row">
-              <button className="primary" disabled={!dirty} onClick={save}>Save</button>
-              <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
-              {dirty && <span className="muted">Unsaved changes</span>}
-            </div>
-          </div>
-        )}
-
-        {/* Tab 3: Metadata & Desktop */}
-        {activeTab === 'metadata' && (
-          <div className="settings-tab-content">
-            <section className="setting-group">
-              <h3>Metadata & Desktop</h3>
-              {GROUPS[2][1].filter((k) => draft[k] !== undefined).map((k) => (
-                <label className="setting" key={k}>
-                  <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
-                  <Control
-                    name={k}
-                    value={draft[k]}
-                    onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
-                  />
-                </label>
-              ))}
-            </section>
-            <div className="actions-row">
-              <button className="primary" disabled={!dirty} onClick={save}>Save</button>
-              <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
-              {dirty && <span className="muted">Unsaved changes</span>}
-            </div>
-          </div>
-        )}
-
-        {/* Tab 4: System & Maintenance */}
-        {activeTab === 'maintenance' && (
-          <div className="settings-tab-content">
-            <Maintenance />
-            {dirty && (
-              <div className="unsaved-floating-bar">
-                <span>You have unsaved changes in your settings.</span>
-                <div className="actions-row" style={{ marginTop: 0 }}>
-                  <button className="primary small" onClick={save}>Save</button>
-                  <button className="ghost small" onClick={() => setDraft(settings)}>Discard</button>
-                </div>
+        {/* Right Stats & Info Sidebar */}
+        <aside className="settings-sidebar">
+          {/* Software & Updates Card */}
+          <div className="sidebar-card update-card">
+            <div className="sidebar-card-header">
+              <div className="sidebar-brand">
+                <span className="sidebar-brand-name">Conrod</span>
+                <span className="sidebar-brand-version">v{updateInfo?.current ?? '1.0.0-beta.4'}</span>
               </div>
+              {checkingUpdate ? (
+                <span className="pill-badge checking">Checking…</span>
+              ) : updateInfo?.newer ? (
+                <span className="pill-badge update-ready">Update available</span>
+              ) : updateInfo?.ok ? (
+                <span className="pill-badge up-to-date">Up to date</span>
+              ) : updateInfo?.error ? (
+                <span className="pill-badge error">Check failed</span>
+              ) : null}
+            </div>
+
+            <div className="sidebar-update-body">
+              {updateInfo?.newer ? (
+                <div className="sidebar-update-alert">
+                  <div className="sidebar-update-lead">
+                    <strong>Version v{updateInfo.latest} is ready</strong>
+                    {updateInfo.size ? <span className="muted small"> · {(updateInfo.size / (1024 * 1024)).toFixed(1)} MB</span> : null}
+                  </div>
+                  {updateInfo.notes && (
+                    <details className="sidebar-update-notes">
+                      <summary>Release highlights</summary>
+                      <pre>{updateInfo.notes}</pre>
+                    </details>
+                  )}
+                  {updateInfo.installable ? (
+                    <button
+                      type="button"
+                      className="primary small full-width"
+                      disabled={installingUpdate}
+                      onClick={handleInstallUpdate}
+                    >
+                      {installingUpdate ? 'Installing update…' : 'Install update & restart'}
+                    </button>
+                  ) : (
+                    <a
+                      className="button primary small full-width"
+                      href={`https://github.com/kapsikkum/conrod/releases/tag/${updateInfo.tag ?? `v${updateInfo.latest}`}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Download from GitHub ↗
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <p className="sidebar-update-desc">
+                  Rate-limit immune updater via GitHub Atom feed and ETag cache.
+                </p>
+              )}
+
+              <div className="sidebar-btn-row">
+                <button
+                  type="button"
+                  className="secondary small"
+                  disabled={checkingUpdate || installingUpdate}
+                  onClick={() => void checkForUpdates(true)}
+                >
+                  {checkingUpdate ? 'Checking…' : 'Check for updates'}
+                </button>
+                <a
+                  href="https://github.com/kapsikkum/conrod/releases"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="sidebar-ext-link"
+                >
+                  Releases ↗
+                </a>
+              </div>
+            </div>
+          </div>
+
+          {/* Library Overview Card */}
+          <div className="sidebar-card">
+            <h4>Library Overview</h4>
+            <div className="sidebar-stat-grid">
+              <div className="sidebar-stat-item">
+                <span className="stat-label">Albums</span>
+                <span className="stat-value">{jobs.length}</span>
+              </div>
+              <div className="sidebar-stat-item">
+                <span className="stat-label">Photos</span>
+                <span className="stat-value">{totalPhotos.toLocaleString()}</span>
+              </div>
+              <div className="sidebar-stat-item">
+                <span className="stat-label">Known Cars</span>
+                <span className="stat-value">{knownCount !== null ? knownCount.toLocaleString() : '—'}</span>
+              </div>
+            </div>
+            {activeTab !== 'known' && (
+              <button
+                type="button"
+                className="ghost small sidebar-card-action"
+                onClick={() => setActiveTab('known')}
+              >
+                View Known Vehicles Catalog →
+              </button>
             )}
           </div>
-        )}
 
-        {/* Tab 5: Known Vehicles */}
-        {activeTab === 'known' && (
-          <div className="settings-tab-content settings-known-tab">
-            <div className="known-tab-intro">
-              <h3>Known vehicles</h3>
-              <p className="muted">Vehicles identified across albums. Used to auto-fill details when the same car appears in a new shoot.</p>
-            </div>
-            <Known run={run} toast={toast} />
-            {dirty && (
-              <div className="unsaved-floating-bar">
-                <span>You have unsaved changes in your settings.</span>
-                <div className="actions-row" style={{ marginTop: 0 }}>
-                  <button className="primary small" onClick={save}>Save</button>
-                  <button className="ghost small" onClick={() => setDraft(settings)}>Discard</button>
-                </div>
+          {/* Vision & AI Pipeline Card */}
+          <div className="sidebar-card">
+            <h4>Vision & AI Pipeline</h4>
+            <div className="sidebar-meta-list">
+              <div className="sidebar-meta-row">
+                <span className="meta-key">Provider</span>
+                <span className="meta-val">
+                  {VLM_PROVIDERS.find((p) => p.id === draft.vlm_provider)?.name.split(' ')[0] ?? String(draft.vlm_provider || 'Ollama')}
+                </span>
               </div>
-            )}
+              <div className="sidebar-meta-row">
+                <span className="meta-key">Active Model</span>
+                <span className="meta-val mono small truncate" title={String(draft.vlm_model || 'None')}>
+                  {String(draft.vlm_model || 'None')}
+                </span>
+              </div>
+              <div className="sidebar-meta-row">
+                <span className="meta-key">Status</span>
+                <span className="meta-val">
+                  {draft.vlm_provider === 'ollama' ? (
+                    ollamaOnline === true ? (
+                      <span className="status-badge online">● Online ({ollamaModels.length} models)</span>
+                    ) : ollamaOnline === false ? (
+                      <span className="status-badge offline">○ Offline</span>
+                    ) : (
+                      <span className="muted small">Checking…</span>
+                    )
+                  ) : draft.vlm_api_key ? (
+                    <span className="status-badge online">● Key set</span>
+                  ) : (
+                    <span className="status-badge offline">○ No key</span>
+                  )}
+                </span>
+              </div>
+            </div>
           </div>
-        )}
+
+          {/* Local ML Models Card */}
+          {models.length > 0 && (
+            <div className="sidebar-card">
+              <h4>Local ML Models</h4>
+              <div className="sidebar-meta-list">
+                {models.map((m) => (
+                  <div className="sidebar-meta-row" key={m.file}>
+                    <span className="meta-key truncate" title={m.name}>
+                      <span className={`dot ${m.ready ? 'ok' : 'no'}`} />
+                      {m.name}
+                    </span>
+                    <span className="meta-val small">{m.ready ? 'Ready' : 'Unavailable'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* System & Environment Card */}
+          <div className="sidebar-card">
+            <h4>System & Runtime</h4>
+            <div className="sidebar-meta-list">
+              <div className="sidebar-meta-row">
+                <span className="meta-key">Platform</span>
+                <span className="meta-val">Windows x64</span>
+              </div>
+              <div className="sidebar-meta-row">
+                <span className="meta-key">Architecture</span>
+                <span className="meta-val">Native Rust + Tauri 2</span>
+              </div>
+              <div className="sidebar-meta-row">
+                <span className="meta-key">Database</span>
+                <span className="meta-val">SQLite (WAL mode)</span>
+              </div>
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   );

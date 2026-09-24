@@ -147,7 +147,7 @@ export function App() {
           <Train rv={rv} jobs={eng.jobs} jobId={jobId} run={run} toast={toast} showBoxes={showBoxes} verbs={trainVerbs} onPickJob={setJobId}
             onLibrary={() => setPage('Library')} />
         )}
-        {page === 'Settings' && <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} />}
+        {page === 'Settings' && <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} />}
       </main>
       <ImportDialog draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} models={eng.models} settings={eng.settings} status={status} busy={starting}
         actions={actions} onStart={(args) => void startScan(args)} onReviewActive={() => { if (status.activeJob != null) openJob(status.activeJob); }}
