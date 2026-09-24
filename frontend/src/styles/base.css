@@ -160,13 +160,79 @@ button.small { padding: 4px 10px; font-size: 12px; }
 .image-unavailable { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-mute); font-size: 11px; }
 @keyframes image-spin { to { transform: rotate(360deg); } }
 
-.zoom-pan { position: relative; width: 100%; height: 100%; overflow: hidden; touch-action: none; cursor: zoom-in; background: #08080a; }
+.zoom-pan { position: relative; width: 100%; height: 100%; overflow: hidden; touch-action: none; cursor: zoom-in; background: #08080a; user-select: none; }
 .zoom-pan.zoomed { cursor: grab; }
-.zoom-pan.zoomed:active { cursor: grabbing; }
+.zoom-pan.zoomed:active, .zoom-pan.zoomed.dragging { cursor: grabbing; }
 .zoom-content { position: absolute; inset: 0; transform-origin: center; will-change: transform; }
-.zoom-content .image-load > img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; }
-.zoom-tools { position: absolute; z-index: 5; top: 10px; left: 50%; transform: translateX(-50%); display: flex; opacity: .92; border-radius: 7px; overflow: hidden; box-shadow: var(--shadow); }
-.zoom-tools button { min-width: 34px; height: 30px; padding: 0 8px; border-radius: 0; background: rgba(10,10,12,.82); border-color: var(--line); font-size: 12px; }
+.zoom-content .image-load > img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; pointer-events: none; }
+
+.zoom-tools {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  background: rgba(14, 15, 20, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+  user-select: none;
+  opacity: 0.92;
+  transition: opacity 0.18s ease;
+  pointer-events: auto;
+}
+.zoom-tools:hover {
+  opacity: 1;
+}
+.zoom-tools .zoom-presets, .zoom-tools .zoom-stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.zoom-tools .zoom-divider {
+  width: 1px;
+  height: 15px;
+  background: rgba(255, 255, 255, 0.16);
+  margin: 0 4px;
+}
+.zoom-tools button {
+  min-width: 32px;
+  height: 25px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.zoom-tools button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+.zoom-tools button.active {
+  background: var(--accent);
+  color: #0d0f14;
+  font-weight: 700;
+}
+.zoom-tools .zoom-percent-btn {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  min-width: 44px;
+  padding: 0 4px;
+}
 
 .winctl { display: flex; align-self: stretch; margin: 0 -18px 0 4px; }
 .winctl button { width: 46px; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text-dim); display: grid; place-items: center; }

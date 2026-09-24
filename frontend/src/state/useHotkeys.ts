@@ -35,12 +35,12 @@ export function useHotkeys(keys: Hotkeys) {
         if (/^[0-5]$/.test(k)) { e.preventDefault(); h.mark({ stars: Number(k) }); }
         else if (k === 'x' || k === 'delete') h.mark({ rejected: !h.rejected });
         else if (k === 'u') h.mark({ stars: null, rejected: false });
-        else if (k === 'enter' && !h.viewerOpen) { e.preventDefault(); h.openViewer(); }
+        else if ((k === 'enter' || k === ' ') && !h.viewerOpen) { e.preventDefault(); h.openViewer(); }
       } else if (/^[1-5]$/.test(k)) h.train.rate(Number(k));
       else if (k === 'x') h.train.rate(0);
       else if (k === 'p') h.train.pan();
       else if (k === 'u') h.train.undo();
-      else if (k === 'z') h.train.zoom();
+      else if (k === 'z' || k === ' ') { e.preventDefault(); h.train.zoom(); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

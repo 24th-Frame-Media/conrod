@@ -75,6 +75,7 @@ export function Train({ rv, jobs, jobId, run, toast, showBoxes, verbs, onPickJob
               src={asset(preview) ?? (subject?.crop_path ? asset(subject.crop_path) : asset(frame.thumb_path))}
               alt={filename(frame.path)}
               zoomed={zoom}
+              onZoomChange={setZoom}
               focusBox={box}
             >
               {showBoxes && box && <div className="train-box" style={{ left: `${box[0] * 100}%`, top: `${box[1] * 100}%`, width: `${(box[2] - box[0]) * 100}%`, height: `${(box[3] - box[1]) * 100}%` }} />}
