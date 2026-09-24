@@ -447,7 +447,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
             <div className="sidebar-card-header">
               <div className="sidebar-brand">
                 <span className="sidebar-brand-name">Conrod</span>
-                <span className="sidebar-brand-version">v{updateInfo?.current ?? '1.0.0-beta.4'}</span>
+                <span className="sidebar-brand-version">v{updateInfo?.current ?? '1.0.0-beta.5'}</span>
               </div>
               {checkingUpdate ? (
                 <span className="pill-badge checking">Checking…</span>
@@ -495,7 +495,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                 </div>
               ) : (
                 <p className="sidebar-update-desc">
-                  Rate-limit immune updater via GitHub Atom feed and ETag cache.
+                  Checks GitHub for the latest release. Updates are downloaded and installed automatically.
                 </p>
               )}
 

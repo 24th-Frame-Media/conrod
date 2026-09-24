@@ -98,7 +98,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'cover': return out({path: db.frames[0]?.thumb_path});
     case 'health': return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}]);
     case 'cache_info': return out({total: {files: 64, bytes: 3200000}});
-    case 'check_update': return out({ok: true, current: '1.0.0-beta.4', latest: '1.0.0-beta.4', newer: false, installable: true});
+    case 'check_update': return out({ok: true, current: '1.0.0-beta.4', latest: '1.0.0-beta.5', newer: true, installable: true});
     case 'ollama_models': return out({
       ok: true,
       host: 'http://127.0.0.1:11434',
