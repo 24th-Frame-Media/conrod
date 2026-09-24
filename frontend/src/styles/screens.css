@@ -1062,7 +1062,8 @@ dialog.viewer { padding: 0; max-width: 96vw; max-height: 94vh; overflow: hidden;
 .setting { display: grid; grid-template-columns: 1fr minmax(200px, 320px); gap: 14px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line-soft); cursor: pointer; }
 .setting-group > h3 + .setting { border-top: none; }
 .setting .label { display: block; font-size: 13.5px; } .setting .hint { display: block; color: var(--text-mute); font-size: 12px; margin-top: 2px; }
-.setting input[type="number"], .setting input[type="text"], .setting input[type="password"] { width: 100%; }
+.setting input[type="number"], .setting input[type="text"], .setting input[type="password"], .setting select { width: 100%; min-height: 38px; box-sizing: border-box; }
+.setting select { padding: 7px 11px; font-size: 13.5px; line-height: normal; border-radius: 8px; }
 .setting input[type="checkbox"] { justify-self: end; }
 
 .album-tools { flex: none; padding: 8px 18px; border-bottom: 1px solid var(--line); }
@@ -1222,20 +1223,42 @@ dialog.viewer { padding: 0; max-width: 96vw; max-height: 94vh; overflow: hidden;
 .model-input-row select {
   flex: 1;
   min-width: 0;
-  height: 32px;
+  min-height: 38px;
+  height: 38px;
+  padding: 7px 11px;
+  font-size: 13px;
+  line-height: normal;
+  border-radius: 8px;
+  box-sizing: border-box;
 }
 .custom-model-input {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex: 1;
 }
+.custom-model-input input {
+  min-height: 38px;
+  height: 38px;
+  padding: 7px 11px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.custom-model-input button {
+  height: 38px;
+  padding: 0 12px;
+}
 .refresh-models-btn {
-  padding: 4px 8px;
-  min-width: 28px;
-  height: 32px;
-  font-size: 14px;
+  padding: 0;
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
+  flex-shrink: 0;
 }
 .ollama-status-line {
   font-size: 11px;
@@ -1302,4 +1325,82 @@ dialog.viewer { padding: 0; max-width: 96vw; max-height: 94vh; overflow: hidden;
 }
 .health-dot.dot-missing {
   background: #f85149;
+}
+
+/* Settings Navigation Tabs */
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 12px;
+  margin: 18px 0 20px;
+  overflow-x: auto;
+}
+.settings-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  padding: 8px 15px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s ease;
+}
+.settings-tab-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+  border-color: #3e3e4a;
+}
+.settings-tab-btn.active {
+  background: var(--surface-3);
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  font-weight: 600;
+}
+.tab-dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e3b341;
+  display: inline-block;
+  box-shadow: 0 0 6px rgba(227, 179, 65, 0.6);
+}
+.settings-tab-content {
+  animation: fadeIn 0.15s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.settings-known-tab {
+  width: 100%;
+}
+.settings-known-tab .known-tab-intro {
+  margin-bottom: 14px;
+}
+.settings-known-tab .known-tab-intro h3 {
+  margin: 0 0 4px;
+}
+.pane.wide.known-pane {
+  max-width: 100%;
+}
+.unsaved-floating-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface-3);
+  border: 1px solid #e3b341;
+  border-radius: 8px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--text);
 }

@@ -52,11 +52,30 @@ const VLM_PROVIDERS = [
 
 type Props = { settings: SettingsMap; onSaved: (s: SettingsMap) => void; run: Runner; toast: Toaster };
 
+type SettingsTab = 'detection' | 'vlm' | 'metadata' | 'maintenance' | 'known';
+
+const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'detection', label: 'Detection & Culling' },
+  { id: 'vlm', label: 'Vision & AI' },
+  { id: 'metadata', label: 'Metadata & Desktop' },
+  { id: 'maintenance', label: 'System & Maintenance' },
+  { id: 'known', label: 'Known Vehicles' },
+];
+
 /** Settings shared with the Python library; Save writes the whole block back. */
 export function Settings({ settings, onSaved, run, toast }: Props) {
   const [draft, setDraft] = useState<SettingsMap>(settings);
   useEffect(() => setDraft(settings), [settings]);
   const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
+  const [activeTab, setActiveTab] = useState<SettingsTab>('detection');
+
+  const isTabDirty = useCallback((tabId: SettingsTab): boolean => {
+    let keys: string[] = [];
+    if (tabId === 'detection') keys = GROUPS[0][1];
+    else if (tabId === 'vlm') keys = GROUPS[1][1];
+    else if (tabId === 'metadata') keys = GROUPS[2][1];
+    return keys.some((k) => draft[k] !== settings[k]);
+  }, [draft, settings]);
 
   // App Update state
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -347,43 +366,134 @@ export function Settings({ settings, onSaved, run, toast }: Props) {
           )}
         </div>
 
-        {GROUPS.map(([title, keys]) => (
-          <section className="setting-group" key={title}>
-            <h3>{title}</h3>
-            {keys.filter((k) => draft[k] !== undefined).map((k) => {
-              const value = draft[k];
-              return (
+        {/* Settings Navigation Tabs */}
+        <nav className="settings-tabs" role="tablist" aria-label="Settings categories">
+          {SETTINGS_TABS.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={activeTab === t.id}
+              className={`settings-tab-btn ${activeTab === t.id ? 'active' : ''}`}
+              onClick={() => setActiveTab(t.id)}
+            >
+              <span>{t.label}</span>
+              {isTabDirty(t.id) && <span className="tab-dirty-dot" title="Unsaved changes in this tab" />}
+            </button>
+          ))}
+        </nav>
+
+        {/* Tab 1: Detection & Culling */}
+        {activeTab === 'detection' && (
+          <div className="settings-tab-content">
+            <section className="setting-group">
+              <h3>Detection & Culling</h3>
+              {GROUPS[0][1].filter((k) => draft[k] !== undefined).map((k) => (
                 <label className="setting" key={k}>
                   <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
                   <Control
                     name={k}
-                    value={value}
+                    value={draft[k]}
+                    onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
+                  />
+                </label>
+              ))}
+            </section>
+            <div className="actions-row">
+              <button className="primary" disabled={!dirty} onClick={save}>Save</button>
+              <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
+              <button className="ghost" title="Fit Conrod's star ratings to the ones you have given by hand." onClick={learn}>Learn from my ratings</button>
+              {dirty && <span className="muted">Unsaved changes</span>}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: Vision & AI */}
+        {activeTab === 'vlm' && (
+          <div className="settings-tab-content">
+            <section className="setting-group">
+              <h3>Vision & AI</h3>
+              {GROUPS[1][1].filter((k) => draft[k] !== undefined).map((k) => (
+                <label className="setting" key={k}>
+                  <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
+                  <Control
+                    name={k}
+                    value={draft[k]}
                     onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
                     onProviderChange={(provider, defaultModel) => {
                       setDraft((d) => ({ ...d, vlm_provider: provider, vlm_model: defaultModel }));
                     }}
                   />
                 </label>
-              );
-            })}
-          </section>
-        ))}
+              ))}
+            </section>
+            <div className="actions-row">
+              <button className="primary" disabled={!dirty} onClick={save}>Save</button>
+              <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
+              {dirty && <span className="muted">Unsaved changes</span>}
+            </div>
+          </div>
+        )}
 
-        <Maintenance />
+        {/* Tab 3: Metadata & Desktop */}
+        {activeTab === 'metadata' && (
+          <div className="settings-tab-content">
+            <section className="setting-group">
+              <h3>Metadata & Desktop</h3>
+              {GROUPS[2][1].filter((k) => draft[k] !== undefined).map((k) => (
+                <label className="setting" key={k}>
+                  <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
+                  <Control
+                    name={k}
+                    value={draft[k]}
+                    onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
+                  />
+                </label>
+              ))}
+            </section>
+            <div className="actions-row">
+              <button className="primary" disabled={!dirty} onClick={save}>Save</button>
+              <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
+              {dirty && <span className="muted">Unsaved changes</span>}
+            </div>
+          </div>
+        )}
 
-        <div className="actions-row">
-          <button className="primary" disabled={!dirty} onClick={save}>Save</button>
-          <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
-          <button className="ghost" title="Fit Conrod's star ratings to the ones you have given by hand." onClick={learn}>Learn from my ratings</button>
-          {dirty && <span className="muted">Unsaved changes</span>}
-        </div>
+        {/* Tab 4: System & Maintenance */}
+        {activeTab === 'maintenance' && (
+          <div className="settings-tab-content">
+            <Maintenance />
+            {dirty && (
+              <div className="unsaved-floating-bar">
+                <span>You have unsaved changes in your settings.</span>
+                <div className="actions-row" style={{ marginTop: 0 }}>
+                  <button className="primary small" onClick={save}>Save</button>
+                  <button className="ghost small" onClick={() => setDraft(settings)}>Discard</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 5: Known Vehicles */}
+        {activeTab === 'known' && (
+          <div className="settings-tab-content settings-known-tab">
+            <div className="known-tab-intro">
+              <h3>Known vehicles</h3>
+              <p className="muted">Vehicles identified across albums. Used to auto-fill details when the same car appears in a new shoot.</p>
+            </div>
+            <Known run={run} toast={toast} />
+            {dirty && (
+              <div className="unsaved-floating-bar">
+                <span>You have unsaved changes in your settings.</span>
+                <div className="actions-row" style={{ marginTop: 0 }}>
+                  <button className="primary small" onClick={save}>Save</button>
+                  <button className="ghost small" onClick={() => setDraft(settings)}>Discard</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
-
-      <section className="settings-section">
-        <h3>Known vehicles</h3>
-        <p className="muted">Vehicles identified across albums. Used to auto-fill details when the same car appears in a new shoot.</p>
-        <Known run={run} toast={toast} />
-      </section>
     </div>
   );
 }
