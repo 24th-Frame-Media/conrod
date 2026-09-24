@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo, type CSSProperties } from 'react';
+import { useState, useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { Modal } from '../components/basics';
 import { StarControl } from '../components/Stars';
 import { asset } from '../lib/api';
 import { boxOf, filename, frameStars, frameExcluded } from '../lib/review';
 import type { ReviewModel } from '../state/useReview';
 import { usePreview, type Runner } from '../state/hooks';
-import { ZoomPanImage } from '../components/Media';
+import { ZoomPanImage, type ZoomPanRef } from '../components/Media';
 import { DetectionsTable, getCategory, type CategoryFilter } from '../components/DetectionsTable';
 
 type Props = {
@@ -20,12 +20,13 @@ type Props = {
 export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
   const { frame, frames, facts, step, mark } = rv;
   const preview = usePreview(frame?.id ?? null, run);
+  const zoomRef = useRef<ZoomPanRef>(null);
   const [selectedDetId, setSelectedDetId] = useState<number | null>(null);
   const [hoveredDetId, setHoveredDetId] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const [showLabels, setShowLabels] = useState(true);
 
-  // Keyboard shortcut: 'L' toggles box labels
+  // Keyboard shortcut: 'L' toggles box labels, Space/Z toggles 1:1 zoom, +/- steps zoom
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -33,6 +34,15 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
       if (e.key === 'l' || e.key === 'L') {
         e.preventDefault();
         setShowLabels((v) => !v);
+      } else if (e.key === 'z' || e.key === 'Z' || e.key === ' ') {
+        e.preventDefault();
+        zoomRef.current?.toggleZoom();
+      } else if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        zoomRef.current?.zoomIn();
+      } else if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        zoomRef.current?.zoomOut();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -65,6 +75,7 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
         <div className="frame-stage-big">
           <div className="stage-inner" style={{ '--ar': ratio } as CSSProperties}>
             <ZoomPanImage
+              ref={zoomRef}
               src={asset(preview) ?? asset(frame.thumb_path)}
               alt={filename(frame.path)}
             >
