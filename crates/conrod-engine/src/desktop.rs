@@ -235,8 +235,14 @@ impl Desktop {
             Command::ResetRatings(a) => crate::housekeeping::reset_ratings(self, a.job_id),
             Command::ResetDetections(a) => crate::housekeeping::reset_detections(self, a.job_id),
             Command::ResetAll {} => crate::housekeeping::reset_all(self),
-            Command::CheckUpdate {} => Ok(crate::updating::check()),
+            Command::CheckUpdate(a) => Ok(crate::updating::check(a.force)),
             Command::InstallUpdate {} => crate::updating::install(self),
+            Command::OllamaModels(a) => {
+                let host = a
+                    .host
+                    .unwrap_or_else(|| self.settings.lock().unwrap().vlm_host.clone());
+                Ok(conrod_io::health::ollama_models(&host))
+            }
             Command::WatchStatus {} => Ok(crate::watching::status(self)),
             Command::SetWatch(a) => crate::watching::set(self, &a),
         }

@@ -98,7 +98,18 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'cover': return out({path: db.frames[0]?.thumb_path});
     case 'health': return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}]);
     case 'cache_info': return out({total: {files: 64, bytes: 3200000}});
-    case 'check_update': return out({current: '0.1.0', newer: false, installable: false});
+    case 'check_update': return out({ok: true, current: '1.0.0-beta.4', latest: '1.0.0-beta.4', newer: false, installable: true});
+    case 'ollama_models': return out({
+      ok: true,
+      host: 'http://127.0.0.1:11434',
+      online: true,
+      models: [
+        { name: 'qwen2.5vl:7b', size: 5969245856, vision: true, parameter_size: '8.3B' },
+        { name: 'qwen3-vl:8b', size: 6140415879, vision: true, parameter_size: '8.8B' },
+        { name: 'gemma4:12b', size: 7556508396, vision: true, parameter_size: '11.9B' },
+        { name: 'minicpm-v:8b', size: 5473838466, vision: true, parameter_size: '7.6B' },
+      ],
+    });
     case 'summary': return out({images: {scanned: db.frames.length, written: 0, errors: 0}, counts: {numbered: 48, plated: 48, to_review: 12}});
     case 'rename_job': { const job = db.jobs.find(j => j.id === a.jobId); if(job) job.label = String(a.label || 'Album'); return out(null); }
     case 'bulk_edit': { for(const d of db.dets.filter(d => (a.ids as number[]).includes(d.id))) { if('number' in a) d.number = String(a.number); if('reviewed' in a) d.reviewed = a.reviewed ? 1 : 0; } return out({updated: (a.ids as number[]).length}); }

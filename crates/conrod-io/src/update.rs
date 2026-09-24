@@ -15,6 +15,8 @@ use serde_json::Value;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 pub const REPO_API: &str = "https://api.github.com/repos/kapsikkum/conrod";
 const INSTALLER_SUFFIX: &str = "-win64-setup.exe";
@@ -197,33 +199,246 @@ pub fn choose(
     }))
 }
 
-fn get(url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(30)))
+#[derive(Debug, Clone, PartialEq)]
+pub struct AtomEntry {
+    pub tag: String,
+    pub title: String,
+    pub content: String,
+}
+
+pub fn parse_atom_entries(xml: &str) -> Vec<AtomEntry> {
+    let mut entries = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find("<entry>") {
+        let entry_body = &rest[start + 7..];
+        let end = match entry_body.find("</entry>") {
+            Some(e) => e,
+            None => break,
+        };
+        let block = &entry_body[..end];
+        rest = &entry_body[end + 8..];
+
+        let title = extract_tag_content(block, "title").unwrap_or_default();
+        let content = extract_tag_content(block, "content").unwrap_or_default();
+        let clean_notes = unescape_html(&content);
+        if !title.is_empty() {
+            entries.push(AtomEntry {
+                tag: title.clone(),
+                title,
+                content: clean_notes,
+            });
+        }
+    }
+    entries
+}
+
+fn extract_tag_content(xml: &str, tag: &str) -> Option<String> {
+    let open_pattern = format!("<{tag}");
+    let close_pattern = format!("</{tag}>");
+    let open_idx = xml.find(&open_pattern)?;
+    let after_open = &xml[open_idx + open_pattern.len()..];
+    let tag_end_idx = after_open.find('>')?;
+    let content_start = &after_open[tag_end_idx + 1..];
+    let close_idx = content_start.find(&close_pattern)?;
+    Some(content_start[..close_idx].trim().to_string())
+}
+
+fn unescape_html(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+}
+
+pub fn choose_from_atom(
+    entries: &[AtomEntry],
+    current: &Version,
+    allow_pre: bool,
+    owner_repo: &str,
+    sums: &mut dyn FnMut(&str) -> Result<String, String>,
+) -> Result<Option<Release>, String> {
+    let best = entries
+        .iter()
+        .filter_map(|e| {
+            let ver = Version::parse(&e.tag)?;
+            if !allow_pre && ver.is_pre() {
+                return None;
+            }
+            if &ver <= current {
+                return None;
+            }
+            Some((ver, e))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0));
+
+    let Some((version, entry)) = best else {
+        return Ok(None);
+    };
+
+    let tag = entry.tag.trim();
+    let installer_name = format!("Conrod-{version}-win64-setup.exe");
+    let sums_url = format!("https://github.com/{owner_repo}/releases/download/{tag}/{SUMS}");
+    let installer_url =
+        format!("https://github.com/{owner_repo}/releases/download/{tag}/{installer_name}");
+
+    let text = sums(&sums_url)?;
+    let sha256 = checksum_for(&text, &installer_name).ok_or_else(|| {
+        format!("release {version} has no checksum for {installer_name}, so it is not offered")
+    })?;
+
+    Ok(Some(Release {
+        version,
+        tag: tag.to_string(),
+        notes: entry.content.clone(),
+        installer: Download {
+            name: installer_name,
+            url: installer_url,
+            size: 0,
+            sha256,
+        },
+    }))
+}
+
+#[derive(Clone)]
+struct CacheEntry {
+    checked_at: Instant,
+    etag: Option<String>,
+    release: Option<Release>,
+}
+
+static CACHE: Mutex<Option<CacheEntry>> = Mutex::new(None);
+const CACHE_TTL_SECS: u64 = 600; // 10 minutes
+
+pub fn owner_repo_from_api(api: &str) -> Option<(&str, &str)> {
+    let trimmed = api.trim_end_matches('/');
+    let suffix = trimmed.strip_prefix("https://api.github.com/repos/")?;
+    let (owner, repo) = suffix.split_once('/')?;
+    Some((owner, repo))
+}
+
+fn get_text(url: &str) -> Result<String, String> {
+    let mut resp = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(30)))
         .build()
         .new_agent()
         .get(url)
         .header("User-Agent", "conrod-updater")
-        .header("Accept", "application/vnd.github+json")
         .call()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    if status >= 400 {
+        return Err(format!("HTTP {status} fetching {url}"));
+    }
+    resp.body_mut().read_to_string().map_err(|e| e.to_string())
 }
 
 /// Ask GitHub (or `api`, a mirror) for a newer release than `current`.
 pub fn latest(api: &str, current: &Version, allow_pre: bool) -> Result<Option<Release>, String> {
-    let list: Value = get(&format!(
-        "{}/releases?per_page=15",
-        api.trim_end_matches('/')
-    ))?
-    .body_mut()
-    .read_json()
-    .map_err(|e| e.to_string())?;
-    choose(&list, current, allow_pre, &mut |url| {
-        get(url)?
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| e.to_string())
-    })
+    latest_with_cache(api, current, allow_pre, false)
+}
+
+/// Ask GitHub for updates with 10-min cache, conditional ETag requests, and automatic fallback to releases.atom.
+pub fn latest_with_cache(
+    api: &str,
+    current: &Version,
+    allow_pre: bool,
+    force: bool,
+) -> Result<Option<Release>, String> {
+    if !force {
+        if let Ok(guard) = CACHE.lock() {
+            if let Some(ref entry) = *guard {
+                if entry.checked_at.elapsed() < Duration::from_secs(CACHE_TTL_SECS) {
+                    return Ok(entry.release.clone());
+                }
+            }
+        }
+    }
+
+    let cached_etag = CACHE
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|e| e.etag.clone()));
+
+    // 1. Try standard GitHub REST API with conditional ETag
+    let api_url = format!("{}/releases?per_page=15", api.trim_end_matches('/'));
+    let mut builder = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(20)))
+        .build()
+        .new_agent()
+        .get(&api_url)
+        .header("User-Agent", "conrod-updater")
+        .header("Accept", "application/vnd.github+json");
+
+    if let Some(ref etag) = cached_etag {
+        builder = builder.header("If-None-Match", etag);
+    }
+
+    let api_res = builder.call();
+
+    match api_res {
+        Ok(mut resp) => {
+            let status = resp.status().as_u16();
+            if status == 304 {
+                // Not modified: refresh timestamp and reuse cached release
+                if let Ok(mut guard) = CACHE.lock() {
+                    if let Some(ref mut entry) = *guard {
+                        entry.checked_at = Instant::now();
+                        return Ok(entry.release.clone());
+                    }
+                }
+            } else if status == 200 {
+                let etag = resp
+                    .headers()
+                    .get("etag")
+                    .and_then(|h| h.to_str().ok())
+                    .map(String::from);
+                let list: Value = resp.body_mut().read_json().map_err(|e| e.to_string())?;
+                let found = choose(&list, current, allow_pre, &mut |u| get_text(u))?;
+                if let Ok(mut guard) = CACHE.lock() {
+                    *guard = Some(CacheEntry {
+                        checked_at: Instant::now(),
+                        etag,
+                        release: found.clone(),
+                    });
+                }
+                return Ok(found);
+            }
+            // If status is 403 (Rate limited) or anything else, fall through to Atom feed!
+        }
+        Err(_) => {
+            // Network error on REST API: fall through to Atom feed!
+        }
+    }
+
+    // 2. Fallback: Edge-cached Atom feed (Zero GitHub API rate limit)
+    if let Some((owner, repo)) = owner_repo_from_api(api) {
+        let atom_url = format!("https://github.com/{owner}/{repo}/releases.atom");
+        if let Ok(xml) = get_text(&atom_url) {
+            let entries = parse_atom_entries(&xml);
+            let owner_repo = format!("{owner}/{repo}");
+            if let Ok(found) =
+                choose_from_atom(&entries, current, allow_pre, &owner_repo, &mut |u| {
+                    get_text(u)
+                })
+            {
+                if let Ok(mut guard) = CACHE.lock() {
+                    *guard = Some(CacheEntry {
+                        checked_at: Instant::now(),
+                        etag: None,
+                        release: found.clone(),
+                    });
+                }
+                return Ok(found);
+            }
+        }
+    }
+
+    // 3. If both failed, return an informative error
+    Err("GitHub update check failed (API rate limit exceeded and fallback unreachable). Check your network or visit github.com/kapsikkum/conrod/releases".into())
 }
 
 /// Download the installer into `into`, verified against the release's checksum.
@@ -455,6 +670,46 @@ mod tests {
         assert!(
             script.ends_with("finally { Start-Process -FilePath 'C:/Apps/Conrod.exe' }"),
             "the app must come back even when the installer failed: {script}"
+        );
+    }
+
+    #[test]
+    fn atom_feed_parses_and_chooses_latest_verified_release() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>v1.0.0-beta.4</title>
+    <content type="html">&lt;h2&gt;Conrod 1.0.0-beta.4&lt;/h2&gt;&lt;p&gt;Bug fixes &amp; performance&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>v1.0.0-beta.3</title>
+    <content type="html">&lt;h2&gt;Conrod 1.0.0-beta.3&lt;/h2&gt;</content>
+  </entry>
+</feed>"#;
+        let entries = parse_atom_entries(xml);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].tag, "v1.0.0-beta.4");
+        assert!(entries[0].content.contains("Bug fixes & performance"));
+
+        let installer_name = "Conrod-1.0.0-beta.4-win64-setup.exe";
+        let mut mock_sums = sums_for(installer_name);
+        let found = choose_from_atom(
+            &entries,
+            &v("1.0.0-beta.3"),
+            true,
+            "kapsikkum/conrod",
+            &mut mock_sums,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(found.version.to_string(), "1.0.0-beta.4");
+        assert_eq!(found.tag, "v1.0.0-beta.4");
+        assert_eq!(found.installer.name, installer_name);
+        assert_eq!(found.installer.sha256, HASH);
+        assert_eq!(
+            found.installer.url,
+            format!("https://github.com/kapsikkum/conrod/releases/download/v1.0.0-beta.4/{installer_name}")
         );
     }
 }

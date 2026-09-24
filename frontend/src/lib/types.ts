@@ -81,3 +81,32 @@ export function profileLabel(id: string): string {
   }
   return id;
 }
+
+export type UpdateInfo = {
+  ok: boolean;
+  current: string;
+  latest?: string;
+  newer?: boolean;
+  tag?: string;
+  size?: number;
+  notes?: string;
+  installable?: boolean;
+  error?: string;
+};
+
+export type OllamaModel = {
+  name: string;
+  size: number;
+  vision: boolean;
+  parameter_size?: string;
+  modified_at?: string;
+};
+
+export type OllamaModelsResponse = {
+  ok: boolean;
+  host: string;
+  online: boolean;
+  models: OllamaModel[];
+  error?: string;
+};
+

@@ -1,23 +1,131 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { call } from '../lib/api';
 import { Confirm } from './basics';
 import { useRun } from '../state/hooks';
+
 export function Maintenance() {
   const run = useRun();
-  const [update, setUpdate] = useState<{current: string; latest?: string; newer?: boolean; installable?: boolean; error?: string; notes?: string} | null>(null);
-  const [cache, setCache] = useState<{total: {files: number; bytes: number}} | null>(null);
-  const [health, setHealth] = useState<{name: string; ready: boolean; detail?: string}[]>([]);
+  const [cache, setCache] = useState<{ total: { files: number; bytes: number } } | null>(null);
+  const [health, setHealth] = useState<{ name: string; ready: boolean; detail?: string }[]>([]);
   const [clear, setClear] = useState<string | null>(null);
-  return <section className="setting-group"><h3>Maintenance</h3><div className="actions-row">
-    <button onClick={() => void run(async () => setHealth(await call('health')))}>Check setup</button>
-    <button onClick={() => void run(async () => { await call('install_models'); })}>Install missing models</button>
-    <button onClick={() => void run(async () => setUpdate(await call('check_update')))}>Check for updates</button>
-    <button onClick={() => void run(async () => setCache(await call('cache_info')))}>Cache usage</button>
-    <button onClick={() => setClear('orphaned')}>Clear unused cache</button><button onClick={() => setClear('previews')}>Clear previews</button>
-    <button className="danger" onClick={() => setClear('all')}>Reset library</button>
-  </div>{cache && <p>{cache.total.files} cached files · {(cache.total.bytes / 1048576).toFixed(1)} MB</p>}
-  {health.map(h => <p key={h.name}>{h.ready ? 'Ready' : 'Missing'} — {h.name}: {h.detail ?? (h.ready ? 'Available' : 'Not installed')}</p>)}
-  {update && <div><p>{update.error ?? (update.newer ? `Update available: ${update.latest}` : `Up to date: ${update.current}`)}</p><p>{update.notes}</p>{update.newer && update.installable && <button onClick={() => void run(async () => { await call('install_update'); })}>Update and restart</button>}</div>}
-  {clear && <Confirm title={clear === 'all' ? 'Reset the library?' : 'Clear cached files?'} action="Clear" onCancel={() => setClear(null)} onConfirm={() => { void run(async () => { await call(clear === 'all' ? 'reset_all' : 'cache_clear', {[clear]: true}); setCache(await call('cache_info')); }); setClear(null); }}><p>{clear === 'all' ? 'All albums and their results will be removed. Known vehicles, training and original photographs are kept.' : 'Original photographs are kept. Previews can be recreated when opened.'}</p></Confirm>}
-  </section>;
+
+  useEffect(() => {
+    void call<{ total: { files: number; bytes: number } }>('cache_info').then(setCache).catch(() => {});
+  }, []);
+
+  return (
+    <section className="setting-group maintenance-group">
+      <h3>System & Maintenance</h3>
+
+      <div className="maintenance-sections">
+        {/* Setup Diagnostics Card */}
+        <div className="maintenance-card">
+          <div className="maintenance-card-header">
+            <div>
+              <strong>Setup & Model Diagnostics</strong>
+              <p className="hint">Verify that AI detector models, OpenCV runtime, and vision hosts are available.</p>
+            </div>
+            <div className="maintenance-btn-row">
+              <button
+                type="button"
+                onClick={() => void run(async () => setHealth(await call('health')))}
+              >
+                Check setup
+              </button>
+              <button
+                type="button"
+                onClick={() => void run(async () => { await call('install_models'); setHealth(await call('health')); })}
+              >
+                Install missing models
+              </button>
+            </div>
+          </div>
+
+          {health.length > 0 && (
+            <div className="health-list">
+              {health.map((h) => (
+                <div className={`health-item ${h.ready ? 'ready' : 'missing'}`} key={h.name}>
+                  <span className={`health-dot ${h.ready ? 'dot-ready' : 'dot-missing'}`} />
+                  <span className="health-name">{h.name}</span>
+                  <span className="health-detail muted small">{h.detail ?? (h.ready ? 'Ready' : 'Not installed')}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Cache & Storage Card */}
+        <div className="maintenance-card">
+          <div className="maintenance-card-header">
+            <div>
+              <strong>Cache & Storage</strong>
+              <p className="hint">
+                {cache
+                  ? `${cache.total.files.toLocaleString()} cached thumbnails and previews · ${(cache.total.bytes / (1024 * 1024)).toFixed(1)} MB`
+                  : 'Survey thumbnail, preview, and temporary inspection caches.'}
+              </p>
+            </div>
+            <div className="maintenance-btn-row">
+              <button
+                type="button"
+                onClick={() => void run(async () => setCache(await call('cache_info')))}
+              >
+                Refresh usage
+              </button>
+              <button
+                type="button"
+                onClick={() => setClear('orphaned')}
+              >
+                Clear unused cache
+              </button>
+              <button
+                type="button"
+                onClick={() => setClear('previews')}
+              >
+                Clear previews
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Library Reset / Danger Zone */}
+        <div className="maintenance-card danger-card">
+          <div className="maintenance-card-header">
+            <div>
+              <strong className="danger-text">Reset Library Data</strong>
+              <p className="hint">Removes all scanned albums, detections, and ratings. Your original RAW and JPEG photos are never modified or deleted.</p>
+            </div>
+            <button
+              type="button"
+              className="danger"
+              onClick={() => setClear('all')}
+            >
+              Reset library…
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {clear && (
+        <Confirm
+          title={clear === 'all' ? 'Reset the library?' : 'Clear cached files?'}
+          action={clear === 'all' ? 'Reset everything' : 'Clear cache'}
+          onCancel={() => setClear(null)}
+          onConfirm={() => {
+            void run(async () => {
+              await call(clear === 'all' ? 'reset_all' : 'cache_clear', { [clear]: true });
+              setCache(await call('cache_info'));
+            });
+            setClear(null);
+          }}
+        >
+          <p>
+            {clear === 'all'
+              ? 'All albums, keeper stacks, and review markers will be removed. Known vehicles, learned focus models, and original photo files will remain untouched.'
+              : 'Cached previews and temporary files will be purged. High-resolution previews are re-created automatically whenever you inspect photos.'}
+          </p>
+        </Confirm>
+      )}
+    </section>
+  );
 }
