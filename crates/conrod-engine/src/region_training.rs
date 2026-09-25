@@ -2,6 +2,7 @@
 use crate::commands::{LabelArgs, Region};
 use crate::desktop::{rows, Desktop, Result};
 use conrod_core::ridge;
+use crate::lock;
 use conrod_vision::{sharpness, similarity};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
@@ -24,7 +25,7 @@ pub fn prepare(db: &Connection) -> Result<()> {
 }
 pub fn status(d: &Desktop) -> Result<Value> {
     let data = rows(
-        &d.db.lock().unwrap(),
+        &lock(&d.db),
         "SELECT region,count(*) AS labels,sum(stars>0) AS rated FROM native_labels GROUP BY region",
         [],
     )?;
@@ -65,7 +66,7 @@ pub fn label(d: &Desktop, a: &LabelArgs) -> Result<Value> {
         .ok_or("Stars must be 0–5")?;
     let task = d.hub.start("Saving subject rating", 0);
     {
-        let db = d.db.lock().unwrap();
+        let db = lock(&d.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         let mut v=rows(&tx,"SELECT i.path,d.x1,d.y1,d.x2,d.y2,COALESCE(d.region_type,'vehicle') AS region,d.features,COALESCE(d.panning,0) AS heur_pan,unixepoch('now') AS created_at FROM detections d JOIN images i ON i.id=d.image_id WHERE d.id=?",[id])?.pop().ok_or("Detection not found")?;
         if !REGIONS.contains(&v["region"].as_str().unwrap_or_default()) {
@@ -102,7 +103,7 @@ pub fn label(d: &Desktop, a: &LabelArgs) -> Result<Value> {
 pub fn undo(d: &Desktop) -> Result<Value> {
     let task = d.hub.start("Undoing subject rating", 0);
     {
-        let db = d.db.lock().unwrap();
+        let db = lock(&d.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         if let Some(last) = rows(
             &tx,
@@ -146,7 +147,7 @@ pub fn train(d: &Desktop, region: Region) -> Result<Value> {
     let region = region.as_str();
     let task = d.hub.start(format!("Training {region} sharpness"), 0);
     let data = rows(
-        &d.db.lock().unwrap(),
+        &lock(&d.db),
         "SELECT * FROM native_labels WHERE region=? AND stars>0 AND version=? ORDER BY path,x1,y1",
         params![region, ridge::FEATURE_VERSION],
     )?;
@@ -201,7 +202,7 @@ pub fn forget(d: &Desktop, region: Region) -> Result<Value> {
 
 pub fn taste(d: &Desktop) -> Result<Value> {
     let task = d.hub.start("Learning review preferences", 0);
-    let rows=rows(&d.db.lock().unwrap(),"SELECT embedding,CASE WHEN rejected=1 THEN 1 ELSE stars END AS stars FROM detections WHERE embedding IS NOT NULL AND (stars IS NOT NULL OR (reviewed=1 AND rejected=1))",[])?;
+    let rows=rows(&lock(&d.db),"SELECT embedding,CASE WHEN rejected=1 THEN 1 ELSE stars END AS stars FROM detections WHERE embedding IS NOT NULL AND (stars IS NOT NULL OR (reviewed=1 AND rejected=1))",[])?;
     let pairs: Vec<_> = rows
         .iter()
         .filter_map(|r| {
@@ -224,7 +225,7 @@ pub fn taste(d: &Desktop) -> Result<Value> {
         serde_json::to_vec(&model).map_err(err)?,
     )
     .map_err(err)?;
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     for row in crate::desktop::rows(
         &db,
         "SELECT id,embedding FROM detections WHERE embedding IS NOT NULL",

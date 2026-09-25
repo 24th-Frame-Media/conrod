@@ -181,21 +181,13 @@ pub fn assign_bursts(frames: &mut [Frame], gap: f64) {
     }
     let mut key = 0;
     for indices in by_camera.values() {
-        let mut timed: Vec<usize> = indices
+        let mut timed: Vec<(usize, f64)> = indices
             .iter()
-            .copied()
-            .filter(|&i| frames[i].taken.is_some())
+            .filter_map(|&i| frames[i].taken.map(|taken| (i, taken)))
             .collect();
-        timed.sort_by(|&a, &b| {
-            let (fa, fb) = (&frames[a], &frames[b]);
-            fa.taken
-                .unwrap()
-                .total_cmp(&fb.taken.unwrap())
-                .then_with(|| fa.path.cmp(&fb.path))
-        });
+        timed.sort_by(|&(a, ta), &(b, tb)| ta.total_cmp(&tb).then_with(|| frames[a].path.cmp(&frames[b].path)));
         let mut previous: Option<f64> = None;
-        for i in timed {
-            let taken = frames[i].taken.unwrap();
+        for (i, taken) in timed {
             if previous.is_none_or(|p| taken - p > gap) {
                 key += 1;
             }

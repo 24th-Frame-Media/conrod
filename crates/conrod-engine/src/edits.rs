@@ -10,6 +10,7 @@
 use crate::commands::{BulkArgs, EditArgs};
 use crate::desktop::{Desktop, Result};
 use conrod_core::{analysis::VehicleAnalysis, keywords};
+use crate::lock;
 use conrod_vision::sharpness;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Map, Value};
@@ -80,13 +81,13 @@ pub fn edit_detection(d: &Desktop, a: &EditArgs) -> Result<Value> {
         }
     }
     let options = {
-        let s = d.settings.lock().unwrap();
+        let s = lock(&d.settings);
         keywords::KeywordOptions {
             prefix: s.keyword_prefix.clone(),
             write_plate: s.write_plate_keyword,
         }
     };
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let row = db
         .query_row(
             "SELECT attributes,cls,number,number_source,number_conf,plate,plate_state,COALESCE(rejected,0),COALESCE(bystander,0),stars,predicted_stars,rating,embedding,region_type FROM detections WHERE id=?",
@@ -211,7 +212,7 @@ pub fn edit_detection(d: &Desktop, a: &EditArgs) -> Result<Value> {
 
 pub fn bulk_edit(d: &Desktop, a: &BulkArgs) -> Result<Value> {
     let number = a.number.as_deref().map(digits);
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     let mut updated = 0;
     for &id in &a.ids {

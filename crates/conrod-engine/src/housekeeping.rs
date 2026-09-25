@@ -19,6 +19,7 @@ use rusqlite::{params_from_iter, ToSql};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
+use crate::lock;
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -71,7 +72,7 @@ fn cached(dir: &Path) -> Vec<Cached> {
 
 /// The ids the database still refers to: frames, and detections with a crop.
 fn live(d: &Desktop) -> Result<(HashSet<i64>, HashSet<i64>)> {
-    let db = d.reader.lock().unwrap();
+    let db = lock(&d.reader);
     let ids = |sql: &str| -> Result<HashSet<i64>> {
         Ok(rows(&db, sql, [])?
             .iter()
@@ -133,8 +134,7 @@ fn ensure_idle(d: &Desktop, job: Option<i64>) -> Result<()> {
     }
     let busy = d
         .operations
-        .lock()
-        .unwrap()
+        .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
         .keys()
         .any(|k| job.is_none_or(|j| k.ends_with(&format!(":{j}"))));
     if busy {
@@ -151,7 +151,7 @@ pub fn cache_clear(d: &Desktop, a: &CacheClearArgs) -> Result<Value> {
     if let Some(job) = a.job_id {
         require_job(d, job)?;
         in_album = rows(
-            &d.reader.lock().unwrap(),
+            &lock(&d.reader),
             "SELECT id FROM images WHERE job_id=?",
             [job],
         )?
@@ -212,7 +212,7 @@ fn crop_paths(d: &Desktop, job: Option<i64>) -> Result<Vec<String>> {
     let (filter, args) = scope(job);
     let joined = if filter.is_empty() { "WHERE" } else { "AND" };
     Ok(rows(
-        &d.reader.lock().unwrap(),
+        &lock(&d.reader),
         &format!("SELECT d.crop_path FROM detections d JOIN images i ON i.id=d.image_id {filter} {joined} d.crop_path IS NOT NULL"),
         params_from_iter(&args),
     )?
@@ -234,7 +234,7 @@ pub fn reset_identifications(d: &Desktop, job: Option<i64>) -> Result<Value> {
     let task = d.hub.start("Resetting identifications", 0);
     let (filter, args) = scope(job);
     let inside = format!("image_id IN (SELECT i.id FROM images i {filter})");
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     let run =
         |sql: String| -> Result<usize> { tx.execute(&sql, params_from_iter(&args)).map_err(err) };
@@ -267,7 +267,7 @@ pub fn reset_ratings(d: &Desktop, job: Option<i64>) -> Result<Value> {
     let task = d.hub.start("Resetting ratings", 0);
     let (filter, args) = scope(job);
     let inside = format!("image_id IN (SELECT i.id FROM images i {filter})");
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     let run =
         |sql: String| -> Result<usize> { tx.execute(&sql, params_from_iter(&args)).map_err(err) };
@@ -305,7 +305,7 @@ pub fn reset_detections(d: &Desktop, job: Option<i64>) -> Result<Value> {
     let crops = crop_paths(d, job)?;
     let (filter, args) = scope(job);
     let gone = {
-        let db = d.db.lock().unwrap();
+        let db = lock(&d.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         let gone = tx
             .execute(
@@ -344,7 +344,7 @@ pub fn reset_all(d: &Desktop) -> Result<Value> {
     let task = d.hub.start("Resetting library", 0);
     let crops = crop_paths(d, None)?;
     let (jobs, frames) = {
-        let db = d.db.lock().unwrap();
+        let db = lock(&d.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         let count = |table: &str| -> Result<i64> {
             tx.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
@@ -602,17 +602,14 @@ mod tests {
         let (image, det) = stocked(&lib);
         lib.sql("INSERT INTO known_vehicles(plate) VALUES('KEEP1')", []);
         lib.sql("INSERT INTO sharpness_labels(path,x1,y1,x2,y2,stars,created_at) VALUES('p',1,2,3,4,3,1)", []);
-        lib.d()
-            .operations
-            .lock()
-            .unwrap()
+        crate::lock(&lib.d().operations)
             .insert(format!("Grouping vehicles:{}", lib.job), Default::default());
         let err = lib.run("reset_all", json!({})).unwrap_err();
         assert!(err.contains("operation is running"), "{err}");
         assert!(lib
             .run("reset_detections", json!({"jobId": lib.job}))
             .is_err());
-        lib.d().operations.lock().unwrap().clear();
+        crate::lock(&lib.d().operations).clear();
 
         let out = lib.run("reset_all", json!({})).unwrap();
         assert_eq!(

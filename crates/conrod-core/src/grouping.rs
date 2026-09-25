@@ -71,11 +71,9 @@ pub fn shape_distance(a: &str, b: &str) -> i64 {
 
 /// `_colour_matches`: how much of the two colour histograms overlaps.
 ///
-/// ponytail: Python's own try/except here only wraps `_parse` -- a length
-/// mismatch reaches `np.minimum(ca, cb)` uncaught and crashes. Every real
+/// ponytail: signatures of different lengths just don't match. Every real
 /// signature has the same 36-bin histogram, so this is not reachable in
-/// practice; returning `false` instead of panicking is a deliberate
-/// deviation, not an oversight, and is not fixture-tested for that reason.
+/// practice.
 pub fn colour_matches(a: &str, b: &str, min_colour: f64) -> bool {
     let (Some((_, ca)), Some((_, cb))) = (parse_signature(a), parse_signature(b)) else {
         return false;
@@ -767,26 +765,24 @@ pub fn edit_distance(a: &str, b: &str, limit: usize) -> usize {
     if ac.len().abs_diff(bc.len()) > limit {
         return limit + 1;
     }
-    let mut previous: Vec<usize> = (0..=bc.len()).collect();
+    let mut row: Vec<usize> = (0..=bc.len()).collect();
     for (i, &x) in ac.iter().enumerate() {
-        let i = i + 1;
-        let mut current: Vec<usize> = Vec::with_capacity(bc.len() + 1);
-        current.push(i);
+        let mut diag = row[0];
+        row[0] = i + 1;
+        let mut row_min = row[0];
         for (j, &y) in bc.iter().enumerate() {
             let j = j + 1;
             let cost = usize::from(x != y);
-            current.push(
-                (previous[j] + 1)
-                    .min(current[j - 1] + 1)
-                    .min(previous[j - 1] + cost),
-            );
+            let above = row[j];
+            row[j] = (above + 1).min(row[j - 1] + 1).min(diag + cost);
+            row_min = row_min.min(row[j]);
+            diag = above;
         }
-        if *current.iter().min().unwrap() > limit {
+        if row_min > limit {
             return limit + 1;
         }
-        previous = current;
     }
-    *previous.last().unwrap()
+    row[bc.len()]
 }
 
 /// When one spelling is a misreading of another. Two conditions have to hold

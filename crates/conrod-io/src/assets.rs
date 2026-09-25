@@ -206,11 +206,13 @@ fn finish(asset: &Asset, part: &Path, into: &Path) -> Result<PathBuf, String> {
         return Ok(target);
     }
     // Windows 10+ ships bsdtar, which reads zips; GNU tar on PATH would not, so
-    // name the system one.
+    // name the system one specifically rather than falling back to whatever
+    // "tar" resolves to on PATH (fail closed instead of unpacking with an
+    // unknown, possibly wrong, tool).
     let tar = std::env::var_os("SystemRoot")
         .map(|root| PathBuf::from(root).join("System32").join("tar.exe"))
         .filter(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from("tar"));
+        .ok_or_else(|| "System32\\tar.exe not found; cannot unpack downloaded asset".to_string())?;
     let status = std::process::Command::new(tar)
         .arg("-xf")
         .arg(part)

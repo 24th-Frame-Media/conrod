@@ -1,8 +1,11 @@
 import { Maintenance } from '../components/Maintenance';
 import { Known } from './Known';
 import { useEffect, useState, useCallback } from 'react';
-import { engine } from '../lib/api';
+import { getVersion } from '@tauri-apps/api/app';
+import { engine, inTauri } from '../lib/api';
 import { words } from '../lib/format';
+
+export const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
 import type {
   Settings as SettingsMap,
   SettingValue,
@@ -33,7 +36,7 @@ const META: Record<string, [string, string?]> = {
   use_vlm: ['Use vision model', 'Identify make, model, colour and team.'],
   vlm_provider: ['Vision provider', 'Ollama (local), or OpenAI, Anthropic, Gemini'],
   vlm_model: ['Vision model', 'e.g. qwen2.5vl:7b, gpt-4o, claude-3-7-sonnet'],
-  vlm_host: ['Vision host', 'For Ollama or local server (default http://127.0.0.1:11434)'],
+  vlm_host: ['Vision host', `For Ollama or local server (default ${DEFAULT_OLLAMA_HOST})`],
   vlm_extra_hosts: ['Extra hosts'],
   vlm_api_key: ['API key', 'Required for cloud providers (OpenAI, Anthropic, Gemini). Stored locally.'],
   vlm_timeout: ['Timeout (seconds)'],
@@ -99,6 +102,10 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    if (inTauri) void getVersion().then(setAppVersion);
+  }, []);
 
   // Ollama Models state
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
@@ -289,7 +296,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
               </span>
             ) : ollamaOnline === false ? (
               <span className="status-badge offline">
-                ○ Ollama offline at {String(draft.vlm_host || 'http://127.0.0.1:11434')}
+                ○ Ollama offline at {String(draft.vlm_host || DEFAULT_OLLAMA_HOST)}
               </span>
             ) : null}
           </div>
@@ -447,7 +454,9 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
             <div className="sidebar-card-header">
               <div className="sidebar-brand">
                 <span className="sidebar-brand-name">Conrod</span>
-                <span className="sidebar-brand-version">v{updateInfo?.current ?? '1.0.0-beta.5'}</span>
+                {(updateInfo?.current ?? appVersion) && (
+                  <span className="sidebar-brand-version">v{updateInfo?.current ?? appVersion}</span>
+                )}
               </div>
               {checkingUpdate ? (
                 <span className="pill-badge checking">Checking…</span>
@@ -602,25 +611,6 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
               </div>
             </div>
           )}
-
-          {/* System & Environment Card */}
-          <div className="sidebar-card">
-            <h4>System & Runtime</h4>
-            <div className="sidebar-meta-list">
-              <div className="sidebar-meta-row">
-                <span className="meta-key">Platform</span>
-                <span className="meta-val">Windows x64</span>
-              </div>
-              <div className="sidebar-meta-row">
-                <span className="meta-key">Architecture</span>
-                <span className="meta-val">Native Rust + Tauri 2</span>
-              </div>
-              <div className="sidebar-meta-row">
-                <span className="meta-key">Database</span>
-                <span className="meta-val">SQLite (WAL mode)</span>
-              </div>
-            </div>
-          </div>
         </aside>
       </div>
     </div>

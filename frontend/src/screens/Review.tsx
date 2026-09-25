@@ -16,57 +16,33 @@ import { profileLabel } from '../lib/types';
 import type { ReviewModel } from '../state/useReview';
 import { subjectExcluded } from '../review.mjs';
 
-function VehicleStacks({ rv, onOpenViewer, identifying }: { rv: ReviewModel; onOpenViewer: () => void; identifying: boolean }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const visible = useMemo(() => new Set(rv.frames.map((frame) => frame.id)), [rv.frames]);
-  const stacks = useMemo(() => {
-    const groups = new Map<string, typeof rv.review.detections>();
-    for (const detection of rv.review.detections.filter((d) => (d.region_type ?? 'vehicle') === 'vehicle')) {
-      const attrs = parseAttributes(detection);
-      const identity = attrs.plate || (attrs.race_number && `${attrs.race_number}-${attrs.make ?? ''}-${attrs.model ?? ''}`);
-      const frame = rv.review.frames.find((item) => item.id === detection.image_id);
-      const key = detection.group_key != null
-        ? `group-${detection.group_key}`
-        : identity
-        ? `identity-${identity}`
-        : identifying && frame?.burst_key != null
-        ? `processing-burst-${frame.burst_key}`
-        : `single-${detection.id}`;
-      const list = groups.get(key); if (list) list.push(detection); else groups.set(key, [detection]);
-    }
-    return [...groups.entries()].map(([key, detections]) => {
-      const frames = [...new Map(detections.map((d) => [d.image_id, rv.review.frames.find((frame) => frame.id === d.image_id)])).values()]
-        .filter((frame): frame is Frame => Boolean(frame));
-      const pick = frames.find((frame) => rv.facts.get(frame.id)?.pick) ?? [...frames].sort((a, b) => frameStars(b) - frameStars(a))[0];
-      return { key, detections, frames, pick, attrs: parseAttributes(detections[0]), processing: identifying && key.startsWith('processing-') };
-    }).filter((group) => group.pick && group.frames.some((f) => visible.has(f.id)))
-      .sort((a, b) => a.pick.id - b.pick.id);
-  }, [rv.review.detections, rv.review.frames, rv.facts, identifying, visible]);
+type Stack = { key: string; frames: Frame[]; pick: Frame; title: string; subtitle: string; photoWord?: string };
 
-  return <div className="burst-grid" role="list" aria-label="Vehicle stacks">
+/** Shared renderer for grouped-photo grids (vehicle identity or burst grouping): identical markup either way. */
+function StackGrid({ stacks, rv, onOpenViewer, ariaLabel, emptyTitle }: {
+  stacks: Stack[]; rv: ReviewModel; onOpenViewer: () => void; ariaLabel: string; emptyTitle: string;
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  return <div className="burst-grid" role="list" aria-label={ariaLabel}>
     {stacks.map((group) => {
       const open = expanded === group.key;
       const isSelected = group.frames.some((f) => f.id === rv.selected);
-      const title = group.processing ? 'Being identified' : [group.attrs.make, group.attrs.model].filter(Boolean).join(' ') || (group.attrs.plate || (group.attrs.race_number && `#${group.attrs.race_number}`) || 'Unidentified vehicle');
-      const subtitle = group.processing
-        ? `Analysing ${group.frames.length} photos`
-        : `${group.frames.length} shot${group.frames.length === 1 ? '' : 's'}${group.attrs.plate ? ` · ${group.attrs.plate}` : ''}${group.attrs.race_number ? ` · #${group.attrs.race_number}` : ''}${group.attrs.team ? ` · ${group.attrs.team}` : ''}`;
       return <Fragment key={group.key}>
         <article className={`burst-stack${open ? ' open' : ''}${isSelected ? ' selected' : ''}`} onClick={() => { rv.setSelected(group.pick.id); setExpanded(open ? null : group.key); }}>
           <div className="burst-layers" style={{ '--layers': Math.min(group.frames.length, 4) } as CSSProperties}>
-            <LoadableImage src={asset(group.pick.thumb_path)} alt={title} />
+            <LoadableImage src={asset(group.pick.thumb_path)} alt={group.title} />
             <StarPill frame={group.pick} />
             <span className="stack-count">{group.frames.length}</span>
             <span className="focus keeper">Best</span>
           </div>
           <div className="burst-caption">
-            <b>{title}</b>
-            <span>{subtitle}</span>
+            <b>{group.title}</b>
+            <span>{group.subtitle}</span>
           </div>
         </article>
         {open && <div className="burst-expanded">
           <div className="burst-expanded-head">
-            <b>{title} · {group.frames.length} photos</b>
+            <b>{group.title} · {group.frames.length} {group.photoWord ?? 'frames'}</b>
             <span className="muted" style={{ marginLeft: 8 }}>· Best photo first</span>
           </div>
           <div className="burst-strip">
@@ -94,8 +70,43 @@ function VehicleStacks({ rv, onOpenViewer, identifying }: { rv: ReviewModel; onO
         </div>}
       </Fragment>;
     })}
-    {!stacks.length && <Empty icon="images" title="No vehicles match these filters." />}
+    {!stacks.length && <Empty icon="images" title={emptyTitle} />}
   </div>;
+}
+
+function VehicleStacks({ rv, onOpenViewer, identifying }: { rv: ReviewModel; onOpenViewer: () => void; identifying: boolean }) {
+  const visible = useMemo(() => new Set(rv.frames.map((frame) => frame.id)), [rv.frames]);
+  const stacks = useMemo(() => {
+    const groups = new Map<string, typeof rv.review.detections>();
+    for (const detection of rv.review.detections.filter((d) => (d.region_type ?? 'vehicle') === 'vehicle')) {
+      const attrs = parseAttributes(detection);
+      const identity = attrs.plate || (attrs.race_number && `${attrs.race_number}-${attrs.make ?? ''}-${attrs.model ?? ''}`);
+      const frame = rv.review.frames.find((item) => item.id === detection.image_id);
+      const key = detection.group_key != null
+        ? `group-${detection.group_key}`
+        : identity
+        ? `identity-${identity}`
+        : identifying && frame?.burst_key != null
+        ? `processing-burst-${frame.burst_key}`
+        : `single-${detection.id}`;
+      const list = groups.get(key); if (list) list.push(detection); else groups.set(key, [detection]);
+    }
+    return [...groups.entries()].map(([key, detections]) => {
+      const frames = [...new Map(detections.map((d) => [d.image_id, rv.review.frames.find((frame) => frame.id === d.image_id)])).values()]
+        .filter((frame): frame is Frame => Boolean(frame));
+      const pick = frames.find((frame) => rv.facts.get(frame.id)?.pick) ?? [...frames].sort((a, b) => frameStars(b) - frameStars(a))[0];
+      const attrs = parseAttributes(detections[0]);
+      const processing = identifying && key.startsWith('processing-');
+      const title = processing ? 'Being identified' : [attrs.make, attrs.model].filter(Boolean).join(' ') || (attrs.plate || (attrs.race_number && `#${attrs.race_number}`) || 'Unidentified vehicle');
+      const subtitle = processing
+        ? `Analysing ${frames.length} photos`
+        : `${frames.length} shot${frames.length === 1 ? '' : 's'}${attrs.plate ? ` · ${attrs.plate}` : ''}${attrs.race_number ? ` · #${attrs.race_number}` : ''}${attrs.team ? ` · ${attrs.team}` : ''}`;
+      return { key, frames, pick, title, subtitle, photoWord: 'photos' as const };
+    }).filter((group): group is typeof group & { pick: Frame } => Boolean(group.pick) && group.frames.some((f) => visible.has(f.id)))
+      .sort((a, b) => a.pick.id - b.pick.id);
+  }, [rv.review.detections, rv.review.frames, rv.facts, identifying, visible]);
+
+  return <StackGrid stacks={stacks} rv={rv} onOpenViewer={onOpenViewer} ariaLabel="Vehicle stacks" emptyTitle="No vehicles match these filters." />;
 }
 
 function currentItem(task: Task): string {
@@ -160,10 +171,7 @@ function PipelineStepper({ job, scanning, identified, identifying, written }: { 
   );
 }
 
-type Burst = { key: string; frames: Frame[]; pick: Frame };
-
 function BurstStacks({ rv, onOpenViewer }: { rv: ReviewModel; onOpenViewer: () => void }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
   const visibleIds = useMemo(() => new Set(rv.frames.map((f) => f.id)), [rv.frames]);
   const bursts = useMemo(() => {
     const map = new Map<string, Frame[]>();
@@ -187,63 +195,15 @@ function BurstStacks({ rv, onOpenViewer }: { rv: ReviewModel; onOpenViewer: () =
         const pick = sortedByBest.find((f) => !rv.facts.get(f.id)?.cull) ?? sortedByBest[0];
         const remaining = rawFrames.filter((f) => f.id !== pick.id).sort((a, b) => a.id - b.id);
         const frames = [pick, ...remaining];
-        return { key, frames, pick };
+        const facts = rv.facts.get(pick.id);
+        const title = facts?.vehicle || facts?.plate || (facts?.number && `#${facts.number}`) || filename(pick.path);
+        const subtitle = `${frames.length} shot${frames.length === 1 ? '' : 's'}${facts?.plate ? ` · ${facts.plate}` : ''}${facts?.number ? ` · #${facts.number}` : ''}${facts?.team ? ` · ${facts.team}` : ''}`;
+        return { key, frames, pick, title, subtitle };
       })
       .sort((a, b) => a.pick.id - b.pick.id);
   }, [rv.review.frames, rv.facts, visibleIds]);
 
-  return <div className="burst-grid" role="list" aria-label="Burst stacks">
-    {bursts.map((burst) => {
-      const facts = rv.facts.get(burst.pick.id);
-      const open = expanded === burst.key;
-      const isSelected = burst.frames.some((f) => f.id === rv.selected);
-      const title = facts?.vehicle || facts?.plate || (facts?.number && `#${facts.number}`) || filename(burst.pick.path);
-      const subtitle = `${burst.frames.length} shot${burst.frames.length === 1 ? '' : 's'}${facts?.plate ? ` · ${facts.plate}` : ''}${facts?.number ? ` · #${facts.number}` : ''}${facts?.team ? ` · ${facts.team}` : ''}`;
-      return <Fragment key={burst.key}>
-        <article className={`burst-stack${open ? ' open' : ''}${isSelected ? ' selected' : ''}`} onClick={() => { rv.setSelected(burst.pick.id); setExpanded(open ? null : burst.key); }}>
-          <div className="burst-layers" style={{ '--layers': Math.min(burst.frames.length, 4) } as CSSProperties}>
-            <LoadableImage src={asset(burst.pick.thumb_path)} alt={filename(burst.pick.path)} />
-            <StarPill frame={burst.pick} />
-            <span className="stack-count">{burst.frames.length}</span>
-            <span className="focus keeper">Best</span>
-          </div>
-          <div className="burst-caption">
-            <b>{title}</b>
-            <span>{subtitle}</span>
-          </div>
-        </article>
-        {open && <div className="burst-expanded">
-          <div className="burst-expanded-head">
-            <b>{title} · {burst.frames.length} frames</b>
-            <span className="muted" style={{ marginLeft: 8 }}>· Best photo first</span>
-          </div>
-          <div className="burst-strip">
-            {burst.frames.map((frame, index) => {
-              const culled = Boolean(rv.facts.get(frame.id)?.cull);
-              return (
-                <button
-                  key={frame.id}
-                  className={`${rv.selected === frame.id ? 'selected' : ''}${index === 0 ? ' burst-best-card' : ''}`}
-                  style={culled ? { opacity: 0.6 } : undefined}
-                  onClick={() => rv.setSelected(frame.id)}
-                  onDoubleClick={onOpenViewer}
-                >
-                  <div style={{ position: 'relative' }}>
-                    <LoadableImage src={asset(frame.thumb_path)} alt={filename(frame.path)} />
-                    {index === 0 && <span className="focus keeper" style={{ position: 'absolute', top: 4, left: 4, zIndex: 2 }}>Best</span>}
-                    {culled && <span className="cull-tag">Culled</span>}
-                  </div>
-                  <StarPill frame={frame} />
-                  <small>{filename(frame.path)}</small>
-                </button>
-              );
-            })}
-          </div>
-        </div>}
-      </Fragment>;
-    })}
-    {!bursts.length && <Empty icon="images" title="No burst stacks match these filters." />}
-  </div>;
+  return <StackGrid stacks={bursts} rv={rv} onOpenViewer={onOpenViewer} ariaLabel="Burst stacks" emptyTitle="No burst stacks match these filters." />;
 }
 
 type Props = {
@@ -475,7 +435,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
       onClick: () => {
         void run(async () => {
           const s = await call<{ images: Record<string, number>; counts: Record<string, number> }>('summary', { jobId });
-          alert(`Album Summary:\n• ${s.images.scanned} scanned · ${s.images.written} written · ${s.images.errors} errors\n• ${s.counts.numbered} numbered · ${s.counts.plated} plated · ${s.counts.to_review} to review`);
+          toast(`${s.images.scanned} scanned · ${s.images.written} written · ${s.images.errors} errors · ${s.counts.numbered} numbered · ${s.counts.plated} plated · ${s.counts.to_review} to review`);
         });
       },
     },

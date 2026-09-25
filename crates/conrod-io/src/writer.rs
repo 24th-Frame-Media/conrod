@@ -216,7 +216,7 @@ impl ExifTool {
 
     pub fn execute(&mut self, args: &[String]) -> io::Result<String> {
         for arg in args {
-            writeln!(self.stdin, "{arg}")?;
+            writeln!(self.stdin, "{}", sanitize_arg(arg))?;
         }
         writeln!(self.stdin, "-execute")?;
         self.stdin.flush()?;
@@ -237,6 +237,13 @@ impl ExifTool {
         }
         Ok(out)
     }
+}
+
+/// Each arg is written on its own line to exiftool's `-stay_open` stdin, so a
+/// `\n` or `\r` inside a VLM-derived keyword/caption would otherwise inject
+/// an extra argument. Flatten both to a space at this one choke point.
+fn sanitize_arg(arg: &str) -> String {
+    arg.replace(['\r', '\n'], " ")
 }
 
 impl Drop for ExifTool {
@@ -586,6 +593,13 @@ mod tests {
         assert!(wrote_one("1 IMAGE FILES UPDATED\n"));
         assert!(!wrote_one("0 image files updated\n"));
         assert!(!wrote_one("Error: nothing written\n"));
+    }
+
+    #[test]
+    fn sanitize_arg_strips_newlines_that_would_inject_args() {
+        assert_eq!(sanitize_arg("Ferrari\n-execute\n"), "Ferrari -execute ");
+        assert_eq!(sanitize_arg("caption\r\nmore"), "caption  more");
+        assert_eq!(sanitize_arg("no newlines"), "no newlines");
     }
 
     #[test]

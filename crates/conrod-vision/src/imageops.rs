@@ -69,10 +69,10 @@ impl Gray {
         let factor_x = ((self.width as f64 / w as f64 / 2.0) as usize).max(1);
         let factor_y = ((self.height as f64 / h as f64 / 2.0) as usize).max(1);
         if factor_x > 1 || factor_y > 1 {
-            // ponytail: Pillow also widens the reduce box by the filter's
-            // support ("_get_safe_box"); this reduces the whole image and
-            // carries the fractional box. Differs by rounding at the edge
-            // only. Revisit if whole-frame scores drift from the fixtures.
+            // ponytail: reduces the whole image and carries the fractional
+            // box rather than widening it by the filter's support, so edge
+            // pixels round slightly differently. Revisit if whole-frame
+            // scores drift from the fixtures.
             let reduced = self.reduce(factor_x, factor_y);
             let bx = self.width as f64 / factor_x as f64;
             let by = self.height as f64 / factor_y as f64;

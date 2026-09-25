@@ -14,6 +14,8 @@ pub const SHARP_AT: f64 = 0.825;
 pub const BLURRED_BELOW: f64 = 0.606;
 /// Bumped whenever the focus scale is re-derived; see `load`.
 pub const FOCUS_SCALE: i64 = 3;
+/// Default Ollama endpoint, shared by every crate that talks to it.
+pub const DEFAULT_VLM_HOST: &str = "http://127.0.0.1:11434";
 
 /// `CONROD_HOME`, else `%USERPROFILE%\.conrod` -- deliberately not
 /// LOCALAPPDATA, which sandboxed hosts redirect into a per-app container.
@@ -160,7 +162,7 @@ impl Default for Settings {
             use_vlm: true,
             vlm_provider: "ollama".into(),
             vlm_model: "qwen2.5vl:7b".into(),
-            vlm_host: "http://127.0.0.1:11434".into(),
+            vlm_host: DEFAULT_VLM_HOST.into(),
             vlm_extra_hosts: String::new(),
             vlm_api_key: String::new(),
             anthropic_key_kind: "auto".into(),
@@ -261,7 +263,8 @@ impl Settings {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, serde_json::to_string_pretty(self).unwrap())
+        let text = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        std::fs::write(path, text)
     }
 
     /// Every configured Ollama host, the main one first, de-duplicated.

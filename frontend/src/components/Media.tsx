@@ -88,6 +88,7 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
 
   const root = useRef<HTMLDivElement>(null);
   const wheelTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (wheelTimer.current != null) window.clearTimeout(wheelTimer.current); }, []);
   const drag = useRef<{
     id: number;
     startX: number;

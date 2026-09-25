@@ -2,6 +2,7 @@
 use crate::analyze::{self, Context, Readers};
 use crate::desktop::{rows, Desktop, Result};
 use crate::setup;
+use crate::lock;
 use conrod_core::{
     analysis::VehicleAnalysis,
     keywords, models,
@@ -35,7 +36,7 @@ fn err(e: impl std::fmt::Display) -> String {
 pub(crate) const ML_ELIGIBLE: &str = "COALESCE(i.rejected,0)=0 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND (COALESCE(d.cull_reason,'')='' OR d.stars IS NOT NULL OR i.stars IS NOT NULL)";
 
 pub(crate) fn ml_eligible(d: &Desktop, id: i64) -> Result<bool> {
-    d.reader.lock().unwrap().query_row(
+    lock(&d.reader).query_row(
         &format!("SELECT EXISTS(SELECT 1 FROM detections d JOIN images i ON i.id=d.image_id WHERE d.id=? AND {ML_ELIGIBLE})"),
         [id], |r| r.get(0),
     ).map_err(err)
@@ -43,13 +44,12 @@ pub(crate) fn ml_eligible(d: &Desktop, id: i64) -> Result<bool> {
 pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
     crate::library::require_job(d, job)?; // "No such album", not a bare "Query returned no rows"
     let raw: Option<String> =
-        d.db.lock()
-            .unwrap()
+        lock(&d.db)
             .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
                 r.get(0)
             })
             .map_err(err)?;
-    let current = d.settings.lock().unwrap().clone();
+    let current = lock(&d.settings).clone();
     let mut s = raw
         .and_then(|s| serde_json::from_str(&s).ok())
         .map(|map| current.clone().apply(&map))
@@ -69,7 +69,7 @@ pub(crate) fn launch(
     let key = format!("{kind}:{job}");
     let flag = Arc::new(AtomicBool::new(false));
     {
-        let mut ops = d.operations.lock().unwrap();
+        let mut ops = lock(&d.operations);
         if ops.keys().any(|k| k.ends_with(&format!(":{job}"))) {
             return Err("This album already has a background operation".into());
         }
@@ -88,11 +88,14 @@ pub(crate) fn launch(
             Ok(Err(e)) => task.fail(e),
             Err(_) => task.fail("Worker stopped unexpectedly; this operation can be retried"),
         }
-        desktop.operations.lock().unwrap().remove(&operation);
+        lock(&desktop.operations).remove(&operation);
     });
     Ok(json!({"operation":key}))
 }
 fn wait_for_cull(d: &Desktop, stop: &AtomicBool, task: &conrod_core::tasks::Task) -> bool {
+    // ponytail: polls desktop state instead of blocking on a signal so the
+    // `stop` flag stays checkable every 200ms; a Condvar woken on both scan
+    // completion and cancellation would remove the poll if needed later.
     while !d.status()["activeJob"].is_null() {
         if stop.load(Ordering::Relaxed) {
             return false;
@@ -145,7 +148,7 @@ impl Run<'_> {
     /// Say a failure once: a vision model that is down would otherwise put one
     /// line per detection in the status log.
     fn report(&self, failure: String) {
-        if self.reported.lock().unwrap().insert(failure.clone()) {
+        if lock(&self.reported).insert(failure.clone()) {
             self.d
                 .hub
                 .start(format!("Identify: {failure}"), 0)
@@ -231,7 +234,7 @@ impl Run<'_> {
                 .transpose()?;
             let crop_path = self.d.root.join(format!("cache/native/crop-{id}.jpg"));
             crate::desktop::save_jpeg(&crop, &crop_path)?;
-            self.d.db.lock().unwrap().execute("UPDATE detections SET attributes=?,plate=?,plate_state=?,plate_conf=?,number=?,number_source=?,number_conf=?,embedding=?,colour_hex=?,crop_path=? WHERE id=? AND reviewed=0",params![serde_json::to_string(&analysis).map_err(err)?,analysis.plate,analysis.plate_state,analysis.plate_conf,analysis.race_number,analysis.number_source,analysis.number_conf,embedding,swatch,crop_path.to_string_lossy(),id]).map_err(err)?;
+            lock(&self.d.db).execute("UPDATE detections SET attributes=?,plate=?,plate_state=?,plate_conf=?,number=?,number_source=?,number_conf=?,embedding=?,colour_hex=?,crop_path=? WHERE id=? AND reviewed=0",params![serde_json::to_string(&analysis).map_err(err)?,analysis.plate,analysis.plate_state,analysis.plate_conf,analysis.race_number,analysis.number_source,analysis.number_conf,embedding,swatch,crop_path.to_string_lossy(),id]).map_err(err)?;
             self.advance(1);
         }
         Ok(())
@@ -277,7 +280,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             task.detail(format!("Prepared {faces} faces for name suggestions"));
             return Ok(());
         }
-        let pending = rows(&d.reader.lock().unwrap(), &format!("SELECT d.*,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND {ML_ELIGIBLE} ORDER BY i.id,d.id"), [job])?;
+        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND {ML_ELIGIBLE} ORDER BY i.id,d.id"), [job])?;
         if pending.is_empty() {
             crate::passes::embed_faces_missing(d, job, stop, task)?;
             task.detail("No kept subjects need identification");
@@ -356,7 +359,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             reported: &reported,
         };
         let fail = |e: String| {
-            failure.lock().unwrap().get_or_insert(e);
+            lock(&failure).get_or_insert(e);
         };
         std::thread::scope(|scope| {
             for _ in 0..identify_workers().min(frames.len().max(1)) {
@@ -375,7 +378,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
                         Some(Ok(e)) => Some(e),
                         None => None,
                     };
-                    while !stop.load(Ordering::Relaxed) && failure.lock().unwrap().is_none() {
+                    while !stop.load(Ordering::Relaxed) && lock(&failure).is_none() {
                         let Some(frame) = frames.get(next.fetch_add(1, Ordering::Relaxed)) else {
                             break;
                         };
@@ -405,7 +408,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
 fn known_vehicles(d: &Desktop) -> Result<HashMap<String, KnownVehicle>> {
     let mut known = HashMap::new();
     let data = rows(
-        &d.db.lock().unwrap(),
+        &lock(&d.db),
         "SELECT * FROM known_vehicles ORDER BY plate",
         [],
     )?;
@@ -482,7 +485,7 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
             setup::ensure(&d.hub, stop, setup::WRITE)?;
         }
         let images = rows(
-            &d.db.lock().unwrap(),
+            &lock(&d.db),
             "SELECT * FROM images WHERE job_id=? AND status='done' ORDER BY id",
             [job],
         )?;
@@ -499,7 +502,7 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
             }
             let image = frame["id"].as_i64().ok_or("Invalid image id")?;
             let detections = rows(
-                &d.db.lock().unwrap(),
+                &lock(&d.db),
                 "SELECT * FROM detections WHERE image_id=?",
                 [image],
             )?;
@@ -555,8 +558,7 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
             if !result.ok {
                 return Err(format!("{}: {}", path.display(), result.message));
             }
-            d.db.lock()
-                .unwrap()
+            lock(&d.db)
                 .execute(
                     "UPDATE images SET written_at=unixepoch('now') WHERE id=?",
                     [image],

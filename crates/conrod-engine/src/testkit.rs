@@ -1,6 +1,7 @@
 //! A small library in a temp directory, for the tests of the album operations.
 use crate::desktop::Desktop;
 use conrod_core::settings::Settings;
+use crate::lock;
 use rusqlite::{params, types::FromSql, Connection, Params};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -24,7 +25,7 @@ impl Lib {
         let _ = std::fs::remove_dir_all(&root);
         let d = Desktop::open(root.clone()).unwrap();
         let job = conrod_store::create_job(
-            &d.db.lock().unwrap(),
+            &lock(&d.db),
             &root,
             Some("Test"),
             &json!(Settings::default()),
@@ -46,7 +47,7 @@ impl Lib {
     }
 
     pub fn db(&self) -> MutexGuard<'_, Connection> {
-        self.d().db.lock().unwrap()
+        lock(&self.d().db)
     }
 
     pub fn sql(&self, sql: &str, args: impl Params) {
@@ -83,7 +84,7 @@ impl Lib {
     /// Wait for the album's background operation to end.
     pub fn wait_idle(&self) {
         for _ in 0..400 {
-            if self.d().operations.lock().unwrap().is_empty() {
+            if lock(&self.d().operations).is_empty() {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(25));

@@ -1034,8 +1034,7 @@ const NULLISH: [&str; 10] = [
 /// `str(value)` on whatever a JSON reply put in a field. Strings, numbers,
 /// bools and null map exactly onto Python's `str()`.
 ///
-/// ponytail: an array or object value takes JSON's own text form rather
-/// than Python's `repr`-flavoured one (`{'a': 1}` vs `{"a":1}`). The schema
+/// ponytail: an array or object value becomes its JSON text. The schema
 /// declares every one of these fields as a plain string or null, so a model
 /// sending a list here is already off-contract; upgrade only if a real
 /// reply is ever seen doing it.
@@ -1082,10 +1081,8 @@ fn text_list(value: Option<&Value>) -> Vec<String> {
 
 /// Port of `vlm._digits`.
 ///
-/// ponytail: Python's `str.isdigit()` also accepts Unicode digits (e.g.
-/// full-width or Devanagari digits); this keeps only ASCII ones. A race
-/// number read off a car in these events is always ASCII, so widening this
-/// is not worth it until a reply proves otherwise.
+/// ponytail: ASCII digits only. A race number read off a car is always
+/// ASCII; widen if a reply proves otherwise.
 fn digits(value: Option<&Value>, settings: &Settings) -> Option<String> {
     let text = text(value)?;
     let token: String = text.chars().filter(char::is_ascii_digit).collect();
@@ -1096,6 +1093,10 @@ fn digits(value: Option<&Value>, settings: &Settings) -> Option<String> {
         return None;
     }
     if let Ok(y) = token.parse::<u32>() {
+        // ponytail: filters out a year the VLM misread as a race number
+        // (e.g. a car's windshield date sticker). 1900-2099 covers every
+        // plausible photo date for this app's lifetime; raise the ceiling
+        // only once a real event is still shooting past 2099.
         if (1900..=2099).contains(&y) {
             return None;
         }

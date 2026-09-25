@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Conrod",
-  "version": "1.0.0-beta.5",
   "identifier": "com.kapsikkum.conrod",
   "build": {
     "frontendDist": "../../frontend/dist",
