@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use crate::lock;
 
 pub const DEFAULT_INTERVAL: f64 = 60.0;
 /// Where a watch is remembered in `settings.json` (the Python app's key and field
@@ -54,14 +55,14 @@ impl Watching {
 }
 
 pub fn status(d: &Desktop) -> Value {
-    json!(d.watching.lock().unwrap().status)
+    json!(lock(&d.watching).status)
 }
 
 /// Turn folder monitoring on or off.
 pub fn set(d: &Arc<Desktop>, a: &WatchArgs) -> Result<Value, String> {
     if !a.active {
         {
-            let mut w = d.watching.lock().unwrap();
+            let mut w = lock(&d.watching);
             w.stop();
             w.status = WatchStatus::default();
         }
@@ -74,8 +75,7 @@ pub fn set(d: &Arc<Desktop>, a: &WatchArgs) -> Result<Value, String> {
     // The folder defaults to the album's own, so the UI need only say which album.
     let root: Option<String> = d
         .reader
-        .lock()
-        .unwrap()
+        .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
         .query_row("SELECT root FROM jobs WHERE id=?", [job], |r| r.get(0))
         .optional()
         .map_err(|e| e.to_string())?;
@@ -105,7 +105,7 @@ pub fn set(d: &Arc<Desktop>, a: &WatchArgs) -> Result<Value, String> {
     let recursive = a.recursive.unwrap_or(true);
     start(d, folder.clone(), job, recursive, interval);
     {
-        let mut settings = d.settings.lock().unwrap();
+        let mut settings = lock(&d.settings);
         // Remembered so a watch survives closing the app: the copy is still
         // running and Conrod is not.
         settings.extra.insert(
@@ -121,7 +121,7 @@ pub fn set(d: &Arc<Desktop>, a: &WatchArgs) -> Result<Value, String> {
 
 /// Resume the watch the last session left on. An album that is gone ends it.
 pub fn restore(d: &Arc<Desktop>) {
-    let saved = d.settings.lock().unwrap().extra.get(SETTING).cloned();
+    let saved = lock(&d.settings).extra.get(SETTING).cloned();
     let Some(saved) = saved else { return };
     let (Some(path), Some(job)) = (saved["path"].as_str(), saved["job_id"].as_i64()) else {
         return forget(d);
@@ -148,7 +148,7 @@ fn start(d: &Arc<Desktop>, folder: PathBuf, job: i64, recursive: bool, interval:
         let (d, stop, folder) = (d.clone(), stop.clone(), folder.clone());
         std::thread::spawn(move || run(d, Watcher::new(folder, recursive), job, interval, stop))
     };
-    let mut w = d.watching.lock().unwrap();
+    let mut w = lock(&d.watching);
     w.stop(); // one loop per folder: two would both try to resume the same album
     w.running = Some((stop, handle.thread().clone()));
     w.status = WatchStatus {
@@ -167,7 +167,7 @@ fn start(d: &Arc<Desktop>, folder: PathBuf, job: i64, recursive: bool, interval:
 /// Take a watch out of `settings.json` as well as out of memory. Otherwise it comes
 /// straight back on the next launch, rescanning an album that is long gone.
 fn forget(d: &Desktop) {
-    let mut settings = d.settings.lock().unwrap();
+    let mut settings = lock(&d.settings);
     if settings.extra.remove(SETTING).is_some() {
         let _ = settings.save(&d.root.join("settings.json"));
     }
@@ -176,8 +176,7 @@ fn forget(d: &Desktop) {
 fn album_exists(d: &Desktop, job: i64) -> bool {
     match d
         .reader
-        .lock()
-        .unwrap()
+        .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
         .query_row("SELECT 1 FROM jobs WHERE id=?", [job], |_| Ok(()))
         .optional()
     {
@@ -190,7 +189,7 @@ fn album_exists(d: &Desktop, job: i64) -> bool {
 
 /// The frames an album already holds, in the watcher's spelling.
 fn known(d: &Desktop, job: i64) -> HashSet<String> {
-    let db = d.reader.lock().unwrap();
+    let db = lock(&d.reader);
     let Ok(mut stmt) = db.prepare("SELECT path FROM images WHERE job_id=?") else {
         return HashSet::new();
     };
@@ -206,7 +205,7 @@ fn known(d: &Desktop, job: i64) -> HashSet<String> {
 /// Apply `change` to the public status, but only while `stop` is still the current
 /// watch: a loop that was turned off must not write over its successor.
 fn update(d: &Desktop, stop: &Arc<AtomicBool>, change: impl FnOnce(&mut WatchStatus)) {
-    let mut w = d.watching.lock().unwrap();
+    let mut w = lock(&d.watching);
     if w.running
         .as_ref()
         .is_some_and(|(flag, _)| Arc::ptr_eq(flag, stop))
@@ -238,7 +237,7 @@ fn run(d: Arc<Desktop>, mut watcher: Watcher, job: i64, interval: f64, stop: Arc
         // started once a minute for ever. A watch with nothing to add to is
         // finished, not idle.
         if !album_exists(&d, job) {
-            let mut w = d.watching.lock().unwrap();
+            let mut w = lock(&d.watching);
             if w.running
                 .as_ref()
                 .is_some_and(|(flag, _)| Arc::ptr_eq(flag, &stop))
@@ -290,7 +289,7 @@ fn run(d: Arc<Desktop>, mut watcher: Watcher, job: i64, interval: f64, stop: Arc
 }
 
 fn add(d: &Desktop, job: i64, found: &[PathBuf]) -> Result<(), String> {
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
     conrod_store::add_images(&tx, job, found).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())

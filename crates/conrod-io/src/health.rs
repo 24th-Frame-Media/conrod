@@ -46,7 +46,7 @@ pub fn vision(settings: &Settings, enabled: bool) -> Value {
 pub fn ollama_models(host: &str) -> Value {
     let host = host.trim();
     let host_str = if host.is_empty() {
-        "http://127.0.0.1:11434"
+        conrod_core::settings::DEFAULT_VLM_HOST
     } else {
         host
     };

@@ -611,13 +611,15 @@ pub fn create_job(
     let label = label
         .map(str::to_string)
         .or_else(|| root.file_name().map(|n| n.to_string_lossy().into_owned()));
+    let settings_json =
+        serde_json::to_string(settings).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     conn.execute(
         "INSERT INTO jobs (root, label, created_at, settings_json) VALUES (?,?,?,?)",
         (
             root.to_string_lossy().as_ref(),
             label,
             now_unix(),
-            serde_json::to_string(settings).unwrap(),
+            settings_json,
         ),
     )?;
     Ok(conn.last_insert_rowid())
@@ -837,7 +839,8 @@ pub fn set_analysis(
     sharpness: Option<f64>,
     sharpness_verdict: Option<&str>,
 ) -> Result<()> {
-    let attributes = serde_json::to_string(&analysis.attributes).unwrap();
+    let attributes = serde_json::to_string(&analysis.attributes)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     conn.execute(
         "UPDATE detections
               SET number=?, number_source=?, number_conf=?,
@@ -1075,9 +1078,11 @@ pub fn update_detection_review(
         conn.execute("UPDATE detections SET plate=? WHERE id=?", (plate, det_id))?;
     }
     if let Some(attributes) = attributes {
+        let attributes = serde_json::to_string(attributes)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         conn.execute(
             "UPDATE detections SET attributes=? WHERE id=?",
-            (serde_json::to_string(attributes).unwrap(), det_id),
+            (attributes, det_id),
         )?;
     }
     if let Some(rejected) = rejected {
@@ -1148,9 +1153,13 @@ pub fn set_detection_measurement(
     heuristic: Option<f64>,
     region_type: Option<&str>,
 ) -> Result<bool> {
+    let features = features
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     Ok(conn.execute(
         "UPDATE detections SET features=?, heuristic=?, region_type=COALESCE(?, region_type) WHERE id=?",
-        (features.map(|f| serde_json::to_string(f).unwrap()), heuristic, region_type, det_id),
+        (features, heuristic, region_type, det_id),
     )? != 0)
 }
 
@@ -1211,7 +1220,9 @@ pub fn add_sharpness_label(
 ) -> Result<()> {
     let features_json = features
         .filter(|f| !f.is_empty())
-        .map(|f| serde_json::to_string(f).unwrap());
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     conn.execute(
         "INSERT OR REPLACE INTO sharpness_labels
                (path, x1, y1, x2, y2, stars, pan, heur_pan, features,

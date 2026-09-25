@@ -35,8 +35,8 @@ pub fn casefold(text: &str) -> String {
 
 /// `str.isdigit()` for one character.
 ///
-/// ponytail: ASCII only. Python also accepts other scripts' digits and
-/// superscripts; race numbers are ASCII in practice. Widen if one turns up.
+/// ponytail: ASCII only; race numbers are ASCII in practice. Widen if a
+/// non-ASCII one turns up.
 pub fn is_digit(c: char) -> bool {
     c.is_ascii_digit()
 }

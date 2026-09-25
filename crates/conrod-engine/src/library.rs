@@ -6,6 +6,7 @@ use crate::desktop::{rows, Desktop, Result};
 use rusqlite::params;
 use serde_json::{json, Map, Value};
 use std::path::Path;
+use crate::lock;
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -14,7 +15,7 @@ fn err(e: impl std::fmt::Display) -> String {
 /// A readable error, rather than SQLite's, for an album that is not there.
 pub(crate) fn require_job(d: &Desktop, job: i64) -> Result<()> {
     let found = rows(
-        &d.reader.lock().unwrap(),
+        &lock(&d.reader),
         "SELECT id FROM jobs WHERE id=?",
         [job],
     )?;
@@ -28,8 +29,7 @@ pub(crate) fn require_job(d: &Desktop, job: i64) -> Result<()> {
 pub fn rename_job(d: &Desktop, a: &RenameArgs) -> Result<Value> {
     let label = a.label.as_deref().map(str::trim).filter(|l| !l.is_empty());
     let changed =
-        d.db.lock()
-            .unwrap()
+        lock(&d.db)
             .execute(
                 "UPDATE jobs SET label=? WHERE id=?",
                 params![label, a.job_id],
@@ -43,7 +43,7 @@ pub fn rename_job(d: &Desktop, a: &RenameArgs) -> Result<Value> {
 
 pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Value> {
     require_job(d, a.job_id)?;
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let current_raw: Option<String> = db
         .query_row(
             "SELECT settings_json FROM jobs WHERE id=?",
@@ -85,7 +85,7 @@ pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
     let settings = crate::operations::settings(d, job)?;
     let mapping = crate::catalog::mapping(&settings)?;
     let threshold = settings.ocr_accept_confidence;
-    let db = d.reader.lock().unwrap();
+    let db = lock(&d.reader);
     let album = rows(&db, "SELECT * FROM jobs WHERE id=?", [job])?
         .into_iter()
         .next()
@@ -154,7 +154,7 @@ pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
 /// is still on disk, else the thumbnail of its best-rated frame.
 pub fn cover(d: &Desktop, job: i64) -> Result<Value> {
     require_job(d, job)?;
-    let db = d.reader.lock().unwrap();
+    let db = lock(&d.reader);
     let candidates = |sql: &str, column: &str| -> Result<Option<String>> {
         Ok(rows(&db, sql, [job])?
             .iter()
@@ -180,10 +180,10 @@ pub fn cover(d: &Desktop, job: i64) -> Result<Value> {
 /// Index-only and older libraries acquire thumbnails without invoking detection.
 pub fn filling(d: &std::sync::Arc<Desktop>, job: i64) -> Result<Value> {
     require_job(d, job)?;
-    if d.scanning() || !d.operations.lock().unwrap().is_empty() {
+    if d.scanning() || !lock(&d.operations).is_empty() {
         return Ok(d.status());
     }
-    let todo = rows(&d.reader.lock().unwrap(), "SELECT id,path FROM images WHERE job_id=? AND thumb_path IS NULL AND error IS NULL ORDER BY id", [job])?;
+    let todo = rows(&lock(&d.reader), "SELECT id,path FROM images WHERE job_id=? AND thumb_path IS NULL AND error IS NULL ORDER BY id", [job])?;
     if todo.is_empty() {
         return Ok(d.status());
     }
@@ -200,8 +200,7 @@ pub fn filling(d: &std::sync::Arc<Desktop>, job: i64) -> Result<Value> {
                     .orient(raw.orientation);
                 let output = d.root.join(format!("cache/native/thumb-{id}.jpg"));
                 crate::desktop::save_jpeg(&crate::thumbnail(&rgb), &output)?;
-                d.db.lock()
-                    .unwrap()
+                lock(&d.db)
                     .execute(
                         "UPDATE images SET thumb_path=?,width=?,height=? WHERE id=?",
                         params![
@@ -215,8 +214,7 @@ pub fn filling(d: &std::sync::Arc<Desktop>, job: i64) -> Result<Value> {
                 Ok(())
             })();
             if let Err(e) = result {
-                d.db.lock()
-                    .unwrap()
+                lock(&d.db)
                     .execute("UPDATE images SET error=? WHERE id=?", params![e, id])
                     .map_err(err)?;
             }

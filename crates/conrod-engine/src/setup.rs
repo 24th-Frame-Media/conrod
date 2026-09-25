@@ -5,6 +5,7 @@
 
 use crate::desktop::Desktop;
 use conrod_core::models;
+use crate::lock;
 use conrod_core::tasks::TaskHub;
 use conrod_io::assets::{self, Asset};
 use serde_json::{json, Value};
@@ -120,7 +121,7 @@ pub fn install_missing(d: &Arc<Desktop>) -> Result<Value, String> {
     let key = "Installing models".to_string();
     let flag = Arc::new(AtomicBool::new(false));
     {
-        let mut ops = d.operations.lock().unwrap();
+        let mut ops = lock(&d.operations);
         if ops.contains_key(&key) {
             return Err("Models are already being installed".into());
         }
@@ -132,7 +133,7 @@ pub fn install_missing(d: &Arc<Desktop>) -> Result<Value, String> {
         let ids = everything();
         let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
         let _ = ensure(&desktop.hub, &flag, &ids);
-        desktop.operations.lock().unwrap().remove(&operation);
+        lock(&desktop.operations).remove(&operation);
     });
     Ok(json!({"operation": key}))
 }

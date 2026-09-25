@@ -15,6 +15,7 @@ use crate::desktop::{rows, Desktop, Result};
 use crate::library::require_job;
 use crate::operations::{launch, settings};
 use crate::passes::{pick_of_pass, region_name};
+use crate::lock;
 use conrod_core::{
     framing,
     profile::{ScanProfile, Subject},
@@ -149,7 +150,7 @@ struct Frame {
 }
 
 fn write(d: &Desktop, batch: &[(i64, Outcome)]) -> Result<()> {
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     for (id, o) in batch {
         tx.execute(
@@ -165,7 +166,7 @@ fn run(d: &Desktop, job: i64, cfg: &Settings, stop: &AtomicBool, task: &Task) ->
     let models = load_models(d);
     let profile = ScanProfile::parse(&cfg.scan_profile);
     let found = rows(
-        &d.reader.lock().unwrap(),
+        &lock(&d.reader),
         "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.features, d.heuristic, d.panning, d.rating, i.width, i.height, i.sharpness AS whole FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.id",
         [job],
     )?;
@@ -240,7 +241,7 @@ fn run(d: &Desktop, job: i64, cfg: &Settings, stop: &AtomicBool, task: &Task) ->
 
     // The frame's own rating, from the subject the profile rates it by.
     {
-        let db = d.db.lock().unwrap();
+        let db = lock(&d.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         for (image, frame) in &frames {
             let rating = profile
@@ -260,7 +261,7 @@ fn run(d: &Desktop, job: i64, cfg: &Settings, stop: &AtomicBool, task: &Task) ->
         tx.commit().map_err(err)?;
     }
     // The stars have moved, so the keeper of a pass may have moved with them.
-    let picked = pick_of_pass(&d.db.lock().unwrap(), job, profile)?;
+    let picked = pick_of_pass(&lock(&d.db), job, profile)?;
     task.detail(format!(
         "Re-measured {} subjects: {changed} changed, {skipped} could not be (no stored features); {} keepers",
         found.len() - skipped,

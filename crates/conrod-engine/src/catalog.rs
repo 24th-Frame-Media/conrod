@@ -1,5 +1,6 @@
 //! Entry lists and the cross-album vehicle registry.
 use crate::desktop::{rows, Desktop, Result};
+use crate::lock;
 use conrod_core::{
     mapping::NumberMap,
     registry::{self, Member, Reading, Row},
@@ -30,7 +31,7 @@ fn put(db: &Connection, r: &Row) -> Result<()> {
 pub fn export(d: &Desktop) -> Result<Value> {
     Ok(json!(registry::to_csv(
         &rows(
-            &d.reader.lock().unwrap(),
+            &lock(&d.reader),
             "SELECT * FROM known_vehicles ORDER BY plate",
             []
         )?
@@ -41,7 +42,7 @@ pub fn export(d: &Desktop) -> Result<Value> {
 }
 pub fn import(d: &Desktop, csv: &str) -> Result<Value> {
     let (incoming, skipped) = registry::parse_csv(csv)?;
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     for r in &incoming {
         let existing = rows(
@@ -60,7 +61,7 @@ pub fn seed(d: &Desktop, job: Option<i64>) -> Result<Value> {
     if let Some(job) = job {
         crate::library::require_job(d, job)?;
     }
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     let found = rows(&tx, "SELECT d.*,i.job_id FROM detections d JOIN images i ON i.id=d.image_id WHERE (?1 IS NULL OR i.job_id=?1) AND d.plate IS NOT NULL AND d.plate!='' AND d.attributes IS NOT NULL ORDER BY d.id", [job])?;
     let mut cars: BTreeMap<(i64, String), Vec<Member>> = BTreeMap::new();
@@ -212,7 +213,7 @@ pub fn entries(d: &Desktop, text: &str) -> Result<Value> {
             .as_nanos()
     ));
     std::fs::write(&path, text).map_err(err)?;
-    let mut settings = d.settings.lock().unwrap();
+    let mut settings = lock(&d.settings);
     settings.extra.insert("map_path".into(), json!(path));
     settings.save(&d.root.join("settings.json")).map_err(err)?;
     Ok(json!({"path": path, "count": map.len()}))
@@ -239,7 +240,7 @@ mod tests {
         assert!(text.as_str().unwrap().contains("Ford,Falcon"));
         let out = entries(lib.d(), "number,driver\n07,Alex\n").unwrap();
         assert_eq!(out["count"], 1);
-        let map = mapping(&lib.d().settings.lock().unwrap()).unwrap().unwrap();
+        let map = mapping(&lock(&lib.d().settings)).unwrap().unwrap();
         assert!(map.keywords_for("7", "").contains(&"Alex".into()));
         assert!(entries(lib.d(), "driver\nAlex\n").is_err());
     }

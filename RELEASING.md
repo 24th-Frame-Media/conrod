@@ -38,8 +38,9 @@ Licences are recorded per asset in `assets.json`; ExifTool's own licence files s
 
 ## Cut a beta
 
-1. Bump the version in **three** places: `Cargo.toml` (`[workspace.package]`),
-   `crates/conrod-app/tauri.conf.json`, `frontend/package.json` (and `package-lock.json`).
+1. Bump the version: `Cargo.toml`'s `[workspace.package] version` is the single source of truth (Tauri and
+   the frontend package both omit `version` and fall back to it). Run `node scripts/release.mjs --beta` (or
+   `--patch`/`--minor`/`--major`/`--set X.Y.Z`, add `--tag` to commit and tag) rather than editing it by hand.
    `node scripts/check-version.mjs` must pass; CI runs it too. The native line continues above the Python
    app's 0.8.x, so the betas are `1.0.0-beta.N` and the first stable release is `1.0.0`.
 2. On `main`, `git tag v1.0.0-beta.1 && git push origin v1.0.0-beta.1`.

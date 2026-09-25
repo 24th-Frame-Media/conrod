@@ -2,6 +2,7 @@
 //! scans stay here; the frontend receives data, never arbitrary SQL or paths.
 use crate::commands::{Command, KnownArgs, MarkArgs, ScanArgs};
 use crate::{FrameResult, Scan};
+use crate::lock;
 use conrod_core::{
     profile::{ScanProfile, ShootPreset},
     settings::Settings,
@@ -100,12 +101,11 @@ impl Desktop {
     }
     /// Whether closing the window should leave Conrod running in the tray.
     pub fn close_to_tray(&self) -> bool {
-        self.settings.lock().unwrap().close_to_tray
+        lock(&self.settings).close_to_tray
     }
     pub fn scanning(&self) -> bool {
         self.active
-            .lock()
-            .unwrap()
+            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
             .is_some_and(|(_, scan)| !scan.is_finished() || self.finishing.load(Ordering::Acquire))
     }
@@ -155,10 +155,10 @@ impl Desktop {
     pub fn run(self: &Arc<Self>, command: Command) -> Result<Value> {
         match command {
             Command::Bootstrap {} => Ok(
-                json!({"settings": *self.settings.lock().unwrap(), "jobs": self.jobs()?, "models": self.models(), "status": self.status()}),
+                json!({"settings": *lock(&self.settings), "jobs": self.jobs()?, "models": self.models(), "status": self.status()}),
             ),
             Command::Health {} => {
-                let settings = self.settings.lock().unwrap().clone();
+                let settings = lock(&self.settings).clone();
                 let mut models = self.models();
                 models
                     .as_array_mut()
@@ -185,7 +185,7 @@ impl Desktop {
                 crate::operations::write(self, a.job_id, a.dry_run, a.embed_in_raw)
             }
             Command::CancelOperation(k) => {
-                if let Some(flag) = self.operations.lock().unwrap().get(&k.key) {
+                if let Some(flag) = lock(&self.operations).get(&k.key) {
                     flag.store(true, Ordering::Relaxed);
                 }
                 Ok(Value::Null)
@@ -196,7 +196,7 @@ impl Desktop {
             Command::EditDetection(a) => crate::edits::edit_detection(self, &a),
             Command::Preview(a) => self.preview(a.image_id),
             Command::Known {} => Ok(json!(rows(
-                &self.reader.lock().unwrap(),
+                &lock(&self.reader),
                 "SELECT * FROM known_vehicles ORDER BY plate",
                 []
             )?)),
@@ -217,7 +217,7 @@ impl Desktop {
             Command::PickKeepers(a) => crate::passes::pick_keepers(self, a.job_id),
             Command::Group(a) => crate::passes::group(self, a.job_id),
             Command::Regroup(a) => {
-                let gap = self.settings.lock().unwrap().burst_gap;
+                let gap = lock(&self.settings).burst_gap;
                 let _ = self.regroup(a.job_id, gap);
                 crate::passes::group(self, a.job_id)
             }
@@ -240,7 +240,7 @@ impl Desktop {
             Command::OllamaModels(a) => {
                 let host = a
                     .host
-                    .unwrap_or_else(|| self.settings.lock().unwrap().vlm_host.clone());
+                    .unwrap_or_else(|| lock(&self.settings).vlm_host.clone());
                 Ok(conrod_io::health::ollama_models(&host))
             }
             Command::WatchStatus {} => Ok(crate::watching::status(self)),
@@ -250,14 +250,14 @@ impl Desktop {
 
     /// Pause, resume or stop whatever scan is running.
     fn control(&self, act: impl FnOnce(&Scan)) -> Result<Value> {
-        if let Some((_, scan)) = self.active.lock().unwrap().as_ref() {
+        if let Some((_, scan)) = lock(&self.active).as_ref() {
             act(scan);
         }
         Ok(self.status())
     }
 
     fn save_settings(&self, updates: &Map<String, Value>) -> Result<Value> {
-        let mut stored = self.settings.lock().unwrap();
+        let mut stored = lock(&self.settings);
         let next = stored.clone().apply(updates);
         if !(0.0..=1.0).contains(&next.detect_conf)
             || next.crop_min_edge < 1
@@ -273,15 +273,14 @@ impl Desktop {
     }
 
     fn delete_job(&self, job: i64) -> Result<Value> {
-        if self.active.lock().unwrap().as_ref().is_some_and(|(j, s)| {
+        if lock(&self.active).as_ref().is_some_and(|(j, s)| {
             *j == job && !s.is_finished() || self.finishing.load(Ordering::Acquire)
         }) {
             return Err("Stop the scan before removing its album".into());
         }
         let task = self.hub.start("Removing album from library", 0);
         self.db
-            .lock()
-            .unwrap()
+            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
             .execute("DELETE FROM jobs WHERE id=?", [job])
             .map_err(err)?;
         task.finish();
@@ -293,7 +292,7 @@ impl Desktop {
         if plate.is_empty() {
             return Err("Plate is required".into());
         }
-        let db = self.db.lock().unwrap();
+        let db = lock(&self.db);
         if let Some(ref old) = a.old_plate {
             let old = old.trim();
             if !old.is_empty() && !old.eq_ignore_ascii_case(plate) {
@@ -310,8 +309,7 @@ impl Desktop {
 
     fn delete_known(&self, plate: &str) -> Result<Value> {
         self.db
-            .lock()
-            .unwrap()
+            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
             .execute("DELETE FROM known_vehicles WHERE plate=?", [plate])
             .map_err(err)?;
         Ok(Value::Null)
@@ -320,8 +318,7 @@ impl Desktop {
     fn delete_all_known(&self) -> Result<Value> {
         let removed = self
             .db
-            .lock()
-            .unwrap()
+            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
             .execute("DELETE FROM known_vehicles", [])
             .map_err(err)?;
         Ok(json!({"removed": removed}))
@@ -333,13 +330,13 @@ impl Desktop {
 
     pub fn status(&self) -> Value {
         let tasks: Vec<_> = self.hub.snapshot().iter().map(|t| json!({"id":t.id,"label":t.label,"detail":t.detail,"state":format!("{:?}",t.state).to_lowercase(),"done":t.done,"total":t.total,"elapsed":t.elapsed.as_secs_f64(),"eta":t.eta.map(|d|d.as_secs_f64()),"error":t.error})).collect();
-        let active = self.active.lock().unwrap();
-        let operations: Vec<_> = self.operations.lock().unwrap().keys().cloned().collect();
+        let active = lock(&self.active);
+        let operations: Vec<_> = lock(&self.operations).keys().cloned().collect();
         json!({"revision":self.hub.version(),"tasks":tasks,"log":self.hub.log(),"operations":operations,"activeJob":active.as_ref().filter(|(_,s)|!s.is_finished() || self.finishing.load(Ordering::Acquire)).map(|(j,_)|*j)})
     }
 
     fn jobs(&self) -> Result<Vec<Value>> {
-        let mut jobs = rows(&self.reader.lock().unwrap(), "SELECT j.*, (SELECT count(*) FROM images i WHERE i.job_id=j.id) AS total, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.status='done') AS done FROM jobs j ORDER BY j.id DESC", [])?;
+        let mut jobs = rows(&lock(&self.reader), "SELECT j.*, (SELECT count(*) FROM images i WHERE i.job_id=j.id) AS total, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.status='done') AS done FROM jobs j ORDER BY j.id DESC", [])?;
         for job in &mut jobs {
             if job["label"].as_str().is_none_or(|s| s.trim().is_empty()) {
                 job["label"] = json!(Path::new(job["root"].as_str().unwrap_or_default())
@@ -359,7 +356,7 @@ impl Desktop {
     }
 
     fn review(&self, job: i64) -> Result<Value> {
-        let db = self.reader.lock().unwrap();
+        let db = lock(&self.reader);
         // Only what the UI reads: `SELECT *` was 17 MB and 0.8 s for 4,808
         // frames, 3.6 MB of it the raw sharpness `features`.
         let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.burst_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, (SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id) AS burst_pick FROM images i WHERE job_id=? ORDER BY path",[job])?;
@@ -413,7 +410,7 @@ impl Desktop {
                 return Err("Stars must be 0–5 or null".into());
             }
         }
-        let db = self.db.lock().unwrap();
+        let db = lock(&self.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         if let Some(stars) = a.stars {
             tx.execute(
@@ -451,17 +448,17 @@ impl Desktop {
                 a.job_id.ok_or("Identify requires an existing album")?,
             );
         }
-        let mut active = self.active.lock().unwrap();
+        let mut active = lock(&self.active);
         if active
             .as_ref()
             .is_some_and(|(_, s)| !s.is_finished() || self.finishing.load(Ordering::Acquire))
         {
             return Err("A scan is already running".into());
         }
-        let mut settings = self.settings.lock().unwrap().clone();
+        let mut settings = lock(&self.settings).clone();
         let task = self.hub.start("Indexing album", 0);
         let (job, paths) = if let Some(job) = a.job_id {
-            let db = self.db.lock().unwrap();
+            let db = lock(&self.db);
             let stored: String = db
                 .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
                     r.get(0)
@@ -508,7 +505,7 @@ impl Desktop {
             if paths.is_empty() {
                 return Err("No CR2, CR3 or JPEG photos found in that folder".into());
             }
-            let db = self.db.lock().unwrap();
+            let db = lock(&self.db);
             let tx = db.unchecked_transaction().map_err(err)?;
             let job = conrod_store::create_job(&tx, &root, a.label.as_deref(), &json!(settings))
                 .map_err(err)?;
@@ -518,16 +515,14 @@ impl Desktop {
         };
         if a.stage == ScanStage::Index {
             self.db
-                .lock()
-                .unwrap()
+                .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
                 .execute("UPDATE jobs SET status='indexed' WHERE id=?", [job])
                 .map_err(err)?;
             task.finish();
             return Ok(json!({"jobId": job}));
         }
         self.db
-            .lock()
-            .unwrap()
+            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
             .execute("UPDATE jobs SET status='scanning' WHERE id=?", [job])
             .map_err(err)?;
         task.finish();
@@ -541,8 +536,7 @@ impl Desktop {
             move |path| {
                 eligibility
                     .reader
-                    .lock()
-                    .unwrap()
+                    .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
                     .query_row(
                         "SELECT COALESCE(rejected,0)=0 FROM images WHERE job_id=? AND path=?",
                         params![job, path.to_string_lossy()],
@@ -557,7 +551,7 @@ impl Desktop {
                     }
                 }
                 Err((path, e)) => {
-                    let _ = desktop.db.lock().unwrap().execute(
+                    let _ = lock(&desktop.db).execute(
                         "UPDATE images SET status='error',error=? WHERE job_id=? AND path=?",
                         params![e, job, path.to_string_lossy()],
                     );
@@ -569,13 +563,18 @@ impl Desktop {
         let desktop = self.clone();
         let identify_after = a.stage == ScanStage::All;
         std::thread::spawn(move || {
+            // ponytail: polls an AtomicBool rather than joining a handle
+            // because `scan` has none to join -- its workers report through
+            // `finished`/`error`, not a thread we own here. A Condvar paired
+            // with that flag would remove the poll if the wakeup latency
+            // ever matters.
             while !scan.is_finished() {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
             let stopped = scan.stop.load(Ordering::Relaxed);
             let status = if stopped {
                 "stopped"
-            } else if scan.error.lock().unwrap().is_some() {
+            } else if lock(&scan.error).is_some() {
                 "error"
             } else {
                 "done"
@@ -585,7 +584,7 @@ impl Desktop {
                     desktop.hub.start("Grouping album", 0).fail(e);
                 }
             }
-            let db = desktop.db.lock().unwrap();
+            let db = lock(&desktop.db);
             let incomplete: i64 = db
                 .query_row(
                     "SELECT count(*) FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0",
@@ -623,8 +622,7 @@ impl Desktop {
     fn persist_frame(&self, job: i64, f: &FrameResult) -> Result<()> {
         let image: i64 = self
             .db
-            .lock()
-            .unwrap()
+            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
             .query_row(
                 "SELECT id FROM images WHERE job_id=? AND path=?",
                 params![job, f.path.to_string_lossy()],
@@ -635,7 +633,7 @@ impl Desktop {
         // the write lock, so sixteen workers do not queue behind each other for it.
         let thumb = self.root.join(format!("cache/native/thumb-{image}.jpg"));
         save_jpeg(&f.thumb, &thumb)?;
-        let db = self.db.lock().unwrap();
+        let db = lock(&self.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         tx.execute("DELETE FROM detections WHERE image_id=?", [image])
             .map_err(err)?;
@@ -650,7 +648,7 @@ impl Desktop {
 
     fn regroup(&self, job: i64, gap: f64) -> Result<()> {
         let task = self.hub.start("Grouping bursts", 0);
-        let db = self.db.lock().unwrap();
+        let db = lock(&self.db);
         let images = rows(
             &db,
             "SELECT id,path,camera,taken_at,rating FROM images WHERE job_id=? AND status='done'",
@@ -692,8 +690,7 @@ impl Desktop {
             let task = self.hub.start("Loading preview", 0);
             let path: String = self
                 .db
-                .lock()
-                .unwrap()
+                .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
                 .query_row("SELECT path FROM images WHERE id=?", [image], |r| r.get(0))
                 .map_err(err)?;
             let raw = conrod_io::raw::read(Path::new(&path))?;
@@ -727,7 +724,7 @@ mod tests {
             std::env::temp_dir().join(format!("conrod-known-{}-{}", std::process::id(), now()));
         let desktop = Desktop::open(root.clone()).unwrap();
         {
-            let db = desktop.db.lock().unwrap();
+            let db = lock(&desktop.db);
             db.execute(
                 "INSERT INTO known_vehicles(plate, updated_at) VALUES('ABC123', 1), ('XYZ789', 1)",
                 [],
@@ -741,8 +738,7 @@ mod tests {
         assert_eq!(
             desktop
                 .db
-                .lock()
-                .unwrap()
+                .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
                 .query_row("SELECT count(*) FROM known_vehicles", [], |row| row
                     .get::<_, i64>(0))
                 .unwrap(),
@@ -758,7 +754,7 @@ mod tests {
             std::env::temp_dir().join(format!("conrod-desktop-{}-{}", std::process::id(), now()));
         let desktop = Desktop::open(root.clone()).unwrap();
         let (job, image, detection) = {
-            let db = desktop.db.lock().unwrap();
+            let db = lock(&desktop.db);
             let job =
                 conrod_store::create_job(&db, &root, Some("Test"), &json!(Settings::default()))
                     .unwrap();
@@ -782,8 +778,7 @@ mod tests {
         assert_eq!(
             desktop
                 .db
-                .lock()
-                .unwrap()
+                .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
                 .query_row("SELECT stars FROM native_labels", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
@@ -792,8 +787,7 @@ mod tests {
         assert_eq!(
             desktop
                 .db
-                .lock()
-                .unwrap()
+                .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
                 .query_row("SELECT count(*) FROM sharpness_labels", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),

@@ -33,7 +33,7 @@ impl Default for Settings {
         Settings {
             vlm_provider: "ollama".into(),
             vlm_model: "qwen2.5vl:7b".into(),
-            vlm_host: "http://127.0.0.1:11434".into(),
+            vlm_host: conrod_core::settings::DEFAULT_VLM_HOST.into(),
             vlm_extra_hosts: String::new(),
             vlm_api_key: String::new(),
             anthropic_key_kind: "auto".into(),

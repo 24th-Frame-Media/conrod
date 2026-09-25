@@ -10,6 +10,7 @@ use conrod_io::update::{self, Version};
 use serde_json::{json, Value};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use crate::lock;
 
 const OPERATION: &str = "Updating Conrod";
 /// The release notes shown beside the button.
@@ -55,7 +56,7 @@ pub fn check(force: bool) -> Value {
 /// Download the newest installer and hand over to it. Returns at once; progress is
 /// the "Updating Conrod" task, and the app quits when the installer is running.
 pub fn install(d: &Arc<Desktop>) -> Result<Value, String> {
-    if d.scanning() || !d.operations.lock().unwrap().is_empty() {
+    if d.scanning() || !lock(&d.operations).is_empty() {
         return Err("Finish or stop current work before installing an update".into());
     }
     // Refuse before downloading 100 MB, not after.
@@ -67,7 +68,7 @@ pub fn install(d: &Arc<Desktop>) -> Result<Value, String> {
     }
     let flag = Arc::new(AtomicBool::new(false));
     {
-        let mut ops = d.operations.lock().unwrap();
+        let mut ops = lock(&d.operations);
         if ops.contains_key(OPERATION) {
             return Err("An update is already in progress".into());
         }
@@ -85,7 +86,7 @@ pub fn install(d: &Arc<Desktop>) -> Result<Value, String> {
             Ok(false) => task.finish(), // already up to date
             Err(e) => task.fail(e),
         }
-        desktop.operations.lock().unwrap().remove(OPERATION);
+        lock(&desktop.operations).remove(OPERATION);
     });
     Ok(json!({"operation": OPERATION}))
 }

@@ -18,7 +18,14 @@ use conrod_vision::sharpness;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Condvar;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+/// Lock, recovering the data instead of panicking if a prior holder
+/// panicked while holding it: a poisoned lock's data is still fine here,
+/// there's no invariant a partial write could have broken.
+pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 pub mod analyze;
 pub mod catalog;
@@ -271,7 +278,7 @@ pub fn cull_frame(
                 continue;
             }
             let crop = image.crop(x0, y0, x1.min(fw), y1.min(fh));
-            for face in detector.lock().unwrap().detect(&crop)? {
+            for face in lock(&detector).detect(&crop)? {
                 let face_box = [
                     face.bbox[0] + x0 as f64,
                     face.bbox[1] + y0 as f64,
@@ -392,7 +399,7 @@ pub struct Scan {
 
 impl Scan {
     pub fn pause(&self, paused: bool) {
-        *self.pause.0.lock().unwrap() = paused;
+        *lock(&self.pause.0) = paused;
         self.pause.1.notify_all();
     }
     pub fn cancel(&self) {
@@ -469,7 +476,7 @@ pub(crate) fn scan_files_filtered(
             needs.extend(setup::FACES);
         }
         if let Err(e) = setup::ensure(&hub, &flag, &needs) {
-            *failure.lock().unwrap() = Some(e.clone());
+            *lock(&failure) = Some(e.clone());
             loading.fail(format!("could not install the models: {e}"));
             return;
         }
@@ -479,12 +486,12 @@ pub(crate) fn scan_files_filtered(
                 Mutex::new(d)
             }
             Err(e) => {
-                *failure.lock().unwrap() = Some(e.clone());
+                *lock(&failure) = Some(e.clone());
                 loading.fail(format!("could not load the detector: {e}"));
                 return;
             }
         };
-        let device = detector.lock().unwrap().device;
+        let device = lock(&detector).device;
         let faces = if ShootPreset::parse(&settings.scan_profile).wants_faces() {
             let task = hub.start("Loading face detector", 0);
             match FaceDetector::load(&conrod_core::models::expected(conrod_core::models::FACES)) {
@@ -493,7 +500,7 @@ pub(crate) fn scan_files_filtered(
                     Some(Mutex::new(detector))
                 }
                 Err(e) => {
-                    *failure.lock().unwrap() = Some(e.clone());
+                    *lock(&failure) = Some(e.clone());
                     task.fail(e);
                     return;
                 }
@@ -520,7 +527,7 @@ pub(crate) fn scan_files_filtered(
         std::thread::scope(|s| {
             for _ in 0..workers {
                 s.spawn(|| loop {
-                    let mut paused = pausing.0.lock().unwrap();
+                    let mut paused = lock(&pausing.0);
                     while *paused && !flag.load(Ordering::Relaxed) {
                         task.paused(true);
                         paused = pausing

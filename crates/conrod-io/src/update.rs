@@ -257,6 +257,7 @@ pub fn choose_from_atom(
     current: &Version,
     allow_pre: bool,
     owner_repo: &str,
+    exists: &mut dyn FnMut(&str) -> bool,
     sums: &mut dyn FnMut(&str) -> Result<String, String>,
 ) -> Result<Option<Release>, String> {
     let best = entries
@@ -282,6 +283,15 @@ pub fn choose_from_atom(
     let sums_url = format!("https://github.com/{owner_repo}/releases/download/{tag}/{SUMS}");
     let installer_url =
         format!("https://github.com/{owner_repo}/releases/download/{tag}/{installer_name}");
+
+    // The Atom feed only gives us a title to build these URLs from; unlike
+    // the REST path's asset list, nothing here confirms the files actually
+    // exist. Fail closed rather than offer a 404.
+    if !exists(&installer_url) || !exists(&sums_url) {
+        return Err(format!(
+            "release {version} is missing its installer or {SUMS}, so it is not offered"
+        ));
+    }
 
     let text = sums(&sums_url)?;
     let sha256 = checksum_for(&text, &installer_name).ok_or_else(|| {
@@ -316,6 +326,21 @@ pub fn owner_repo_from_api(api: &str) -> Option<(&str, &str)> {
     let suffix = trimmed.strip_prefix("https://api.github.com/repos/")?;
     let (owner, repo) = suffix.split_once('/')?;
     Some((owner, repo))
+}
+
+/// Does `url` resolve to something (any non-error status)? Used to confirm
+/// an Atom-derived asset URL exists before offering it, since the feed gives
+/// us only a title to build the URL from, unlike the REST path's asset list.
+fn head_exists(url: &str) -> bool {
+    ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build()
+        .new_agent()
+        .head(url)
+        .header("User-Agent", "conrod-updater")
+        .call()
+        .is_ok_and(|resp| resp.status().as_u16() < 400)
 }
 
 fn get_text(url: &str) -> Result<String, String> {
@@ -420,11 +445,14 @@ pub fn latest_with_cache(
         if let Ok(xml) = get_text(&atom_url) {
             let entries = parse_atom_entries(&xml);
             let owner_repo = format!("{owner}/{repo}");
-            if let Ok(found) =
-                choose_from_atom(&entries, current, allow_pre, &owner_repo, &mut |u| {
-                    get_text(u)
-                })
-            {
+            if let Ok(found) = choose_from_atom(
+                &entries,
+                current,
+                allow_pre,
+                &owner_repo,
+                &mut head_exists,
+                &mut |u| get_text(u),
+            ) {
                 if let Ok(mut guard) = CACHE.lock() {
                     *guard = Some(CacheEntry {
                         checked_at: Instant::now(),
@@ -698,6 +726,7 @@ mod tests {
             &v("1.0.0-beta.3"),
             true,
             "kapsikkum/conrod",
+            &mut |_| true,
             &mut mock_sums,
         )
         .unwrap()
@@ -711,5 +740,28 @@ mod tests {
             found.installer.url,
             format!("https://github.com/kapsikkum/conrod/releases/download/v1.0.0-beta.4/{installer_name}")
         );
+    }
+
+    #[test]
+    fn atom_feed_fails_closed_when_asset_missing() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>v1.0.0-beta.4</title>
+    <content type="html">notes</content>
+  </entry>
+</feed>"#;
+        let entries = parse_atom_entries(xml);
+        let mut mock_sums = sums_for("Conrod-1.0.0-beta.4-win64-setup.exe");
+        let err = choose_from_atom(
+            &entries,
+            &v("1.0.0-beta.3"),
+            true,
+            "kapsikkum/conrod",
+            &mut |_| false,
+            &mut mock_sums,
+        )
+        .unwrap_err();
+        assert!(err.contains("not offered"));
     }
 }

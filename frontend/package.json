@@ -1,6 +1,5 @@
 {
   "name": "conrod-desktop",
-  "version": "1.0.0-beta.5",
   "private": true,
   "type": "module",
   "scripts": {

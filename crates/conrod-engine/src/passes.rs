@@ -6,6 +6,7 @@ use crate::desktop::{rows, Desktop, Result};
 use crate::edits::attributes_of;
 use crate::library::require_job;
 use crate::operations::{launch, ml_eligible, settings, ML_ELIGIBLE};
+use crate::lock;
 use conrod_core::{
     grouping, models,
     profile::{ScanProfile, Subject},
@@ -104,7 +105,7 @@ pub fn pick_keepers(d: &Desktop, job: i64) -> Result<Value> {
     require_job(d, job)?;
     let profile = ScanProfile::parse(&settings(d, job)?.scan_profile);
     let task = d.hub.start("Picking keepers", 0);
-    match pick_of_pass(&d.db.lock().unwrap(), job, profile) {
+    match pick_of_pass(&lock(&d.db), job, profile) {
         Ok(stats) => {
             task.detail(format!(
                 "{} keepers from {} frames across {} passes",
@@ -140,7 +141,7 @@ pub fn group(d: &Arc<Desktop>, job: i64) -> Result<Value> {
 /// there were any. Skips crops that have one, so it is safe to run again.
 fn embed_missing(d: &Desktop, job: i64, stop: &AtomicBool, task: &Task) -> Result<usize> {
     let todo = rows(
-        &d.reader.lock().unwrap(),
+        &lock(&d.reader),
         &format!("SELECT d.id, d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {ML_ELIGIBLE} AND d.crop_path IS NOT NULL AND (d.embedding IS NULL OR d.embedding='') AND COALESCE(d.region_type,'vehicle')='vehicle' ORDER BY d.id"),
         [job],
     )?;
@@ -171,7 +172,7 @@ fn embed_missing(d: &Desktop, job: i64, stop: &AtomicBool, task: &Task) -> Resul
             done += 1;
             task.progress(done as u64, todo.len() as u64);
         }
-        let db = d.db.lock().unwrap();
+        let db = lock(&d.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         for (id, packed) in found {
             tx.execute(
@@ -198,7 +199,7 @@ pub(crate) fn embed_faces_missing(
     task: &Task,
 ) -> Result<usize> {
     let todo = rows(
-        &d.reader.lock().unwrap(),
+        &lock(&d.reader),
         &format!("SELECT d.id,d.x1,d.y1,d.x2,d.y2,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'')='face' AND (d.embedding IS NULL OR d.embedding='') ORDER BY i.id,d.id"),
         [job],
     )?;
@@ -249,7 +250,7 @@ pub(crate) fn embed_faces_missing(
         found.push((id, packed, crop_path.to_string_lossy().into_owned()));
         task.progress((index + 1) as u64, todo.len() as u64);
     }
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     for (id, packed, crop_path) in &found {
         tx.execute(
@@ -286,7 +287,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
          WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'vehicle')='vehicle' \
          ORDER BY i.id, d.id"
     );
-    let found = rows(&d.reader.lock().unwrap(), &sql, [job])?;
+    let found = rows(&lock(&d.reader), &sql, [job])?;
     if found.is_empty() {
         return Ok((0, 0));
     }
@@ -388,7 +389,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         }
     }
     let profile = ScanProfile::parse(&settings(d, job)?.scan_profile);
-    let db = d.db.lock().unwrap();
+    let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     for (id, attrs, key, size, agreement, hex) in &writes {
         // group_colour_hex, never colour_hex: the per-frame sample is a
