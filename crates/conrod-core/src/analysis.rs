@@ -1,16 +1,14 @@
 //! What was read off one vehicle.
 //!
-//! Port of the `VehicleAnalysis` data model in `conrod/analyze.py`. Stored as
-//! JSON in `detections.attributes`, which also carries keys this struct does
-//! not own (grouping writes its own), so reading is tolerant: unknown keys are
-//! ignored and a value of the wrong type falls back to the default.
+//! Stored as JSON in `detections.attributes`, which also carries keys this
+//! struct does not own (grouping writes its own), so reading is tolerant:
+//! unknown keys are ignored and a value of the wrong type falls back to the
+//! default.
 //!
-//! Also carries `_merge_number` and `_corroborated`, the two pure decisions
-//! `analyze()` makes once its four readers have each had their turn. The
-//! readers themselves (plate detection, OCR, the vision model) are all IO and
-//! stay in Python.
+//! Also carries `merge_number` and `corroborated`, the two pure decisions
+//! made once the four readers (plate detection, OCR, the vision model) have
+//! each had their turn.
 
-use crate::py;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -65,7 +63,7 @@ impl Default for VehicleAnalysis {
     }
 }
 
-/// A Python-truthy string: present and not empty.
+/// A present, non-empty string.
 pub(crate) fn given(value: &Option<String>) -> Option<&str> {
     value.as_deref().filter(|s| !s.is_empty())
 }
@@ -149,9 +147,9 @@ impl VehicleAnalysis {
         let mut label = if !bits.is_empty() {
             bits.join(" ")
         } else if given(&self.plate).is_some() || given(&self.race_number).is_some() {
-            py::capitalize(&self.kind)
+            capitalize(&self.kind)
         } else {
-            format!("{}, not identified", py::capitalize(&self.kind))
+            format!("{}, not identified", capitalize(&self.kind))
         };
         if let Some(number) = given(&self.race_number) {
             label = format!("#{number} {label}");
@@ -160,8 +158,19 @@ impl VehicleAnalysis {
     }
 }
 
-/// A small (number, confidence, source) tuple -- `ocr.Reading` in
-/// `conrod/ocr.py`, which does IO to produce and so is not ported itself.
+/// First character upper, the rest lower.
+fn capitalize(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first
+            .to_uppercase()
+            .chain(chars.as_str().to_lowercase().chars())
+            .collect(),
+        None => String::new(),
+    }
+}
+
+/// A small (number, confidence, source) tuple: one reading OCR handed back.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OcrReading {
     pub number: Option<String>,
@@ -189,7 +198,7 @@ pub fn merge_number(
     ocr_accept_confidence: f64,
 ) -> (Option<String>, Option<String>, f64) {
     let ocr_number = given(&ocr_reading.number);
-    // An empty vlm_number is falsy in Python, same as an empty ocr number.
+    // Treat an empty vlm_number the same as a missing ocr number.
     let vlm_number = vlm_number.filter(|s| !s.is_empty());
     let source = if ocr_reading.source.is_empty() {
         "ocr".to_string()

@@ -1,13 +1,13 @@
-//! Port of `conrod/store.py`.
+//! Conrod's job store.
 //!
 //! A shoot is a *job*: a folder full of frames, each with zero or more
 //! detected vehicles, each of which may have a number. The database is what
 //! the review UI reads and writes, and what the XMP writer consumes at the
 //! end, so a run can be interrupted and resumed without redoing work.
 //!
-//! This opens the exact same `conrod.db` the Python app uses, with the same
-//! schema text, the same column-diffing migrations, and the same pragmas --
-//! a file this crate touches stays fully usable by Python afterwards.
+//! Existing users have a `conrod.db` created by the retired Python app; this
+//! crate opens those files too, applying the same column-adding migrations
+//! so an old database is upgraded in place rather than left behind.
 
 use conrod_core::bursts::Frame;
 use rusqlite::functions::FunctionFlags;
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS detections (
 
 -- Cars this photographer has already met, keyed by plate. Not scoped to a
 -- job: the point is that the same cars turn up at the same meets, so what
--- one album worked out is what the next one starts from. See registry.py.
+-- one album worked out is what the next one starts from.
 CREATE TABLE IF NOT EXISTS known_vehicles (
     plate       TEXT PRIMARY KEY,
     make        TEXT,
@@ -137,7 +137,7 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("detections", "group_agreement", "REAL"),
     ("detections", "colour_hex", "TEXT"),
     ("detections", "group_colour_hex", "TEXT"),
-    // Which body shot it and which burst it belongs to -- see bursts.py.
+    // Which body shot it and which burst it belongs to -- see conrod-core::bursts.
     ("images", "camera", "TEXT"),
     ("images", "burst_key", "INTEGER"),
     ("images", "taken_at", "REAL"),
@@ -198,7 +198,7 @@ fn now_unix() -> f64 {
         .as_secs_f64()
 }
 
-// --- paths, mirroring config.py's _data_root --------------------------------
+// --- paths -------------------------------------------------------------------
 
 /// Where the database (and everything else churny) lives. Deliberately NOT
 /// %LOCALAPPDATA%: a sandboxed or Store-packaged host redirects that into a
@@ -218,7 +218,7 @@ pub fn data_root() -> PathBuf {
     PathBuf::from(base).join(".conrod")
 }
 
-/// Path to the same `conrod.db` the Python app opens.
+/// Path to the job database, `conrod.db` under [`data_root`].
 pub fn db_path() -> PathBuf {
     data_root().join("conrod.db")
 }
@@ -226,9 +226,9 @@ pub fn db_path() -> PathBuf {
 // --- connecting --------------------------------------------------------------
 
 /// Which database files this process has already prepared (schema +
-/// migrations + WAL pragmas), keyed by the resolved path. Matches store.py's
-/// module-level `_prepared` set: those are writes, so doing them on every
-/// connection queued every request behind the analysis workers' write lock.
+/// migrations + WAL pragmas), keyed by the resolved path. Those are writes,
+/// so doing them on every connection would queue every request behind the
+/// analysis workers' write lock.
 fn prepared() -> &'static Mutex<HashSet<String>> {
     static PREPARED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     PREPARED.get_or_init(|| Mutex::new(HashSet::new()))
@@ -240,9 +240,9 @@ pub fn connect(path: Option<&Path>) -> Result<Connection> {
     let target = path.map(PathBuf::from).unwrap_or_else(db_path);
     let conn = Connection::open(&target)?;
     // Autocommit (rusqlite's default -- no BEGIN is ever issued here) is the
-    // point: Python's isolation_level=None avoided holding the single write
-    // lock for the whole of a multi-second analysis batch. Every statement
-    // below is its own transaction, which is what WAL is for.
+    // point: it avoids holding the single write lock for the whole of a
+    // multi-second analysis batch. Every statement below is its own
+    // transaction, which is what WAL is for.
     conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=30000;")?;
     register_needs_review(&conn)?;
 
@@ -276,19 +276,17 @@ fn migrate(conn: &Connection) -> Result<()> {
 }
 
 /// Open a connection, run `f`, and close it. Autocommit means every write in
-/// `f` is already durable by the time it returns; this exists for parity with
-/// store.py's `session()` context manager.
+/// `f` is already durable by the time it returns.
 pub fn session<T>(path: Option<&Path>, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
     let conn = connect(path)?;
     f(&conn)
 }
 
-// --- the `_needs_review` SQL function, from conrod/server.py ---------------
+// --- the `_needs_review` SQL function ----------------------------------------
 
 /// Register `_needs_review(number_conf, reviewed, rejected, uncertain,
-/// threshold)` on this connection, as `conrod/server.py` does on every
-/// connection it uses -- so a query written against the Python schema still
-/// runs unchanged here.
+/// threshold)` on this connection, so review queries can filter on it in SQL
+/// instead of pulling every row into Rust to check.
 pub fn register_needs_review(conn: &Connection) -> Result<()> {
     conn.create_scalar_function(
         "_needs_review",
@@ -577,11 +575,10 @@ fn sharpness_label_from_row(row: &Row<'_>) -> Result<SharpnessLabelRow> {
     })
 }
 
-/// What `set_analysis` stores against a detection -- the same fields
-/// `conrod.analyze.VehicleAnalysis` carries, plus its own JSON serialisation
-/// as `attributes` (kept as a JSON `Value` here rather than a fixed struct:
-/// the shape is still moving on the Python side, so this crate only knows it
-/// as a blob, exactly what the `attributes` column has always been).
+/// What `set_analysis` stores against a detection: the identifying fields
+/// plus `attributes`, the full vehicle analysis as JSON (kept as a `Value`
+/// rather than a fixed struct because that shape is still moving, and the
+/// `attributes` column has always been an opaque blob to this crate).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Analysis {
     pub race_number: Option<String>,
@@ -594,8 +591,8 @@ pub struct Analysis {
 }
 
 /// Parse a JSON column leniently: a malformed or absent value reads as
-/// absent rather than an error, matching every `json.loads(...)` the Python
-/// side wraps in a `try`/`except`.
+/// absent rather than an error, since a stale or hand-edited row should not
+/// take down a read.
 fn opt_json(text: Option<String>) -> Option<Value> {
     text.and_then(|t| serde_json::from_str(&t).ok())
 }
@@ -933,7 +930,7 @@ fn images_by_path_key(conn: &Connection, job_id: i64) -> Result<HashMap<String, 
 ///
 /// exiftool reports `SourceFile` with forward slashes and the database holds
 /// what Windows gave us, so comparing the strings directly matched nothing at
-/// all -- see `set_frame_origin` and `set_existing_marks` in store.py.
+/// all -- see `set_frame_origin` and `set_existing_marks` below.
 ///
 /// ponytail: does not resolve "." or ".." components. Every caller hands this
 /// an absolute path from exiftool or a directory walk, neither of which ever
@@ -959,11 +956,11 @@ fn path_key(path: &str) -> String {
     out.to_lowercase()
 }
 
-/// Everything known about the picture, as opposed to what is in it. Python's
-/// defaults: `panning = false`, `sharp_end = "even"`, `background = -1.0`,
-/// `uncertain = false`.
-// A direct port of store.py's keyword-argument setter; splitting it into a
-// builder or an options struct would be more code for the same one call site.
+/// Everything known about the picture, as opposed to what is in it. Defaults
+/// used elsewhere for an unmeasured detection: `panning = false`,
+/// `sharp_end = "even"`, `background = -1.0`, `uncertain = false`.
+// Kept as one keyword-style setter rather than a builder or options struct:
+// there's only this one call site.
 #[allow(clippy::too_many_arguments)]
 pub fn set_quality(
     conn: &Connection,
@@ -1045,8 +1042,8 @@ pub fn get_detection(conn: &Connection, det_id: i64) -> Result<Option<Detection>
     .optional()
 }
 
-/// Update fields a reviewer can change without requiring a Python
-/// `VehicleAnalysis` implementation in this crate.
+/// Update fields a reviewer can change without this crate needing its own
+/// copy of the full vehicle-analysis model.
 #[allow(clippy::too_many_arguments)]
 pub fn update_detection_review(
     conn: &Connection,

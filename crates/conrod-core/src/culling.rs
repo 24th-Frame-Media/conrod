@@ -1,13 +1,11 @@
 //! Respecting the cull.
 //!
-//! Port of `conrod/culling.py`. `read_culls` and `filter_frames` themselves
-//! stay out -- both are exiftool calls -- but their pure decision logic does
-//! not need a separate wrapper here: turning a raw tag row into a [`Cull`]
-//! is [`cull_from_tags`], and turning a [`Cull`] into a keep/skip verdict is
-//! [`Cull::passes`]. `filter_frames` itself is just those two calls run over
-//! a list and tallied, which needs no port of its own.
+//! Turning a raw exiftool tag row into a [`Cull`] is [`cull_from_tags`], and
+//! turning a [`Cull`] into a keep/skip verdict is [`Cull::passes`]. Reading
+//! the tags and filtering a whole file list is just those two calls run over
+//! a list and tallied, and needs nothing more here.
 
-use crate::py;
+use crate::text::{is_truthy, value_to_string};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
@@ -69,31 +67,29 @@ pub fn sidecar_for(image: &Path) -> PathBuf {
 fn to_float(value: &Value) -> Option<f64> {
     match value {
         Value::Number(n) => n.as_f64(),
-        Value::String(s) => py::float(s),
-        // float(True) == 1.0 in Python, since bool is an int subtype.
+        Value::String(s) => s.trim().parse().ok(),
         Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
         _ => None,
     }
 }
 
-/// Turn one exiftool tag row into a [`Cull`] -- the pure decision inside
-/// `read_culls`. `Rating` wins over `XMP:Rating` when both are present;
-/// anything that will not parse as a number is treated as unrated, exactly
-/// as Python's `except (TypeError, ValueError): value = 0` does.
+/// Turn one exiftool tag row into a [`Cull`]. `Rating` wins over `XMP:Rating`
+/// when both are present; anything that will not parse as a number is
+/// treated as unrated.
 pub fn cull_from_tags(row: &Map<String, Value>) -> Cull {
-    // `if rating is None: rating = row.get("XMP:Rating")` -- a *value* of
-    // JSON null falls through exactly like a missing key does.
+    // A *value* of JSON null falls through to `XMP:Rating` exactly like a
+    // missing key does.
     let rating = match row.get("Rating") {
         None | Some(Value::Null) => row.get("XMP:Rating"),
         some => some,
     };
-    // int(float(rating)): truncates toward zero, not the nearest star.
+    // Truncates toward zero, not the nearest star.
     let value = rating
         .and_then(to_float)
         .map(|f| f.trunc() as i32)
         .unwrap_or(0);
     let label = match row.get("Label") {
-        Some(v) if py::truthy(v) => py::str_of(v),
+        Some(v) if is_truthy(v) => value_to_string(v),
         _ => String::new(),
     };
     Cull {

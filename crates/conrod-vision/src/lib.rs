@@ -1,5 +1,6 @@
 //! Conrod's pixel work: Pillow- and OpenCV-exact image operations, the
-//! detector, and the sharpness measure. Checked against Python in `tests/`.
+//! detector, and the sharpness measure. Checked against recorded snapshots
+//! in `tests/`.
 
 pub mod colour;
 pub mod detect;

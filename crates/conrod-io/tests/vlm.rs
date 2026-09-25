@@ -66,7 +66,7 @@ fn sorted(mut pairs: Vec<(String, String)>) -> Vec<(String, String)> {
 }
 
 #[test]
-fn provider_requests_match_python_fixture() {
+fn provider_requests_match_recorded_fixture() {
     let payload = fixture();
     let images = vec!["b64img".to_string()];
     for case in payload["requests"].as_array().unwrap() {
@@ -105,7 +105,7 @@ fn provider_requests_match_python_fixture() {
 }
 
 #[test]
-fn provider_responses_match_python_fixture() {
+fn provider_responses_match_recorded_fixture() {
     let payload = fixture();
     for case in payload["responses"].as_array().unwrap() {
         let provider = case["provider"].as_str().unwrap();

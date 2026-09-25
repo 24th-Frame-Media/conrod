@@ -1,10 +1,8 @@
 //! Race number -> driver / team / class keywords, from an entry list CSV.
 //!
-//! Port of `conrod/mapping.py`. The CSV needs a number column; every other
-//! column becomes a keyword, so a two-column grid and a full entry list both
-//! load with no configuration.
+//! The CSV needs a number column; every other column becomes a keyword, so
+//! a two-column grid and a full entry list both load with no configuration.
 
-use crate::py;
 use std::collections::HashMap;
 
 /// Column names accepted as the number column, in order of preference.
@@ -47,7 +45,7 @@ impl NumberMap {
         for record in records {
             let record = record.map_err(|e| e.to_string())?;
             if record.len() == 1 && record.get(0) == Some("") {
-                continue; // a blank line, which Python's DictReader skips
+                continue; // a blank line -- nothing to read
             }
             // dict(zip(header, record)): a repeated column name keeps its
             // first position and its last value; surplus cells are dropped.
@@ -138,7 +136,7 @@ fn find_number_field(fields: &[String]) -> Option<&str> {
 
 /// "#07 " and "7" are the same competitor as far as lookup is concerned.
 pub fn canonical(value: &str) -> String {
-    let digits: String = value.chars().filter(|&c| py::is_digit(c)).collect();
+    let digits: String = value.chars().filter(char::is_ascii_digit).collect();
     let trimmed = digits.trim_start_matches('0');
     if trimmed.is_empty() {
         digits

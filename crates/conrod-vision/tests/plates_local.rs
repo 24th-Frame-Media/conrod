@@ -1,7 +1,7 @@
-//! The plate port against Python's `plates.scan_regions`, on real vehicle
+//! Plate reading checked against recorded snapshots, on real vehicle
 //! crops. Local-only: needs tools/gen_plates_local.py's fixture and the two
 //! ONNX models it depends on (open-image-models' and fast-plate-ocr's own
-//! caches -- present once the Python side has been run at least once).
+//! caches -- present once those tools have been run at least once).
 //!
 //! Plate text, state and the best roundel number are compared. The general OCR
 //! runs on PP-OCRv4 like the fixture (see tools/gen_plates_local.py); without
@@ -35,14 +35,14 @@ fn cache_dir() -> PathBuf {
     PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default()).join(".cache")
 }
 
-/// Python's `int(v)`: truncating, clamped at zero for a crop box.
+/// A truncating cast, clamped at zero for a crop box.
 fn trunc(v: f64) -> usize {
     (v as i64).max(0) as usize
 }
 
 #[test]
 #[ignore = "real photos: cargo test --release -p conrod-vision -- --ignored"]
-fn plate_text_matches_python_on_real_crops() {
+fn plate_text_matches_recorded_snapshot_on_real_crops() {
     let fixture_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/plates_local.json");
     let detector_model = cache_dir().join(
@@ -64,7 +64,7 @@ fn plate_text_matches_python_on_real_crops() {
     let mut detector = PlateDetector::load(&detector_model, Device::Cpu).unwrap();
     let mut reader = PlateReader::load(&reader_model, Device::Cpu).unwrap();
 
-    let (mut total, mut matched, mut state_ok, mut number_ok, mut python_numbers) = (0, 0, 0, 0, 0);
+    let (mut total, mut matched, mut state_ok, mut number_ok, mut snapshot_numbers) = (0, 0, 0, 0, 0);
     let mut mismatches = Vec::new();
 
     for case in fixture["cases"].as_array().unwrap() {
@@ -105,7 +105,7 @@ fn plate_text_matches_python_on_real_crops() {
         )
         .unwrap();
         let want_number = case["numbers"][0][0].as_str();
-        python_numbers += usize::from(want_number.is_some());
+        snapshot_numbers += usize::from(want_number.is_some());
         number_ok += usize::from(numbers.first().map(|n| n.0.as_str()) == want_number);
         state_ok += usize::from(reading.state.as_deref() == case["state"].as_str());
 
@@ -122,7 +122,7 @@ fn plate_text_matches_python_on_real_crops() {
     }
 
     eprintln!(
-        "plates on {total} crops: text {matched}, state {state_ok}, best roundel number {number_ok} (Python read one on {python_numbers})"
+        "plates on {total} crops: text {matched}, state {state_ok}, best roundel number {number_ok} (recorded snapshot read one on {snapshot_numbers})"
     );
     for mismatch in &mismatches {
         eprintln!("  mismatch: {mismatch}");

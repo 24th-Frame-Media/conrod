@@ -14,7 +14,7 @@ fn fixture() -> Value {
 }
 
 #[test]
-fn looks_like_plate_matches_python() {
+fn looks_like_plate_matches_recorded_snapshot() {
     for case in fixture()["looks_like_plate"].as_array().unwrap() {
         let token = case["token"].as_str().unwrap();
         assert_eq!(
@@ -26,7 +26,7 @@ fn looks_like_plate_matches_python() {
 }
 
 #[test]
-fn trim_to_format_matches_python() {
+fn trim_to_format_matches_recorded_snapshot() {
     for case in fixture()["trim_to_format"].as_array().unwrap() {
         let token = case["token"].as_str().unwrap();
         assert_eq!(
@@ -38,7 +38,7 @@ fn trim_to_format_matches_python() {
 }
 
 #[test]
-fn interpret_matches_python() {
+fn interpret_matches_recorded_snapshot() {
     let opts = PlateOptions::default();
     for case in fixture()["interpret"].as_array().unwrap() {
         let lines: Vec<(String, f64)> = case["lines"]

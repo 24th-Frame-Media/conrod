@@ -1,9 +1,8 @@
-//! Ridge regression, in the two flavours the app uses.
-//!
-//! Port of `conrod/sharp_model.py` (standardised hand-built features onto a
-//! one-to-five sharpness rating) and `conrod/taste.py` (unit embeddings onto
-//! the stars a photographer gives). Both are a linear model stored as a list of
-//! numbers, which is why the JSON a Python build wrote is read here unchanged.
+//! Ridge regression, in the two flavours the app uses: standardised
+//! hand-built features onto a one-to-five sharpness rating, and unit
+//! embeddings onto the stars a photographer gives. Both are a linear model
+//! stored as a list of numbers, so a model file trained once is read here
+//! unchanged regardless of which trainer produced it.
 
 use serde::{Deserialize, Serialize};
 
@@ -190,6 +189,7 @@ pub fn predict_taste(model: &TasteModel, vector: &[f64]) -> Option<i32> {
     }
     let (intercept, weights) = model.weights.split_last()?;
     let value: f64 = vector.iter().zip(weights).map(|(v, w)| v * w).sum::<f64>() + intercept;
-    // Python's round() is round-half-to-even.
+    // Round-half-to-even, matching the convention the model was trained
+    // against.
     Some(value.round_ties_even().clamp(1.0, 5.0) as i32)
 }

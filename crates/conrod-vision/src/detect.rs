@@ -1,11 +1,10 @@
 //! Finding vehicles and people in a frame.
 //!
-//! Port of `conrod/detect.py` on ONNX Runtime instead of ultralytics + torch.
-//! The model is YOLO11s exported by `tools/export_onnx.py`, whose numpy
-//! decoder was proven to reproduce ultralytics box for box; this follows it:
-//! rectangular letterbox (ultralytics' predict() sets rect=True), argmax over
-//! all 80 classes then the class filter, class-wise NMS, and ultralytics'
-//! rescale. Then detect.py's own rules: drop tiny boxes, drop boxes inside a
+//! Runs on ONNX Runtime instead of ultralytics + torch. The model is YOLO11s
+//! exported by `tools/export_onnx.py`, decoded to reproduce ultralytics box
+//! for box: rectangular letterbox (ultralytics' predict() sets rect=True),
+//! argmax over all 80 classes then the class filter, class-wise NMS, and
+//! ultralytics' rescale. Then a few of the app's own rules: drop tiny boxes, drop boxes inside a
 //! bigger one, keep the largest few, pad each into the crop to analyse.
 
 use crate::imageops::Rgb;
@@ -323,7 +322,7 @@ fn filter(
             crop_box: expand_box(bbox, width, height, options),
         })
         .collect();
-    // Largest first, stable, as Python's sort is.
+    // Largest first, stable sort so ties keep their detection order.
     found.sort_by(|a, b| b.area().total_cmp(&a.area()));
     let mut kept: Vec<Detection> = Vec::new();
     for det in found {

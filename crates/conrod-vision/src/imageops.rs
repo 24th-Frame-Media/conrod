@@ -37,9 +37,8 @@ impl Gray {
         Gray::new(width, height, data)
     }
 
-    /// Decode a file (PNG or JPEG) and convert it to greyscale the way the
-    /// Python side does: RGB first, then `convert("L")`. A greyscale file is
-    /// taken as it is.
+    /// Decode a file (PNG or JPEG) and convert it to greyscale: RGB first,
+    /// then Pillow's `convert("L")` luma. A greyscale file is taken as it is.
     pub fn open(path: &std::path::Path) -> image::ImageResult<Gray> {
         let img = image::open(path)?;
         Ok(match img {
@@ -440,9 +439,9 @@ impl Rgb {
         Rgb::new(self.width, self.height, data)
     }
 
-    /// Turn a frame upright per its EXIF orientation, the way the Python
-    /// scan baked it into the cached preview (3, 6 and 8; mirrored values are
-    /// left alone, as they were).
+    /// Turn a frame upright per its EXIF orientation, matching how the
+    /// cached preview bakes it in (3, 6 and 8; mirrored values are left
+    /// alone, as they were).
     pub fn orient(self, orientation: u16) -> Rgb {
         let (w, h) = (self.width, self.height);
         let (nw, nh) = match orientation {

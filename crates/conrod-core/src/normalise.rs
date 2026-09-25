@@ -1,17 +1,15 @@
 //! Settling a group's noisy readings into one canonical name.
 //!
-//! Port of `conrod/normalise.py`. `canonical()` itself is skipped: it makes a
-//! real HTTP call to a locally-installed vision model to arbitrate between
-//! readings, and that is out of scope here. What is ported is everything
-//! pure around it -- deciding whether the call is even needed
+//! Arbitrating between readings with a real call to a locally-installed
+//! vision model is out of scope here. What lives here is everything pure
+//! around it: deciding whether the call is even needed
 //! ([`settle_without_model`]), the key a pending call is cached under
 //! ([`cache_key`]), and the checking-back of the model's answer against what
-//! was actually read ([`reconcile`]), which is most of what `canonical()`
-//! does and the part that matters for correctness.
+//! was actually read ([`reconcile`]).
 
 use crate::analysis::given;
 use crate::marques;
-use crate::py;
+use crate::text::Tally;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -77,7 +75,7 @@ pub struct Canonical {
 }
 
 impl Canonical {
-    /// `bool(canonical)`: true once either half of an identity is filled in.
+    /// True once either half of an identity is filled in.
     pub fn is_truthy(&self) -> bool {
         given(&self.make).is_some() || given(&self.model).is_some()
     }
@@ -86,9 +84,7 @@ impl Canonical {
 /// What each frame's own reader said, one line per distinct reading,
 /// deduplicated and carrying how often each was seen.
 pub fn readings_of(members: &[Map<String, Value>]) -> Vec<Reading> {
-    // A reader's own text field, if it is a non-empty string -- the `member.get(...)
-    // or ""` chain in Python, minus the case where a non-string value would
-    // otherwise print as e.g. "None".
+    // A reader's own text field, if it is a non-empty string.
     let field = |member: &Map<String, Value>, key: &str| -> Option<String> {
         match member.get(key) {
             Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
@@ -96,8 +92,8 @@ pub fn readings_of(members: &[Map<String, Value>]) -> Vec<Reading> {
         }
     };
 
-    let mut counts: py::Counter<String> = py::Counter::new();
-    let mut forms: HashMap<String, py::Counter<(String, String)>> = HashMap::new();
+    let mut counts: Tally<String> = Tally::new();
+    let mut forms: HashMap<String, Tally<(String, String)>> = HashMap::new();
     for member in members {
         let mut make = field(member, "own_make")
             .or_else(|| field(member, "make"))
@@ -127,8 +123,8 @@ pub fn readings_of(members: &[Map<String, Value>]) -> Vec<Reading> {
     }
 
     let mut out = Vec::new();
-    for (k, total) in counts.most_common() {
-        let (make, model) = forms[&k].most_common()[0].0.clone();
+    for (k, total) in counts.ranked() {
+        let (make, model) = forms[&k].ranked()[0].0.clone();
         out.push(Reading {
             make,
             model,
@@ -163,7 +159,7 @@ pub fn observed(readings: &[Reading]) -> String {
 /// a tie, which is a real answer: nothing should be allowed to claim a win
 /// that was not won.
 pub fn plurality_make(readings: &[Reading]) -> Option<String> {
-    let mut tally: py::Counter<String> = py::Counter::new();
+    let mut tally: Tally<String> = Tally::new();
     let mut spelling: HashMap<String, String> = HashMap::new();
     for reading in readings {
         if !reading.stated {
@@ -186,7 +182,7 @@ pub fn plurality_make(readings: &[Reading]) -> Option<String> {
     if tally.is_empty() {
         return None;
     }
-    let ranked = tally.most_common();
+    let ranked = tally.ranked();
     if ranked.len() > 1 && ranked[0].1 == ranked[1].1 {
         return None;
     }
@@ -194,7 +190,7 @@ pub fn plurality_make(readings: &[Reading]) -> Option<String> {
 }
 
 /// A make is acceptable if it was read, or if a read nameplate implies it --
-/// marques.py's job, done from the other direction.
+/// `marques`'s job, done from the other direction.
 pub fn acceptable_make(make: Option<&str>, readings: &[Reading]) -> Option<String> {
     let make = make.filter(|m| !m.is_empty())?;
     let haystack = observed(readings);
@@ -303,14 +299,15 @@ pub fn reconcile(make: Option<&str>, model: Option<&str>, readings: &[Reading]) 
         if key(make_val) != key(leader) {
             let top = &readings[0];
             let top_model = if key(&top.make) == key(leader) {
-                // Matches Python's bare `top.model`, not `top.model or None`:
-                // an empty string here really is stored as an empty string.
+                // An empty string here really is stored as an empty string,
+                // not treated as absent.
                 Some(top.model.clone())
             } else {
                 None
             };
-            // Python's f"{make} {model}" turns a `None` model into the
-            // literal word "None" -- kept here for exact parity.
+            // ponytail: a missing model renders as the literal word "None"
+            // in the rejected text -- kept as-is, the recorded snapshots
+            // depend on this exact wording.
             let model_repr = model.unwrap_or("None");
             let rejected_text = format!("{make_val} {model_repr}").trim().to_string();
             return Canonical {
@@ -335,7 +332,7 @@ pub fn reconcile(make: Option<&str>, model: Option<&str>, readings: &[Reading]) 
         }
     }
 
-    // A model without its make is half an answer; marques.py can often
+    // A model without its make is half an answer; `marques` can often
     // supply the other half from the nameplate alone.
     let mut kept_make = kept_make;
     if kept_model.is_some() && kept_make.is_none() {

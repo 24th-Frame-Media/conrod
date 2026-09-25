@@ -1,4 +1,4 @@
-//! YuNet decoder parity on the optional local OpenCV fixture.
+//! YuNet decoder regression check on the optional local OpenCV fixture.
 //!
 //! The fixture names private frames and is intentionally git-ignored. Generate
 //! it with `tools/gen_faces_local.py`; this test silently skips without it or

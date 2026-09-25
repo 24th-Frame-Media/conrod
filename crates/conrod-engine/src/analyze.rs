@@ -1,12 +1,12 @@
-//! One vehicle crop in, everything readable off it out (`conrod/analyze.py::analyze`).
+//! One vehicle crop in, everything readable off it out.
 //!
-//! Same order and rules as Python: registration and roundel numbers first, a
-//! roundel beats whole-crop OCR, a plate-shaped number is discarded, OCR and the
-//! vision model are reconciled by `merge_number`, and the known-vehicle registry
-//! only fills blanks. Two deliberate differences: the whole-crop OCR runs once
-//! and feeds both the number and the visible text, and a reader that fails costs
-//! that reader's answer rather than the run (only a stopped or misconfigured
-//! vision model ends it).
+//! Registration and roundel numbers are read first, a roundel beats
+//! whole-crop OCR, a plate-shaped number is discarded, OCR and the vision
+//! model are reconciled by `merge_number`, and the known-vehicle registry
+//! only fills blanks. Two notable choices: the whole-crop OCR runs once and
+//! feeds both the number and the visible text, and a reader that fails costs
+//! only that reader's answer rather than the run (only a stopped or
+//! misconfigured vision model ends it).
 
 use conrod_core::analysis::{corroborated, merge_number, OcrReading, VehicleAnalysis};
 use conrod_core::registry::{self, KnownVehicle};

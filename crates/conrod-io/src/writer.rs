@@ -251,8 +251,7 @@ impl Drop for ExifTool {
         let _ = writeln!(self.stdin, "-stay_open");
         let _ = writeln!(self.stdin, "False");
         let _ = self.stdin.flush();
-        // Give exiftool a chance to exit on its own before killing it, the
-        // way `proc.wait(timeout=10)` does in the Python.
+        // Give exiftool a chance to exit on its own before killing it.
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             match self.child.try_wait() {

@@ -1,5 +1,5 @@
-//! The handful of `conrod/config.py::Settings` fields the VLM and writer
-//! ports need. Not a port of the whole dataclass -- nothing else in this
+//! The handful of shared `conrod_core::settings::Settings` fields the VLM
+//! and writer need. Not the whole settings struct -- nothing else in this
 //! crate reads settings yet, and the other ~30 fields (culling thresholds,
 //! detector switches, and so on) belong to code that has not moved here.
 
