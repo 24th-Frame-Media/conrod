@@ -64,7 +64,8 @@ fn plate_text_matches_recorded_snapshot_on_real_crops() {
     let mut detector = PlateDetector::load(&detector_model, Device::Cpu).unwrap();
     let mut reader = PlateReader::load(&reader_model, Device::Cpu).unwrap();
 
-    let (mut total, mut matched, mut state_ok, mut number_ok, mut snapshot_numbers) = (0, 0, 0, 0, 0);
+    let (mut total, mut matched, mut state_ok, mut number_ok, mut snapshot_numbers) =
+        (0, 0, 0, 0, 0);
     let mut mismatches = Vec::new();
 
     for case in fixture["cases"].as_array().unwrap() {

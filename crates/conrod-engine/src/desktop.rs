@@ -1,8 +1,8 @@
 //! Application operations shared by Tauri and the CLI. Database writes and
 //! scans stay here; the frontend receives data, never arbitrary SQL or paths.
 use crate::commands::{Command, KnownArgs, MarkArgs, ScanArgs};
-use crate::{FrameResult, Scan};
 use crate::lock;
+use crate::{FrameResult, Scan};
 use conrod_core::{
     profile::{ScanProfile, ShootPreset},
     settings::Settings,
@@ -105,7 +105,8 @@ impl Desktop {
     }
     pub fn scanning(&self) -> bool {
         self.active
-            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
             .is_some_and(|(_, scan)| !scan.is_finished() || self.finishing.load(Ordering::Acquire))
     }
@@ -280,7 +281,8 @@ impl Desktop {
         }
         let task = self.hub.start("Removing album from library", 0);
         self.db
-            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .execute("DELETE FROM jobs WHERE id=?", [job])
             .map_err(err)?;
         task.finish();
@@ -309,7 +311,8 @@ impl Desktop {
 
     fn delete_known(&self, plate: &str) -> Result<Value> {
         self.db
-            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .execute("DELETE FROM known_vehicles WHERE plate=?", [plate])
             .map_err(err)?;
         Ok(Value::Null)
@@ -318,7 +321,8 @@ impl Desktop {
     fn delete_all_known(&self) -> Result<Value> {
         let removed = self
             .db
-            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .execute("DELETE FROM known_vehicles", [])
             .map_err(err)?;
         Ok(json!({"removed": removed}))
@@ -515,14 +519,16 @@ impl Desktop {
         };
         if a.stage == ScanStage::Index {
             self.db
-                .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .execute("UPDATE jobs SET status='indexed' WHERE id=?", [job])
                 .map_err(err)?;
             task.finish();
             return Ok(json!({"jobId": job}));
         }
         self.db
-            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .execute("UPDATE jobs SET status='scanning' WHERE id=?", [job])
             .map_err(err)?;
         task.finish();
@@ -536,7 +542,8 @@ impl Desktop {
             move |path| {
                 eligibility
                     .reader
-                    .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .query_row(
                         "SELECT COALESCE(rejected,0)=0 FROM images WHERE job_id=? AND path=?",
                         params![job, path.to_string_lossy()],
@@ -622,7 +629,8 @@ impl Desktop {
     fn persist_frame(&self, job: i64, f: &FrameResult) -> Result<()> {
         let image: i64 = self
             .db
-            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .query_row(
                 "SELECT id FROM images WHERE job_id=? AND path=?",
                 params![job, f.path.to_string_lossy()],
@@ -690,7 +698,8 @@ impl Desktop {
             let task = self.hub.start("Loading preview", 0);
             let path: String = self
                 .db
-                .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .query_row("SELECT path FROM images WHERE id=?", [image], |r| r.get(0))
                 .map_err(err)?;
             let raw = conrod_io::raw::read(Path::new(&path))?;
@@ -738,7 +747,8 @@ mod tests {
         assert_eq!(
             desktop
                 .db
-                .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .query_row("SELECT count(*) FROM known_vehicles", [], |row| row
                     .get::<_, i64>(0))
                 .unwrap(),
@@ -778,7 +788,8 @@ mod tests {
         assert_eq!(
             desktop
                 .db
-                .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .query_row("SELECT stars FROM native_labels", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
@@ -787,7 +798,8 @@ mod tests {
         assert_eq!(
             desktop
                 .db
-                .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .query_row("SELECT count(*) FROM sharpness_labels", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),

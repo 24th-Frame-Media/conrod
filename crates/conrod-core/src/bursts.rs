@@ -70,7 +70,9 @@ pub fn camera_of(tags: &Tags, fallback: &str) -> String {
         // No serial: two identical bodies collapse here, but the lens often
         // differs between shooters and costs nothing to include.
         return match first(tags, &["LensModel", "LensID"]) {
-            Some(lens) => format!("{model} + {}", value_to_string(lens)).trim().to_string(),
+            Some(lens) => format!("{model} + {}", value_to_string(lens))
+                .trim()
+                .to_string(),
             None => model,
         };
     }
@@ -127,7 +129,11 @@ pub fn parse_stamp(stamp: &str) -> Option<f64> {
         return None;
     }
     let parse_int = |s: &str| s.trim().parse::<i64>().ok();
-    let (year, month, day) = (parse_int(date[0])?, parse_int(date[1])?, parse_int(date[2])?);
+    let (year, month, day) = (
+        parse_int(date[0])?,
+        parse_int(date[1])?,
+        parse_int(date[2])?,
+    );
     let (hour, minute) = (parse_int(time[0])?, parse_int(time[1])?);
     let second: f64 = time[2].trim().parse().ok()?;
     if year < 1970 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
@@ -186,7 +192,10 @@ pub fn assign_bursts(frames: &mut [Frame], gap: f64) {
             .iter()
             .filter_map(|&i| frames[i].taken.map(|taken| (i, taken)))
             .collect();
-        timed.sort_by(|&(a, ta), &(b, tb)| ta.total_cmp(&tb).then_with(|| frames[a].path.cmp(&frames[b].path)));
+        timed.sort_by(|&(a, ta), &(b, tb)| {
+            ta.total_cmp(&tb)
+                .then_with(|| frames[a].path.cmp(&frames[b].path))
+        });
         let mut previous: Option<f64> = None;
         for (i, taken) in timed {
             if previous.is_none_or(|p| taken - p > gap) {

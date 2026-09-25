@@ -1,8 +1,8 @@
 //! Region labels supplement, rather than replace, the scan's own vehicle labels.
 use crate::commands::{LabelArgs, Region};
 use crate::desktop::{rows, Desktop, Result};
-use conrod_core::ridge;
 use crate::lock;
+use conrod_core::ridge;
 use conrod_vision::{sharpness, similarity};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};

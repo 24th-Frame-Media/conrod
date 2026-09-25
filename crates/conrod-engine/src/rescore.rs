@@ -12,9 +12,9 @@
 //! Hand stars, rejects and reviews are in other columns and are never written.
 use crate::desktop::{rows, Desktop, Result};
 use crate::library::require_job;
+use crate::lock;
 use crate::operations::{launch, settings};
 use crate::passes::{pick_of_pass, region_name};
-use crate::lock;
 use conrod_core::{
     framing,
     profile::{ScanProfile, Subject},
@@ -460,7 +460,11 @@ mod tests {
         // 3*1.0+0.5 = 3.5 stars -> 0.825; 3*0.1+0.5 = 0.8 stars -> 0.24.
         assert!((rating(high) - 0.825).abs() < 1e-9, "{}", rating(high));
         assert!((rating(low) - 0.24).abs() < 1e-9, "{}", rating(low));
-        assert_eq!(rating(no_features), 0.66, "no stored features: left as it was");
+        assert_eq!(
+            rating(no_features),
+            0.66,
+            "no stored features: left as it was"
+        );
         let verdict: String = lib.one("SELECT rating_verdict FROM detections WHERE id=?", [high]);
         assert_eq!(verdict, "good");
         // The hand star, reject and review are untouched.

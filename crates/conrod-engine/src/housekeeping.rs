@@ -15,11 +15,11 @@
 use crate::commands::CacheClearArgs;
 use crate::desktop::{rows, Desktop, Result};
 use crate::library::require_job;
+use crate::lock;
 use rusqlite::{params_from_iter, ToSql};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
-use crate::lock;
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -134,7 +134,8 @@ fn ensure_idle(d: &Desktop, job: Option<i64>) -> Result<()> {
     }
     let busy = d
         .operations
-        .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .keys()
         .any(|k| job.is_none_or(|j| k.ends_with(&format!(":{j}"))));
     if busy {

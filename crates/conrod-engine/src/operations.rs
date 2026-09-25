@@ -1,8 +1,8 @@
 //! The slower identification and metadata lanes. Work is visible and cancellable.
 use crate::analyze::{self, Context, Readers};
 use crate::desktop::{rows, Desktop, Result};
-use crate::setup;
 use crate::lock;
+use crate::setup;
 use conrod_core::{
     analysis::VehicleAnalysis,
     keywords, models,
@@ -43,12 +43,11 @@ pub(crate) fn ml_eligible(d: &Desktop, id: i64) -> Result<bool> {
 }
 pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
     crate::library::require_job(d, job)?; // "No such album", not a bare "Query returned no rows"
-    let raw: Option<String> =
-        lock(&d.db)
-            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
-                r.get(0)
-            })
-            .map_err(err)?;
+    let raw: Option<String> = lock(&d.db)
+        .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+            r.get(0)
+        })
+        .map_err(err)?;
     let current = lock(&d.settings).clone();
     let mut s = raw
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -148,7 +147,7 @@ impl Run<'_> {
     /// Say a failure once: a vision model that is down would otherwise put one
     /// line per detection in the status log.
     fn report(&self, failure: String) {
-        if lock(&self.reported).insert(failure.clone()) {
+        if lock(self.reported).insert(failure.clone()) {
             self.d
                 .hub
                 .start(format!("Identify: {failure}"), 0)

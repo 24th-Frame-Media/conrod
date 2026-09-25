@@ -1,7 +1,7 @@
 //! A small library in a temp directory, for the tests of the album operations.
 use crate::desktop::Desktop;
-use conrod_core::settings::Settings;
 use crate::lock;
+use conrod_core::settings::Settings;
 use rusqlite::{params, types::FromSql, Connection, Params};
 use serde_json::{json, Value};
 use std::path::PathBuf;

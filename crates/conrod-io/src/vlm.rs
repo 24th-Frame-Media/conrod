@@ -426,7 +426,12 @@ fn response_error_message(body: &[u8]) -> String {
             .get("message")
             .or_else(|| map.get("type"))
             .or_else(|| map.get("status"))
-            .map(|v| conrod_core::text::value_to_string(v).chars().take(200).collect())
+            .map(|v| {
+                conrod_core::text::value_to_string(v)
+                    .chars()
+                    .take(200)
+                    .collect()
+            })
             .unwrap_or_default(),
         _ => String::new(),
     }

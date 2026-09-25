@@ -7,6 +7,7 @@
 
 use crate::commands::WatchArgs;
 use crate::desktop::Desktop;
+use crate::lock;
 use conrod_io::watch::{self, Watcher};
 use rusqlite::OptionalExtension;
 use serde::Serialize;
@@ -16,7 +17,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use crate::lock;
 
 pub const DEFAULT_INTERVAL: f64 = 60.0;
 /// Where a watch is remembered in `settings.json` (the Python app's key and field
@@ -75,7 +75,8 @@ pub fn set(d: &Arc<Desktop>, a: &WatchArgs) -> Result<Value, String> {
     // The folder defaults to the album's own, so the UI need only say which album.
     let root: Option<String> = d
         .reader
-        .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .query_row("SELECT root FROM jobs WHERE id=?", [job], |r| r.get(0))
         .optional()
         .map_err(|e| e.to_string())?;
@@ -176,7 +177,8 @@ fn forget(d: &Desktop) {
 fn album_exists(d: &Desktop, job: i64) -> bool {
     match d
         .reader
-        .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .query_row("SELECT 1 FROM jobs WHERE id=?", [job], |_| Ok(()))
         .optional()
     {

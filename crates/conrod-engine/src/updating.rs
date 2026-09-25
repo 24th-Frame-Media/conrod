@@ -6,11 +6,11 @@
 //! can replace its files. It only ever runs because someone pressed the button.
 
 use crate::desktop::Desktop;
+use crate::lock;
 use conrod_io::update::{self, Version};
 use serde_json::{json, Value};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use crate::lock;
 
 const OPERATION: &str = "Updating Conrod";
 /// The release notes shown beside the button.
