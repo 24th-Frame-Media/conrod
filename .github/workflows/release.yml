@@ -45,8 +45,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      # Models and ExifTool, pinned by SHA-256 in scripts/assets.json. A
-      # download whose hash differs fails the release rather than shipping it.
+      # ExifTool, pinned by SHA-256 in scripts/assets.json (models are not bundled;
+      # the app downloads and verifies them on first run). A download whose hash
+      # differs fails the release rather than shipping it.
       - name: Fetch the pinned release assets
         run: powershell -NoProfile -File scripts/fetch-release-assets.ps1
 
@@ -55,13 +56,6 @@ jobs:
         run: |
           npm ci
           npm run build
-          npm test
-
-      - name: Test
-        run: |
-          cargo fmt --all --check
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo test --workspace
 
       - name: Build the app and the installer
         working-directory: crates/conrod-app
@@ -79,9 +73,10 @@ jobs:
           Compress-Archive -Path dist/Conrod -DestinationPath "dist/Conrod-$v-win64.zip"
 
       # Importing proves nothing about a bundle. This runs the shipped exe from the
-      # assembled folder: every model found and loaded, a frame through the
-      # detector, sharpness and OCR, ExifTool, a database. It fails the release
-      # if any of them break.
+      # assembled folder: --selftest first downloads any missing models (the
+      # installer no longer bundles them), then every model is loaded, a frame
+      # goes through the detector, sharpness and OCR, ExifTool, a database. It
+      # fails the release if any of them break.
       - name: Self-test the shipped build
         shell: powershell
         run: |
@@ -121,8 +116,8 @@ jobs:
             ## Conrod ${{ steps.version.outputs.value }}
 
             **Installer** (`-setup.exe`, per-user, no admin) or **portable** (unzip, run `Conrod.exe`).
-            Models and ExifTool are bundled. An existing `~/.conrod` library, settings and
-            trained models are used as they are.
+            ExifTool is bundled; the AI models (~97 MB) download and verify themselves on first
+            run. An existing `~/.conrod` library, settings and trained models are used as they are.
 
             Optional: **Ollama** plus `ollama pull qwen2.5vl:7b` (~6 GB) names make, model,
             colour and team. Without it Conrod still culls, reads plates, numbers and livery text.

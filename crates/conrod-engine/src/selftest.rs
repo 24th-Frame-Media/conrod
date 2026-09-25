@@ -5,14 +5,24 @@
 //! `conrod-cli selftest`).
 
 use conrod_core::models as m;
+use conrod_core::tasks::TaskHub;
 use conrod_vision::detect::{DetectOptions, Detector, Device};
 use conrod_vision::imageops::Rgb;
 use conrod_vision::{ocr, plates, sharpness};
+use std::sync::atomic::AtomicBool;
 
 type Check = Result<String, String>;
 
 /// Run every check; the exit code (0 = all passed) and a line per check.
+///
+/// Models are not bundled with the installer, so a fresh checkout (and CI's
+/// freshly-assembled release folder) may not have them yet: install whatever
+/// is missing, via the same fail-closed path the app uses, before checking.
 pub fn run() -> (i32, String) {
+    let hub = TaskHub::new();
+    let ids = crate::setup::everything();
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let install = crate::setup::ensure(&hub, &AtomicBool::new(false), &ids);
     let frame = synthetic(1280, 720);
     let checks: [(&str, Check); 7] = [
         ("model files", model_files()),
@@ -31,6 +41,10 @@ pub fn run() -> (i32, String) {
     ];
     let mut failed = 0;
     let mut report = String::new();
+    if let Err(e) = install {
+        failed += 1;
+        report += &format!("FAIL  install models: {e}\n");
+    }
     for (name, result) in checks {
         match result {
             Ok(detail) => {
