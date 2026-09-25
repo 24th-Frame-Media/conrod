@@ -608,8 +608,8 @@ pub fn create_job(
     let label = label
         .map(str::to_string)
         .or_else(|| root.file_name().map(|n| n.to_string_lossy().into_owned()));
-    let settings_json =
-        serde_json::to_string(settings).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    let settings_json = serde_json::to_string(settings)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     conn.execute(
         "INSERT INTO jobs (root, label, created_at, settings_json) VALUES (?,?,?,?)",
         (

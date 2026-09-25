@@ -9,8 +9,8 @@
 //! `group_make`, ...) survive an edit.
 use crate::commands::{BulkArgs, EditArgs};
 use crate::desktop::{Desktop, Result};
-use conrod_core::{analysis::VehicleAnalysis, keywords};
 use crate::lock;
+use conrod_core::{analysis::VehicleAnalysis, keywords};
 use conrod_vision::sharpness;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Map, Value};

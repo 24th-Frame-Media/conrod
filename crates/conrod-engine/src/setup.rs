@@ -4,8 +4,8 @@
 //! so a missing file is fetched rather than being an error the user has to fix.
 
 use crate::desktop::Desktop;
-use conrod_core::models;
 use crate::lock;
+use conrod_core::models;
 use conrod_core::tasks::TaskHub;
 use conrod_io::assets::{self, Asset};
 use serde_json::{json, Value};

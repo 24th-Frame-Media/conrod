@@ -278,7 +278,7 @@ pub fn cull_frame(
                 continue;
             }
             let crop = image.crop(x0, y0, x1.min(fw), y1.min(fh));
-            for face in lock(&detector).detect(&crop)? {
+            for face in lock(detector).detect(&crop)? {
                 let face_box = [
                     face.bbox[0] + x0 as f64,
                     face.bbox[1] + y0 as f64,

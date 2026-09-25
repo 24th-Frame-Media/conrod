@@ -105,7 +105,10 @@ fn ridge_matches_snapshot() {
                     refused += 1;
                 }
                 Some(model) => {
-                    assert!(!want.is_null(), "fitted what the snapshot expected to be refused");
+                    assert!(
+                        !want.is_null(),
+                        "fitted what the snapshot expected to be refused"
+                    );
                     assert_eq!(
                         model.trained_on,
                         want["trained_on"].as_u64().unwrap() as usize

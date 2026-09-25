@@ -3,10 +3,10 @@
 //! Missing thumbnails are filled on demand when an album opens.
 use crate::commands::{RenameArgs, UpdateJobSettingsArgs};
 use crate::desktop::{rows, Desktop, Result};
+use crate::lock;
 use rusqlite::params;
 use serde_json::{json, Map, Value};
 use std::path::Path;
-use crate::lock;
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -14,11 +14,7 @@ fn err(e: impl std::fmt::Display) -> String {
 
 /// A readable error, rather than SQLite's, for an album that is not there.
 pub(crate) fn require_job(d: &Desktop, job: i64) -> Result<()> {
-    let found = rows(
-        &lock(&d.reader),
-        "SELECT id FROM jobs WHERE id=?",
-        [job],
-    )?;
+    let found = rows(&lock(&d.reader), "SELECT id FROM jobs WHERE id=?", [job])?;
     if found.is_empty() {
         Err("No such album".into())
     } else {
@@ -28,13 +24,12 @@ pub(crate) fn require_job(d: &Desktop, job: i64) -> Result<()> {
 
 pub fn rename_job(d: &Desktop, a: &RenameArgs) -> Result<Value> {
     let label = a.label.as_deref().map(str::trim).filter(|l| !l.is_empty());
-    let changed =
-        lock(&d.db)
-            .execute(
-                "UPDATE jobs SET label=? WHERE id=?",
-                params![label, a.job_id],
-            )
-            .map_err(err)?;
+    let changed = lock(&d.db)
+        .execute(
+            "UPDATE jobs SET label=? WHERE id=?",
+            params![label, a.job_id],
+        )
+        .map_err(err)?;
     if changed == 0 {
         return Err("No such album".into());
     }

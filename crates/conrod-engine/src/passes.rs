@@ -5,8 +5,8 @@
 use crate::desktop::{rows, Desktop, Result};
 use crate::edits::attributes_of;
 use crate::library::require_job;
-use crate::operations::{launch, ml_eligible, settings, ML_ELIGIBLE};
 use crate::lock;
+use crate::operations::{launch, ml_eligible, settings, ML_ELIGIBLE};
 use conrod_core::{
     grouping, models,
     profile::{ScanProfile, Subject},
@@ -456,7 +456,10 @@ mod tests {
         );
         assert_eq!(picks(&lib), vec![b, d1], "a tie goes to the earlier frame");
         let unpicked: Option<i64> = lib.one("SELECT burst_pick FROM detections WHERE id=?", [a]);
-        assert_eq!(unpicked, None, "not a keeper is NULL, matching the recorded behaviour");
+        assert_eq!(
+            unpicked, None,
+            "not a keeper is NULL, matching the recorded behaviour"
+        );
 
         // A hand star outranks a better measure; a hand reject leaves the pass.
         lib.sql("UPDATE detections SET stars=3 WHERE id=?", [a]);
@@ -595,7 +598,11 @@ mod tests {
             lib.one("SELECT group_key FROM detections WHERE id=?", [det])
         };
         assert_eq!(key(a), key(c), "0.95 alike is one car");
-        assert_ne!(key(a), key(b), "0.85 alike is two cars at the recorded threshold of 0.90");
+        assert_ne!(
+            key(a),
+            key(b),
+            "0.85 alike is two cars at the recorded threshold of 0.90"
+        );
     }
 
     #[test]
