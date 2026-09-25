@@ -523,7 +523,11 @@ fn features(
 const STAR_KNOTS: [f64; 8] = [0.0, 1.0, 1.5, 2.5, 3.5, 4.5, 5.0, 6.0];
 const STAR_VALUES: [f64; 8] = [0.0, 0.30, 0.606, 0.728, 0.825, 0.958, 0.99, 1.0];
 
-fn learned_score(model: &SharpModel, features: &[f64]) -> Option<f64> {
+/// The trained model's prediction, mapped from stars onto the same 0-1 focus
+/// score the hand-built measure uses. Shared with `conrod-engine`'s rescore,
+/// so an old scan's stored features and this mapping are the only inputs
+/// needed to re-score it under a newly trained model.
+pub fn learned_score(model: &SharpModel, features: &[f64]) -> Option<f64> {
     let stars = ridge::predict_sharp(model, features)?;
     Some(interp(stars, &STAR_KNOTS, &STAR_VALUES))
 }

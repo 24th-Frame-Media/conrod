@@ -1,12 +1,10 @@
-//! Port of `conrod/similarity.py`.
-//!
 //! Is this the same car? An instance embedding from DINOv2-small (Xenova's
 //! ONNX export, dynamically quantised to uint8) answers that better than a
-//! shape hash or a hue histogram did -- see the Python module's docstring for
-//! why those were dropped. This ports the preprocessing, the session, and the
-//! embedding itself; downloading and verifying the model file stays in
-//! Python, since fetching it needs an HTTP client this crate has no other use
-//! for and nothing here runs unattended against the network.
+//! shape hash or a hue histogram did. This crate does the preprocessing, the
+//! session, and the embedding itself; downloading and verifying the model
+//! file is a separate tool (`tools/`), since fetching it needs an HTTP
+//! client this crate has no other use for and nothing here runs unattended
+//! against the network.
 
 use crate::detect::Device;
 use crate::imageops::{Filter, Rgb};
@@ -34,9 +32,9 @@ impl Embedder {
                 builder
                     .with_execution_providers([ep::DirectML::default().build().error_on_failure()])
             } else {
-                // One thread per session, same as the Python side: the
-                // analysis pool already runs several workers, and letting
-                // each fan out again oversubscribes the machine.
+                // One thread per session: the analysis pool already runs
+                // several workers, and letting each fan out again
+                // oversubscribes the machine.
                 builder
                     .with_intra_threads(1)
                     .map_err(|e| e.to_string())?

@@ -1,11 +1,11 @@
 //! Turning what was read off a vehicle into keywords worth searching.
 //!
-//! Port of `conrod/keywords.py`: the number, the plate, the car, the team,
-//! the colour -- what a photographer would type into Lightroom's search box.
+//! The number, the plate, the car, the team, the colour -- what a
+//! photographer would type into Lightroom's search box.
 
 use crate::analysis::{given, VehicleAnalysis};
 use crate::mapping::NumberMap;
-use crate::py;
+use crate::text::casefold;
 use std::collections::HashSet;
 
 /// The keyword settings, as `Settings.keyword_prefix` / `write_plate_keyword`.
@@ -21,7 +21,7 @@ fn dedupe_casefold(
     out: &mut Vec<String>,
 ) {
     for keyword in keywords {
-        if seen.insert(py::casefold(&keyword)) {
+        if seen.insert(casefold(&keyword)) {
             out.push(keyword);
         }
     }
@@ -46,7 +46,7 @@ pub fn for_vehicle(
         add(&mut out, number);
         add(&mut out, &format!("#{number}"));
         add(&mut out, &format!("Car {number}"));
-        // An empty entry list is falsy in Python, so it is skipped here too.
+        // An empty entry list has nothing to look up, so skip it.
         if let Some(map) = numbers.filter(|m| !m.is_empty()) {
             // The entry list is authoritative about who a number is.
             for keyword in map.keywords_for(number, prefix) {

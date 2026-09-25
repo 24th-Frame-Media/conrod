@@ -1,13 +1,13 @@
 //! Cars this photographer has already met.
 //!
-//! Port of `conrod/registry.py`. `load`, `remember`, `seed`, `count` and
-//! `forget` are SQLite access and stay out; what is ported is the pure logic
-//! inside them -- `fill` only ever fills a blank, `to_csv`/`from_csv` become
-//! plain text in/out over a `Row`, and `agreed`/`majority` turn a car's
-//! frames into one settled reading without touching a database.
+//! `load`, `remember`, `seed`, `count` and `forget` are SQLite access and
+//! live elsewhere; what lives here is the pure logic around them -- `fill`
+//! only ever fills a blank, `to_csv`/`from_csv` become plain text in/out over
+//! a `Row`, and `agreed`/`majority` turn a car's frames into one settled
+//! reading without touching a database.
 
 use crate::analysis::{given, VehicleAnalysis};
-use crate::py;
+use crate::text::{is_truthy, value_to_string, Tally};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -130,9 +130,8 @@ fn fill_text(remembered: &Option<String>, current: &mut Option<String>) -> bool 
     }
 }
 
-/// Character pairs a plate reader confuses -- copied from `_near_plate` in
-/// `conrod/grouping.py` (the module registry.py reaches for lazily), not
-/// re-derived, since grouping.py itself is out of scope for this port.
+/// Character pairs a plate reader confuses -- the same list `grouping`
+/// uses for its own near-plate test, not re-derived here.
 const CONFUSABLE: [&str; 11] = [
     "047", "8B", "0OQD", "1IL", "5S", "2Z", "6G", "VY", "MN", "CG", "UV",
 ];
@@ -216,7 +215,7 @@ pub struct Member {
 /// come from grouping's own vote (left blank where it could not settle);
 /// everything else is a plain majority of the frames that offered a value.
 pub fn agreed(members: &[Member]) -> Option<Reading> {
-    let mut plates: py::Counter<String> = py::Counter::new();
+    let mut plates: Tally<String> = Tally::new();
     for member in members {
         let key = normalise(member.plate.as_deref());
         if !key.is_empty() {
@@ -226,7 +225,7 @@ pub fn agreed(members: &[Member]) -> Option<Reading> {
     if plates.is_empty() {
         return None;
     }
-    let best = plates.most_common()[0].0.clone();
+    let best = plates.ranked()[0].0.clone();
     // Only readings plausibly the same plate misread -- grouping's own
     // near-plate test, not a general fuzzy match.
     let aliases: Vec<String> = plates
@@ -264,11 +263,11 @@ pub fn agreed(members: &[Member]) -> Option<Reading> {
     })
 }
 
-fn field_votes(members: &[Member], field: &str) -> py::Counter<String> {
-    let mut votes = py::Counter::new();
-    let count_value = |value: &Value, votes: &mut py::Counter<String>| {
-        if py::truthy(value) {
-            votes.add(py::str_of(value).trim().to_string(), 1);
+fn field_votes(members: &[Member], field: &str) -> Tally<String> {
+    let mut votes = Tally::new();
+    let count_value = |value: &Value, votes: &mut Tally<String>| {
+        if is_truthy(value) {
+            votes.add(value_to_string(value).trim().to_string(), 1);
         }
     };
     for member in members {
@@ -291,18 +290,17 @@ pub fn majority(members: &[Member], field: &str) -> Option<String> {
     if votes.is_empty() {
         return None;
     }
-    Some(votes.most_common()[0].0.clone())
+    Some(votes.ranked()[0].0.clone())
 }
 
-/// `_majority(members, "sponsors")`: Python returns the whole ranked list
-/// for this one field rather than a single winner, which is why it gets its
-/// own return type here instead of sharing one with [`majority`].
+/// Like [`majority`], but returns the whole ranked list for this one field
+/// rather than a single winner, which is why it gets its own return type.
 pub fn majority_sponsors(members: &[Member]) -> Option<Vec<String>> {
     let votes = field_votes(members, "sponsors");
     if votes.is_empty() {
         return None;
     }
-    Some(votes.most_common().into_iter().map(|(s, _)| s).collect())
+    Some(votes.ranked().into_iter().map(|(s, _)| s).collect())
 }
 
 /// Comma-separated text, split and trimmed.
@@ -318,13 +316,13 @@ fn split_text(text: &str) -> Vec<String> {
 /// its items' plain text, since Rust has no equivalent of handing back a
 /// list of whatever type its items happened to be).
 pub fn split_field(value: &Value) -> Vec<String> {
-    if !py::truthy(value) {
+    if !is_truthy(value) {
         return Vec::new();
     }
     if let Value::Array(items) = value {
-        return items.iter().map(py::str_of).collect();
+        return items.iter().map(value_to_string).collect();
     }
-    split_text(&py::str_of(value))
+    split_text(&value_to_string(value))
 }
 
 /// One field, as it goes into a text column -- `_text`. A list is joined
@@ -338,7 +336,7 @@ pub fn text_of(value: &Value) -> Option<String> {
     if let Value::Array(items) = value {
         let joined: Vec<String> = items
             .iter()
-            .map(|v| py::str_of(v).trim().to_string())
+            .map(|v| value_to_string(v).trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
         let joined = joined.join(", ");
@@ -348,7 +346,7 @@ pub fn text_of(value: &Value) -> Option<String> {
             Some(joined)
         };
     }
-    let text = py::str_of(value).trim().to_string();
+    let text = value_to_string(value).trim().to_string();
     if text.is_empty() {
         None
     } else {
@@ -411,7 +409,7 @@ pub fn parse_csv(text: &str) -> Result<(Vec<Row>, usize), String> {
     for record in records {
         let record = record.map_err(|e| e.to_string())?;
         if record.len() == 1 && record.get(0) == Some("") {
-            continue; // a blank line, which Python's DictReader skips
+            continue; // a blank line -- nothing to read
         }
         // A repeated column name: the LAST one wins, both position and
         // value, matching `dict(zip(fieldnames, row))` folded twice.

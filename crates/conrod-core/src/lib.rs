@@ -1,9 +1,8 @@
 //! Conrod's pure logic.
 //!
 //! Everything here is deterministic and free of IO, so it can be checked
-//! against the Python implementation's recorded behaviour (see
-//! `fixtures` and `tools/gen_golden.py`) rather than against a reading of
-//! its source.
+//! against recorded snapshots (see `fixtures` and the `regression` test)
+//! rather than against a reading of its source.
 
 pub mod analysis;
 pub mod bursts;
@@ -16,8 +15,8 @@ pub mod marques;
 pub mod models;
 pub mod normalise;
 pub mod profile;
-pub mod py;
 pub mod registry;
 pub mod ridge;
 pub mod settings;
 pub mod tasks;
+pub mod text;

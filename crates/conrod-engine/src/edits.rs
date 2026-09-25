@@ -364,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn stars_reject_and_bystander_follow_the_python_rules() {
+    fn stars_reject_and_bystander_follow_the_recorded_rules() {
         let lib = Lib::new("edit-stars");
         let det = one_detection(&lib);
         lib.sql("UPDATE detections SET predicted_stars=2 WHERE id=?", [det]);

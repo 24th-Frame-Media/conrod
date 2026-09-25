@@ -317,7 +317,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
             cls: row["cls"].as_str().map(str::to_owned),
         });
     }
-    // Python falls back to a cruder shape-and-colour measure when the look model
+    // The pipeline falls back to a cruder shape-and-colour measure when the look model
     // has not seen most of the album; there are no crop signatures here, so the
     // album has to be looked at first.
     let usable = looks.iter().filter(|l| l.vector.is_some()).count();
@@ -456,7 +456,7 @@ mod tests {
         );
         assert_eq!(picks(&lib), vec![b, d1], "a tie goes to the earlier frame");
         let unpicked: Option<i64> = lib.one("SELECT burst_pick FROM detections WHERE id=?", [a]);
-        assert_eq!(unpicked, None, "not a keeper is NULL, as Python leaves it");
+        assert_eq!(unpicked, None, "not a keeper is NULL, matching the recorded behaviour");
 
         // A hand star outranks a better measure; a hand reject leaves the pass.
         lib.sql("UPDATE detections SET stars=3 WHERE id=?", [a]);
@@ -573,8 +573,8 @@ mod tests {
     }
 
     #[test]
-    fn group_keeps_apart_crops_alike_only_below_pythons_same_car_threshold() {
-        // Job 39 of the real library: at 0.8 Rust merged cars Python (0.90) keeps apart.
+    fn group_keeps_apart_crops_alike_only_below_the_same_car_threshold() {
+        // Job 39 of the real library: at 0.8 an earlier threshold merged cars that the recorded 0.90 keeps apart.
         let lib = Lib::new("group-threshold");
         let (f1, f2, f3) = (
             lib.frame("1.jpg", Some(1)),
@@ -595,7 +595,7 @@ mod tests {
             lib.one("SELECT group_key FROM detections WHERE id=?", [det])
         };
         assert_eq!(key(a), key(c), "0.95 alike is one car");
-        assert_ne!(key(a), key(b), "0.85 alike is two cars at Python's 0.90");
+        assert_ne!(key(a), key(b), "0.85 alike is two cars at the recorded threshold of 0.90");
     }
 
     #[test]

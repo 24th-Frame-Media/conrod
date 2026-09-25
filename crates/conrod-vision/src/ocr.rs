@@ -21,8 +21,8 @@ pub struct Token {
 
 impl Ocr {
     pub fn load(models: &Path) -> Result<Self, String> {
-        // RapidOCR 1.3+ (what the Python build bundles) ships PP-OCRv4; v3 is
-        // its older default and still accepted.
+        // RapidOCR 1.3+ ships PP-OCRv4; v3 is its older default and still
+        // accepted.
         let pick = |kind: &str| {
             ["v4", "v3"]
                 .map(|v| models.join(format!("ch_PP-OCR{v}_{kind}_infer.onnx")))

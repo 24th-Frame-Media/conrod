@@ -1,12 +1,11 @@
-//! Re-measure an album with the sharpness models as they stand now. Ports
-//! `pipeline.rescore` and `POST /api/jobs/{id}/rescore`.
+//! Re-measure an album with the sharpness models as they stand now.
 //!
 //! The scan keeps each subject's 18 focus features and its hand-built score
 //! (`heuristic`), so a newly trained model can be applied to an old album without
 //! touching a photograph: features through the model, then the framing penalty
-//! and the cull decision exactly as `cull_frame` makes them. Where Python
-//! re-measured the crops and had to guess the framing factor from the old
-//! rating, the frame size and box are stored here, so it is computed.
+//! and the cull decision exactly as `cull_frame` makes them. The frame size
+//! and box are stored alongside the features, so the framing factor is
+//! computed fresh rather than guessed back out of the old rating.
 //!
 //! What a model cannot change is left alone: the features themselves, and the
 //! pan / background / sharp-end facts, which come from the hand-built measure.
@@ -19,7 +18,7 @@ use crate::lock;
 use conrod_core::{
     framing,
     profile::{ScanProfile, Subject},
-    ridge::{self, SharpModel},
+    ridge::SharpModel,
     settings::Settings,
     tasks::Task,
 };
@@ -32,26 +31,6 @@ use std::sync::Arc;
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
-}
-
-// ponytail: a copy of the private `learned_score` mapping in conrod_vision's
-// sharpness.rs (predicted stars -> focus score, knotted on the star-band
-// floors). Make that function public and delete this; the test
-// `a_learned_model_gives_what_the_scan_would_have_given` fails if they drift.
-const STAR_KNOTS: [f64; 8] = [0.0, 1.0, 1.5, 2.5, 3.5, 4.5, 5.0, 6.0];
-const STAR_VALUES: [f64; 8] = [0.0, 0.30, 0.606, 0.728, 0.825, 0.958, 0.99, 1.0];
-
-fn stars_to_score(stars: f64) -> f64 {
-    if stars <= STAR_KNOTS[0] {
-        return STAR_VALUES[0];
-    }
-    for i in 1..STAR_KNOTS.len() {
-        if stars <= STAR_KNOTS[i] {
-            let t = (stars - STAR_KNOTS[i - 1]) / (STAR_KNOTS[i] - STAR_KNOTS[i - 1]);
-            return STAR_VALUES[i - 1] + t * (STAR_VALUES[i] - STAR_VALUES[i - 1]);
-        }
-    }
-    STAR_VALUES[STAR_VALUES.len() - 1]
 }
 
 /// What the scan stored about one subject.
@@ -79,8 +58,7 @@ pub struct Outcome {
 pub fn remeasure(s: &Stored, model: Option<&SharpModel>, cfg: &Settings) -> Outcome {
     let learned = model
         .filter(|_| !s.features.is_empty())
-        .and_then(|m| ridge::predict_sharp(m, s.features))
-        .map(stars_to_score);
+        .and_then(|m| sharpness::learned_score(m, s.features));
     let score = learned.unwrap_or(s.heuristic);
     let small = matches!(s.region, "face" | "eye");
     // A face is judged on its own; a vehicle or person also by how much of it is in frame.
@@ -186,8 +164,9 @@ fn run(d: &Desktop, job: i64, cfg: &Settings, stop: &AtomicBool, task: &Task) ->
             .or_default();
         frame.whole = row["whole"].as_f64();
         let old = row["rating"].as_f64();
-        // A detection stored without its hand-built score (an album scanned by
-        // the Python app) cannot be re-measured without its crop: kept as it was.
+        // A detection stored without its hand-built score (a legacy scan,
+        // from before that score was recorded) cannot be re-measured without
+        // its crop: kept as it was.
         match row["heuristic"].as_f64().filter(|h| *h >= 0.0) {
             None => {
                 skipped += 1;
@@ -274,6 +253,7 @@ fn run(d: &Desktop, job: i64, cfg: &Settings, stop: &AtomicBool, task: &Task) ->
 mod tests {
     use super::*;
     use crate::testkit::Lib;
+    use conrod_core::ridge;
     use conrod_vision::imageops::Gray;
     use serde_json::json;
 
@@ -440,7 +420,7 @@ mod tests {
             lib.detection(f1, "vehicle", 0.30),
             lib.detection(f2, "vehicle", 0.35),
         );
-        let (python, starred) = (
+        let (no_features, starred) = (
             lib.detection(f3, "vehicle", 0.66),
             lib.detection(f3, "vehicle", 0.10),
         );
@@ -480,7 +460,7 @@ mod tests {
         // 3*1.0+0.5 = 3.5 stars -> 0.825; 3*0.1+0.5 = 0.8 stars -> 0.24.
         assert!((rating(high) - 0.825).abs() < 1e-9, "{}", rating(high));
         assert!((rating(low) - 0.24).abs() < 1e-9, "{}", rating(low));
-        assert_eq!(rating(python), 0.66, "no stored features: left as it was");
+        assert_eq!(rating(no_features), 0.66, "no stored features: left as it was");
         let verdict: String = lib.one("SELECT rating_verdict FROM detections WHERE id=?", [high]);
         assert_eq!(verdict, "good");
         // The hand star, reject and review are untouched.

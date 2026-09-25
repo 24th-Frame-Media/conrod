@@ -1,4 +1,4 @@
-//! Region labels supplement, rather than replace, Python's vehicle labels.
+//! Region labels supplement, rather than replace, the scan's own vehicle labels.
 use crate::commands::{LabelArgs, Region};
 use crate::desktop::{rows, Desktop, Result};
 use conrod_core::ridge;

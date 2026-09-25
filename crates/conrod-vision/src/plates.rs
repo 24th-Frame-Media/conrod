@@ -128,10 +128,9 @@ impl PlateDetector {
 }
 
 struct Letterboxed {
-    /// CHW, channel order R,G,B, 0..1 -- two BGR flips cancel out on the
-    /// Python side (`_detect_on`'s slice reversal, then the model's own
-    /// preprocess doing the same); letterboxing the RGB `Rgb` directly and
-    /// skipping both reproduces the same tensor.
+    /// CHW, channel order R,G,B, 0..1 -- the model's own preprocessing
+    /// expects a BGR-to-RGB flip, so letterboxing the RGB `Rgb` directly and
+    /// skipping it reproduces the same tensor.
     tensor: Vec<f32>,
     r: f64,
     dw: f64,
@@ -177,7 +176,7 @@ fn decode(raw: &[f32], n: usize, lb: &Letterboxed, conf: f32) -> Vec<([i64; 4], 
             if score < conf {
                 return None;
             }
-            // Truncating cast, matching Python's `int(...)` on each coordinate.
+            // Truncating cast on each coordinate.
             let at = |v: f32, pad: f64| ((f64::from(v) - pad) / lb.r) as i64;
             let b = [
                 at(row[1], lb.dw),
@@ -540,9 +539,9 @@ const LETTER: bool = false;
 /// length range) rather than as regexes -- equivalent given the ASCII
 /// alnum-only, already-uppercased tokens this is always called with.
 ///
-/// ponytail: ASCII only, like `conrod_core::py::is_digit`; the source
-/// regexes are themselves ASCII-literal (`[A-Z]`, `\d` on tokens already
-/// filtered to `[A-Za-z0-9]`), so this is not a narrowing.
+/// ponytail: ASCII only -- plate tokens are already filtered to
+/// `[A-Za-z0-9]` before this runs, so restricting to ASCII letters and
+/// digits here is not a narrowing.
 const FORMATS: &[&[(bool, std::ops::RangeInclusive<usize>)]] = &[
     &[(LETTER, 3..=3), (DIGIT, 2..=2), (LETTER, 1..=1)], // NSW current: FD23RS
     &[(LETTER, 3..=3), (DIGIT, 3..=3)],                  // widespread older issue

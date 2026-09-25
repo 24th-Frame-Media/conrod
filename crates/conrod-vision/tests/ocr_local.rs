@@ -1,8 +1,8 @@
-//! The OCR port against RapidOCR (PP-OCRv4) on real vehicle crops.
+//! OCR (RapidOCR / PP-OCRv4) on real vehicle crops, checked against recorded snapshots.
 //!
 //! Local-only: needs `fixtures/ocr_local.json` (tools/gen_ocr_local.py)
 //! and the PP-OCRv4 model files, looked up in `$CONROD_MODELS`, the data
-//! directory's `models/`, then the Python release's bundled copy. Without
+//! directory's `models/`, then a locally bundled copy. Without
 //! either it prints why and returns, so CI (which has neither) is unaffected.
 
 use conrod_core::settings::Settings;
@@ -93,7 +93,7 @@ fn ocr_matches_rapidocr_on_real_crops() {
 
         if a != b || want_number != got_number {
             differing.push(format!(
-                "{}: python {:?} -> {:?} | rust {:?} -> {:?}",
+                "{}: recorded {:?} -> {:?} | rust {:?} -> {:?}",
                 Path::new(case["crop"].as_str().unwrap())
                     .file_name()
                     .unwrap()
@@ -106,7 +106,7 @@ fn ocr_matches_rapidocr_on_real_crops() {
         }
     }
     eprintln!(
-        "OCR on {n} crops ({:.0} ms/crop): identical lines {lines_equal}, race number equal {number_equal} (python read one on {with_number}, rust matched {number_kept}; rust-only reads {number_extra}), visible text {text_equal}",
+        "OCR on {n} crops ({:.0} ms/crop): identical lines {lines_equal}, race number equal {number_equal} (the recorded snapshot read one on {with_number}, rust matched {number_kept}; rust-only reads {number_extra}), visible text {text_equal}",
         started.elapsed().as_secs_f64() * 1000.0 / n as f64
     );
     for d in differing.iter().take(14) {
@@ -114,9 +114,9 @@ fn ocr_matches_rapidocr_on_real_crops() {
     }
     // Measured on 120 crops: 57 of 62 (92%). The rest are detector-level
     // differences from oar-ocr vs RapidOCR's own DB post-processing; Rust also
-    // reads real numbers Python misses (crop 38361's orange 7).
+    // reads real numbers the recorded snapshot misses (crop 38361's orange 7).
     assert!(
         number_kept * 100 >= with_number * 85,
-        "recovered {number_kept}/{with_number} of Python's numbers"
+        "recovered {number_kept}/{with_number} of the recorded snapshot's numbers"
     );
 }

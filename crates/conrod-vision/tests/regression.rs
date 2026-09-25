@@ -1,4 +1,4 @@
-//! The sharpness measure against the Python implementation, on the same pixels.
+//! The sharpness measure against recorded snapshots, on the same pixels.
 //!
 //! `fixtures/sharpness.json` + `fixtures/sharpness/*.png` are synthetic and
 //! committed. `fixtures/sharpness_local.json`, when present, points at the
@@ -86,7 +86,7 @@ fn check(label: &str, got: &sharpness::Sharpness, want: &Value, tolerance: f64) 
 }
 
 #[test]
-fn synthetic_crops_match_python() {
+fn synthetic_crops_match_recorded_snapshot() {
     let fixture = read("sharpness.json").expect("sharpness fixture");
     let model: SharpModel = serde_json::from_value(fixture["learned_model"].clone()).unwrap();
     for case in fixture["cases"].as_array().unwrap() {
@@ -96,7 +96,7 @@ fn synthetic_crops_match_python() {
             let v = floats(&Value::Array(b.clone()));
             [v[0], v[1], v[2], v[3]]
         });
-        // Lossless pixels, Pillow-exact resampling: rounding error only.
+        // Lossless pixels, exact resampling: rounding error only.
         check(
             name,
             &sharpness::measure(&image, bbox, None),
@@ -132,7 +132,7 @@ fn synthetic_crops_match_python() {
 /// and there (Pillow uses libjpeg-turbo), so this allows more, and reports
 /// how far apart the two ever got.
 #[test]
-fn real_crops_match_python_when_available() {
+fn real_crops_match_recorded_snapshot_when_available() {
     let Some(fixture) = read("sharpness_local.json") else {
         eprintln!("no local fixture; run tools/gen_golden.py --local");
         return;

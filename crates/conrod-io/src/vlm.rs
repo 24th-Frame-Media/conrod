@@ -1,4 +1,4 @@
-//! Port of `conrod/vlm_providers.py` and `conrod/vlm.py`.
+//! Talking to a vision-language model to describe a vehicle crop.
 //!
 //! Everything that is *what to ask* -- the prompt, the schema, how a reply
 //! maps onto a [`VehicleDescription`] -- is the same regardless of which
@@ -6,7 +6,7 @@
 //! header, how an image and a schema get shaped into that API's own
 //! request, and how to pull the model's JSON back out of its own response
 //! envelope -- is behind the four `*_request` / `parse_*_response`
-//! functions below, which is what `vlm_providers.py` used to be.
+//! functions below.
 //!
 //! Uses `ureq` (blocking) rather than an async client: nothing else in this
 //! crate runs an async runtime, and pulling in tokio for one HTTP call per
@@ -30,13 +30,10 @@ const GEMINI_URL: &str =
 
 /// Every way a call to a provider can fail.
 ///
-/// `Stopped` and `Misconfigured` are `BaseException` in the Python, not
-/// `Exception` -- deliberately off the branch every per-crop reader wraps
-/// itself in with `except Exception`, so a Stop or a run that has given up
-/// cannot be swallowed as "this one frame could not be read". The Rust
-/// equivalent of "off that branch" is simply not being caught by whatever
-/// turns the other variants into an empty [`VehicleDescription`]; see
-/// [`describe`].
+/// `Stopped` and `Misconfigured` are deliberately not handled by the
+/// per-crop `match` that turns the other variants into an empty
+/// [`VehicleDescription`], so a Stop or a run that has given up cannot be
+/// swallowed as "this one frame could not be read"; see [`describe`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum VlmError {
     /// The scan was stopped while waiting for a rate limit to lift.
@@ -203,12 +200,10 @@ impl RateGate {
     }
 }
 
-/// How long the provider asked for, or a backed-off guess. Port of
-/// `_retry_after`.
+/// How long the provider asked for, or a backed-off guess.
 ///
 /// A stated `Retry-After` is taken at face value and uncapped, whether it is
-/// plain seconds or an HTTP-date (parsed with the `httpdate` crate, which --
-/// unlike Python's more permissive `email.utils.parsedate_to_datetime` --
+/// plain seconds or an HTTP-date (parsed with the `httpdate` crate, which
 /// only reads the RFC 7231 IMF-fixdate form; that is the only form a real
 /// `Retry-After` header uses in practice).
 pub fn retry_after(headers: &[(String, String)], attempt: u32, jitter: f64) -> f64 {
@@ -264,12 +259,10 @@ pub struct RawResponse {
 }
 
 /// Make the request, waiting out rate limits rather than failing on one.
-/// Port of `_send`.
 ///
 /// `send` is retried in place: it performs the actual HTTP call (or, in a
 /// test, returns the next canned outcome) and is invoked again for every
-/// attempt, exactly like the `lambda: client.post(...)` the Python passes
-/// in. A rate limit (429/529) is waited out for as long as it takes and
+/// attempt. A rate limit (429/529) is waited out for as long as it takes and
 /// never spends the retry budget; a possibly-broken 5xx/408 or a transport
 /// error does, and still gives up once it is spent.
 pub fn send_with_retries(
@@ -433,7 +426,7 @@ fn response_error_message(body: &[u8]) -> String {
             .get("message")
             .or_else(|| map.get("type"))
             .or_else(|| map.get("status"))
-            .map(|v| python_str(v).chars().take(200).collect())
+            .map(|v| conrod_core::text::value_to_string(v).chars().take(200).collect())
             .unwrap_or_default(),
         _ => String::new(),
     }
@@ -503,8 +496,8 @@ impl HostPools {
 // Every provider takes the same inputs -- a prompt, already-encoded base64
 // JPEG images, a JSON schema and a token budget -- and is asked for
 // something to POST: the URL, headers, query parameters and JSON body.
-// Kept pure (no network) so the fixtures generated from the Python side by
-// `tools/gen_vlm_fixtures.py` can be compared directly; see `tests/vlm.rs`.
+// Kept pure (no network) so it can be compared directly against recorded
+// fixtures; see `tests/vlm.rs`.
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProviderRequest {
@@ -1031,30 +1024,13 @@ const NULLISH: [&str; 10] = [
     "-",
 ];
 
-/// `str(value)` on whatever a JSON reply put in a field. Strings, numbers,
-/// bools and null map exactly onto Python's `str()`.
-///
-/// ponytail: an array or object value becomes its JSON text. The schema
-/// declares every one of these fields as a plain string or null, so a model
-/// sending a list here is already off-contract; upgrade only if a real
-/// reply is ever seen doing it.
-fn python_str(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::Null => "None".to_string(),
-        other => other.to_string(),
-    }
-}
-
-/// Port of `vlm._text`.
+/// The field's plain-text reading, whatever type a reply put in it.
 fn text(value: Option<&Value>) -> Option<String> {
     let value = value?;
     if value.is_null() {
         return None;
     }
-    let text = python_str(value).trim().to_string();
+    let text = conrod_core::text::value_to_string(value).trim().to_string();
     if NULLISH.contains(&text.to_lowercase().as_str()) {
         None
     } else {
@@ -1115,19 +1091,11 @@ fn number(value: Option<&Value>) -> f64 {
     parsed.map_or(0.0, |f| f.clamp(0.0, 1.0))
 }
 
-/// `bool(x or False)`: Python truthiness on a JSON value that may be
-/// missing. `None`, `False`, `0`, `0.0`, `""` and an empty list/object are
-/// falsy; every other value -- including the string `"false"` -- is
-/// truthy. Port of the `is_competition` line in `vlm.describe`.
+/// Whether a possibly-missing reply field carries anything: `null`, `false`,
+/// `0`, `0.0`, `""` and an empty list/object are all absent; every other
+/// value -- including the string `"false"` -- counts as present.
 fn is_competition(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Number(n)) => n.as_f64().is_none_or(|f| f != 0.0),
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Array(a)) => !a.is_empty(),
-        Some(Value::Object(o)) => !o.is_empty(),
-    }
+    value.is_some_and(conrod_core::text::is_truthy)
 }
 
 /// Map a provider's parsed reply onto a [`VehicleDescription`]. Shared by
@@ -1160,15 +1128,15 @@ fn map_vehicle(parsed: &Value, settings: &Settings, with_number: bool) -> Vehicl
     }
 }
 
-/// Downscale and JPEG-encode a crop for the model. Port of `vlm._encode`.
+/// Downscale and JPEG-encode a crop for the model.
 ///
-/// The resize is Pillow-exact (`conrod_vision::imageops`'s Lanczos filter,
-/// checked against Pillow in that crate's own tests) because the pixels the
-/// model sees have to match what the Python side would have sent it. The
-/// JPEG *encoder* is the `image` crate's, not libjpeg, so the encoded bytes
-/// themselves are not byte-for-byte what Pillow would produce -- nothing
-/// downstream compares them, only the request-building functions above are
-/// checked against fixtures, and those take already-encoded strings.
+/// The resize uses `conrod_vision::imageops`'s Lanczos filter (checked
+/// against Pillow's own output in that crate's tests, since the sharpness
+/// measure's thresholds depend on matching it exactly). The JPEG *encoder*
+/// here is the `image` crate's, not libjpeg, so the encoded bytes are not
+/// byte-for-byte what Pillow would produce -- nothing downstream compares
+/// them, only the request-building functions above are checked against
+/// fixtures, and those take already-encoded strings.
 pub fn encode_for_model(image: &Rgb, long_edge: u32) -> String {
     let long_edge = long_edge as usize;
     let resized = if image.width.max(image.height) > long_edge {

@@ -10,5 +10,6 @@ repository.workspace = true
 csv = "1"
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: without it serde_json can land one ULP off on a parsed
-# float, which is enough to fail a bit-exact comparison against Python.
+# float, which is enough to fail a bit-exact comparison against a recorded
+# snapshot.
 serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }

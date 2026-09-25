@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_carries_the_python_fields_and_keeps_its_defaults() {
+    fn an_edit_carries_the_legacy_field_names_and_keeps_its_defaults() {
         let Ok(Command::EditDetection(a)) = Command::parse(
             "edit_detection",
             json!({"detectionId": 3, "number": "#12", "sponsors": ["Shell", " shell ", ""], "stars": 0}),

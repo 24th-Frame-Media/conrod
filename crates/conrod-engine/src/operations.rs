@@ -200,9 +200,9 @@ impl Run<'_> {
                 self.advance(1);
                 continue;
             }
-            // Everything reads the padded, size-capped `cut` crop, as Python's
-            // `det.crop_path`; the tight native-resolution box is only for the
-            // plate search. Reading the tight box clipped plates at its edge.
+            // Everything reads the padded, size-capped `cut` crop; the tight
+            // native-resolution box is only for the plate search. Reading
+            // the tight box clipped plates at its edge.
             let crop = crate::cut(
                 &image,
                 detect::expand_box(subject, image.width, image.height, self.crop),

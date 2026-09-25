@@ -2,12 +2,12 @@
 //! against the release's `SHA256SUMS.txt`, and hand it to the platform.
 //!
 //! **Fail closed.** A release without a checksum for its installer is never
-//! offered: the Python updater installed whatever it downloaded when the sums file
-//! was missing, and that is the one thing a verifying updater must not do.
+//! offered: installing whatever was downloaded when the sums file is missing
+//! is the one thing a verifying updater must not do.
 //!
 //! Releases are tagged `v*`. What makes one an update is an installer:
 //! `Conrod-<version>-win64-setup.exe`, a per-user NSIS installer that runs silently
-//! with `/S`. The Python app's old zips (v0.8.0 and earlier) and the asset files of
+//! with `/S`. The legacy zip releases (v0.8.0 and earlier) and the asset files of
 //! `assets-v1` have none, so they are never offered.
 
 use crate::assets;
@@ -587,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn the_newest_native_release_is_chosen_and_the_python_ones_are_ignored() {
+    fn the_newest_native_release_is_chosen_and_legacy_zip_releases_are_ignored() {
         let name = "Conrod-0.1.0-beta.3-win64-setup.exe";
         let list = json!([
             release("v0.9.9", false, &["Conrod-0.9.9-win64.zip", SUMS]),
@@ -618,7 +618,7 @@ mod tests {
 
     #[test]
     fn only_releases_with_an_installer_are_updates() {
-        // Native releases are `v1.0.0`, beside the Python line's `v0.8.x` zips (no
+        // Native releases are `v1.0.0`, beside the legacy `v0.8.x` zip releases (no
         // installer, and older) and the assets-v1 pre-release.
         let name = "Conrod-1.0.0-win64-setup.exe";
         let list = json!([
@@ -636,7 +636,7 @@ mod tests {
             .unwrap();
         assert_eq!(found.tag, "v1.0.0");
         assert_eq!(found.version.to_string(), "1.0.0");
-        // a beta of the native app is not offered the Python line, however it is tagged
+        // a beta of the native app is not offered a legacy zip release, however it is tagged
         assert_eq!(
             choose(&list, &v("1.0.0"), true, &mut sums_for(name)).unwrap(),
             None

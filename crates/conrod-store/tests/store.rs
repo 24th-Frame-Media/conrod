@@ -1,7 +1,7 @@
-//! Round-trip coverage for the setters, plus proof that a library the Python app wrote
-//! (`fixtures/python_library.sql`) and the schema it created (`fixtures/python_schema.json`)
-//! stay usable by this crate. Both fixtures were recorded from the Python app's own store
-//! (branch `legacy-python`).
+//! Round-trip coverage for the setters, plus proof that a library the retired Python app wrote
+//! (`fixtures/legacy_library.sql`) and the schema it created (`fixtures/legacy_schema.json`)
+//! still open and read correctly. Both fixtures were recorded from that app's own store
+//! (branch `legacy-python`) and are frozen regression snapshots.
 
 use conrod_core::bursts::Frame;
 use conrod_store::{
@@ -261,7 +261,7 @@ fn round_trip_sharpness_labels() {
 }
 
 #[test]
-fn needs_review_sql_function_matches_python_logic() {
+fn needs_review_sql_function_covers_all_branches() {
     let conn = fresh_conn("needs_review");
     let ask = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
 
@@ -357,16 +357,16 @@ fn review_group_and_frame_fields_round_trip() {
     assert!(get_detection(&conn, det_id).unwrap().is_none());
 }
 
-// --- compatibility with libraries the Python app wrote ---------------------------
+// --- compatibility with libraries the legacy Python app wrote ---------------------
 
 #[test]
-fn a_library_written_by_the_python_app_opens_and_reads() {
-    let db = temp_db_path("python_library");
+fn a_library_written_by_the_legacy_app_opens_and_reads() {
+    let db = temp_db_path("legacy_library");
     {
         let raw = Connection::open(&db).unwrap();
         // The dump lists tables alphabetically, so a child's rows precede its parent's table.
         raw.pragma_update(None, "foreign_keys", "OFF").unwrap();
-        raw.execute_batch(include_str!("../../../fixtures/python_library.sql"))
+        raw.execute_batch(include_str!("../../../fixtures/legacy_library.sql"))
             .unwrap();
     }
     let conn = conrod_store::connect(Some(&db)).unwrap();
@@ -399,17 +399,17 @@ fn a_library_written_by_the_python_app_opens_and_reads() {
 }
 
 #[test]
-fn the_rust_schema_keeps_every_column_of_the_python_schema() {
+fn the_schema_keeps_every_column_of_the_legacy_schema() {
     let rust_db = temp_db_path("schema_rust");
     conrod_store::connect(Some(&rust_db)).unwrap();
     let rust_conn = Connection::open(&rust_db).unwrap();
 
-    let python: serde_json::Value =
-        serde_json::from_str(include_str!("../../../fixtures/python_schema.json")).unwrap();
-    for (table, columns) in python.as_object().unwrap() {
+    let legacy: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/legacy_schema.json")).unwrap();
+    for (table, columns) in legacy.as_object().unwrap() {
         let rust_columns = table_info(&rust_conn, table);
-        // Rust carries additive engine fields; every column the Python app created must keep
-        // the same type and constraints so a library it wrote opens unchanged.
+        // This crate carries additive engine fields; every column the legacy app created must
+        // keep the same type and constraints so a library it wrote opens unchanged.
         for c in columns.as_array().unwrap() {
             let (name, kind) = (c[1].as_str().unwrap(), c[2].as_str().unwrap());
             let (notnull, default, pk) = (
@@ -423,7 +423,7 @@ fn the_rust_schema_keeps_every_column_of_the_python_schema() {
                     && *nn == notnull
                     && d.as_deref() == default
                     && *p == pk),
-                "Python column {table}.{name} is missing or changed in the Rust schema"
+                "legacy column {table}.{name} is missing or changed in the schema"
             );
         }
     }

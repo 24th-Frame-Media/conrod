@@ -1,10 +1,10 @@
 //! Everything tunable, persisted to `settings.json` in the data directory.
 //!
-//! Port of `Settings` in `conrod/config.py`. The file is shared with the
-//! Python app during the migration, so it is read the way Python reads it:
-//! unknown keys ignored, a value of the wrong type ignored (Python would
-//! store it and fail later; ignoring is the safe half of that), and the
-//! sharpness thresholds retired when they were set against an older scale.
+//! Reading is tolerant, since the file on disk may predate fields this
+//! struct has added or removed: unknown keys are ignored, a value of the
+//! wrong type is ignored rather than stored and left to fail later, and the
+//! sharpness thresholds are retired when they were set against an older
+//! scale.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -114,8 +114,7 @@ pub struct Settings {
     pub detect_workers: i64,
     pub workers: i64,
     pub extra: Map<String, Value>,
-    /// New in the Rust app: what kind of shoot a new scan defaults to.
-    /// Python ignores the key, and drops it if it saves the file.
+    /// What kind of shoot a new scan defaults to.
     pub scan_profile: String,
 }
 
@@ -210,8 +209,8 @@ impl Default for Settings {
     }
 }
 
-/// Same JSON kind, with ints and floats both counting as numbers (Python
-/// happily stores 1 where 1.0 is meant).
+/// Same JSON kind, with ints and floats both counting as numbers -- a file
+/// on disk may store `1` where `1.0` is meant, or vice versa.
 fn same_kind(a: &Value, b: &Value) -> bool {
     matches!(
         (a, b),

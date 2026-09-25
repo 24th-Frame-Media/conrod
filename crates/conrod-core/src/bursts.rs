@@ -1,11 +1,11 @@
 //! Which camera took it, and which burst it belongs to.
 //!
-//! Port of `conrod/bursts.py`. Two shooters at one event interleave into one
-//! folder, so a burst is consecutive frames *from one body* with no gap longer
-//! than [`BURST_GAP_SECONDS`]. The camera is its serial number where the file
-//! has one, since that is the only thing separating two identical bodies.
+//! Two shooters at one event interleave into one folder, so a burst is
+//! consecutive frames *from one body* with no gap longer than
+//! [`BURST_GAP_SECONDS`]. The camera is its serial number where the file has
+//! one, since that is the only thing separating two identical bodies.
 
-use crate::py;
+use crate::text::value_to_string;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
@@ -58,9 +58,9 @@ fn first<'a>(tags: &'a Tags, names: &[&str]) -> Option<&'a Value> {
 
 /// A stable name for the body that took this frame.
 pub fn camera_of(tags: &Tags, fallback: &str) -> String {
-    let model = first(tags, &["Model"]).map(py::str_of);
+    let model = first(tags, &["Model"]).map(value_to_string);
     if let Some(serial) = first(tags, &["SerialNumber", "InternalSerialNumber"]) {
-        let serial = py::str_of(serial);
+        let serial = value_to_string(serial);
         return match model {
             Some(model) => format!("{model} {serial}").trim().to_string(),
             None => serial,
@@ -70,7 +70,7 @@ pub fn camera_of(tags: &Tags, fallback: &str) -> String {
         // No serial: two identical bodies collapse here, but the lens often
         // differs between shooters and costs nothing to include.
         return match first(tags, &["LensModel", "LensID"]) {
-            Some(lens) => format!("{model} + {}", py::str_of(lens)).trim().to_string(),
+            Some(lens) => format!("{model} + {}", value_to_string(lens)).trim().to_string(),
             None => model,
         };
     }
@@ -88,7 +88,7 @@ pub fn taken_at(tags: &Tags) -> Option<f64> {
             "DateTime",
         ],
     )?;
-    let mut seconds = parse_stamp(&py::str_of(stamp))?;
+    let mut seconds = parse_stamp(&value_to_string(stamp))?;
     // Presence of the key, not its value: an empty combined tag still means
     // the camera chose not to split the sub-second out.
     if !tags.contains_key("SubSecDateTimeOriginal") {
@@ -96,7 +96,7 @@ pub fn taken_at(tags: &Tags) -> Option<f64> {
             tags,
             &["SubSecTimeOriginal", "SubSecTime", "SubSecTimeDigitized"],
         ) {
-            if let Some(fraction) = py::float(&format!("0.{}", py::str_of(sub).trim())) {
+            if let Ok(fraction) = format!("0.{}", value_to_string(sub).trim()).parse::<f64>() {
                 seconds += fraction;
             }
         }
@@ -126,17 +126,18 @@ pub fn parse_stamp(stamp: &str) -> Option<f64> {
     if date.len() != 3 || time.len() < 3 {
         return None;
     }
-    let (year, month, day) = (py::int(date[0])?, py::int(date[1])?, py::int(date[2])?);
-    let (hour, minute) = (py::int(time[0])?, py::int(time[1])?);
-    let second = py::float(time[2])?;
+    let parse_int = |s: &str| s.trim().parse::<i64>().ok();
+    let (year, month, day) = (parse_int(date[0])?, parse_int(date[1])?, parse_int(date[2])?);
+    let (hour, minute) = (parse_int(time[0])?, parse_int(time[1])?);
+    let second: f64 = time[2].trim().parse().ok()?;
     if year < 1970 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
     if year > 9999 {
-        return None; // datetime.date refuses it, so calendar.timegm does too
+        return None; // out of range for any calendar worth trusting
     }
-    // calendar.timegm: the first of the month, plus the day, unvalidated --
-    // 31 February rolls into March exactly as Python's does.
+    // The first of the month, plus the day, unvalidated: a nonsense day like
+    // "31 February" rolls forward into March rather than being rejected.
     let days = i128::from(days_from_civil(year, month, 1) + day - 1);
     let base = ((days * 24 + i128::from(hour)) * 60 + i128::from(minute)) * 60;
     Some(base as f64 + second)
@@ -161,7 +162,7 @@ pub fn describe(rows: &[Tags], fallback: &str, gap: f64) -> Vec<Frame> {
             path: row
                 .get("SourceFile")
                 .filter(|v| !v.is_null())
-                .map(py::str_of)
+                .map(value_to_string)
                 .unwrap_or_default(),
             camera: camera_of(row, fallback),
             taken: taken_at(row),

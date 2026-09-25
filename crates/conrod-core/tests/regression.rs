@@ -1,7 +1,7 @@
-//! Checks the Rust port against what the Python implementation did.
+//! Checks this crate's pure logic against recorded snapshots.
 //!
-//! The fixtures are written by `tools/gen_golden.py`. A failure here after
-//! regenerating them means the two implementations have diverged.
+//! A failure here means today's output has diverged from what a fixture
+//! recorded earlier -- this is the bug report.
 
 use conrod_core::{framing, ridge};
 use serde_json::{Map, Value};
@@ -47,7 +47,7 @@ fn assert_all_close(got: &[f64], want: &[f64], what: &str) {
 }
 
 #[test]
-fn framing_matches_python() {
+fn framing_matches_snapshot() {
     let fixture = fixture("framing");
     let cases = fixture["cases"].as_array().unwrap();
     assert!(cases.len() > 50, "fixture looks truncated");
@@ -87,7 +87,7 @@ fn framing_matches_python() {
 }
 
 #[test]
-fn ridge_matches_python() {
+fn ridge_matches_snapshot() {
     let fixture = fixture("ridge");
     let mut fitted = 0;
     let mut refused = 0;
@@ -101,11 +101,11 @@ fn ridge_matches_python() {
         match kind {
             "sharp_model" => match ridge::fit_sharp(&vectors, &stars) {
                 None => {
-                    assert!(want.is_null(), "Rust refused a fit Python made");
+                    assert!(want.is_null(), "refused a fit the snapshot expected");
                     refused += 1;
                 }
                 Some(model) => {
-                    assert!(!want.is_null(), "Rust fitted what Python refused");
+                    assert!(!want.is_null(), "fitted what the snapshot expected to be refused");
                     assert_eq!(
                         model.trained_on,
                         want["trained_on"].as_u64().unwrap() as usize
@@ -123,7 +123,7 @@ fn ridge_matches_python() {
                         let got = ridge::predict_sharp(&model, probe).unwrap();
                         assert_close(got, *want, "prediction");
                     }
-                    // A model Python wrote must load and predict identically.
+                    // A model file written once must load and predict identically.
                     let loaded: ridge::SharpModel = serde_json::from_value(want.clone()).unwrap();
                     for (probe, want) in probes.iter().zip(&expected) {
                         assert_close(
@@ -206,7 +206,7 @@ fn opt_str(v: &Value) -> Option<&str> {
 }
 
 #[test]
-fn bursts_match_python() {
+fn bursts_match_snapshot() {
     let fixture = fixture("bursts");
     for case in fixture["cases"].as_array().unwrap() {
         let tags = case["tags"].as_object().unwrap();
@@ -264,7 +264,7 @@ fn bursts_match_python() {
 }
 
 #[test]
-fn marques_match_python() {
+fn marques_match_snapshot() {
     for case in fixture("marques")["cases"].as_array().unwrap() {
         let (make, model) = (opt_str(&case["make"]), opt_str(&case["model"]));
         assert_eq!(
@@ -276,7 +276,7 @@ fn marques_match_python() {
 }
 
 #[test]
-fn entry_lists_match_python() {
+fn entry_lists_match_snapshot() {
     let fixture = fixture("mapping");
     let map = NumberMap::parse(fixture["csv"].as_str().unwrap()).unwrap();
     // The fixture's rows were key-sorted by the JSON writer, so compare as
@@ -324,7 +324,7 @@ fn entry_lists_match_python() {
 }
 
 #[test]
-fn keywords_and_titles_match_python() {
+fn keywords_and_titles_match_snapshot() {
     let fixture = fixture("keywords");
     let map = NumberMap::parse(fixture["csv"].as_str().unwrap()).unwrap();
     let strings = |v: &Value| -> Vec<String> {
@@ -404,7 +404,7 @@ fn out_map(v: &Value) -> HashMap<i64, i64> {
 }
 
 #[test]
-fn grouping_signature_helpers_match_python() {
+fn grouping_signature_helpers_match_snapshot() {
     for case in fixture("grouping")["signature"].as_array().unwrap() {
         let (a, b) = (case["a"].as_str().unwrap(), case["b"].as_str().unwrap());
         let min_colour = case["min_colour"].as_f64().unwrap();
@@ -429,7 +429,7 @@ fn grouping_signature_helpers_match_python() {
 }
 
 #[test]
-fn grouping_plate_helpers_match_python() {
+fn grouping_plate_helpers_match_snapshot() {
     let fixture = fixture("grouping");
     let plate = &fixture["plate"];
     for case in plate["tidy_plate"].as_array().unwrap() {
@@ -478,7 +478,7 @@ fn grouping_plate_helpers_match_python() {
 }
 
 #[test]
-fn grouping_paint_helpers_match_python() {
+fn grouping_paint_helpers_match_snapshot() {
     let fixture = fixture("grouping");
     let swatch = &fixture["swatch"];
     for case in swatch["rgb"].as_array().unwrap() {
@@ -517,7 +517,7 @@ fn grouping_paint_helpers_match_python() {
 }
 
 #[test]
-fn grouping_voting_helpers_match_python() {
+fn grouping_voting_helpers_match_snapshot() {
     let fixture = fixture("grouping");
     for case in fixture["edit_distance"].as_array().unwrap() {
         let (a, b) = (case["a"].as_str().unwrap(), case["b"].as_str().unwrap());
@@ -582,7 +582,7 @@ fn grouping_voting_helpers_match_python() {
 }
 
 #[test]
-fn grouping_own_reading_matches_python() {
+fn grouping_own_reading_matches_snapshot() {
     let fixture = fixture("grouping");
     for case in fixture["own_reading"]["remember_own_reading"]
         .as_array()
@@ -613,7 +613,7 @@ fn grouping_own_reading_matches_python() {
 }
 
 #[test]
-fn grouping_consensus_matches_python() {
+fn grouping_consensus_matches_snapshot() {
     for case in fixture("grouping")["consensus"].as_array().unwrap() {
         let members: Vec<Map<String, Value>> = case["members"]
             .as_array()
@@ -680,7 +680,7 @@ fn grouping_consensus_matches_python() {
 }
 
 #[test]
-fn cluster_by_look_matches_python() {
+fn cluster_by_look_matches_snapshot() {
     for case in fixture("grouping")["cluster_by_look"].as_array().unwrap() {
         let rows: Vec<grouping::LookRow> = case["rows"]
             .as_array()
@@ -710,7 +710,7 @@ fn cluster_by_look_matches_python() {
 }
 
 #[test]
-fn cluster_matches_python() {
+fn cluster_matches_snapshot() {
     for case in fixture("grouping")["cluster"].as_array().unwrap() {
         let rows: Vec<grouping::SignatureRow> = case["rows"]
             .as_array()
@@ -781,7 +781,7 @@ fn assert_reading_lists_eq(got: &[Reading], want: &Value, what: &str) {
 }
 
 #[test]
-fn normalise_matches_python() {
+fn normalise_matches_snapshot() {
     let fixture = fixture("normalise");
 
     for case in fixture["readings_from"].as_array().unwrap() {
@@ -948,7 +948,7 @@ fn row_from_tuple(v: &Value) -> Row {
 }
 
 #[test]
-fn registry_matches_python() {
+fn registry_matches_snapshot() {
     let fixture = fixture("registry");
 
     for case in fixture["normalise"].as_array().unwrap() {
@@ -982,7 +982,7 @@ fn registry_matches_python() {
         match &case["out"] {
             Value::Null => assert!(got.is_none()),
             want => {
-                let got = got.expect("Python found an agreed reading");
+                let got = got.expect("the snapshot found an agreed reading");
                 assert_eq!(got.plate, want["plate"].as_str().unwrap());
                 assert_eq!(got.aliases, strings(&want["aliases"]));
                 assert_eq!(got.make.as_deref(), opt_str(&want["make"]));
@@ -1079,7 +1079,7 @@ fn registry_matches_python() {
 use conrod_core::culling::{self, Cull, CullSettings};
 
 #[test]
-fn culling_matches_python() {
+fn culling_matches_snapshot() {
     let fixture = fixture("culling");
 
     assert_eq!(
@@ -1101,7 +1101,7 @@ fn culling_matches_python() {
 
     for case in fixture["sidecar"].as_array().unwrap() {
         let got = culling::sidecar_for(Path::new(case["image"].as_str().unwrap()));
-        // Python's pathlib normalises "/" to the platform separator when
+        // The snapshot normalises "/" to the platform separator when
         // stringified; Rust's Path keeps whichever one the input used. Both
         // name the same path, so normalise before comparing.
         let got = got.to_string_lossy().replace('\\', "/");
@@ -1134,7 +1134,7 @@ fn culling_matches_python() {
 use conrod_core::analysis::{corroborated, merge_number, OcrReading};
 
 #[test]
-fn merge_matches_python() {
+fn merge_matches_snapshot() {
     let fixture = fixture("merge");
     let ocr_accept_confidence = fixture["ocr_accept_confidence"].as_f64().unwrap();
 
@@ -1166,7 +1166,7 @@ fn merge_matches_python() {
 }
 
 #[test]
-fn settings_match_python() {
+fn settings_match_snapshot() {
     use conrod_core::settings::Settings;
     let fixture = fixture("settings");
     let as_map = |s: &Settings| {
@@ -1176,7 +1176,7 @@ fn settings_match_python() {
         m.remove("scan_profile"); // Rust-only
         v
     };
-    // Python stores 1 for 1.0 and vice versa; compare numbers as numbers.
+    // A stored value may be 1 where 1.0 is meant, or vice versa; compare numbers as numbers.
     let same = |a: &Value, b: &Value| -> bool {
         a.as_object().unwrap().iter().all(|(k, va)| {
             let vb = &b[k];

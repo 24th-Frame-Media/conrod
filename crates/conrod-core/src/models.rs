@@ -2,9 +2,9 @@
 //!
 //! One lookup for every reader, so a developer checkout, the owner's existing
 //! `~/.conrod` and an installed release all resolve the same way. In order:
-//! the data directory's `models/` (Python-compatible, and what a user can
-//! override), the `resources/` folder shipped beside the executable, then the
-//! caches the Python libraries leave behind for the two plate models.
+//! the data directory's `models/` (what a user can override), the
+//! `resources/` folder shipped beside the executable, then the on-disk
+//! caches an earlier install may have left behind for the two plate models.
 
 use crate::settings::data_root;
 use std::path::PathBuf;
@@ -19,7 +19,8 @@ pub const OCR_DETECTOR: &str = "ch_PP-OCRv4_det_infer.onnx";
 pub const OCR_RECOGNISER: &str = "ch_PP-OCRv4_rec_infer.onnx";
 const OCR_DETECTOR_V3: &str = "ch_PP-OCRv3_det_infer.onnx";
 
-/// The plate models' homes in the Python libraries' caches, under `~/.cache`.
+/// The plate models' homes in the OCR libraries' on-disk caches, under
+/// `~/.cache`.
 const LIBRARY_CACHES: [(&str, &str); 2] = [
     (
         PLATE_DETECTOR,

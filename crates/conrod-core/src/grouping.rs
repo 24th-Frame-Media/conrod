@@ -1,24 +1,22 @@
 //! Recognising the same vehicle across frames, and agreeing on what it is.
 //!
-//! Port of `conrod/grouping.py`. Two clusterers decide which crops are one
-//! car -- [`cluster_by_look`] on an embedding, [`cluster`] on the older
-//! dHash-and-colour signature -- and [`consensus`] settles what the group
-//! agrees it is. `signature(image)` itself needs PIL and stays in Python;
-//! everything here is the pure comparison and voting that follows it.
-//! `_second_look` and `consolidate` touch the database and the vision model
-//! and stay in Python too -- `consolidate`'s shape is what the row and member
-//! types here are modelled on.
+//! Two clusterers decide which crops are one car -- [`cluster_by_look`] on an
+//! embedding, [`cluster`] on the older dHash-and-colour signature -- and
+//! [`consensus`] settles what the group agrees it is. Producing the
+//! embedding or the signature itself is IO and lives elsewhere; everything
+//! here is the pure comparison and voting that follows it.
 
+use crate::text::Tally;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 
-/// A Python-truthy string: present and not empty.
+/// A present, non-empty string.
 fn given(value: Option<&str>) -> Option<&str> {
     value.filter(|s| !s.is_empty())
 }
 
-/// Python truthiness of a decoded JSON value.
+/// Whether a decoded JSON value carries anything.
 fn truthy(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Null) => false,
@@ -32,9 +30,9 @@ fn truthy(value: Option<&Value>) -> bool {
 
 // --- the dHash/colour signature, as a string -------------------------------
 
-/// `int(head, 16)`: an optional `0x`/`0X` prefix, surrounding whitespace
-/// allowed. ponytail: no sign handling -- `signature()`'s own hex heads are
-/// never negative, and a fixture is free to add one if that ever changes.
+/// Parse a hex shape hash: an optional `0x`/`0X` prefix, surrounding
+/// whitespace allowed. ponytail: no sign handling -- a shape hash is never
+/// negative, and a fixture is free to add one if that ever changes.
 fn parse_hex(text: &str) -> Option<u64> {
     let t = text.trim();
     let t = t
@@ -44,9 +42,9 @@ fn parse_hex(text: &str) -> Option<u64> {
     u64::from_str_radix(t, 16).ok()
 }
 
-/// `_parse`: the hex shape hash and the colour histogram it was packed with.
-/// `None` stands in for the Python function's exception -- a signature that
-/// does not parse, which every caller here treats as "give up gracefully".
+/// The hex shape hash and the colour histogram it was packed with. `None`
+/// is a signature that does not parse, which every caller here treats as
+/// "give up gracefully".
 pub fn parse_signature(sig: &str) -> Option<(u64, Vec<f32>)> {
     let (head, tail) = match sig.find(':') {
         Some(i) => (&sig[..i], &sig[i + 1..]),
@@ -60,8 +58,8 @@ pub fn parse_signature(sig: &str) -> Option<(u64, Vec<f32>)> {
     Some((hash, values))
 }
 
-/// `_shape_distance`: bits that differ between two dHashes. 999 -- far beyond
-/// any real `max_bits` -- stands in for "could not be compared".
+/// Bits that differ between two dHashes. 999 -- far beyond any real
+/// `max_bits` -- stands in for "could not be compared".
 pub fn shape_distance(a: &str, b: &str) -> i64 {
     match (parse_signature(a), parse_signature(b)) {
         (Some((ha, _)), Some((hb, _))) => (ha ^ hb).count_ones().into(),
@@ -69,7 +67,7 @@ pub fn shape_distance(a: &str, b: &str) -> i64 {
     }
 }
 
-/// `_colour_matches`: how much of the two colour histograms overlaps.
+/// How much of the two colour histograms overlaps.
 ///
 /// ponytail: signatures of different lengths just don't match. Every real
 /// signature has the same 36-bin histogram, so this is not reachable in
@@ -81,8 +79,8 @@ pub fn colour_matches(a: &str, b: &str, min_colour: f64) -> bool {
     if ca.len() != cb.len() {
         return false;
     }
-    // Summed in f32, like the numpy array it came from, so this lands on the
-    // same rounding as Python rather than merely close to it.
+    // Summed in f32, matching the precision the histogram itself was built
+    // with.
     let overlap: f32 = ca.iter().zip(&cb).map(|(x, y)| x.min(*y)).sum();
     f64::from(overlap) >= min_colour
 }
@@ -112,8 +110,8 @@ pub struct Group {
     pub vectors: Vec<Vec<f64>>,
 }
 
-/// How alike two crops have to look before [`cluster_by_look`] calls them the
-/// same car. See `conrod/grouping.py` for the measurement behind it.
+/// How alike two crops have to look before [`cluster_by_look`] calls them
+/// the same car.
 pub const SAME_CAR: f64 = 0.90;
 
 #[allow(clippy::too_many_arguments)]
@@ -170,14 +168,15 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-/// Assign each detection to a vehicle by embedding similarity. See
-/// `conrod/grouping.py::cluster_by_look` for the two rules this follows.
+/// Assign each detection to a vehicle by embedding similarity: rows are
+/// grouped per burst, and each row joins the most similar existing group in
+/// that burst if one is close enough, or starts a new one otherwise.
 pub fn cluster_by_look(rows: &[LookRow], same_car: f64) -> HashMap<i64, i64> {
     let mut groups: Vec<Group> = Vec::new();
     let mut assignment: HashMap<i64, i64> = HashMap::new();
 
-    // An insertion-ordered map, like the Python dict `by_burst.setdefault`
-    // builds: small enough here that a linear scan costs nothing.
+    // An insertion-ordered map: small enough here that a linear scan over
+    // it costs nothing.
     let mut by_burst: Vec<(Option<i64>, Vec<&LookRow>)> = Vec::new();
     for row in rows {
         if row.vector.is_none() {
@@ -372,8 +371,10 @@ impl Default for ClusterOptions {
 }
 
 /// Assign each detection to a group by dHash, colour, class, make and frame
-/// proximity, all subject to a read plate. See `conrod/grouping.py::cluster`
-/// for what each signal is worth and why the gates are ordered as they are.
+/// proximity, all subject to a read plate. The gates below are applied in
+/// the order they matter most: an exact plate match wins outright, then
+/// shape and colour similarity within the frame window, with class and make
+/// narrowing which candidates are even considered.
 pub fn cluster(rows: &[SignatureRow], options: &ClusterOptions) -> HashMap<i64, i64> {
     let ClusterOptions {
         max_bits,
@@ -592,8 +593,8 @@ pub fn rgb(value: &str) -> Option<(u8, u8, u8)> {
     Some((out[0], out[1], out[2]))
 }
 
-/// `colorsys.rgb_to_hsv`, transcribed rather than reinvented so its edge
-/// cases (grey, black, white) match Python's exactly.
+/// RGB to HSV, hand-rolled so its edge cases (grey, black, white) are exact
+/// and match what the recorded snapshots expect.
 fn rgb_to_hsv(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
     let maxc = r.max(g).max(b);
     let minc = r.min(g).min(b);
@@ -619,9 +620,9 @@ fn rgb_to_hsv(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
 
 /// Whether two sampled paint colours are close enough to be one car, compared
 /// by hue rather than distance in RGB so exposure does not split one colour
-/// into two. `max_swatch` is accepted for symmetry with its callers but,
-/// like the Python it is ported from, unused: the comparison moved to hue
-/// and never took the limit back out of the signature.
+/// into two. `max_swatch` is accepted for symmetry with its callers but
+/// unused: the comparison moved to hue and never took the limit back out of
+/// the signature.
 pub fn swatch_matches(a: Option<&str>, b: Option<&str>, _max_swatch: i64) -> bool {
     let (Some(a), Some(b)) = (given(a), given(b)) else {
         return true;
@@ -654,39 +655,6 @@ pub fn swatch_matches(a: Option<&str>, b: Option<&str>, _max_swatch: i64) -> boo
     apart.min(1.0 - apart) <= HUE_TOLERANCE // hue is a circle
 }
 
-// --- an insertion-ordered counter --------------------------------------------
-
-/// `collections.Counter`, close enough for this module: increments never
-/// move a key, and [`OrderedCounter::most_common`] breaks ties by insertion
-/// order the way Python's stable sort does.
-#[derive(Debug, Clone, Default)]
-struct OrderedCounter<T: Eq + std::hash::Hash + Clone> {
-    order: Vec<T>,
-    counts: HashMap<T, usize>,
-}
-
-impl<T: Eq + std::hash::Hash + Clone> OrderedCounter<T> {
-    fn add(&mut self, key: T, n: usize) {
-        match self.counts.get_mut(&key) {
-            Some(c) => *c += n,
-            None => {
-                self.counts.insert(key.clone(), n);
-                self.order.push(key);
-            }
-        }
-    }
-
-    fn most_common(&self) -> Vec<(T, usize)> {
-        let mut out: Vec<(T, usize)> = self
-            .order
-            .iter()
-            .map(|k| (k.clone(), self.counts[k]))
-            .collect();
-        out.sort_by_key(|(_, count)| std::cmp::Reverse(*count)); // stable: ties keep insertion order
-        out
-    }
-}
-
 // --- Consensus ---------------------------------------------------------------
 
 /// Below this level of agreement the group has no answer, only a
@@ -715,19 +683,18 @@ pub struct Consensus {
     pub size: usize,
     pub disputed: Vec<String>,
     /// True when the name came from looking at the pictures again rather
-    /// than from the per-frame readings. Not produced here -- that is
-    /// `_second_look`'s job in Python -- but kept so a caller can set it.
+    /// than from the per-frame readings. Not produced here -- that is a
+    /// caller's job -- but kept so a caller can set it.
     pub second_look: bool,
 }
 
 /// The channel-wise median of several `#rrggbb` strings.
 ///
-/// Faithful to a quirk in the Python: parsing a malformed value can append to
-/// one channel and then fail on the next, leaving that channel's list one
-/// entry longer than its neighbours -- so the three medians are not
-/// necessarily taken over the same set of readings. Reproduced rather than
-/// fixed, because this ports what Python actually computed, not what it
-/// meant to.
+/// ponytail: a deliberately preserved quirk, not a bug -- parsing a
+/// malformed value can append to one channel and then fail on the next,
+/// leaving that channel's list one entry longer than its neighbours, so the
+/// three medians are not necessarily taken over the same set of readings.
+/// Kept as-is because the recorded snapshots depend on this exact output.
 pub fn median_hex(values: &[String]) -> Option<String> {
     let mut channels: [Vec<u32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     for value in values {
@@ -790,10 +757,12 @@ pub fn edit_distance(a: &str, b: &str, limit: usize) -> usize {
 /// be a mistake rather than a second decal.
 const VARIANT_RULES: [(usize, usize, usize); 2] = [(1, 4, 3), (2, 5, 10)];
 
-fn is_variant(text: &str, count: usize, kept: &str, kept_count: usize) -> bool {
+fn is_variant(text: &str, count: i64, kept: &str, kept_count: i64) -> bool {
     for (edits, min_length, ratio) in VARIANT_RULES {
         let short_enough = text.chars().count().min(kept.chars().count()) >= min_length;
-        if short_enough && count * ratio <= kept_count && edit_distance(text, kept, edits) <= edits
+        if short_enough
+            && count * ratio as i64 <= kept_count
+            && edit_distance(text, kept, edits) <= edits
         {
             return true;
         }
@@ -803,13 +772,13 @@ fn is_variant(text: &str, count: usize, kept: &str, kept_count: usize) -> bool {
 
 /// Merge misreadings of one decal into the spelling most frames agreed on.
 /// Only the rare spelling moves, and only towards a much commoner one.
-fn fold_variants(counts: &OrderedCounter<String>) -> OrderedCounter<String> {
-    let mut folded: OrderedCounter<String> = OrderedCounter::default();
-    for (text, count) in counts.most_common() {
+fn fold_variants(counts: &Tally<String>) -> Tally<String> {
+    let mut folded: Tally<String> = Tally::default();
+    for (text, count) in counts.ranked() {
         let kept = folded
-            .order
+            .keys()
             .iter()
-            .find(|k| is_variant(&text, count, k, folded.counts[*k]))
+            .find(|k| is_variant(&text, count, k, folded.get(k)))
             .cloned();
         match kept {
             Some(kept) => folded.add(kept, count),
@@ -822,7 +791,7 @@ fn fold_variants(counts: &OrderedCounter<String>) -> OrderedCounter<String> {
 /// Every distinct string any frame in the group saw under `key`, commonest
 /// first. `key` is typically `"sponsors"` or `"livery_text"`.
 pub fn accumulate(members: &[Map<String, Value>], key: &str) -> Vec<String> {
-    let mut counts: OrderedCounter<String> = OrderedCounter::default();
+    let mut counts: Tally<String> = Tally::default();
     let mut original: HashMap<String, String> = HashMap::new();
     for member in members {
         let seen: Vec<Value> = match member.get(key) {
@@ -831,7 +800,7 @@ pub fn accumulate(members: &[Map<String, Value>], key: &str) -> Vec<String> {
             _ => Vec::new(),
         };
         for value in seen {
-            let text = crate::py::str_of(&value).trim().to_string();
+            let text = crate::text::value_to_string(&value).trim().to_string();
             if text.is_empty() {
                 continue;
             }
@@ -841,7 +810,7 @@ pub fn accumulate(members: &[Map<String, Value>], key: &str) -> Vec<String> {
         }
     }
     fold_variants(&counts)
-        .most_common()
+        .ranked()
         .into_iter()
         .map(|(k, _)| original[&k].clone())
         .collect()
@@ -860,11 +829,11 @@ pub fn vote(values: &[Option<String>]) -> (Option<String>, f64) {
     if present.is_empty() {
         return (None, 0.0);
     }
-    let mut counts: OrderedCounter<String> = OrderedCounter::default();
+    let mut counts: Tally<String> = Tally::default();
     for p in &present {
         counts.add(p.to_lowercase(), 1);
     }
-    let (top, hits) = counts.most_common().into_iter().next().unwrap();
+    let (top, hits) = counts.ranked().into_iter().next().unwrap();
     match present.iter().find(|v| v.to_lowercase() == top) {
         Some(value) => (Some(value.clone()), hits as f64 / present.len() as f64),
         None => (None, 0.0),
@@ -875,8 +844,8 @@ pub fn vote(values: &[Option<String>]) -> (Option<String>, f64) {
 pub const OWN_FIELDS: [&str; 3] = ["make", "model", "colour"];
 
 /// Keep what this frame's own reader said, before the group overwrites it.
-/// Never records the absence of an answer, and never overwrites a reading
-/// already stored -- see `conrod/grouping.py` for why both matter.
+/// Never records the absence of an answer -- a blank is not evidence -- and
+/// never overwrites a reading already stored, so the first-seen answer wins.
 pub fn remember_own_reading(current: &mut Map<String, Value>) {
     for field in OWN_FIELDS {
         let Some(value) = current.get(field).cloned() else {
@@ -908,14 +877,15 @@ pub fn use_own_reading(parsed: &mut Map<String, Value>) {
 
 fn text_field(member: &Map<String, Value>, key: &str) -> Option<String> {
     match member.get(key) {
-        Some(v) if truthy(Some(v)) => Some(crate::py::str_of(v).trim().to_string()),
+        Some(v) if truthy(Some(v)) => Some(crate::text::value_to_string(v).trim().to_string()),
         _ => None,
     }
 }
 
-/// The group's agreed identity. See `conrod/grouping.py::consensus` for why
-/// make and model are voted as one unit while plates and race numbers are
-/// read rather than guessed.
+/// The group's agreed identity. Make and model are voted as one unit,
+/// since a model reading often implies a make; plates and race numbers are
+/// read rather than guessed, since a majority vote over misreadings is not
+/// a safer answer than the plainly-read value.
 pub fn consensus(members: &[Map<String, Value>]) -> Consensus {
     let mut out = Consensus {
         size: members.len(),
@@ -937,11 +907,11 @@ pub fn consensus(members: &[Map<String, Value>]) -> Consensus {
         .collect();
 
     if !named.is_empty() {
-        let mut counter: OrderedCounter<(String, String)> = OrderedCounter::default();
+        let mut counter: Tally<(String, String)> = Tally::default();
         for (a, b) in &named {
             counter.add((a.to_lowercase(), b.to_lowercase()), 1);
         }
-        let ((top_make, top_model), hits) = counter.most_common().into_iter().next().unwrap();
+        let ((top_make, top_model), hits) = counter.ranked().into_iter().next().unwrap();
         for (make, model) in &named {
             if make.to_lowercase() == top_make && model.to_lowercase() == top_model {
                 out.make = (!make.is_empty()).then(|| make.clone());
@@ -970,11 +940,11 @@ pub fn consensus(members: &[Map<String, Value>]) -> Consensus {
                 .filter(|a| !a.is_empty())
                 .collect();
             if !makes.is_empty() {
-                let mut make_counter: OrderedCounter<String> = OrderedCounter::default();
+                let mut make_counter: Tally<String> = Tally::default();
                 for m in &makes {
                     make_counter.add(m.to_lowercase(), 1);
                 }
-                let (top, hits) = make_counter.most_common().into_iter().next().unwrap();
+                let (top, hits) = make_counter.ranked().into_iter().next().unwrap();
                 if hits as f64 / named.len() as f64 >= MIN_MAKE_AGREEMENT {
                     out.make = makes
                         .iter()
@@ -1041,11 +1011,11 @@ pub fn consensus(members: &[Map<String, Value>]) -> Consensus {
             };
             let conf = match m.get(conf_key) {
                 Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
-                Some(Value::String(s)) => crate::py::float(s).unwrap_or(0.0),
+                Some(Value::String(s)) => s.trim().parse().unwrap_or(0.0),
                 _ => 0.0,
             };
             if conf > best_conf {
-                best = Some(crate::py::str_of(value));
+                best = Some(crate::text::value_to_string(value));
                 best_conf = conf;
             }
         }
@@ -1074,7 +1044,7 @@ pub fn proposed_makes(members: &[Map<String, Value>]) -> HashSet<String> {
         .filter_map(|m| {
             let own = m.get("own_make").filter(|v| truthy(Some(v)));
             let make = own.or_else(|| m.get("make")).filter(|v| truthy(Some(v)))?;
-            Some(plain(&crate::py::str_of(make)))
+            Some(plain(&crate::text::value_to_string(make)))
         })
         .collect()
 }

@@ -1,8 +1,8 @@
-//! The similarity embedding and the colour swatch against Python, on the
+//! The similarity embedding and the colour swatch against recorded snapshots, on the
 //! photographer's own crops.
 //!
 //! `fixtures/vision_local.json`, when present, points at real crops
-//! (`tools/gen_vision_local.py`) and is the parity gate that counts; without
+//! (`tools/gen_vision_local.py`) and is the regression gate that counts; without
 //! it, or without the model file, this prints why and returns rather than
 //! failing a build that simply has neither.
 //!
@@ -41,7 +41,7 @@ fn parse_hex(s: &str) -> Option<[i32; 3]> {
 }
 
 #[test]
-fn real_crops_match_python_when_available() {
+fn real_crops_match_recorded_snapshot_when_available() {
     let (Some(fixture), true) = (fixture(), model_path().exists()) else {
         eprintln!("no local vision fixture or model; run tools/gen_vision_local.py");
         return;

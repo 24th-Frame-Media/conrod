@@ -1,11 +1,8 @@
-//! Port of `conrod/colour.py`.
-//!
 //! The actual colour of a vehicle, sampled from the crop rather than taken
 //! from a model's word for it. Most of a vehicle crop is not paint -- glass
 //! and tyres are near-black, chrome and sunlight are near-white, the edges
 //! are road, grass and sky -- so pixels are weighted towards the centre and
 //! the biggest brightness or hue cluster wins, not the mean of everything.
-//! See the Python module's docstring for the full reasoning.
 
 use crate::imageops::{Filter, Rgb};
 
@@ -162,9 +159,8 @@ fn biggest_band(pixels: &[[u8; 3]], value: &[i16], weight: &[f32]) -> [f64; 3] {
     weighted_median_rgb(&near_pixels, &near_weight)
 }
 
-/// `np.searchsorted(cumsum(weight), total / 2)`: the value where half the
-/// weight lies on each side, falling back to an unweighted median when every
-/// weight is zero, same as the Python side.
+/// The weighted median: the value where half the weight lies on each side,
+/// falling back to an unweighted median when every weight is zero.
 fn weighted_median(values: &[i16], weight: &[f32]) -> f64 {
     if values.is_empty() {
         return 0.0;
