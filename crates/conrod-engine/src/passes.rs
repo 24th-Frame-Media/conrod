@@ -9,9 +9,11 @@ use crate::lock;
 use crate::operations::{launch, ml_eligible, settings, ML_ELIGIBLE};
 use conrod_core::{
     grouping, models,
-    profile::{ScanProfile, Subject},
+    profile::{ScanProfile, ShootPreset, Subject},
+    settings::Settings,
     tasks::Task,
 };
+use conrod_vision::faces::FaceDetector;
 use conrod_vision::{detect::Device, imageops::Rgb, similarity};
 use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
@@ -42,20 +44,49 @@ pub(crate) fn region_name(kind: Subject) -> &'static str {
 /// earlier frame so a re-run picks the same one. Of a frame's subjects only
 /// those of the kind the profile rates the frame by compete, as they do for
 /// the frame's own rating.
-pub fn pick_of_pass(conn: &Connection, job: i64, profile: ScanProfile) -> Result<Value> {
-    let priority: Vec<&str> = profile.priority().iter().map(|k| region_name(*k)).collect();
-    let rank = |region: &str| {
+pub fn pick_of_pass(
+    conn: &Connection,
+    job: i64,
+    profile: ScanProfile,
+    include_people: bool,
+) -> Result<Value> {
+    let rank = |main: Option<Subject>, region: &str| {
+        let priority = profile.frame_priority(include_people, main);
         priority
             .iter()
-            .position(|p| *p == region)
+            .position(|k| region_name(*k) == region)
             .unwrap_or(priority.len())
     };
     let found = rows(
         conn,
-        "SELECT d.id, d.rating, d.sharpness, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
         [job],
     )?;
-    let region_of = |r: &Value| rank(r["region"].as_str().unwrap_or("vehicle"));
+    // Each frame's main subject: its largest person or vehicle.
+    let mut boxes: HashMap<i64, Vec<(Subject, f64)>> = HashMap::new();
+    for r in &found {
+        let kind = match r["region"].as_str() {
+            Some("person") => Subject::Person,
+            Some("vehicle") => Subject::Vehicle,
+            _ => continue,
+        };
+        let c = |k: &str| r[k].as_f64().unwrap_or_default();
+        boxes
+            .entry(r["image_id"].as_i64().unwrap_or_default())
+            .or_default()
+            .push((kind, (c("x2") - c("x1")) * (c("y2") - c("y1"))));
+    }
+    let main: HashMap<i64, Subject> = boxes
+        .into_iter()
+        .filter_map(|(image, b)| conrod_core::profile::main_subject(b).map(|m| (image, m)))
+        .collect();
+    let region_of = |r: &Value| {
+        let image = r["image_id"].as_i64().unwrap_or_default();
+        rank(
+            main.get(&image).copied(),
+            r["region"].as_str().unwrap_or("vehicle"),
+        )
+    };
     let mut primary: HashMap<i64, usize> = HashMap::new();
     for r in &found {
         let best = primary
@@ -103,9 +134,10 @@ pub fn pick_of_pass(conn: &Connection, job: i64, profile: ScanProfile) -> Result
 /// The action: run the pick and report it as a task.
 pub fn pick_keepers(d: &Desktop, job: i64) -> Result<Value> {
     require_job(d, job)?;
-    let profile = ScanProfile::parse(&settings(d, job)?.scan_profile);
+    let cfg = settings(d, job)?;
+    let profile = ScanProfile::parse(&cfg.scan_profile);
     let task = d.hub.start("Picking keepers", 0);
-    match pick_of_pass(&lock(&d.db), job, profile) {
+    match pick_of_pass(&lock(&d.db), job, profile, cfg.include_people) {
         Ok(stats) => {
             task.detail(format!(
                 "{} keepers from {} frames across {} passes",
@@ -135,6 +167,137 @@ pub fn group(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         ));
         Ok(())
     })
+}
+
+/// The action: turn people on or off for an album. On, for a motorsport album
+/// that skipped faces, finds the faces and eyes of the people already stored
+/// as a background operation; off only saves the flag (the rows stay, hidden
+/// by the window).
+pub fn set_include_people(d: &Arc<Desktop>, job: i64, value: bool) -> Result<Value> {
+    let mut cfg = settings(d, job)?;
+    cfg.include_people = value;
+    let preset = ShootPreset::parse(&cfg.scan_profile);
+    // Faces are already found at scan time wherever the flag is not needed.
+    let operation = if value && !preset.wants_faces(false) {
+        let cfg = cfg.clone();
+        launch(d, job, "Finding people", move |d, stop, task| {
+            if crate::operations::wait_for_cull(d, stop, task) {
+                find_people(d, job, &cfg, stop, task)?;
+            }
+            Ok(())
+        })?["operation"]
+            .clone()
+    } else {
+        Value::Null
+    };
+    let mut patch = Map::new();
+    patch.insert("include_people".into(), json!(value));
+    let mut saved = crate::library::update_job_settings(
+        d,
+        &crate::commands::UpdateJobSettingsArgs { job_id: job, patch },
+    )?;
+    saved["operation"] = operation;
+    Ok(saved)
+}
+
+/// Faces and eyes for every stored person of an album whose frame has none
+/// yet; vehicles are neither re-detected nor touched. Then the frames are
+/// re-rated by their main subject and the faces prepared for naming.
+fn find_people(
+    d: &Desktop,
+    job: i64,
+    cfg: &Settings,
+    stop: &AtomicBool,
+    task: &Task,
+) -> Result<()> {
+    let people = rows(
+        &lock(&d.reader),
+        "SELECT d.image_id, i.path, d.x1, d.y1, d.x2, d.y2 FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.rejected,0)=0 AND d.region_type='person' AND NOT EXISTS (SELECT 1 FROM detections f WHERE f.image_id=i.id AND f.region_type IN ('face','eye')) ORDER BY i.id, d.id",
+        [job],
+    )?;
+    let mut frames: BTreeMap<i64, (String, Vec<[f64; 4]>)> = BTreeMap::new();
+    for r in &people {
+        let c = |k: &str| r[k].as_f64().unwrap_or_default();
+        frames
+            .entry(r["image_id"].as_i64().unwrap_or_default())
+            .or_insert_with(|| {
+                (
+                    r["path"].as_str().unwrap_or_default().to_owned(),
+                    Vec::new(),
+                )
+            })
+            .1
+            .push([c("x1"), c("y1"), c("x2"), c("y2")]);
+    }
+    if !frames.is_empty() {
+        crate::setup::ensure(&d.hub, stop, crate::setup::FACES)?;
+        let detector = std::sync::Mutex::new(FaceDetector::load(&models::expected(models::FACES))?);
+        let region_models: HashMap<String, _> = ["face", "eye"]
+            .into_iter()
+            .filter_map(|r| crate::load_region_model(r).map(|m| (r.to_string(), m)))
+            .collect();
+        let total = frames.len() as u64;
+        for (n, (image, (path, boxes))) in frames.iter().enumerate() {
+            if stop.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            task.detail(format!("Looking for faces · {path}"));
+            let raw = conrod_io::raw::read(std::path::Path::new(path))?;
+            let rgb = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
+            let found =
+                crate::face_subjects(&rgb, boxes.iter().copied(), &detector, cfg, &region_models)?;
+            let db = lock(&d.db);
+            let tx = db.unchecked_transaction().map_err(err)?;
+            for s in &found {
+                crate::desktop::insert_subject(&tx, *image, s)?;
+            }
+            tx.commit().map_err(err)?;
+            task.progress(n as u64 + 1, total);
+        }
+    }
+    rerate(d, job, cfg)?;
+    let faces = embed_faces_missing(d, job, stop, task)?;
+    task.detail(format!(
+        "Found faces in {} frames; {faces} ready for naming",
+        frames.len()
+    ));
+    Ok(())
+}
+
+/// Every frame's rating again from its stored subjects, and the keepers.
+fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
+    let profile = ScanProfile::parse(&cfg.scan_profile);
+    let found = rows(
+        &lock(&d.reader),
+        "SELECT d.image_id, COALESCE(d.region_type,'vehicle') AS region, d.x1, d.y1, d.x2, d.y2, d.rating, i.sharpness AS whole FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id",
+        [job],
+    )?;
+    type Rated<'a> = Vec<(&'a str, [f64; 4], f64)>;
+    let mut frames: BTreeMap<i64, (Option<f64>, Rated)> = BTreeMap::new();
+    for r in &found {
+        let c = |k: &str| r[k].as_f64().unwrap_or_default();
+        let frame = frames
+            .entry(r["image_id"].as_i64().unwrap_or_default())
+            .or_insert((r["whole"].as_f64(), Vec::new()));
+        frame.1.push((
+            r["region"].as_str().unwrap_or("vehicle"),
+            [c("x1"), c("y1"), c("x2"), c("y2")],
+            c("rating"),
+        ));
+    }
+    let db = lock(&d.db);
+    let tx = db.unchecked_transaction().map_err(err)?;
+    for (image, (whole, subjects)) in &frames {
+        let rating = crate::frame_rating(profile, cfg.include_people, subjects, *whole);
+        tx.execute(
+            "UPDATE images SET rating=? WHERE id=?",
+            params![rating, image],
+        )
+        .map_err(err)?;
+    }
+    tx.commit().map_err(err)?;
+    pick_of_pass(&db, job, profile, cfg.include_people)?;
+    Ok(())
 }
 
 /// Give every stored vehicle crop an embedding, for albums identified before
@@ -388,7 +551,8 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
             ));
         }
     }
-    let profile = ScanProfile::parse(&settings(d, job)?.scan_profile);
+    let cfg = settings(d, job)?;
+    let profile = ScanProfile::parse(&cfg.scan_profile);
     let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     for (id, attrs, key, size, agreement, hex) in &writes {
@@ -401,7 +565,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         .map_err(err)?;
     }
     tx.commit().map_err(err)?;
-    pick_of_pass(&db, job, profile)?;
+    pick_of_pass(&db, job, profile, cfg.include_people)?;
     Ok((members.len(), looks.len()))
 }
 
@@ -617,5 +781,58 @@ mod tests {
         assert_eq!(task["state"], "failed");
         assert!(task["error"].as_str().unwrap().contains("Only 0 of 2"));
         assert!(lib.run("group", json!({"jobId": 4242})).is_err());
+    }
+
+    #[test]
+    fn including_people_saves_the_flag_and_rates_a_frame_by_its_main_subject() {
+        let lib = Lib::new("people");
+        let frame = lib.frame("1.jpg", Some(1));
+        let car = lib.detection(frame, "vehicle", 0.9);
+        let person = lib.detection(frame, "person", 0.5);
+        let face = lib.detection(frame, "face", 0.3);
+        // Already prepared for naming, so no model or photo is needed.
+        lib.sql("UPDATE detections SET embedding='x' WHERE id=?", [face]);
+        // The person fills more of the frame than the car.
+        lib.sql("UPDATE detections SET x2=1500 WHERE id=?", [car]);
+        let include = |value: bool| {
+            let out = lib
+                .run(
+                    "set_include_people",
+                    json!({"jobId": lib.job, "value": value}),
+                )
+                .unwrap();
+            lib.wait_idle();
+            out
+        };
+
+        let on = include(true);
+        assert_eq!(on["settings"]["include_people"], true);
+        assert!(on["operation"]
+            .as_str()
+            .unwrap()
+            .starts_with("Finding people"));
+        assert_eq!(lib.task("Finding people")["state"], "done");
+        assert!(settings(lib.d(), lib.job).unwrap().include_people);
+        let jobs = lib.run("jobs", json!({})).unwrap();
+        assert_eq!(jobs[0]["include_people"], true);
+        assert_eq!(jobs[0]["scan_profile"], "motorsport");
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [frame]);
+        assert_eq!(rating, 0.3, "a person as main subject: the face decides");
+        assert_eq!(picks(&lib).len(), 1);
+
+        // The car as main subject: the vehicle decides again.
+        lib.sql("UPDATE detections SET x2=5000 WHERE id=?", [car]);
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(picks(&lib), vec![car]);
+
+        let off = include(false);
+        assert_eq!(off["settings"]["include_people"], false);
+        assert!(off["operation"].is_null(), "turning off launches nothing");
+        assert!(!settings(lib.d(), lib.job).unwrap().include_people);
+        let kept: i64 = lib.one("SELECT count(*) FROM detections WHERE id=?", [person]);
+        assert_eq!(kept, 1, "people are hidden, not deleted");
+        assert!(lib
+            .run("set_include_people", json!({"jobId": 4242, "value": true}))
+            .is_err());
     }
 }

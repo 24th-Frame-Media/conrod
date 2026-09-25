@@ -28,6 +28,7 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 pub mod analyze;
+pub mod bench;
 pub mod catalog;
 pub mod commands;
 pub mod desktop;
@@ -193,6 +194,125 @@ fn options(settings: &Settings, _profile: ScanProfile) -> DetectOptions {
     }
 }
 
+/// Faces and eyes found inside each person box, measured like any subject.
+pub(crate) fn face_subjects(
+    image: &Rgb,
+    people: impl IntoIterator<Item = [f64; 4]>,
+    detector: &Mutex<FaceDetector>,
+    settings: &Settings,
+    models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
+) -> Result<Vec<Subject>, String> {
+    let (fw, fh) = (image.width, image.height);
+    let mut out = Vec::new();
+    for bbox in people {
+        let [x0, y0, x1, y1] = bbox.map(|v| v.max(0.0) as usize);
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+        let crop = image.crop(x0, y0, x1.min(fw), y1.min(fh));
+        for face in lock(detector).detect(&crop)? {
+            let face_box = [
+                face.bbox[0] + x0 as f64,
+                face.bbox[1] + y0 as f64,
+                face.bbox[2] + x0 as f64,
+                face.bbox[3] + y0 as f64,
+            ];
+            let mut regions = vec![("face", face_box)];
+            let side = (face.bbox[2] - face.bbox[0]) / 3.0;
+            for (x, y) in face.eyes {
+                let (x, y) = (x + x0 as f64, y + y0 as f64);
+                regions.push((
+                    "eye",
+                    [
+                        x - side / 2.0,
+                        y - side / 2.0,
+                        x + side / 2.0,
+                        y + side / 2.0,
+                    ],
+                ));
+            }
+            for (kind, bbox) in regions {
+                let [a, b, c, d] = [
+                    bbox[0].clamp(0.0, fw as f64),
+                    bbox[1].clamp(0.0, fh as f64),
+                    bbox[2].clamp(0.0, fw as f64),
+                    bbox[3].clamp(0.0, fh as f64),
+                ]
+                .map(|v| v as usize);
+                if c <= a + 24 || d <= b + 24 {
+                    continue;
+                }
+                let focus =
+                    sharpness::measure(&image.crop(a, b, c, d).to_gray(), None, models.get(kind));
+                if !focus.measured {
+                    continue;
+                }
+                let stars = sharpness::stars_for(focus.score);
+                let reason = if stars < (settings.auto_reject_below_stars as u8)
+                    || (settings.cull_blurred && focus.score < settings.blurred_below)
+                {
+                    format!("{kind} soft")
+                } else {
+                    String::new()
+                };
+                out.push(Subject {
+                    class: kind,
+                    conf: face.score,
+                    bbox: [a as f64, b as f64, c as f64, d as f64],
+                    sharpness: focus.score,
+                    panning: false,
+                    sharp_end: focus.sharp_end,
+                    rating: focus.score,
+                    stars,
+                    cull_reason: reason,
+                    features: focus.features,
+                    heuristic: if focus.learned {
+                        focus.heuristic
+                    } else {
+                        focus.score
+                    },
+                    region_type: kind,
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The frame's rating: the best subject of the first kind its priority finds.
+/// Subjects are `(region_type, bbox, rating)`.
+pub(crate) fn frame_rating(
+    profile: ScanProfile,
+    include_people: bool,
+    subjects: &[(&str, [f64; 4], f64)],
+    whole: Option<f64>,
+) -> f64 {
+    use conrod_core::profile::{main_subject, Subject as Kind};
+    let kind_of = |region: &str| match region {
+        "person" => Some(Kind::Person),
+        "vehicle" => Some(Kind::Vehicle),
+        _ => None,
+    };
+    let main = main_subject(subjects.iter().filter_map(|(region, [x0, y0, x1, y1], _)| {
+        kind_of(region).map(|k| (k, (x1 - x0) * (y1 - y0)))
+    }));
+    profile
+        .frame_priority(include_people, main)
+        .iter()
+        .find_map(|kind| {
+            if *kind == Kind::WholeFrame {
+                return whole;
+            }
+            let name = crate::passes::region_name(*kind);
+            subjects
+                .iter()
+                .filter(|s| s.0 == name)
+                .map(|s| s.2)
+                .max_by(f64::total_cmp)
+        })
+        .unwrap_or(0.0)
+}
+
 pub fn cull_frame(
     path: &Path,
     detector: &Mutex<Detector>,
@@ -272,105 +392,21 @@ pub fn cull_frame(
         });
     }
     if let Some(detector) = faces {
-        for person in found.iter().filter(|d| d.class_id == detect::PERSON) {
-            let [x0, y0, x1, y1] = person.bbox.map(|v| v.max(0.0) as usize);
-            if x1 <= x0 || y1 <= y0 {
-                continue;
-            }
-            let crop = image.crop(x0, y0, x1.min(fw), y1.min(fh));
-            for face in lock(detector).detect(&crop)? {
-                let face_box = [
-                    face.bbox[0] + x0 as f64,
-                    face.bbox[1] + y0 as f64,
-                    face.bbox[2] + x0 as f64,
-                    face.bbox[3] + y0 as f64,
-                ];
-                let mut regions = vec![("face", face_box)];
-                let side = (face.bbox[2] - face.bbox[0]) / 3.0;
-                for (x, y) in face.eyes {
-                    let (x, y) = (x + x0 as f64, y + y0 as f64);
-                    regions.push((
-                        "eye",
-                        [
-                            x - side / 2.0,
-                            y - side / 2.0,
-                            x + side / 2.0,
-                            y + side / 2.0,
-                        ],
-                    ));
-                }
-                for (kind, bbox) in regions {
-                    let [a, b, c, d] = [
-                        bbox[0].clamp(0.0, fw as f64),
-                        bbox[1].clamp(0.0, fh as f64),
-                        bbox[2].clamp(0.0, fw as f64),
-                        bbox[3].clamp(0.0, fh as f64),
-                    ]
-                    .map(|v| v as usize);
-                    if c <= a + 24 || d <= b + 24 {
-                        continue;
-                    }
-                    let focus = sharpness::measure(
-                        &image.crop(a, b, c, d).to_gray(),
-                        None,
-                        models.get(kind),
-                    );
-                    if !focus.measured {
-                        continue;
-                    }
-                    let stars = sharpness::stars_for(focus.score);
-                    let reason = if stars < (settings.auto_reject_below_stars as u8)
-                        || (settings.cull_blurred && focus.score < settings.blurred_below)
-                    {
-                        format!("{kind} soft")
-                    } else {
-                        String::new()
-                    };
-                    subjects.push(Subject {
-                        class: kind,
-                        conf: face.score,
-                        bbox: [a as f64, b as f64, c as f64, d as f64],
-                        sharpness: focus.score,
-                        panning: false,
-                        sharp_end: focus.sharp_end,
-                        rating: focus.score,
-                        stars,
-                        cull_reason: reason,
-                        features: focus.features,
-                        heuristic: if focus.learned {
-                            focus.heuristic
-                        } else {
-                            focus.score
-                        },
-                        region_type: kind,
-                    });
-                }
-            }
-        }
+        let people = found
+            .iter()
+            .filter(|d| d.class_id == detect::PERSON)
+            .map(|d| d.bbox);
+        subjects.extend(face_subjects(&image, people, detector, settings, models)?);
     }
     let whole = {
         let focus = sharpness::measure(&image.to_gray(), None, None);
         focus.measured.then_some(focus.score)
     };
-    let rating = preset
-        .priority()
+    let rated: Vec<_> = subjects
         .iter()
-        .find_map(|kind| {
-            use conrod_core::profile::Subject as Kind;
-            let name = match kind {
-                Kind::Eye => "eye",
-                Kind::Face => "face",
-                Kind::Person => "person",
-                Kind::Vehicle => "vehicle",
-                Kind::WholeFrame => return whole,
-            };
-            subjects
-                .iter()
-                .filter(|s| s.region_type == name)
-                .map(|s| s.rating)
-                .max_by(f64::total_cmp)
-        })
-        .unwrap_or(0.0);
+        .map(|s| (s.region_type, s.bbox, s.rating))
+        .collect();
+    let rating = frame_rating(preset.profile(), settings.include_people, &rated, whole);
     let stars = sharpness::stars_for(rating);
     Ok(FrameResult {
         path: path.to_path_buf(),
@@ -472,7 +508,7 @@ pub(crate) fn scan_files_filtered(
             return;
         }
         let mut needs = setup::SCAN.to_vec();
-        if ShootPreset::parse(&settings.scan_profile).wants_faces() {
+        if ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people) {
             needs.extend(setup::FACES);
         }
         if let Err(e) = setup::ensure(&hub, &flag, &needs) {
@@ -492,7 +528,9 @@ pub(crate) fn scan_files_filtered(
             }
         };
         let device = lock(&detector).device;
-        let faces = if ShootPreset::parse(&settings.scan_profile).wants_faces() {
+        let faces = if ShootPreset::parse(&settings.scan_profile)
+            .wants_faces(settings.include_people)
+        {
             let task = hub.start("Loading face detector", 0);
             match FaceDetector::load(&conrod_core::models::expected(conrod_core::models::FACES)) {
                 Ok(detector) => {

@@ -198,6 +198,7 @@ fn main() {
         }));
     }
     let builder = builder
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let desktop =
                 Desktop::open(conrod_core::settings::data_root()).map_err(std::io::Error::other)?;

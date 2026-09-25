@@ -1169,6 +1169,44 @@ fn merge_matches_snapshot() {
 }
 
 #[test]
+fn vlm_services_seed_from_legacy_fields() {
+    use conrod_core::settings::Settings;
+    let dir = std::env::temp_dir().join(format!("conrod-services-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("settings.json");
+    std::fs::write(
+        &path,
+        r#"{"vlm_provider":"ollama","vlm_model":"m","vlm_host":"http://a:1","vlm_extra_hosts":"http://b:2, http://a:1"}"#,
+    )
+    .unwrap();
+    let loaded = Settings::load(&path);
+    let got: Vec<_> = loaded
+        .vlm_services
+        .iter()
+        .map(|s| {
+            (
+                s.id.as_str(),
+                s.provider.as_str(),
+                s.model.as_str(),
+                s.host.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("vlm-1", "ollama", "m", "http://a:1"),
+            ("vlm-2", "ollama", "m", "http://b:2")
+        ]
+    );
+    assert_eq!(loaded.vlm_strategy, "least_busy");
+    // Stored services win over the legacy fields, and survive a save.
+    loaded.save(&path).unwrap();
+    assert_eq!(Settings::load(&path).vlm_services, loaded.vlm_services);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn settings_match_snapshot() {
     use conrod_core::settings::Settings;
     let fixture = fixture("settings");
@@ -1177,6 +1215,9 @@ fn settings_match_snapshot() {
         let m = v.as_object_mut().unwrap();
         m.remove("workers");
         m.remove("scan_profile"); // Rust-only
+        m.remove("include_people"); // Rust-only
+        m.remove("vlm_services");
+        m.remove("vlm_strategy");
         v
     };
     // A stored value may be 1 where 1.0 is meant, or vice versa; compare numbers as numbers.

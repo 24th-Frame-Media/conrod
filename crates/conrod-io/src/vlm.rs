@@ -497,6 +497,42 @@ impl HostPools {
     }
 }
 
+/// Where to start among `ids`: the id a `least_busy` token handed out, the
+/// next turn for `round_robin`, or clock nanos for `random`.
+pub fn pick_service(
+    strategy: &str,
+    ids: &[String],
+    held: Option<&str>,
+    turn: &std::sync::atomic::AtomicUsize,
+) -> usize {
+    let n = ids.len().max(1);
+    match (strategy, held) {
+        (_, Some(id)) => ids.iter().position(|i| i == id).unwrap_or(0),
+        ("round_robin", _) => turn.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % n,
+        _ => {
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos() as usize)
+                .unwrap_or(0)
+                % n
+        }
+    }
+}
+
+/// A copy of `settings` that talks to just this one service.
+fn for_service(settings: &Settings, service: &conrod_core::settings::VlmService) -> Settings {
+    Settings {
+        vlm_provider: service.provider.clone(),
+        vlm_model: service.model.clone(),
+        vlm_host: service.host.clone(),
+        vlm_extra_hosts: String::new(),
+        vlm_api_key: service.api_key.clone(),
+        anthropic_key_kind: service.key_kind.clone(),
+        vlm_services: Vec::new(),
+        ..settings.clone()
+    }
+}
+
 // ── request building ─────────────────────────────────────────────────────
 // Every provider takes the same inputs -- a prompt, already-encoded base64
 // JPEG images, a JSON schema and a token budget -- and is asked for
@@ -824,6 +860,9 @@ pub struct VlmClient {
     pub gate: RateGate,
     pub fatal: FatalTracker,
     hosts: HostPools,
+    /// One token per service id, for `least_busy`; see [`HostPool`].
+    services: HostPools,
+    turn: std::sync::atomic::AtomicUsize,
 }
 
 impl VlmClient {
@@ -833,12 +872,57 @@ impl VlmClient {
             gate: RateGate::new(clock),
             fatal: FatalTracker::default(),
             hosts: HostPools::default(),
+            services: HostPools::default(),
+            turn: Default::default(),
         }
     }
 
-    /// Ask whichever provider is configured. Returns the parsed JSON reply.
-    /// Port of `vlm_providers.call`.
+    /// Ask one of the enabled services, picked by `vlm_strategy`; on an
+    /// error, each other enabled service gets one try before giving up.
+    /// With no services at all, the single legacy provider is asked.
     pub fn call(
+        &self,
+        settings: &Settings,
+        prompt: &str,
+        images: &[String],
+        schema: &Value,
+        num_predict: i64,
+    ) -> Result<Value, VlmError> {
+        let enabled: Vec<_> = settings.vlm_services.iter().filter(|s| s.enabled).collect();
+        if enabled.is_empty() {
+            return self.call_one(settings, prompt, images, schema, num_predict);
+        }
+        let ids: Vec<String> = enabled.iter().map(|s| s.id.clone()).collect();
+        let pool = self.services.pool_for(ids.clone());
+        let held = (settings.vlm_strategy == "least_busy" || settings.vlm_strategy.is_empty())
+            .then(|| pool.acquire());
+        let start = pick_service(&settings.vlm_strategy, &ids, held.as_deref(), &self.turn);
+        let ask = |i: usize| {
+            let one = for_service(settings, enabled[i]);
+            self.call_one(&one, prompt, images, schema, num_predict)
+        };
+        let mut order = (start..ids.len()).chain(0..start);
+        let first = ask(order.next().unwrap_or(0));
+        // ponytail: only the first pick holds a least_busy token; failover
+        // tries go unpooled rather than wait on a busy service.
+        if let Some(id) = held {
+            pool.release(id);
+        }
+        let mut last = match first {
+            Err(VlmError::Stopped) | Ok(_) => return first,
+            Err(e) => e,
+        };
+        for i in order {
+            match ask(i) {
+                Err(VlmError::Stopped) => return Err(VlmError::Stopped),
+                Err(e) => last = e,
+                ok => return ok,
+            }
+        }
+        Err(last)
+    }
+
+    fn call_one(
         &self,
         settings: &Settings,
         prompt: &str,
@@ -1213,5 +1297,113 @@ pub fn identify_burst(
             note_failure(&client.fatal, &who, &err)?;
             Err(err)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use conrod_core::settings::VlmService;
+    use std::io::{Read, Write};
+    use std::sync::atomic::AtomicUsize;
+
+    fn ids(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("s{i}")).collect()
+    }
+
+    #[test]
+    fn round_robin_takes_turns() {
+        let turn = AtomicUsize::new(0);
+        let order: Vec<_> = (0..5)
+            .map(|_| pick_service("round_robin", &ids(3), None, &turn))
+            .collect();
+        assert_eq!(order, [0, 1, 2, 0, 1]);
+    }
+
+    #[test]
+    fn least_busy_never_double_books() {
+        let pools = HostPools::default();
+        let busy = Mutex::new(std::collections::HashSet::new());
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..20 {
+                        let pool = pools.pool_for(ids(3));
+                        let id = pool.acquire();
+                        assert!(
+                            busy.lock().unwrap().insert(id.clone()),
+                            "{id} double-booked"
+                        );
+                        std::thread::yield_now();
+                        busy.lock().unwrap().remove(&id);
+                        pool.release(id);
+                    }
+                });
+            }
+        });
+    }
+
+    /// Answers one Ollama request with a canned reply.
+    fn ollama_once() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            // Read the headers and the whole body before answering.
+            loop {
+                let n = stream.read(&mut buf).unwrap_or(0);
+                seen.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&seen).to_lowercase();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let len = text
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if n == 0 || seen.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+            }
+            let body = br#"{"response":"{\"ok\":true}"}"#;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body);
+        });
+        base
+    }
+
+    #[test]
+    fn fails_over_to_the_next_service() {
+        // A port nothing listens on: bound, then dropped.
+        let dead = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://{}", l.local_addr().unwrap())
+        };
+        let service = |id: &str, host: String| VlmService {
+            id: id.into(),
+            model: "m".into(),
+            host,
+            ..VlmService::default()
+        };
+        let settings = Settings {
+            vlm_services: vec![service("dead", dead), service("live", ollama_once())],
+            vlm_strategy: "round_robin".into(),
+            vlm_timeout: 5.0,
+            ..Settings::default()
+        };
+        let client = VlmClient::new(Arc::new(RealClock::default()));
+        let answer = client
+            .call(&settings, "p", &[], &json!({}), 8)
+            .expect("the live service answers");
+        assert_eq!(answer, json!({"ok": true}));
     }
 }

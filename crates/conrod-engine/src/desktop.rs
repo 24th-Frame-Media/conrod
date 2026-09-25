@@ -127,6 +127,7 @@ impl Desktop {
             recursive: true,
             read_plates: None,
             read_numbers: None,
+            include_people: None,
         })
         .map(|_| ())
     }
@@ -164,7 +165,7 @@ impl Desktop {
                 models
                     .as_array_mut()
                     .unwrap()
-                    .push(conrod_io::health::vision(
+                    .extend(conrod_io::health::services(
                         &conrod_io::settings::Settings::from_core(&settings),
                         settings.use_vlm,
                     ));
@@ -225,6 +226,9 @@ impl Desktop {
             Command::BulkEdit(a) => crate::edits::bulk_edit(self, &a),
             Command::RenameJob(a) => crate::library::rename_job(self, &a),
             Command::UpdateJobSettings(a) => crate::library::update_job_settings(self, &a),
+            Command::SetIncludePeople(a) => {
+                crate::passes::set_include_people(self, a.job_id, a.value)
+            }
             Command::Summary(a) => crate::library::summary(self, a.job_id),
             Command::Filling(a) => crate::library::filling(self, a.job_id),
             Command::Cover(a) => crate::library::cover(self, a.job_id),
@@ -246,6 +250,9 @@ impl Desktop {
             }
             Command::WatchStatus {} => Ok(crate::watching::status(self)),
             Command::SetWatch(a) => crate::watching::set(self, &a),
+            Command::BenchPick {} => crate::bench::pick(self),
+            Command::BenchRun(a) => crate::bench::run(self, &a),
+            Command::DescribeImage { path } => crate::bench::describe_one(self, &path),
         }
     }
 
@@ -353,6 +360,10 @@ impl Desktop {
                     if let Some(profile) = val.get("scan_profile").and_then(|p| p.as_str()) {
                         job["scan_profile"] = json!(profile);
                     }
+                    job["include_people"] = json!(val
+                        .get("include_people")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false));
                 }
             }
         }
@@ -496,6 +507,9 @@ impl Desktop {
             }
             if let Some(read) = a.read_numbers {
                 settings.read_numbers = read;
+            }
+            if let Some(people) = a.include_people {
+                settings.include_people = people;
             }
             settings.extra.insert(
                 "native_scan_stage".into(),
@@ -646,7 +660,7 @@ impl Desktop {
         tx.execute("DELETE FROM detections WHERE image_id=?", [image])
             .map_err(err)?;
         for s in &f.subjects {
-            tx.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,rating_verdict,panning,sharp_end,cull_reason,features,heuristic,region_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![image,s.bbox[0],s.bbox[1],s.bbox[2],s.bbox[3],s.class,s.conf,s.sharpness,s.rating,conrod_vision::sharpness::rating_for(s.rating,0.825,0.606),s.panning,s.sharp_end,s.cull_reason,serde_json::to_string(&s.features).map_err(err)?,s.heuristic,s.region_type]).map_err(err)?;
+            insert_subject(&tx, image, s)?;
         }
         let rating = f.rating;
         tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,thumb_path=? WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,thumb.to_string_lossy(),image]).map_err(err)?;
@@ -709,6 +723,16 @@ impl Desktop {
         }
         Ok(json!(output))
     }
+}
+
+/// Store one measured subject of a frame.
+pub(crate) fn insert_subject(
+    db: &rusqlite::Connection,
+    image: i64,
+    s: &crate::Subject,
+) -> Result<()> {
+    db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,rating_verdict,panning,sharp_end,cull_reason,features,heuristic,region_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![image,s.bbox[0],s.bbox[1],s.bbox[2],s.bbox[3],s.class,s.conf,s.sharpness,s.rating,conrod_vision::sharpness::rating_for(s.rating,0.825,0.606),s.panning,s.sharp_end,s.cull_reason,serde_json::to_string(&s.features).map_err(err)?,s.heuristic,s.region_type]).map_err(err)?;
+    Ok(())
 }
 
 pub fn save_jpeg(rgb: &Rgb, path: &Path) -> Result<()> {

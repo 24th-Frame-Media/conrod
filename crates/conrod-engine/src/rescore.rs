@@ -125,6 +125,8 @@ pub fn rescore(d: &Arc<Desktop>, job: i64) -> Result<Value> {
 struct Frame {
     whole: Option<f64>,
     best: HashMap<String, f64>,
+    /// Person and vehicle box areas, for the main subject.
+    boxes: Vec<(Subject, f64)>,
 }
 
 fn write(d: &Desktop, batch: &[(i64, Outcome)]) -> Result<()> {
@@ -140,7 +142,13 @@ fn write(d: &Desktop, batch: &[(i64, Outcome)]) -> Result<()> {
     tx.commit().map_err(err)
 }
 
-fn run(d: &Desktop, job: i64, cfg: &Settings, stop: &AtomicBool, task: &Task) -> Result<()> {
+pub(crate) fn run(
+    d: &Desktop,
+    job: i64,
+    cfg: &Settings,
+    stop: &AtomicBool,
+    task: &Task,
+) -> Result<()> {
     let models = load_models(d);
     let profile = ScanProfile::parse(&cfg.scan_profile);
     let found = rows(
@@ -163,6 +171,16 @@ fn run(d: &Desktop, job: i64, cfg: &Settings, stop: &AtomicBool, task: &Task) ->
             .entry(row["image_id"].as_i64().unwrap_or_default())
             .or_default();
         frame.whole = row["whole"].as_f64();
+        let kind = match region {
+            "person" => Some(Subject::Person),
+            "vehicle" => Some(Subject::Vehicle),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            let corner = |k: &str| row[k].as_f64().unwrap_or_default();
+            let area = (corner("x2") - corner("x1")) * (corner("y2") - corner("y1"));
+            frame.boxes.push((kind, area));
+        }
         let old = row["rating"].as_f64();
         // A detection stored without its hand-built score (a legacy scan,
         // from before that score was recorded) cannot be re-measured without
@@ -223,8 +241,9 @@ fn run(d: &Desktop, job: i64, cfg: &Settings, stop: &AtomicBool, task: &Task) ->
         let db = lock(&d.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         for (image, frame) in &frames {
+            let main = conrod_core::profile::main_subject(frame.boxes.iter().copied());
             let rating = profile
-                .priority()
+                .frame_priority(cfg.include_people, main)
                 .iter()
                 .find_map(|kind| match kind {
                     Subject::WholeFrame => frame.whole,
@@ -240,7 +259,7 @@ fn run(d: &Desktop, job: i64, cfg: &Settings, stop: &AtomicBool, task: &Task) ->
         tx.commit().map_err(err)?;
     }
     // The stars have moved, so the keeper of a pass may have moved with them.
-    let picked = pick_of_pass(&lock(&d.db), job, profile)?;
+    let picked = pick_of_pass(&lock(&d.db), job, profile, cfg.include_people)?;
     task.detail(format!(
         "Re-measured {} subjects: {changed} changed, {skipped} could not be (no stored features); {} keepers",
         found.len() - skipped,

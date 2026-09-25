@@ -220,7 +220,7 @@ pub fn parse_atom_entries(xml: &str) -> Vec<AtomEntry> {
 
         let title = extract_tag_content(block, "title").unwrap_or_default();
         let content = extract_tag_content(block, "content").unwrap_or_default();
-        let clean_notes = unescape_html(&content);
+        let clean_notes = strip_tags(&unescape_html(&content));
         if !title.is_empty() {
             entries.push(AtomEntry {
                 tag: title.clone(),
@@ -241,6 +241,30 @@ fn extract_tag_content(xml: &str, tag: &str) -> Option<String> {
     let content_start = &after_open[tag_end_idx + 1..];
     let close_idx = content_start.find(&close_pattern)?;
     Some(content_start[..close_idx].trim().to_string())
+}
+
+/// The feed's content is HTML; the panel shows plain text. Block ends become
+/// newlines, other tags vanish, then the text's own entities are unescaped.
+fn strip_tags(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(open) = rest.find('<') {
+        out.push_str(&rest[..open]);
+        let Some(close) = rest[open..].find('>') else {
+            rest = &rest[open..];
+            break;
+        };
+        let tag = rest[open + 1..open + close].to_ascii_lowercase();
+        if ["/p", "/h1", "/h2", "/h3", "/li", "br", "br/", "br /"].contains(&tag.as_str()) {
+            out.push('\n');
+        }
+        if tag == "li" {
+            out.push_str("• ");
+        }
+        rest = &rest[open + close + 1..];
+    }
+    out.push_str(rest);
+    unescape_html(out.trim())
 }
 
 fn unescape_html(s: &str) -> String {
@@ -717,7 +741,10 @@ mod tests {
         let entries = parse_atom_entries(xml);
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].tag, "v1.0.0-beta.4");
-        assert!(entries[0].content.contains("Bug fixes & performance"));
+        assert_eq!(
+            entries[0].content,
+            "Conrod 1.0.0-beta.4\nBug fixes & performance"
+        );
 
         let installer_name = "Conrod-1.0.0-beta.4-win64-setup.exe";
         let mut mock_sums = sums_for(installer_name);

@@ -25,10 +25,26 @@ fn current() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("the crate version is semver")
 }
 
-/// Only a copy the installer put there can be updated by running a newer installer;
-/// a portable unzip or a development build is told to download instead.
+/// Release builds can always update: the installer copy is replaced in place, and a
+/// portable copy runs the installer and then opens the installed Conrod. Development
+/// builds are told to download instead.
 fn installable() -> bool {
-    std::env::current_exe().is_ok_and(|exe| update::installed_by_installer(&exe))
+    !cfg!(debug_assertions)
+}
+
+/// The Conrod to start once the installer has run: this one if the installer put it
+/// here, else where the per-user installer puts it (`%LOCALAPPDATA%\Conrod`).
+fn target_app(exe: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    if update::installed_by_installer(exe) {
+        return Ok(exe.to_path_buf());
+    }
+    std::env::var_os("LOCALAPPDATA")
+        .map(|dir| {
+            std::path::PathBuf::from(dir)
+                .join("Conrod")
+                .join("Conrod.exe")
+        })
+        .ok_or_else(|| "LOCALAPPDATA is not set, so the installed Conrod cannot be found".into())
 }
 
 /// Is there a newer release? Pre-releases count: until 1.0 they are the only ones.
@@ -61,11 +77,12 @@ pub fn install(d: &Arc<Desktop>) -> Result<Value, String> {
     }
     // Refuse before downloading 100 MB, not after.
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    if !update::installed_by_installer(&exe) {
+    if !installable() {
         return Err(
-            "This copy was not put here by the installer (a portable or development build), so it cannot update itself. Download the new version instead.".into(),
+            "A development build cannot update itself. Download the new version instead.".into(),
         );
     }
+    let exe = target_app(&exe)?;
     let flag = Arc::new(AtomicBool::new(false));
     {
         let mut ops = lock(&d.operations);

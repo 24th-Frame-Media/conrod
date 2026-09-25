@@ -42,6 +42,61 @@ pub fn vision(settings: &Settings, enabled: bool) -> Value {
     }
 }
 
+/// Display name for a service (a server): "Ollama @ 172.26.18.230:11434"
+/// for Ollama (scheme and trailing slash stripped), else the provider name
+/// capitalised ("Anthropic"). Match rows by `id`, not by this.
+pub fn service_label(provider: &str, host: &str) -> String {
+    let mut name = provider.to_string();
+    if let Some(c) = name.get_mut(0..1) {
+        c.make_ascii_uppercase();
+    }
+    if provider != "ollama" {
+        return name;
+    }
+    let h = host.trim().trim_end_matches('/');
+    let h = h.split_once("://").map_or(h, |(_, rest)| rest);
+    format!("{name} @ {h}")
+}
+
+/// One status row per enabled VLM service, checked in parallel so N hosts
+/// cost one timeout, not N. No services configured: the single legacy row.
+/// Row shape: `{"id", "name", "file": "vlm", "ready", "detail"}` where `id`
+/// is `VlmService::id`, `name` is `service_label`, and `detail` starts with
+/// the server's selected model ("qwen2.5vl:7b: qwen2.5vl:7b available").
+/// The legacy row has no `id`.
+pub fn services(settings: &Settings, enabled: bool) -> Vec<Value> {
+    let active: Vec<_> = settings.vlm_services.iter().filter(|s| s.enabled).collect();
+    if !enabled || active.is_empty() {
+        return vec![vision(settings, enabled)];
+    }
+    std::thread::scope(|scope| {
+        let checks: Vec<_> = active
+            .iter()
+            .map(|service| {
+                scope.spawn(move || {
+                    let one = Settings {
+                        vlm_provider: service.provider.clone(),
+                        vlm_model: service.model.clone(),
+                        vlm_host: service.host.clone(),
+                        vlm_api_key: service.api_key.clone(),
+                        ..settings.clone()
+                    };
+                    let mut row = vision(&one, true);
+                    row["id"] = json!(service.id);
+                    row["name"] = json!(service_label(&service.provider, &service.host));
+                    // Ollama's detail already names the model; cloud's does not.
+                    let detail = row["detail"].as_str().unwrap_or("").to_string();
+                    if !detail.contains(&service.model) {
+                        row["detail"] = json!(format!("{}: {detail}", service.model));
+                    }
+                    row
+                })
+            })
+            .collect();
+        checks.into_iter().map(|c| c.join().unwrap()).collect()
+    })
+}
+
 /// Query Ollama's `/api/tags` on `host` and return discovered models with metadata and vision capability flags.
 pub fn ollama_models(host: &str) -> Value {
     let host = host.trim();
@@ -134,4 +189,16 @@ pub fn ollama_models(host: &str) -> Value {
         "online": true,
         "models": models
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn service_label_is_server_not_model() {
+        assert_eq!(
+            super::service_label("ollama", "http://172.26.18.230:11434/"),
+            "Ollama @ 172.26.18.230:11434"
+        );
+        assert_eq!(super::service_label("anthropic", ""), "Anthropic");
+    }
 }

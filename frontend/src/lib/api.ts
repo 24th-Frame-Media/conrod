@@ -48,6 +48,7 @@ export const engine = {
   forgetModel: (region: Region) => call<Training>('forget_model', { region }),
   trainTaste: () => call<Record<string, unknown>>('train_taste'),
   deleteJob: (jobId: number) => call('delete_job', { jobId }),
+  setIncludePeople: (jobId: number, value: boolean) => call<{ ok: boolean; jobId: number; settings: Settings; operation: string | null }>('set_include_people', { jobId, value }),
   updateJobSettings: (jobId: number, patch: Record<string, unknown>) => call('update_job_settings', { jobId, patch }),
   checkUpdate: (force = false) => call<import('./types').UpdateInfo>('check_update', { force }),
   installUpdate: () => call<{ operation: string }>('install_update'),

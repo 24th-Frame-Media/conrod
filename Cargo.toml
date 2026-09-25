@@ -14,6 +14,9 @@ repository = "https://github.com/kapsikkum/conrod"
 
 [profile.dev]
 opt-level = 2
+# Optimised incremental builds intermittently fail to link on MSVC (unresolved
+# `*.llvm.*` symbols in Conrod.exe); full rebuilds of the changed crates do not.
+incremental = false
 
 [profile.dev.package."*"]
 opt-level = 3

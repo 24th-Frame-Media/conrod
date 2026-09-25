@@ -114,7 +114,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
           )}
           <div className="activity-section"><span>Detection models</span><span>{readyModels}/{models.length}</span></div>
           <ul className="activity-models">
-            {models.map((model) => <li key={model.file}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span>{model.name}</span><small>{model.ready ? 'Ready' : 'Unavailable'}</small></li>)}
+            {models.map((model) => <li key={model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span>{model.name}</span><small>{model.ready ? 'Ready' : 'Unavailable'}</small></li>)}
             {!models.length && <li className="muted">Checking model availability…</li>}
           </ul>
           <details className="activity-history">

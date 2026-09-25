@@ -192,14 +192,17 @@ impl ShootPreset {
         true
     }
 
-    pub fn wants_faces(self) -> bool {
-        !matches!(
-            self,
-            ShootPreset::Motorsport
-                | ShootPreset::MotorsportBurnouts
-                | ShootPreset::MotorsportTrack
-                | ShootPreset::MotorsportRally
-        )
+    /// `include_people` is the album's choice to look at people too; only the
+    /// motorsport presets that skip faces change with it.
+    pub fn wants_faces(self, include_people: bool) -> bool {
+        include_people
+            || !matches!(
+                self,
+                ShootPreset::Motorsport
+                    | ShootPreset::MotorsportBurnouts
+                    | ShootPreset::MotorsportTrack
+                    | ShootPreset::MotorsportRally
+            )
     }
 
     pub fn wants_pets(self) -> bool {
@@ -283,9 +286,9 @@ impl ScanProfile {
     }
 
     /// Faces and eyes: the costly extra pass, skipped where no one looks at
-    /// a driver's eyes.
-    pub fn wants_faces(self) -> bool {
-        !matches!(self, ScanProfile::Motorsport)
+    /// a driver's eyes -- unless the album includes people.
+    pub fn wants_faces(self, include_people: bool) -> bool {
+        include_people || !matches!(self, ScanProfile::Motorsport)
     }
 
     /// First present wins.
@@ -295,6 +298,17 @@ impl ScanProfile {
             ScanProfile::Motorsport => &[Vehicle, Person, WholeFrame],
             ScanProfile::Portrait => &[Eye, Face, Person, WholeFrame],
             ScanProfile::Event | ScanProfile::Mix => &[Eye, Face, Person, Vehicle, WholeFrame],
+        }
+    }
+
+    /// The priority for one frame. A motorsport album that includes people
+    /// is judged by the frame's main subject: when that is a person, the
+    /// frame is rated like a portrait (eye, then face, then person).
+    pub fn frame_priority(self, include_people: bool, main: Option<Subject>) -> &'static [Subject] {
+        if self == ScanProfile::Motorsport && include_people && main == Some(Subject::Person) {
+            ScanProfile::Portrait.priority()
+        } else {
+            self.priority()
         }
     }
 
@@ -309,6 +323,16 @@ impl ScanProfile {
     pub fn identifies_vehicles(self) -> bool {
         matches!(self, ScanProfile::Motorsport | ScanProfile::Mix)
     }
+}
+
+/// A frame's main subject: the kind of its largest box, person or vehicle.
+/// Other kinds (faces, eyes) belong to a person and do not compete.
+pub fn main_subject(boxes: impl IntoIterator<Item = (Subject, f64)>) -> Option<Subject> {
+    boxes
+        .into_iter()
+        .filter(|(kind, _)| matches!(kind, Subject::Person | Subject::Vehicle))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(kind, _)| kind)
 }
 
 #[cfg(test)]
@@ -333,5 +357,85 @@ mod tests {
         for p in ScanProfile::ALL {
             assert_eq!(p.priority().last(), Some(&Subject::WholeFrame));
         }
+    }
+
+    #[test]
+    fn include_people_turns_faces_on_only_where_they_were_off() {
+        use ScanProfile::*;
+        for (p, off, on) in [
+            (Motorsport, false, true),
+            (Portrait, true, true),
+            (Event, true, true),
+            (Mix, true, true),
+        ] {
+            assert_eq!(p.wants_faces(false), off, "{p:?}");
+            assert_eq!(p.wants_faces(true), on, "{p:?}");
+            assert!(p.wants_people(), "{p:?}");
+        }
+        assert!(!ShootPreset::MotorsportTrack.wants_faces(false));
+        assert!(ShootPreset::MotorsportTrack.wants_faces(true));
+        assert!(ShootPreset::MotorsportMeet.wants_faces(false));
+        for preset in ShootPreset::ALL {
+            if preset.profile() != Motorsport {
+                assert_eq!(preset.wants_faces(false), preset.wants_faces(true));
+            }
+        }
+    }
+
+    #[test]
+    fn only_motorsport_with_people_follows_the_main_subject() {
+        use ScanProfile::*;
+        for p in ScanProfile::ALL {
+            for main in [None, Some(Subject::Vehicle), Some(Subject::Person)] {
+                assert_eq!(p.frame_priority(false, main), p.priority(), "{p:?}");
+                if p != Motorsport {
+                    assert_eq!(p.frame_priority(true, main), p.priority(), "{p:?}");
+                }
+            }
+        }
+        assert_eq!(
+            Motorsport.frame_priority(true, Some(Subject::Vehicle))[0],
+            Subject::Vehicle
+        );
+        assert_eq!(Motorsport.frame_priority(true, None)[0], Subject::Vehicle);
+        assert_eq!(
+            Motorsport.frame_priority(true, Some(Subject::Person)),
+            Portrait.priority()
+        );
+    }
+
+    #[test]
+    fn the_largest_person_or_vehicle_is_the_main_subject() {
+        use Subject::*;
+        assert_eq!(
+            main_subject([(Vehicle, 900.0), (Person, 400.0)]),
+            Some(Vehicle)
+        );
+        assert_eq!(
+            main_subject([(Vehicle, 300.0), (Person, 400.0)]),
+            Some(Person)
+        );
+        // A face's box never makes it the main subject on its own.
+        assert_eq!(
+            main_subject([(Face, 5000.0), (Vehicle, 10.0)]),
+            Some(Vehicle)
+        );
+        assert_eq!(main_subject([(Eye, 1.0)]), None);
+        // Person larger: a present eye beats the face and the person.
+        let present = [Face, Eye, Person, Vehicle];
+        let first = first_judged(&present, main_subject([(Vehicle, 1.0), (Person, 2.0)]));
+        assert_eq!(first, Some(Eye));
+        let first = first_judged(&[Face, Person, Vehicle], Some(Person));
+        assert_eq!(first, Some(Face));
+        let first = first_judged(&present, Some(Vehicle));
+        assert_eq!(first, Some(Vehicle));
+    }
+
+    fn first_judged(present: &[Subject], main: Option<Subject>) -> Option<Subject> {
+        ScanProfile::Motorsport
+            .frame_priority(true, main)
+            .iter()
+            .copied()
+            .find(|k| present.contains(k))
     }
 }
