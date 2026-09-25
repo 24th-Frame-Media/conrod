@@ -3,11 +3,15 @@ name: Check
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  # Its parity tests read fixtures generated from the Python app (branch
-  # legacy-python), so a divergence from that behaviour fails here.
   check:
     runs-on: windows-latest
     steps:

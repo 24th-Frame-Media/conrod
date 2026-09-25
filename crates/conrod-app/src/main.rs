@@ -203,6 +203,9 @@ fn main() {
                 Desktop::open(conrod_core::settings::data_root()).map_err(std::io::Error::other)?;
             app.asset_protocol_scope()
                 .allow_directory(desktop.root.join("cache"), true)?;
+            // Models are not bundled with the installer; fetch whatever is missing
+            // now, in the background, so the app is usable without waiting on first use.
+            let _ = conrod_engine::setup::install_missing(&desktop);
             app.manage(desktop);
             app.manage(Remembered(Mutex::new(None)));
             if let Some(window) = app.get_webview_window("main") {
