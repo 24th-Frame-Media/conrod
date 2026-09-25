@@ -732,6 +732,41 @@ pub fn delete_image(conn: &Connection, image_id: i64) -> Result<bool> {
     Ok(conn.execute("DELETE FROM images WHERE id=?", [image_id])? != 0)
 }
 
+/// 10 sharp images (top of the per-album sharpness ranking) that have at
+/// least one vehicle detection and a measured sharpness, for the VLM bench
+/// picker. Each row is `(image_id, path, thumbnail, sharp)`; `sharp` is
+/// always true now, kept so `sharp_end`/UI callers don't need to change shape.
+// Random 10, so repicking gives a fresh sample.
+pub type BenchPick = (i64, String, Option<String>, bool);
+
+pub fn bench_pick(conn: &Connection) -> Result<Vec<BenchPick>> {
+    // Sharpness is ranked within each album: cameras and lenses score on
+    // different scales, so a global ranking hands one album every slot.
+    const RANKED: &str = "SELECT i.id, i.path, COALESCE(i.thumb_path, i.preview_path) AS thumb,
+               PERCENT_RANK() OVER (PARTITION BY i.job_id ORDER BY i.sharpness) AS pr
+          FROM images i
+         WHERE i.sharpness IS NOT NULL
+           AND EXISTS (SELECT 1 FROM detections d WHERE d.image_id = i.id
+                       AND (d.region_type IS NULL OR d.region_type = 'vehicle'))";
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, path, thumb FROM ({RANKED}) WHERE pr >= 0.8 ORDER BY random() LIMIT 10"
+    ))?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, true)))?;
+    rows.collect()
+}
+
+/// The largest vehicle box on a photo, in the embedded preview's pixels.
+pub fn largest_vehicle_box(conn: &Connection, path: &str) -> Result<Option<[f64; 4]>> {
+    conn.query_row(
+        "SELECT d.x1, d.y1, d.x2, d.y2 FROM detections d JOIN images i ON i.id = d.image_id
+          WHERE i.path = ? AND (d.region_type IS NULL OR d.region_type = 'vehicle')
+          ORDER BY (d.x2 - d.x1) * (d.y2 - d.y1) DESC LIMIT 1",
+        [path],
+        |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?]),
+    )
+    .optional()
+}
+
 pub fn set_image_result(
     conn: &Connection,
     image_id: i64,

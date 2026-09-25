@@ -118,6 +118,11 @@ export function App() {
               await eng.refreshJobs();
               if (jobId === j.id) setJobId(null);
               toast('Album deleted');
+            })}
+            onToggleIncludePeople={(j) => void run(async () => {
+              const result = await engine.setIncludePeople(j.id, !j.include_people);
+              await eng.refreshJobs();
+              toast(result.ok ? 'Album settings updated' : 'Could not update album settings', { tone: result.ok ? 'ok' : 'error' });
             })} />
         )}
         {page === 'Review' && (
@@ -147,7 +152,7 @@ export function App() {
           <Train rv={rv} jobs={eng.jobs} jobId={jobId} run={run} toast={toast} showBoxes={showBoxes} verbs={trainVerbs} onPickJob={setJobId}
             onLibrary={() => setPage('Library')} />
         )}
-        {page === 'Settings' && <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} />}
+        {page === 'Settings' && <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status} />}
       </main>
       <ImportDialog draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} models={eng.models} settings={eng.settings} status={status} busy={starting}
         actions={actions} onStart={(args) => void startScan(args)} onReviewActive={() => { if (status.activeJob != null) openJob(status.activeJob); }}

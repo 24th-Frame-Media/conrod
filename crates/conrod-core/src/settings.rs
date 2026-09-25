@@ -75,6 +75,11 @@ pub struct Settings {
     pub vlm_extra_hosts: String,
     pub vlm_api_key: String,
     pub anthropic_key_kind: String,
+    /// Every VLM endpoint to spread calls over. Empty on an older file; `load`
+    /// seeds it from the single-provider fields above, which stay for that.
+    pub vlm_services: Vec<VlmService>,
+    /// "least_busy", "round_robin" or "random".
+    pub vlm_strategy: String,
     pub vlm_max_retries: i64,
     pub vlm_timeout: f64,
     pub vlm_input_edge: i64,
@@ -116,6 +121,9 @@ pub struct Settings {
     pub extra: Map<String, Value>,
     /// What kind of shoot a new scan defaults to.
     pub scan_profile: String,
+    /// Motorsport only: also look at people (faces, eyes, naming) and judge
+    /// a frame by its main subject. Other profiles ignore it.
+    pub include_people: bool,
 }
 
 impl Default for Settings {
@@ -165,6 +173,8 @@ impl Default for Settings {
             vlm_extra_hosts: String::new(),
             vlm_api_key: String::new(),
             anthropic_key_kind: "auto".into(),
+            vlm_services: Vec::new(),
+            vlm_strategy: "least_busy".into(),
             vlm_max_retries: 4,
             vlm_timeout: 180.0,
             vlm_input_edge: 1568,
@@ -205,6 +215,35 @@ impl Default for Settings {
             workers: (cpus - 2).max(2),
             extra: Map::new(),
             scan_profile: "motorsport".into(),
+            include_people: false,
+        }
+    }
+}
+
+/// One VLM server: a provider at a host (with its key), and the model
+/// selected on that server.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VlmService {
+    pub id: String,
+    pub provider: String,
+    pub model: String,
+    pub host: String,
+    pub api_key: String,
+    pub key_kind: String,
+    pub enabled: bool,
+}
+
+impl Default for VlmService {
+    fn default() -> Self {
+        VlmService {
+            id: String::new(),
+            provider: "ollama".into(),
+            model: String::new(),
+            host: String::new(),
+            api_key: String::new(),
+            key_kind: "auto".into(),
+            enabled: true,
         }
     }
 }
@@ -218,6 +257,7 @@ fn same_kind(a: &Value, b: &Value) -> bool {
             | (Value::Number(_), Value::Number(_))
             | (Value::String(_), Value::String(_))
             | (Value::Object(_), Value::Object(_))
+            | (Value::Array(_), Value::Array(_))
     )
 }
 
@@ -240,7 +280,37 @@ impl Settings {
             settings.blurred_below = BLURRED_BELOW;
             settings.focus_scale = FOCUS_SCALE;
         }
+        settings.seed_vlm_services();
         settings
+    }
+
+    /// An older file has only the single-provider fields: turn them into one
+    /// service, plus one Ollama service per extra host with the same model.
+    pub fn seed_vlm_services(&mut self) {
+        if !self.vlm_services.is_empty() {
+            return;
+        }
+        let main = VlmService {
+            id: "vlm-1".into(),
+            provider: self.vlm_provider.clone(),
+            model: self.vlm_model.clone(),
+            host: self.vlm_host.clone(),
+            api_key: self.vlm_api_key.clone(),
+            key_kind: self.anthropic_key_kind.clone(),
+            enabled: true,
+        };
+        let extra: Vec<String> = self.ollama_hosts().into_iter().skip(1).collect();
+        self.vlm_services.push(main);
+        for host in extra {
+            let id = format!("vlm-{}", self.vlm_services.len() + 1);
+            self.vlm_services.push(VlmService {
+                id,
+                provider: "ollama".into(),
+                model: self.vlm_model.clone(),
+                host,
+                ..VlmService::default()
+            });
+        }
     }
 
     /// Overlay known keys whose values have the right type.

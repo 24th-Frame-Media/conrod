@@ -1,4 +1,4 @@
-export type Job = { id: number; label: string; root: string; status: string; total: number; done: number; created_at: number; scan_profile?: string };
+export type Job = { id: number; label: string; root: string; status: string; total: number; done: number; created_at: number; scan_profile?: string; include_people?: boolean };
 export type Frame = {
   id: number; path: string; status: string; thumb_path: string | null; preview_path: string | null;
   width: number; height: number; rating: number | null; manual_stars: number | null; rejected: number;
@@ -20,7 +20,7 @@ export type Review = { frames: Frame[]; detections: Detection[] };
 
 export type SettingValue = string | number | boolean;
 export type Settings = Record<string, SettingValue>;
-export type ModelInfo = { name: string; file: string; ready: boolean };
+export type ModelInfo = { id?: string; name: string; file: string; ready: boolean; detail?: string };
 export type Bootstrap = { jobs: Job[]; settings: Settings; models: ModelInfo[]; status: Status };
 
 export const ATTRIBUTE_KEYS = ['plate', 'race_number', 'make', 'model', 'colour', 'team', 'driver', 'country', 'plate_state', 'body_type'] as const;
@@ -35,7 +35,7 @@ export type Page = 'Library' | 'Scan' | 'Review' | 'Train' | 'Known vehicles' | 
 export type View = 'review' | 'all' | 'picks' | 'rejected' | 'kept' | 'stacks' | 'vehicles';
 export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick';
 export type Facet = { kind: 'number' | 'plate'; value: string };
-export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean } | { jobId: number };
+export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean } | { jobId: number };
 export type MarkValues = { stars?: number | null; rejected?: boolean };
 export type Toaster = (message: string, options?: { tone?: 'error' | 'ok'; ms?: number }) => void;
 
@@ -109,4 +109,16 @@ export type OllamaModelsResponse = {
   models: OllamaModel[];
   error?: string;
 };
+
+export type VlmProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini';
+export type VlmService = {
+  id: string;
+  provider: VlmProvider;
+  model: string;
+  host?: string;
+  api_key?: string;
+  key_kind?: string;
+  enabled: boolean;
+};
+export type VlmStrategy = 'least_busy' | 'round_robin' | 'random';
 

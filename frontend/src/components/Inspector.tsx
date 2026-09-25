@@ -1,10 +1,12 @@
 import { useEffect, useState, useRef } from 'react';
-import { asset } from '../lib/api';
+import { asset, call } from '../lib/api';
 import { filename, frameStars, frameExcluded } from '../lib/review';
 import type { Detection, Frame, KnownVehicle, MarkValues } from '../lib/types';
 import { StarControl } from './Stars';
 import { LoadableImage } from './Media';
-import { DetectionsTable, type CategoryFilter } from './DetectionsTable';
+import { DetectionsTable, getCategory, type CategoryFilter } from './DetectionsTable';
+
+export type ReviewKind = 'portrait' | 'motorsport' | 'motorsport+people' | 'mixed';
 
 type Props = {
   frame: Frame | null;
@@ -13,10 +15,18 @@ type Props = {
   allDetections?: Detection[];
   allFrames?: Frame[];
   known?: KnownVehicle[];
+  kind?: ReviewKind;
   onMark: (values: MarkValues) => void;
   onOpen: () => void;
   onEdit: (id: number, updates: Record<string, string | string[] | null>) => unknown;
 };
+
+/** Portrait albums only ever care about people/face/eye rows; car-only albums only ever care about the vehicle. */
+function filterByKind(list: Detection[], kind: ReviewKind): Detection[] {
+  if (kind === 'portrait') return list.filter((d) => getCategory(d) === 'person' || getCategory(d) === 'landmark');
+  if (kind === 'motorsport') return list.filter((d) => getCategory(d) === 'vehicle' || getCategory(d) === 'plate');
+  return list;
+}
 
 const DEFAULT_WIDTH = 360;
 const MIN_WIDTH = 280;
@@ -41,15 +51,30 @@ export function Inspector({
   allDetections = [],
   allFrames = [],
   known = [],
+  kind = 'mixed',
   onMark,
   onOpen,
   onEdit,
 }: Props) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>(kind === 'portrait' ? 'people' : 'all');
+  const shownDetections = filterByKind(detections, kind);
+  const shownAllDetections = filterByKind(allDetections, kind);
   const [width, setWidth] = useState<number>(getStoredWidth);
   const [resizing, setResizing] = useState(false);
+  const [guess, setGuess] = useState<string | null>(null);
+  useEffect(() => setGuess(null), [frame?.path]);
+  // Asks the Settings model about this one frame; shown only, never stored.
+  const identify = async (path: string) => {
+    setGuess('Asking…');
+    try {
+      const v = await call<Record<string, string | null>>('describe_image', { path });
+      setGuess([v.make, v.model, v.colour, v.number && `#${v.number}`].filter(Boolean).join(' · ') || 'Nothing recognised');
+    } catch (e) {
+      setGuess(`Failed: ${e}`);
+    }
+  };
   const widthRef = useRef(width);
   widthRef.current = width;
 
@@ -141,6 +166,14 @@ export function Inspector({
         </button>
       </div>
 
+      {kind !== 'portrait' && (
+        <div className="frame-side-foot">
+          <button className="ghost small" disabled={guess === 'Asking…'} onClick={() => void identify(frame.path)}
+            title="Ask the vision model in Settings about this frame. Nothing is saved.">Identify</button>
+          {guess && <span className="mono" style={{ fontSize: 12 }}>{guess}</span>}
+        </div>
+      )}
+
       <dl className="meta">
         <dt>Size</dt>
         <dd>{frame.width ? `${frame.width} × ${frame.height}` : '—'}</dd>
@@ -153,7 +186,7 @@ export function Inspector({
       {frame.error && <p className="error-text">{frame.error}</p>}
 
       <DetectionsTable
-        detections={detections}
+        detections={shownDetections}
         selectedId={selectedId}
         hoveredId={hoveredId}
         categoryFilter={categoryFilter}
@@ -161,7 +194,7 @@ export function Inspector({
         onHover={setHoveredId}
         onFilterChange={setCategoryFilter}
         onEdit={onEdit}
-        allDetections={allDetections}
+        allDetections={shownAllDetections}
         allFrames={allFrames}
         known={known}
         frameBurstKey={frame.burst_key}

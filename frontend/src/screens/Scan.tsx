@@ -22,6 +22,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, models, set
   const [autoIdentify, setAutoIdentify] = useState(false);
   const [readPlates, setReadPlates] = useState(() => settings.read_plates !== false);
   const [readNumbers, setReadNumbers] = useState(() => settings.read_numbers !== false);
+  const [includePeople, setIncludePeople] = useState(false);
   const [entries, setEntries] = useState('');
   const selectedParent = profileParent(profile);
   const selectedGroup = PROFILE_GROUPS.find((group) => group.id === selectedParent);
@@ -97,10 +98,13 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, models, set
               <label><input type="checkbox" checked={readPlates} onChange={(e) => setReadPlates(e.target.checked)} /><span><b>Registration plates</b><small>Use the plate detector and OCR; tune the vision prompt for registered vehicles.</small></span></label>
               <label><input type="checkbox" checked={readNumbers} onChange={(e) => setReadNumbers(e.target.checked)} /><span><b>Race numbers</b><small>Read door, roundel and fairing numbers; tune the vision prompt for competition vehicles.</small></span></label>
             </>}
+            {selectedParent === 'motorsport' && (
+              <label><input type="checkbox" checked={includePeople} onChange={(e) => setIncludePeople(e.target.checked)} /><span><b>Includes people</b><small>Also detect people and faces; the main subject decides focus.</small></span></label>
+            )}
             {contextualTargets.map(([title, description]) => <label className="fixed-target" key={title}><input type="checkbox" checked readOnly tabIndex={-1} /><span><b>{title}</b><small>{description}</small></span></label>)}
           </div>
           <div className="actions-row">
-            <button className="primary" disabled={!draft.root || busy || scanning} onClick={() => { onStart({ root: draft.root, label: draft.label, profile, recursive, stage: effectiveStage, readPlates: vehicleIdentity && readPlates, readNumbers: vehicleIdentity && readNumbers }); onClose(); }}>
+            <button className="primary" disabled={!draft.root || busy || scanning} onClick={() => { onStart({ root: draft.root, label: draft.label, profile, recursive, stage: effectiveStage, readPlates: vehicleIdentity && readPlates, readNumbers: vehicleIdentity && readNumbers, includePeople: selectedParent === 'motorsport' && includePeople }); onClose(); }}>
               {busy ? 'Preparing import…' : 'Import photos'}
             </button>
             {scanning && <span className="muted busy-note">A scan is already running. Stop it from the activity menu, top right, to start another.</span>}

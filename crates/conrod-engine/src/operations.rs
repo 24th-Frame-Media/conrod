@@ -57,6 +57,8 @@ pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
     s.vlm_api_key = current.vlm_api_key;
     s.vlm_host = current.vlm_host;
     s.vlm_extra_hosts = current.vlm_extra_hosts;
+    s.vlm_services = current.vlm_services;
+    s.vlm_strategy = current.vlm_strategy;
     Ok(s)
 }
 pub(crate) fn launch(
@@ -91,7 +93,11 @@ pub(crate) fn launch(
     });
     Ok(json!({"operation":key}))
 }
-fn wait_for_cull(d: &Desktop, stop: &AtomicBool, task: &conrod_core::tasks::Task) -> bool {
+pub(crate) fn wait_for_cull(
+    d: &Desktop,
+    stop: &AtomicBool,
+    task: &conrod_core::tasks::Task,
+) -> bool {
     // ponytail: polls desktop state instead of blocking on a signal so the
     // `stop` flag stays checkable every 200ms; a Condvar woken on both scan
     // completion and cancellation would remove the poll if needed later.
@@ -265,8 +271,8 @@ fn load_readers(settings: &Settings, ocr: &Option<Arc<ocr::Ocr>>) -> Result<Read
 pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
     let settings = settings(d, job)?;
     let profile = conrod_core::profile::ScanProfile::parse(&settings.scan_profile);
-    let finds_faces =
-        conrod_core::profile::ShootPreset::parse(&settings.scan_profile).wants_faces();
+    let finds_faces = conrod_core::profile::ShootPreset::parse(&settings.scan_profile)
+        .wants_faces(settings.include_people);
     if !profile.identifies_vehicles() && !finds_faces {
         return Err("There are no identifiable subjects in this shoot preset".into());
     }

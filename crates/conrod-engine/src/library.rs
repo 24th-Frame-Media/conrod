@@ -145,10 +145,15 @@ pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
     }))
 }
 
-/// A picture to stand for the album on its card: the surest vehicle crop that
-/// is still on disk, else the thumbnail of its best-rated frame.
+/// A picture to stand for the album on its card: for a motorsport shoot, the
+/// biggest sharp vehicle crop that is still on disk; otherwise (portraits,
+/// events, mixed) a close-up crop is as likely to be a face, so we go
+/// straight to the thumbnail of the best-rated full frame.
 pub fn cover(d: &Desktop, job: i64) -> Result<Value> {
     require_job(d, job)?;
+    let settings = crate::operations::settings(d, job)?;
+    let is_motorsport = conrod_core::profile::ScanProfile::parse(&settings.scan_profile)
+        == conrod_core::profile::ScanProfile::Motorsport;
     let db = lock(&d.reader);
     let candidates = |sql: &str, column: &str| -> Result<Option<String>> {
         Ok(rows(&db, sql, [job])?
@@ -157,11 +162,15 @@ pub fn cover(d: &Desktop, job: i64) -> Result<Value> {
             .find(|p| Path::new(p).is_file())
             .map(str::to_owned))
     };
-    if let Some(path) = candidates(
-        "SELECT d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND d.crop_path IS NOT NULL AND d.rejected=0 ORDER BY d.conf DESC LIMIT 20",
-        "crop_path",
-    )? {
-        return Ok(json!({"path": path, "source": "crop"}));
+    if is_motorsport {
+        if let Some(path) = candidates(
+            &format!(
+                "SELECT d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND d.crop_path IS NOT NULL AND d.rejected=0 AND {VEHICLE} ORDER BY d.conf * (d.x2-d.x1) * (d.y2-d.y1) * (1 + COALESCE(d.sharpness,0)) DESC LIMIT 20"
+            ),
+            "crop_path",
+        )? {
+            return Ok(json!({"path": path, "source": "crop"}));
+        }
     }
     if let Some(path) = candidates(
         "SELECT thumb_path FROM images WHERE job_id=? AND thumb_path IS NOT NULL AND rejected=0 ORDER BY COALESCE(stars*0.2, rating, 0) DESC, id LIMIT 20",
@@ -367,6 +376,36 @@ mod tests {
         assert_eq!(
             out["path"].as_str().map(std::path::Path::new),
             Some(present.as_path())
+        );
+    }
+
+    #[test]
+    fn a_portrait_album_covers_with_the_thumbnail_not_a_face_crop() {
+        let lib = Lib::new("cover-portrait");
+        lib.run(
+            "update_job_settings",
+            json!({"jobId": lib.job, "patch": {"scan_profile": "portrait"}}),
+        )
+        .unwrap();
+        let f1 = lib.frame("1.jpg", None);
+        let thumb = lib.root.join("t1.jpg");
+        std::fs::write(&thumb, b"x").unwrap();
+        lib.sql(
+            "UPDATE images SET thumb_path=?,rating=0.5 WHERE id=?",
+            params![thumb.to_string_lossy(), f1],
+        );
+        let crop = lib.root.join("crop-1.jpg");
+        std::fs::write(&crop, b"x").unwrap();
+        let d1 = lib.detection(f1, "face", 0.99);
+        lib.sql(
+            "UPDATE detections SET crop_path=?,conf=? WHERE id=?",
+            params![crop.to_string_lossy(), 0.99, d1],
+        );
+        let out = lib.run("cover", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(out["source"], "thumb", "a face crop is not a cover");
+        assert_eq!(
+            out["path"].as_str().map(std::path::Path::new),
+            Some(thumb.as_path())
         );
     }
 

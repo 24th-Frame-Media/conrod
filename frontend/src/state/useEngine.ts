@@ -1,7 +1,7 @@
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { engine, inTauri } from '../lib/api';
+import { call, engine, inTauri } from '../lib/api';
 import type { Job, ModelInfo, Settings, Status } from '../lib/types';
 import type { Runner } from './hooks';
 import { useToast } from './toast';
@@ -24,6 +24,8 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
   useEffect(() => { latest.current = { jobId, refreshReview, jobs }; });
 
   const refreshJobs = useCallback(async () => setJobs(await engine.jobs()), []);
+  // `health` = bootstrap's local models plus one live row per VLM server (with its id).
+  const refreshModels = useCallback(async () => setModels(await call<ModelInfo[]>('health')), []);
 
   useEffect(() => {
     let live = true;
@@ -31,9 +33,10 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
       const b = await engine.bootstrap();
       if (!live) return;
       setJobs(b.jobs); setSettings(b.settings); setModels(b.models); setStatus(b.status);
+      void refreshModels().catch(() => undefined);
     }).finally(() => { if (live) setReady(true); });
     return () => { live = false; };
-  }, [run]);
+  }, [run, refreshModels]);
 
   useEffect(() => {
     let live = true;
@@ -54,7 +57,7 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
           await latest.current.refreshReview();
         }
       }
-      if (!s.activeJob && !s.operations.length && lastActive) { const b = await engine.bootstrap(); if(live) setModels(b.models); }
+      if (!s.activeJob && !s.operations.length && lastActive) { const m = await call<ModelInfo[]>('health'); if(live) setModels(m); }
       lastActive = s.activeJob ?? (s.operations.length ? -1 : null);
     };
     const update = async (pushed?: Status) => {
@@ -88,6 +91,6 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
     if (inTauri) void getCurrentWindow().requestUserAttention(last?.state === 'failed' ? UserAttentionType.Critical : UserAttentionType.Informational);
   }, [status, toast]);
 
-  return { ready, jobs, setJobs, settings, setSettings, models, status, setStatus, refreshJobs };
+  return { ready, jobs, setJobs, settings, setSettings, models, status, setStatus, refreshJobs, refreshModels };
 }
 export type EngineModel = ReturnType<typeof useEngine>;

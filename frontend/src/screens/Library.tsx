@@ -3,16 +3,16 @@ import { asset, call } from '../lib/api';
 import { useEffect, useState } from 'react';
 import { Confirm, Empty } from '../components/basics';
 import { coverTint, jobState, pct, plural, shortDate } from '../lib/format';
-import type { Job, ModelInfo } from '../lib/types';
+import { profileParent, type Job, type ModelInfo } from '../lib/types';
 
 type Props = {
   jobs: Job[]; models: ModelInfo[]; scanning: boolean;
   onOpen: (job: Job) => void; onNewScan: () => void; onIdentify: (job: Job) => void;
-  onResume: (job: Job) => void; onDelete: (job: Job) => void;
+  onResume: (job: Job) => void; onDelete: (job: Job) => void; onToggleIncludePeople: (job: Job) => void;
 };
 
-function JobCard({ job, scanning, onOpen, onIdentify, onResume, onAsk }: {
-  job: Job; scanning: boolean; onOpen: () => void; onIdentify: () => void; onResume: () => void; onAsk: () => void;
+function JobCard({ job, scanning, onOpen, onIdentify, onResume, onAsk, onToggleIncludePeople }: {
+  job: Job; scanning: boolean; onOpen: () => void; onIdentify: () => void; onResume: () => void; onAsk: () => void; onToggleIncludePeople: () => void;
 }) {
   const [cover, setCover] = useState<string>();
   useEffect(() => { let live = true; void call<{path: string} | null>('cover', {jobId: job.id}).then(c => { if(live) setCover(asset(c?.path)); }).catch(() => undefined); return () => { live = false; }; }, [job.id, job.done]);
@@ -32,6 +32,11 @@ function JobCard({ job, scanning, onOpen, onIdentify, onResume, onAsk }: {
       </div>
       <div className="name" title={job.root}>{job.label}</div>
       <div className="sub">{job.done.toLocaleString()} / {job.total.toLocaleString()} photos · {shortDate(job.created_at)}</div>
+      {profileParent(job.scan_profile ?? '') === 'motorsport' && (
+        <label className="sub" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={Boolean(job.include_people)} onChange={onToggleIncludePeople} /> Includes people
+        </label>
+      )}
       <div className="steps">
         <button className="step" onClick={(e) => { e.stopPropagation(); onOpen(); }}>Review</button>
         {job.status === 'done' && (
@@ -43,7 +48,7 @@ function JobCard({ job, scanning, onOpen, onIdentify, onResume, onAsk }: {
 }
 
 /** Home: the albums as cover cards, with totals and model setup in the rail, as on the Python home screen. */
-export function Library({ jobs, models, scanning, onOpen, onNewScan, onIdentify, onResume, onDelete }: Props) {
+export function Library({ jobs, models, scanning, onOpen, onNewScan, onIdentify, onResume, onDelete, onToggleIncludePeople }: Props) {
   const run = useRun();
   const [doomed, setDoomed] = useState<Job | null>(null);
   const scanned = jobs.reduce((n, j) => n + j.done, 0);
@@ -66,7 +71,7 @@ export function Library({ jobs, models, scanning, onOpen, onNewScan, onIdentify,
             <div className="cards">
               {jobs.map((job) => (
                 <JobCard key={job.id} job={job} scanning={scanning} onOpen={() => onOpen(job)} onIdentify={() => onIdentify(job)}
-                  onResume={() => onResume(job)} onAsk={() => setDoomed(job)} />
+                  onResume={() => onResume(job)} onAsk={() => setDoomed(job)} onToggleIncludePeople={() => onToggleIncludePeople(job)} />
               ))}
             </div>
           ) : (

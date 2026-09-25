@@ -288,11 +288,11 @@ button.small { padding: 4px 10px; font-size: 12px; }
 .readout input:focus { border-color: var(--accent); }
 
 /* toasts */
-.toasts { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 100; pointer-events: none; }
+.toasts { position: fixed; top: 60px; right: 16px; display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 8px; z-index: 100; pointer-events: none; }
 .toast { pointer-events: auto; max-width: min(640px, 90vw); background: var(--surface-3); border: 1px solid var(--line); padding: 11px 18px; border-radius: 99px; box-shadow: var(--shadow); white-space: pre-line; text-align: left; animation: toast-in .2s ease-out; }
 .toast.ok::before { content: "✓ "; color: var(--good); font-weight: 700; }
 .toast.error { background: #2a1719; border-color: #7a2f2c; color: #ffb4b8; border-radius: var(--radius); }
-@keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px) scale(.98); } }
 
 /* dialogs */
 dialog { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px; box-shadow: var(--shadow); }

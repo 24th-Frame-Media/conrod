@@ -84,6 +84,8 @@ pub struct ScanArgs {
     pub label: Option<String>,
     pub read_plates: Option<bool>,
     pub read_numbers: Option<bool>,
+    /// Motorsport: look at people too. Left out keeps the saved default.
+    pub include_people: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,6 +170,14 @@ pub struct RenameArgs {
     pub job_id: i64,
     /// Blank or `null` goes back to the folder name.
     pub label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncludePeopleArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    pub value: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -287,6 +297,37 @@ pub struct OllamaModelsArgs {
     pub host: Option<String>,
 }
 
+/// What a bench item is claimed to be; a blank field is skipped when scoring.
+#[derive(Debug, Deserialize, Default)]
+pub struct BenchTruth {
+    pub make: Option<String>,
+    pub model: Option<String>,
+    pub colour: Option<String>,
+    pub number: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BenchItem {
+    pub path: String,
+    pub sharp: bool,
+    #[serde(default)]
+    pub truth: BenchTruth,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BenchModel {
+    /// `VlmService::id` of the server to run on.
+    pub service_id: String,
+    /// The model to run on that server.
+    pub model: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BenchRunArgs {
+    pub items: Vec<BenchItem>,
+    pub models: Vec<BenchModel>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", content = "args", rename_all = "snake_case")]
 pub enum Command {
@@ -331,6 +372,7 @@ pub enum Command {
     BulkEdit(BulkArgs),
     RenameJob(RenameArgs),
     UpdateJobSettings(UpdateJobSettingsArgs),
+    SetIncludePeople(IncludePeopleArgs),
     Summary(JobArgs),
     Cover(JobArgs),
     Filling(JobArgs),
@@ -345,6 +387,11 @@ pub enum Command {
     OllamaModels(OllamaModelsArgs),
     WatchStatus {},
     SetWatch(WatchArgs),
+    BenchPick {},
+    BenchRun(BenchRunArgs),
+    DescribeImage {
+        path: String,
+    },
 }
 
 impl Command {

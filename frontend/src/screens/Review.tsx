@@ -12,7 +12,7 @@ import { useToast } from '../state/toast';
 import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
 import { ShootSettingsModal } from '../components/ShootSettingsModal';
 import type { Frame, Job, KnownVehicle, Settings, Status, Task } from '../lib/types';
-import { profileLabel } from '../lib/types';
+import { profileLabel, profileParent } from '../lib/types';
 import type { ReviewModel } from '../state/useReview';
 import { subjectExcluded } from '../review.mjs';
 
@@ -243,6 +243,10 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
   const busy = scanning || status.operations.some((key) => key.endsWith(`:${jobId}`));
   const currentJob = jobs.find((j) => j.id === jobId);
   const currentProfile = String(currentJob?.scan_profile || settings.scan_profile || 'motorsport');
+  const currentParent = profileParent(currentProfile);
+  const kind = currentParent === 'portrait' ? 'portrait'
+    : currentParent === 'motorsport' ? (currentJob?.include_people ? 'motorsport+people' : 'motorsport')
+    : 'mixed';
 
   const primaryStep = !busy && pending > 0
     ? {
@@ -569,7 +573,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
                   {filtered && <button className="ghost" onClick={() => patchFilters({ ...defaultFilters })}>Clear filters</button>}
                 </Empty>
               } />}
-        <Inspector frame={frame} detections={frame ? facts.get(frame.id)?.dets ?? [] : []} allDetections={review.detections} allFrames={review.frames} known={known} scanning={scanning}
+        <Inspector frame={frame} detections={frame ? facts.get(frame.id)?.dets ?? [] : []} allDetections={review.detections} allFrames={review.frames} known={known} scanning={scanning} kind={kind}
           onMark={(values) => void rv.mark(values)} onOpen={onOpenViewer} onEdit={onEdit} />
       </div>
     </div>
