@@ -30,7 +30,7 @@ pub const STAR_BANDS: [(f64, u8); 5] = [(0.958, 5), (0.825, 4), (0.728, 3), (0.6
 pub const SHARP_AT: f64 = 0.825;
 pub const BLURRED_BELOW: f64 = 0.606;
 
-pub const FEATURE_NAMES: [&str; 18] = [
+pub const FEATURE_NAMES: [&str; 19] = [
     "score",
     "tiles_p50",
     "tiles_p95",
@@ -49,7 +49,14 @@ pub const FEATURE_NAMES: [&str; 18] = [
     "log_subject_px",
     "subject_fraction",
     "log_noise",
+    "fft_hf_ratio",
 ];
+/// Above this fraction of the FFT's radius (after fftshift) counts as "high
+/// frequency" for [`fft_hf_ratio`].
+const FFT_HF_RADIUS: f64 = 0.5;
+/// The FFT is run on the subject shrunk to at most this edge; a blur signature
+/// does not need full resolution, and this keeps the cost bounded.
+const FFT_MAX_EDGE: usize = 128;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sharpness {
@@ -514,7 +521,67 @@ fn features(
         (h * w).sqrt().ln(),
         (h * w) / (data.h * data.w) as f64,
         (median(&mut laplacian) + 0.05).ln(),
+        fft_hf_ratio(subject),
     ]
+}
+
+/// Share of the crop's 2-D FFT energy that sits above [`FFT_HF_RADIUS`] of the
+/// spectrum's radius: a blurred crop's energy huddles near the DC term, a
+/// sharp one spreads into high frequencies. Complements the tile-based Tenengrad
+/// score above with a global measure the tiling can miss (e.g. fine, even
+/// texture loss across the whole subject).
+fn fft_hf_ratio(region: &Plane) -> f64 {
+    // Bound the cost: shrink big crops before transforming.
+    let mut plane = region.clone();
+    while plane.w > FFT_MAX_EDGE || plane.h > FFT_MAX_EDGE {
+        if plane.w / 2 < 8 || plane.h / 2 < 8 {
+            break;
+        }
+        plane = plane.shrink(2);
+    }
+    let (w, h) = (plane.w, plane.h);
+    if w < 8 || h < 8 {
+        return 0.0;
+    }
+    use rustfft::{num_complex::Complex, FftPlanner};
+    let mut planner = FftPlanner::new();
+    let mut rows: Vec<Complex<f32>> = plane.px.iter().map(|&v| Complex::new(v, 0.0)).collect();
+    let row_fft = planner.plan_fft_forward(w);
+    for row in rows.chunks_mut(w) {
+        row_fft.process(row);
+    }
+    // Transpose so a column is contiguous, then FFT those.
+    let mut cols = vec![Complex::new(0.0, 0.0); w * h];
+    for y in 0..h {
+        for x in 0..w {
+            cols[x * h + y] = rows[y * w + x];
+        }
+    }
+    let col_fft = planner.plan_fft_forward(h);
+    for col in cols.chunks_mut(h) {
+        col_fft.process(col);
+    }
+    let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0);
+    let r_max = cx.min(cy) * FFT_HF_RADIUS;
+    let (mut total, mut high) = (0.0f64, 0.0f64);
+    for x in 0..w {
+        for y in 0..h {
+            let c = cols[x * h + y];
+            let energy = f64::from(c.re * c.re + c.im * c.im);
+            // Frequency distance from the origin, after an implicit fftshift.
+            let fx = if x as f64 > cx { w as f64 - x as f64 } else { x as f64 };
+            let fy = if y as f64 > cy { h as f64 - y as f64 } else { y as f64 };
+            total += energy;
+            if (fx * fx + fy * fy).sqrt() > r_max {
+                high += energy;
+            }
+        }
+    }
+    if total <= 0.0 {
+        0.0
+    } else {
+        (high / total).clamp(0.0, 1.0)
+    }
 }
 
 /// Knots on the star-band floors, so a predicted 3.4 lands in the three-star

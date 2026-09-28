@@ -81,6 +81,10 @@ pub struct PlateReading {
     /// In the coordinates of whichever image (crop or native) it was found in.
     pub bbox: Option<[i64; 4]>,
     pub candidates: Vec<String>,
+    /// Whether `bbox` is in `native`'s coordinates (the tight, unresized detection crop) rather
+    /// than the padded/resized `image` crop's; only the native case is cheap to translate back to
+    /// full-frame pixels, so callers use this to decide whether to keep the box.
+    pub bbox_native: bool,
 }
 
 impl PlateReading {
@@ -398,21 +402,21 @@ pub fn scan_regions(
     reader: &mut PlateReader,
     ocr: Option<&Ocr>,
 ) -> Result<(PlateReading, Vec<(String, f64)>), String> {
-    let mut candidates: Vec<(&Rgb, [i64; 4], f32)> = find_plates(image, opts, detector)?
+    let mut candidates: Vec<(&Rgb, [i64; 4], f32, bool)> = find_plates(image, opts, detector)?
         .into_iter()
-        .map(|(b, c)| (image, b, c))
+        .map(|(b, c)| (image, b, c, false))
         .collect();
     if let Some(native) = native {
         candidates.extend(
             find_plates_native(native, opts, detector)?
                 .into_iter()
-                .map(|(b, c)| (native, b, c)),
+                .map(|(b, c)| (native, b, c, true)),
         );
     }
 
     let mut best = PlateReading::default();
     let mut numbers: Vec<(String, f64)> = Vec::new();
-    for (source, bbox, detection_conf) in candidates {
+    for (source, bbox, detection_conf, is_native) in candidates {
         let piece = crop_plate(source, bbox, opts);
         let weight = 0.5 + 0.5 * f64::from(detection_conf);
         // A failed OCR pass on one piece costs that piece's OCR lines, not the vehicle.
@@ -434,6 +438,7 @@ pub fn scan_regions(
             }
         }
         reading.bbox = Some(bbox);
+        reading.bbox_native = is_native;
         // Weight the character read by how sure the detector was that it is a plate.
         reading.confidence *= weight;
         if reading.text.is_some() && reading.confidence > best.confidence {

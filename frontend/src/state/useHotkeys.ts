@@ -5,12 +5,18 @@ export type Hotkeys = {
   page: Page;
   viewerOpen: boolean;
   rejected: boolean;
-  step: (delta: number) => void;
+  picked: boolean;
+  /** Left/right (and j/k): move within the current burst, clamped at its edges. */
+  stepFrame: (delta: number) => void;
+  /** Up/down: jump to the previous/next burst, landing on its pick. */
+  stepBurst: (delta: number) => void;
   mark: (values: MarkValues) => void;
   openViewer: () => void;
   closeOverlays: () => void;
   toggleHelp: () => void;
   toggleBoxes: () => void;
+  /** 1.3: G = grid, E = loupe (Viewer), C = compare. */
+  setView: (view: 'grid' | 'loupe' | 'compare') => void;
   /** Train-page verbs; `rate(0)` is "can't tell". */
   train: { rate: (stars: number) => void; pan: () => void; undo: () => void; zoom: () => void };
 };
@@ -28,14 +34,20 @@ export function useHotkeys(keys: Hotkeys) {
       if (k === 'escape') { h.closeOverlays(); return; }
       if (k === '?') { e.preventDefault(); h.toggleHelp(); return; }
       if (h.page !== 'Review' && h.page !== 'Train') return;
-      if (['arrowright', 'arrowdown', 'j'].includes(k)) { e.preventDefault(); h.step(1); }
-      else if (['arrowleft', 'arrowup', 'k'].includes(k)) { e.preventDefault(); h.step(-1); }
+      if (k === 'arrowright' || k === 'j') { e.preventDefault(); h.stepFrame(1); }
+      else if (k === 'arrowleft' || k === 'k') { e.preventDefault(); h.stepFrame(-1); }
+      else if (k === 'arrowdown') { e.preventDefault(); h.stepBurst(1); }
+      else if (k === 'arrowup') { e.preventDefault(); h.stepBurst(-1); }
       else if (k === 'b') h.toggleBoxes();
       else if (h.page === 'Review') {
         if (/^[0-5]$/.test(k)) { e.preventDefault(); h.mark({ stars: Number(k) }); }
         else if (k === 'x' || k === 'delete') h.mark({ rejected: !h.rejected });
+        else if (k === 'p') h.mark({ picked: !h.picked });
         else if (k === 'u') h.mark({ stars: null, rejected: false });
         else if ((k === 'enter' || k === ' ') && !h.viewerOpen) { e.preventDefault(); h.openViewer(); }
+        else if (k === 'g') h.setView('grid');
+        else if (k === 'e') h.setView('loupe');
+        else if (k === 'c') h.setView('compare');
       } else if (/^[1-5]$/.test(k)) h.train.rate(Number(k));
       else if (k === 'x') h.train.rate(0);
       else if (k === 'p') h.train.pan();

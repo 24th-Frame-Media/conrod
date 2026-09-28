@@ -431,6 +431,7 @@ fn the_schema_keeps_every_column_of_the_legacy_schema() {
     for (table, column) in [
         ("images", "stars"),
         ("images", "rejected"),
+        ("images", "picked"),
         ("detections", "region_type"),
     ] {
         assert!(

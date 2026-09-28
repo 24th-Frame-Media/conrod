@@ -22,6 +22,30 @@
       ]
     },
     {
+      "name": "ocec_l.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "MIT (PINTO0309 OCEC)",
+      "note": "TODO(owner): upload release asset",
+      "sha256": "de9b8031f8b521a862d8cff55ba88c2fccab6ac96484ba53154dd12c53c7c7f9",
+      "size": 6372200,
+      "sources": [
+        "https://github.com/PINTO0309/OCEC/releases/download/onnx/ocec_l.onnx"
+      ]
+    },
+    {
+      "name": "face_recognition_sface_2021dec.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "Apache-2.0 (OpenCV Zoo SFace)",
+      "note": "TODO(owner): upload release asset",
+      "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+      "size": 38696353,
+      "sources": [
+        "https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx"
+      ]
+    },
+    {
       "name": "dinov2-small-quantized.onnx",
       "dest": "models",
       "extract": false,
@@ -71,6 +95,16 @@
       "sha256": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
       "size": 10857958,
       "sources": []
+    },
+    {
+      "name": "nima-mobilenet-technical.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "Apache-2.0 (idealo/image-quality-assessment, MobileNet technical weights, converted Keras->ONNX via scripts/convert_nima_to_onnx.py)",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 1,
+      "sources": [],
+      "_comment": "TODO(owner): upload release asset -- run scripts/convert_nima_to_onnx.py, then replace sha256 and size with the real values"
     },
     {
       "name": "exiftool-13.58-win64.zip",

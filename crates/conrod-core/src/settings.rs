@@ -124,6 +124,10 @@ pub struct Settings {
     /// Motorsport only: also look at people (faces, eyes, naming) and judge
     /// a frame by its main subject. Other profiles ignore it.
     pub include_people: bool,
+    /// Score the subject crop with NIMA technical quality and use it only as
+    /// a burst tiebreak after sharpness. Opt-in: off until the model is
+    /// installed and a photographer turns it on.
+    pub use_quality_score: bool,
 }
 
 impl Default for Settings {
@@ -216,6 +220,7 @@ impl Default for Settings {
             extra: Map::new(),
             scan_profile: "motorsport".into(),
             include_people: false,
+            use_quality_score: false,
         }
     }
 }

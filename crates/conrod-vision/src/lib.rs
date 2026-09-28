@@ -8,5 +8,6 @@ pub mod faces;
 pub mod imageops;
 pub mod ocr;
 pub mod plates;
+pub mod quality;
 pub mod sharpness;
 pub mod similarity;

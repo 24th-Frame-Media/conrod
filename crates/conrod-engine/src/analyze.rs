@@ -78,6 +78,11 @@ pub fn analyze(
                     a.plate = reading.text;
                     a.plate_state = reading.state;
                     a.plate_conf = reading.confidence;
+                    // ponytail: only the native-crop box translates to full-frame pixels for free
+                    // (see operations.rs); a crop-space box would need cut()'s resize undone too.
+                    if reading.bbox_native {
+                        a.plate_bbox = reading.bbox;
+                    }
                 }
             }
             Err(e) => failures.push(format!("plate read: {e}")),

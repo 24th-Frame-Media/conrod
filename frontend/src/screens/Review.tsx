@@ -1,20 +1,29 @@
-import { Fragment, useMemo, CSSProperties, useEffect, useState } from 'react';
+import { Fragment, useMemo, CSSProperties, useEffect, useState, type MutableRefObject } from 'react';
 import { Confirm, Empty, Icon } from '../components/basics';
 import { Facets } from '../components/Facets';
 import { Inspector } from '../components/Inspector';
 import { PhotoGrid } from '../components/PhotoGrid';
 import { LoadableImage } from '../components/Media';
-import { defaultFilters, frameStars, parseAttributes, filename } from '../lib/review';
+import { burstGroups, burstPickOf, defaultFilters, frameStars, parseAttributes, filename } from '../lib/review';
 import { StarPill } from '../components/Stars';
+import { BurstFilmstrip } from '../components/BurstFilmstrip';
 import { asset, call, engine } from '../lib/api';
 import { useRun } from '../state/hooks';
 import { useToast } from '../state/toast';
 import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
 import { ShootSettingsModal } from '../components/ShootSettingsModal';
-import type { Frame, Job, KnownVehicle, Settings, Status, Task } from '../lib/types';
+import type { Frame, Job, KnownVehicle, MarkValues, Settings, Status, Task } from '../lib/types';
 import { profileLabel, profileParent } from '../lib/types';
 import type { ReviewModel } from '../state/useReview';
 import { subjectExcluded } from '../review.mjs';
+import { Viewer } from './Viewer';
+import { Compare } from './Compare';
+
+/** G/E/C hotkeys switch between the grid, the loupe (Viewer) and the compare view. */
+export type ReviewView = 'grid' | 'loupe' | 'compare';
+/** How App's global hotkey handler reaches into whichever view Review currently owns (mirrors Train's `verbs` ref). */
+export type ReviewVerbs = { view: ReviewView; setView: (v: ReviewView) => void; stepFrame: (delta: number) => void; stepBurst: (delta: number) => void; mark: (values: MarkValues) => void; rejected: boolean };
+export const noReviewVerbs: ReviewVerbs = { view: 'grid', setView: () => {}, stepFrame: () => {}, stepBurst: () => {}, mark: () => {}, rejected: false };
 
 type Stack = { key: string; frames: Frame[]; pick: Frame; title: string; subtitle: string; photoWord?: string };
 
@@ -45,28 +54,14 @@ function StackGrid({ stacks, rv, onOpenViewer, ariaLabel, emptyTitle }: {
             <b>{group.title} · {group.frames.length} {group.photoWord ?? 'frames'}</b>
             <span className="muted" style={{ marginLeft: 8 }}>· Best photo first</span>
           </div>
-          <div className="burst-strip">
-            {group.frames.map((frame, index) => {
-              const culled = Boolean(rv.facts.get(frame.id)?.cull);
-              return (
-                <button
-                  key={frame.id}
-                  className={`${rv.selected === frame.id ? 'selected' : ''}${index === 0 ? ' burst-best-card' : ''}`}
-                  style={culled ? { opacity: 0.6 } : undefined}
-                  onClick={() => rv.setSelected(frame.id)}
-                  onDoubleClick={onOpenViewer}
-                >
-                  <div style={{ position: 'relative' }}>
-                    <LoadableImage src={asset(frame.thumb_path)} alt={filename(frame.path)} />
-                    {index === 0 && <span className="focus keeper" style={{ position: 'absolute', top: 4, left: 4, zIndex: 2 }}>Best</span>}
-                    {culled && <span className="cull-tag">Culled</span>}
-                  </div>
-                  <StarPill frame={frame} />
-                  <small>{filename(frame.path)}</small>
-                </button>
-              );
-            })}
-          </div>
+          <BurstFilmstrip
+            frames={group.frames}
+            pickId={group.pick.id}
+            selectedId={rv.selected}
+            culled={(frame) => Boolean(rv.facts.get(frame.id)?.cull)}
+            onSelect={rv.setSelected}
+            onOpen={onOpenViewer}
+          />
         </div>}
       </Fragment>;
     })}
@@ -171,12 +166,14 @@ function PipelineStepper({ job, scanning, identified, identifying, written }: { 
   );
 }
 
-function BurstStacks({ rv, onOpenViewer }: { rv: ReviewModel; onOpenViewer: () => void }) {
+/** Burst stacks, or with `dupes` the shoot-wide re-shoot stacks (`dupe_key`, 2+ frames only). */
+function BurstStacks({ rv, onOpenViewer, dupes = false }: { rv: ReviewModel; onOpenViewer: () => void; dupes?: boolean }) {
   const visibleIds = useMemo(() => new Set(rv.frames.map((f) => f.id)), [rv.frames]);
   const bursts = useMemo(() => {
     const map = new Map<string, Frame[]>();
     for (const frame of rv.review.frames.filter((item) => item.status === 'done')) {
-      const key = frame.burst_key == null ? `frame-${frame.id}` : `burst-${frame.burst_key}`;
+      const group = dupes ? frame.dupe_key : frame.burst_key;
+      const key = group == null ? `frame-${frame.id}` : `${dupes ? 'dupe' : 'burst'}-${group}`;
       const list = map.get(key); if (list) list.push(frame); else map.set(key, [frame]);
     }
     const scoreOf = (f: Frame) => {
@@ -189,7 +186,7 @@ function BurstStacks({ rv, onOpenViewer }: { rv: ReviewModel; onOpenViewer: () =
       return stars + isPick + rating;
     };
     return [...map]
-      .filter(([, rawFrames]) => rawFrames.some((f) => visibleIds.has(f.id)))
+      .filter(([, rawFrames]) => rawFrames.some((f) => visibleIds.has(f.id)) && (!dupes || rawFrames.length > 1))
       .map(([key, rawFrames]) => {
         const sortedByBest = [...rawFrames].sort((a, b) => scoreOf(b) - scoreOf(a));
         const pick = sortedByBest.find((f) => !rv.facts.get(f.id)?.cull) ?? sortedByBest[0];
@@ -201,13 +198,15 @@ function BurstStacks({ rv, onOpenViewer }: { rv: ReviewModel; onOpenViewer: () =
         return { key, frames, pick, title, subtitle };
       })
       .sort((a, b) => a.pick.id - b.pick.id);
-  }, [rv.review.frames, rv.facts, visibleIds]);
+  }, [rv.review.frames, rv.facts, visibleIds, dupes]);
 
-  return <StackGrid stacks={bursts} rv={rv} onOpenViewer={onOpenViewer} ariaLabel="Burst stacks" emptyTitle="No burst stacks match these filters." />;
+  return <StackGrid stacks={bursts} rv={rv} onOpenViewer={onOpenViewer} ariaLabel={dupes ? 'Duplicate stacks' : 'Burst stacks'}
+    emptyTitle={dupes ? 'No re-shot frames found across this shoot.' : 'No burst stacks match these filters.'} />;
 }
 
 type Props = {
   rv: ReviewModel; jobs: Job[]; jobId: number | null; scanning: boolean; status: Status; settings: Settings;
+  showBoxes: boolean; onToggleBoxes: () => void; verbs: MutableRefObject<ReviewVerbs>;
   onPickJob: (id: number) => void; onIdentify: () => void; onCull: () => void;
   onHelp: () => void; onOpenViewer: () => void; onLibrary: () => void;
   onEdit: (detectionId: number, updates: Record<string, string | string[] | null>) => unknown;
@@ -215,15 +214,71 @@ type Props = {
 };
 
 /** Toolbar (album, view, search, stars, sort, actions), facets, the card grid and the inspector. */
-export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite }: Props) {
+export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite }: Props) {
   const [known, setKnown] = useState<KnownVehicle[]>([]);
-  const [grouping, setGrouping] = useState<'bursts' | 'vehicles' | 'flat'>('bursts');
+  const [grouping, setGrouping] = useState<'bursts' | 'vehicles' | 'dupes' | 'flat'>('bursts');
   const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
   const run = useRun();
   const toast = useToast();
   useEffect(() => { void engine.known().then(setKnown); }, [jobId]);
   const { filters, patchFilters, frames, review, facts, selected, frame } = rv;
+
+  // 1.3: which of grid / loupe (Viewer) / compare is showing; G/E/C reach this through `verbs`.
+  const [view, setView] = useState<ReviewView>('grid');
+  const [comparePane, setComparePane] = useState<'left' | 'right'>('left');
+  const [compareRightId, setCompareRightId] = useState<number | null>(null);
+  const compareRight = useMemo(() => {
+    if (!frame) return null;
+    if (compareRightId != null) return frames.find((f) => f.id === compareRightId) ?? null;
+    // Default right pane: the current burst's pick if this frame isn't it, else the next frame.
+    const burstPick = frame.burst_key != null
+      ? frames.find((f) => f.burst_key === frame.burst_key && f.id !== frame.id && (facts.get(f.id)?.pick || Boolean(f.burst_pick)))
+      : undefined;
+    if (burstPick) return burstPick;
+    const index = frames.findIndex((f) => f.id === frame.id);
+    return index >= 0 && index < frames.length - 1 ? frames[index + 1] : null;
+  }, [frame, compareRightId, frames, facts]);
+  useEffect(() => { setCompareRightId(null); setComparePane('left'); }, [frame?.id]);
+  const activeCompareFrame = comparePane === 'left' ? frame : compareRight;
+
+  // 1.4: the burst groups behind the loupe/compare filmstrip and the up/down (across bursts) vs. left/right (within
+  // a burst, clamped at its edges) hotkeys. Grid view keeps the plain flat-list step it always had.
+  const groups = useMemo(() => burstGroups(frames), [frames]);
+  const withinBurst = (base: Frame | null, delta: number): Frame | null => {
+    if (!base) return null;
+    const group = groups.find((g) => g.some((f) => f.id === base.id));
+    if (!group) return base;
+    const index = group.findIndex((f) => f.id === base.id);
+    return group[Math.max(0, Math.min(group.length - 1, index + delta))] ?? base;
+  };
+  const acrossBursts = (base: Frame | null, delta: number): Frame | null => {
+    if (!base) return null;
+    const index = groups.findIndex((g) => g.some((f) => f.id === base.id));
+    if (index < 0) return base;
+    const group = groups[Math.max(0, Math.min(groups.length - 1, index + delta))];
+    return burstPickOf(group, facts);
+  };
+
+  verbs.current = {
+    view,
+    setView,
+    stepFrame: (delta) => {
+      if (view === 'grid') { rv.step(delta); return; }
+      if (view !== 'compare') { const next = withinBurst(frame, delta); if (next) rv.setSelected(next.id); return; }
+      const next = withinBurst(compareRight ?? frame, delta);
+      if (next) setCompareRightId(next.id);
+    },
+    stepBurst: (delta) => {
+      if (view === 'grid') { rv.step(delta); return; }
+      if (view !== 'compare') { const next = acrossBursts(frame, delta); if (next) rv.setSelected(next.id); return; }
+      const next = acrossBursts(compareRight ?? frame, delta);
+      if (next) setCompareRightId(next.id);
+    },
+    mark: (values) => void rv.mark(values, view === 'compare' ? activeCompareFrame?.id : undefined),
+    rejected: Boolean(activeCompareFrame && facts.get(activeCompareFrame.id)?.cull),
+  };
+  const openViewer = () => { setView('loupe'); onOpenViewer(); };
   if (jobId == null) {
     return (
       <div className="screen">
@@ -465,10 +520,10 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
         <input id="search" type="search" aria-label="Search photos" placeholder="Search make, team, plate…" spellCheck={false}
           value={filters.search} onChange={(e) => patchFilters({ search: e.target.value })} />
         <select aria-label="Photo filter" value={filters.view} onChange={(e) => patchFilters({ view: e.target.value as typeof filters.view })}>
-          <option value="all">All photos</option><option value="kept">Kept photos</option><option value="rejected">Culled / rejected</option><option value="picks">Burst picks</option><option value="review">Needs review</option>
+          <option value="all">All photos</option><option value="kept">Kept photos</option><option value="rejected">Culled / rejected</option><option value="picks">Burst picks</option><option value="review">Needs review</option><option value="needsLook">Needs a look</option>
         </select>
         <select aria-label="Group photos" value={grouping} onChange={(e) => setGrouping(e.target.value as typeof grouping)}>
-          <option value="bursts">Group: Burst stacks</option><option value="vehicles">Group: By vehicle</option><option value="flat">Group: Individual photos</option>
+          <option value="bursts">Group: Burst stacks</option><option value="vehicles">Group: By vehicle</option><option value="dupes">Group: Duplicates</option><option value="flat">Group: Individual photos</option>
         </select>
         <select aria-label="Photo order" value={filters.sort} onChange={(e) => patchFilters({ sort: e.target.value as typeof filters.sort })}>
           <option value="frame">Filename order</option><option value="best">Highest rated first</option><option value="worst">Lowest rated first</option><option value="pick">Burst picks first</option>
@@ -563,10 +618,11 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
       {identifyTask && <IdentificationBanner task={identifyTask} settings={settings} onSkip={onSkipIdentify} />}
       <div className="review-main">
         <Facets facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
-        {grouping === 'bursts' || filters.view === 'stacks'
-          ? <BurstStacks rv={rv} onOpenViewer={onOpenViewer} />
-          : grouping === 'vehicles' || filters.view === 'vehicles' ? <VehicleStacks rv={rv} onOpenViewer={onOpenViewer} identifying={identifying} />
-          : <PhotoGrid frames={frames} facts={facts} selected={selected} onSelect={rv.setSelected} onOpen={onOpenViewer}
+        {grouping === 'dupes' ? <BurstStacks rv={rv} onOpenViewer={openViewer} dupes />
+          : grouping === 'bursts' || filters.view === 'stacks'
+          ? <BurstStacks rv={rv} onOpenViewer={openViewer} />
+          : grouping === 'vehicles' || filters.view === 'vehicles' ? <VehicleStacks rv={rv} onOpenViewer={openViewer} identifying={identifying} />
+          : <PhotoGrid frames={frames} facts={facts} selected={selected} onSelect={rv.setSelected} onOpen={openViewer}
               onReject={(id, rejected) => void rv.mark({ rejected }, id)}
               empty={
                 <Empty icon="images" title={review.frames.length ? 'Nothing matches these filters.' : scanning ? 'Waiting for the first frames…' : 'No photographs to show yet.'}>
@@ -574,8 +630,24 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
                 </Empty>
               } />}
         <Inspector frame={frame} detections={frame ? facts.get(frame.id)?.dets ?? [] : []} allDetections={review.detections} allFrames={review.frames} known={known} scanning={scanning} kind={kind}
-          onMark={(values) => void rv.mark(values)} onOpen={onOpenViewer} onEdit={onEdit} />
+          onMark={(values) => void rv.mark(values)} onOpen={openViewer} onEdit={onEdit} />
       </div>
+      {view === 'loupe' && frame && (
+        <Viewer rv={rv} run={run} showBoxes={showBoxes} onToggleBoxes={onToggleBoxes} onClose={() => setView('grid')} />
+      )}
+      {view === 'compare' && frame && (
+        <Compare
+          rv={rv}
+          run={run}
+          showBoxes={showBoxes}
+          onToggleBoxes={onToggleBoxes}
+          right={compareRight}
+          activePane={comparePane}
+          onSetActivePane={setComparePane}
+          onPickFilmstrip={setCompareRightId}
+          onClose={() => setView('grid')}
+        />
+      )}
     </div>
   );
 }

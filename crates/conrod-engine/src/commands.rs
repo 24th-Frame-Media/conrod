@@ -97,6 +97,7 @@ pub struct MarkArgs {
     #[serde(default, deserialize_with = "present")]
     pub stars: Option<Option<i64>>,
     pub rejected: Option<bool>,
+    pub picked: Option<bool>,
 }
 
 /// Hand edits to one vehicle's fields; a field left out is untouched, `null` clears it.

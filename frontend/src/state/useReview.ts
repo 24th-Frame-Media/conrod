@@ -66,7 +66,8 @@ export function useReview(jobId: number | null, run: Runner) {
         frames: r.frames.map((f) => (f.id !== id ? f : {
           ...f,
           ...('stars' in values ? { manual_stars: values.stars ?? null } : {}),
-          ...('rejected' in values ? { rejected: values.rejected ? 1 : 0 } : {}),
+          ...('rejected' in values ? { rejected: values.rejected ? 1 : 0, ...(values.rejected ? { picked: 0 } : {}) } : {}),
+          ...('picked' in values ? { picked: values.picked ? 1 : 0, ...(values.picked ? { rejected: 0 } : {}) } : {}),
         })),
       }));
     });

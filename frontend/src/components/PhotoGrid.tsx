@@ -16,7 +16,7 @@ type CardProps = {
 
 const Card = memo(function Card({ frame, facts, selected, left, top, width, height, onSelect, onOpen, onReject, checked, onToggle }: CardProps) {
   const verdict = verdictOf(frameStars(frame));
-  const cls = ['card', selected && 'selected current', frame.rejected && 'rejected', facts?.cull && 'culled', verdict !== 'none' && `rated-${verdict}`]
+  const cls = ['card', selected && 'selected current', frame.rejected && 'rejected', frame.picked && 'picked', facts?.cull && 'culled', verdict !== 'none' && `rated-${verdict}`]
     .filter(Boolean).join(' ');
   const swatch = facts?.colourCss && CSS.supports('color', facts.colourCss) ? facts.colourCss : undefined;
   return (
@@ -28,9 +28,10 @@ const Card = memo(function Card({ frame, facts, selected, left, top, width, heig
         <StarPill frame={frame} />
         {facts?.panned && <span className="focus panning" title="Subject sharp against a blurred background. Kept, never auto-culled">panned</span>}
         {facts?.pick && <span className="focus keeper" title="The sharpest frame of this pass">keeper</span>}
+        {Boolean(frame.picked) && <span className="focus picked" title="Picked (P)">picked</span>}
         <button className="icon-btn" aria-label={facts?.cull ? 'Restore for ML' : 'Reject'} title={facts?.cull ? 'Restore for ML (U)' : 'Reject (X)'}
           onClick={(e) => { e.stopPropagation(); onReject(frame.id, !facts?.cull); }}>{facts?.cull ? '↺' : '✕'}</button>
-        {facts?.cull && <div className="culled-note">{facts.cull}</div>}
+        {facts?.cull && <div className="culled-note" title={facts.cullDetail ?? facts.cull}>{facts.cull}</div>}
         {frame.status !== 'done' && <span className="stack-count">{frame.status}</span>}
       </div>
       <div className="body">

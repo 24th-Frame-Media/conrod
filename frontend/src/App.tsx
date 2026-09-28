@@ -8,11 +8,10 @@ import { subjectExcluded } from './review.mjs';
 import type { DevStart } from './lib/mock';
 import type { Page, ScanArgs, Status } from './lib/types';
 import { Library } from './screens/Library';
-import { ReviewScreen } from './screens/Review';
+import { noReviewVerbs, ReviewScreen, type ReviewVerbs } from './screens/Review';
 import { ImportDialog, type ScanDraft } from './screens/Scan';
 import { Settings } from './screens/Settings';
 import { noTrainVerbs, Train, type TrainVerbs } from './screens/Train';
-import { Viewer } from './screens/Viewer';
 import { useFolderDrop, useLocalFlag, useRun } from './state/hooks';
 import { useToast } from './state/toast';
 import { useEngine } from './state/useEngine';
@@ -29,11 +28,14 @@ export function App() {
   const [draft, setDraft] = useState<ScanDraft>({ root: '', label: '' });
   const [starting, setStarting] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  // Best-effort mirror of Review's loupe/compare state, only for the Enter-key open-guard and dev-start below;
+  // Review.tsx owns the real `view` state and App reaches it through `reviewVerbs` (see useHotkeys wiring).
   const [viewer, setViewer] = useState(false);
   const [help, setHelp] = useState(false);
   const [showBoxes, setShowBoxes] = useLocalFlag('conrod.boxes', true);
   const [dev, setDev] = useState<DevStart | null>(null);
   const trainVerbs = useRef<TrainVerbs>(noTrainVerbs);
+  const reviewVerbs = useRef<ReviewVerbs>(noReviewVerbs);
 
   const rv = useReview(jobId, run);
   const eng = useEngine(jobId, rv.refresh, run);
@@ -54,7 +56,7 @@ export function App() {
     });
   }, []);
   useEffect(() => {
-    if (dev?.viewer && rv.frames.length) { setViewer(true); setDev({ ...dev, viewer: false }); }
+    if (dev?.viewer && rv.frames.length) { setViewer(true); reviewVerbs.current.setView('loupe'); setDev({ ...dev, viewer: false }); }
   }, [dev, rv.frames.length]);
 
   const dropping = useFolderDrop((folder) => {
@@ -96,13 +98,15 @@ export function App() {
   };
 
   useHotkeys({
-    page, viewerOpen: viewer, rejected: Boolean(rv.frame && rv.facts.get(rv.frame.id)?.cull),
-    step: (d) => (page === 'Train' ? trainVerbs.current.step(d) : rv.step(d)),
-    mark: (values) => void rv.mark(values),
-    openViewer: () => { if (rv.frame) setViewer(true); },
-    closeOverlays: () => { setViewer(false); setHelp(false); setShowImport(false); },
+    page, viewerOpen: viewer, rejected: reviewVerbs.current.rejected, picked: Boolean(rv.frame?.picked),
+    stepFrame: (d) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepFrame(d)),
+    stepBurst: (d) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepBurst(d)),
+    mark: (values) => reviewVerbs.current.mark(values),
+    openViewer: () => { if (rv.frame) { setViewer(true); reviewVerbs.current.setView('loupe'); } },
+    closeOverlays: () => { setViewer(false); reviewVerbs.current.setView('grid'); setHelp(false); setShowImport(false); },
     toggleHelp: () => setHelp((v) => !v),
     toggleBoxes: () => setShowBoxes((v) => !v),
+    setView: (v) => { setViewer(v === 'loupe'); reviewVerbs.current.setView(v); },
     train: { rate: (n) => trainVerbs.current.rate(n), pan: () => trainVerbs.current.pan(), undo: () => trainVerbs.current.undo(), zoom: () => trainVerbs.current.zoom() },
   });
 
@@ -127,6 +131,7 @@ export function App() {
         )}
         {page === 'Review' && (
           <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} status={status} settings={eng.settings}
+            showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} verbs={reviewVerbs}
             onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={() => jobId != null && identify(jobId)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
               onLibrary={() => setPage('Library')}
               onAcceptAll={() => void run(async () => {
@@ -157,7 +162,6 @@ export function App() {
       <ImportDialog draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} models={eng.models} settings={eng.settings} status={status} busy={starting}
         actions={actions} onStart={(args) => void startScan(args)} onReviewActive={() => { if (status.activeJob != null) openJob(status.activeJob); }}
         visible={showImport} onClose={() => setShowImport(false)} />
-      {viewer && page === 'Review' && <Viewer rv={rv} run={run} showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} onClose={() => setViewer(false)} />}
       {help && <KeysDialog onClose={() => setHelp(false)} />}
       {dropping && <div className="drop-overlay"><Icon name="drop" size={34} /><b>Drop a folder to scan it</b><span>Photos, or a folder of them</span></div>}
       <Splash gone={eng.ready} />

@@ -231,7 +231,14 @@ impl Run<'_> {
             for failure in outcome.failures {
                 self.report(failure);
             }
-            let analysis = outcome.analysis;
+            let mut analysis = outcome.analysis;
+            // `plate_bbox` (when set) is in the native tight-crop's own pixels; `bbox` is that
+            // crop's origin in the full frame, so offsetting gives full-frame pixels directly -
+            // the same coordinate space the frontend already reads vehicle boxes in.
+            if let Some([x1, y1, x2, y2]) = analysis.plate_bbox {
+                let (ox, oy) = (bbox[0] as i64, bbox[1] as i64);
+                analysis.plate_bbox = Some([ox + x1, oy + y1, ox + x2, oy + y2]);
+            }
             let swatch = colour::dominant(&crop);
             let embedding = embedder
                 .as_mut()
@@ -403,6 +410,8 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             crate::passes::embed_faces_missing(d, job, stop, task)?;
             task.detail("Grouping similar vehicles");
             crate::passes::consolidate(d, job, task)?;
+            task.detail("Finding re-shot frames");
+            crate::passes::near_duplicates(d, job, stop)?;
             crate::catalog::seed(d, Some(job))?;
         }
         Ok(())
@@ -537,7 +546,10 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
                     a
                 })
                 .collect();
-            let keywords = keywords::for_frame(&analyses, &options, mapping.as_ref());
+            let mut keywords = keywords::for_frame(&analyses, &options, mapping.as_ref());
+            if frame["picked"].as_i64() == Some(1) {
+                keywords.push(format!("{}Pick", settings.keyword_prefix));
+            }
             let caption = keywords::caption_for(&analyses);
             let path = Path::new(frame["path"].as_str().ok_or("Missing image path")?);
             task.detail(path.display().to_string());

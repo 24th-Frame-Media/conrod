@@ -11,12 +11,19 @@ use std::path::PathBuf;
 
 pub const DETECTOR: &str = "yolo11s-960.onnx";
 pub const FACES: &str = "face_detection_yunet_2023mar.onnx";
+/// OCEC eyes open/closed (PINTO0309, MIT), the large variant.
+pub const EYES: &str = "ocec_l.onnx";
+/// SFace face identity (OpenCV zoo, Apache-2.0).
+pub const FACE_ID: &str = "face_recognition_sface_2021dec.onnx";
 pub const SIMILARITY: &str = "dinov2-small-quantized.onnx";
 pub const PLATE_DETECTOR: &str = "yolo-v9-t-640-license-plates-end2end.onnx";
 pub const PLATE_READER: &str = "global_mobile_vit_v2_ocr.onnx";
 /// The OCR pair is found by its detector; the recogniser sits beside it.
 pub const OCR_DETECTOR: &str = "ch_PP-OCRv4_det_infer.onnx";
 pub const OCR_RECOGNISER: &str = "ch_PP-OCRv4_rec_infer.onnx";
+/// NIMA technical quality (idealo/image-quality-assessment, MobileNet, Apache-2.0).
+/// Opt-in, not part of a fresh install's default set.
+pub const QUALITY: &str = "nima-mobilenet-technical.onnx";
 const OCR_DETECTOR_V3: &str = "ch_PP-OCRv3_det_infer.onnx";
 
 /// The plate models' homes in the OCR libraries' on-disk caches, under
