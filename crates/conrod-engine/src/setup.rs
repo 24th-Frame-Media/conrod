@@ -125,6 +125,7 @@ pub fn everything() -> Vec<String> {
     assets::manifest()
         .iter()
         .map(|a| a.id().to_string())
+        .filter(|id| !QUALITY.contains(&id.as_str()))
         .collect()
 }
 
