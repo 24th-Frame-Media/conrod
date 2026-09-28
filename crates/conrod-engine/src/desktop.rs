@@ -374,8 +374,8 @@ impl Desktop {
         let db = lock(&self.reader);
         // Only what the UI reads: `SELECT *` was 17 MB and 0.8 s for 4,808
         // frames, 3.6 MB of it the raw sharpness `features`.
-        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.burst_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, (SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id) AS burst_pick FROM images i WHERE job_id=? ORDER BY path",[job])?;
-        let mut detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
+        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, (SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id) AS burst_pick FROM images i WHERE job_id=? ORDER BY path",[job])?;
+        let mut detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
         let known: Vec<(Value, Vec<f32>)> = rows(&db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
             .into_iter()
             .filter_map(|row| similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector)))
@@ -391,13 +391,18 @@ impl Desktop {
             if let Some(vector) = detection["embedding"].as_str().and_then(similarity::unpack) {
                 let is_face = detection["region_type"].as_str() == Some("face");
                 let candidates = if is_face { &people } else { &known };
-                let threshold = if is_face {
+                // SFace faces match at its own threshold; an older DINOv2 one
+                // must be near-identical.
+                let threshold = if is_face && vector.len() == conrod_vision::faces::IDENTITY_DIM {
+                    f64::from(conrod_vision::faces::SAME_PERSON)
+                } else if is_face {
                     0.97
                 } else {
                     conrod_core::grouping::SAME_CAR
                 };
                 let best = candidates
                     .iter()
+                    .filter(|(_, candidate)| candidate.len() == vector.len())
                     .filter_map(|(item, candidate)| {
                         let score = similarity::nearness(&vector, candidate);
                         (f64::from(score) >= threshold).then_some((score, item))
@@ -441,13 +446,20 @@ impl Desktop {
         }
         if let Some(rejected) = a.rejected {
             tx.execute(
-                "UPDATE images SET rejected=? WHERE id=?",
+                "UPDATE images SET rejected=?,picked=CASE WHEN ?1=0 THEN picked ELSE 0 END WHERE id=?2",
                 params![rejected, a.image_id],
             )
             .map_err(err)?;
             tx.execute(
                 "UPDATE detections SET rejected=?,cull_reason=CASE WHEN ?1=0 THEN NULL ELSE cull_reason END WHERE image_id=?2",
                 params![rejected, a.image_id],
+            )
+            .map_err(err)?;
+        }
+        if let Some(picked) = a.picked {
+            tx.execute(
+                "UPDATE images SET picked=?,rejected=CASE WHEN ?1=0 THEN rejected ELSE 0 END WHERE id=?2",
+                params![picked, a.image_id],
             )
             .map_err(err)?;
         }
@@ -726,12 +738,20 @@ impl Desktop {
 }
 
 /// Store one measured subject of a frame.
+/// A face's `attributes`: OCEC's verdict, which re-measuring keeps (see
+/// `rescore::write`). `None` for anything not judged.
+fn eyes_json(open: [Option<f32>; 2]) -> Option<String> {
+    open.iter()
+        .any(Option::is_some)
+        .then(|| json!({"eyes_open": open, "eyes_closed": crate::eyes_closed(open)}).to_string())
+}
+
 pub(crate) fn insert_subject(
     db: &rusqlite::Connection,
     image: i64,
     s: &crate::Subject,
 ) -> Result<()> {
-    db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,rating_verdict,panning,sharp_end,cull_reason,features,heuristic,region_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![image,s.bbox[0],s.bbox[1],s.bbox[2],s.bbox[3],s.class,s.conf,s.sharpness,s.rating,conrod_vision::sharpness::rating_for(s.rating,0.825,0.606),s.panning,s.sharp_end,s.cull_reason,serde_json::to_string(&s.features).map_err(err)?,s.heuristic,s.region_type]).map_err(err)?;
+    db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,rating_verdict,panning,sharp_end,cull_reason,features,heuristic,region_type,quality,attributes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![image,s.bbox[0],s.bbox[1],s.bbox[2],s.bbox[3],s.class,s.conf,s.sharpness,s.rating,conrod_vision::sharpness::rating_for(s.rating,0.825,0.606),s.panning,s.sharp_end,s.cull_reason,serde_json::to_string(&s.features).map_err(err)?,s.heuristic,s.region_type,s.quality,eyes_json(s.eyes_open)]).map_err(err)?;
     Ok(())
 }
 
@@ -796,7 +816,7 @@ mod tests {
             let image: i64 = db
                 .query_row("SELECT id FROM images WHERE job_id=?", [job], |r| r.get(0))
                 .unwrap();
-            db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,features,region_type) VALUES(?,1,2,30,40,'person',0.9,?,'face')",params![image,serde_json::to_string(&vec![0.5;18]).unwrap()]).unwrap();
+            db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,features,region_type) VALUES(?,1,2,30,40,'person',0.9,?,'face')",params![image,serde_json::to_string(&vec![0.5;conrod_vision::sharpness::FEATURE_NAMES.len()]).unwrap()]).unwrap();
             (job, image, db.last_insert_rowid())
         };
         desktop
@@ -839,6 +859,41 @@ mod tests {
             0
         );
         drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn picking_and_rejecting_a_frame_are_mutually_exclusive() {
+        let root =
+            std::env::temp_dir().join(format!("conrod-pick-{}-{}", std::process::id(), now()));
+        let desktop = Desktop::open(root.clone()).unwrap();
+        let (job, image) = {
+            let db = lock(&desktop.db);
+            let job =
+                conrod_store::create_job(&db, &root, Some("Test"), &json!(Settings::default()))
+                    .unwrap();
+            conrod_store::add_images(&db, job, &[root.join("test.jpg")]).unwrap();
+            let image: i64 = db
+                .query_row("SELECT id FROM images WHERE job_id=?", [job], |r| r.get(0))
+                .unwrap();
+            (job, image)
+        };
+
+        desktop
+            .dispatch("mark", json!({"imageId":image,"picked":true}))
+            .unwrap();
+        let review = desktop.dispatch("review", json!({"jobId":job})).unwrap();
+        assert_eq!(review["frames"][0]["picked"], 1);
+        assert_eq!(review["frames"][0]["rejected"], 0);
+
+        desktop
+            .dispatch("mark", json!({"imageId":image,"rejected":true}))
+            .unwrap();
+        let review = desktop.dispatch("review", json!({"jobId":job})).unwrap();
+        assert_eq!(review["frames"][0]["rejected"], 1);
+        assert_eq!(review["frames"][0]["picked"], 0, "rejecting clears a pick");
+
+        drop(desktop);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -13,11 +13,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub const SCAN: &[&str] = &[models::DETECTOR];
-pub const FACES: &[&str] = &[models::FACES];
+// TODO(owner): upload release asset -- ocec_l.onnx and
+// face_recognition_sface_2021dec.onnx to the `release` in scripts/assets.json.
+// Until then they install from their upstream `sources`.
+pub const FACES: &[&str] = &[models::FACES, models::EYES, models::FACE_ID];
+/// Extras a run is better with but works without: failing to install them is
+/// shown in the status area and is not an error.
+const OPTIONAL: &[&str] = &[models::EYES, models::FACE_ID];
 pub const IDENTIFY_PLATES: &[&str] = &[models::PLATE_DETECTOR, models::PLATE_READER];
 pub const TEXT: &[&str] = &[models::OCR_DETECTOR, models::OCR_RECOGNISER];
 pub const SIMILARITY: &[&str] = &[models::SIMILARITY];
 pub const WRITE: &[&str] = &["exiftool"];
+/// NIMA technical quality. Opt-in: not in `GROUPS`/`everything()`, so a
+/// fresh install or "install everything" never fetches it; only a settings
+/// screen that turns quality scoring on should call [`ensure`] with this.
+pub const QUALITY: &[&str] = &[models::QUALITY];
 
 /// The rows of the Setup card: what a person would name it, and the assets it needs.
 const GROUPS: [(&str, &[&str]); 6] = [
@@ -94,7 +104,9 @@ pub fn ensure(hub: &TaskHub, stop: &AtomicBool, ids: &[&str]) -> Result<(), Stri
             Ok(_) => task.finish(),
             Err(e) => {
                 task.fail(e.clone());
-                failures.push(e);
+                if !OPTIONAL.contains(id) {
+                    failures.push(e);
+                }
             }
         }
         if stop.load(Ordering::Relaxed) {

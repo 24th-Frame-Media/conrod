@@ -46,12 +46,12 @@ function makeDb(): Db {
     frames.push({
       id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > 60 ? 'pending' : 'done',
       thumb_path: scene(hue, cx, s, colour, 420, 280), preview_path: null, width: W, height: H, rating,
-      manual_stars: i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
+      manual_stars: i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, picked: i % 17 === 5 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
     });
     dets.push({
       id: 5000 + i, image_id: id, cls: 'car', x1: (cx - s / 2) * W, y1: 0.38 * H, x2: (cx + s / 2) * W, y2: 0.74 * H,
       sharpness: rating, panning: i % 3 === 0 ? 1 : 0, number: read ? no : null, plate: read ? plate : null,
-      cull_reason: rating < 0.6 ? `Soft: subject sharpness ${rating.toFixed(2)}` : null,
+      cull_reason: rating < 0.6 ? 'Motion blur' : null, rating, rating_verdict: rating >= 0.8 ? 'good' : rating >= 0.6 ? 'fair' : 'poor', sharp_end: i % 3 === 0 ? 'subject' : 'even',
       attributes: JSON.stringify(read ? { make, model, colour, team, race_number: no, plate } : {}), burst_pick: i % 5 === 0 ? 1 : 0, region_type: 'vehicle',
     });
   }
@@ -140,7 +140,11 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     }
     case 'mark': {
       const f = db.frames.find((x) => x.id === a.imageId);
-      if (f) { if ('stars' in a) f.manual_stars = (a.stars as number | null) ?? null; if ('rejected' in a) f.rejected = a.rejected ? 1 : 0; }
+      if (f) {
+        if ('stars' in a) f.manual_stars = (a.stars as number | null) ?? null;
+        if ('rejected' in a) { f.rejected = a.rejected ? 1 : 0; if (a.rejected) f.picked = 0; }
+        if ('picked' in a) { f.picked = a.picked ? 1 : 0; if (a.picked) f.rejected = 0; }
+      }
       for (const d of db.dets.filter((d) => d.image_id === a.imageId)) {
         if ('stars' in a) d.stars = (a.stars as number | null) ?? null;
         if ('rejected' in a) { d.rejected = a.rejected ? 1 : 0; if (!a.rejected) d.cull_reason = null; }

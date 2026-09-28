@@ -134,7 +134,8 @@ fn write(d: &Desktop, batch: &[(i64, Outcome)]) -> Result<()> {
     let tx = db.unchecked_transaction().map_err(err)?;
     for (id, o) in batch {
         tx.execute(
-            "UPDATE detections SET sharpness=?,sharpness_verdict=?,rating=?,rating_verdict=?,cull_reason=? WHERE id=?",
+            // Shut eyes are OCEC's verdict, not a focus one: re-measuring keeps it.
+            "UPDATE detections SET sharpness=?1,sharpness_verdict=?2,rating=?3,rating_verdict=?4,cull_reason=CASE WHEN region_type='face' AND COALESCE(CASE WHEN json_valid(attributes) THEN json_extract(attributes,'$.eyes_closed') END,0) THEN 'eyes closed' ELSE ?5 END WHERE id=?6",
             params![o.sharpness, o.sharpness_verdict, o.rating, o.rating_verdict, o.cull_reason, id],
         )
         .map_err(err)?;
@@ -259,7 +260,7 @@ pub(crate) fn run(
         tx.commit().map_err(err)?;
     }
     // The stars have moved, so the keeper of a pass may have moved with them.
-    let picked = pick_of_pass(&lock(&d.db), job, profile, cfg.include_people)?;
+    let picked = pick_of_pass(&lock(&d.db), job, profile, cfg.include_people, cfg.use_quality_score)?;
     task.detail(format!(
         "Re-measured {} subjects: {changed} changed, {skipped} could not be (no stored features); {} keepers",
         found.len() - skipped,
@@ -398,7 +399,7 @@ mod tests {
         }] {
             let scanned = sharpness::measure(&Gray::new(w, h, data.clone()), Some(bbox), Some(&m));
             assert!(scanned.learned, "the model applied to a measured subject");
-            assert_eq!(scanned.features.len(), 18);
+            assert_eq!(scanned.features.len(), sharpness::FEATURE_NAMES.len());
             let again = remeasure(
                 &Stored {
                     region: "vehicle",

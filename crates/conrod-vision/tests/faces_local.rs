@@ -94,3 +94,52 @@ fn faces_match_opencv_when_available() {
     }
     assert!(matched * 100 >= expected * 95, "{matched}/{expected}");
 }
+
+/// OCEC and SFace on labelled faces, when `CONROD_FACE_MODELS` names a folder
+/// holding the YuNet, OCEC and SFace models and `CONROD_EYES_FIXTURES` one of
+/// `closed_eyes_*.jpg` / `open_eyes_*.jpg` frames (e.g. from the MIT-licensed
+/// OCEC's training set, MichalMlodawski/closed-open-eyes). Skips without them.
+#[test]
+fn eyes_and_identity_when_available() {
+    use conrod_core::models;
+    use conrod_vision::faces::{FaceEmbedder, EYES_CLOSED_BELOW, IDENTITY_DIM, SAME_PERSON};
+    let (Some(dir), Some(frames)) = (
+        std::env::var_os("CONROD_FACE_MODELS").map(PathBuf::from),
+        std::env::var_os("CONROD_EYES_FIXTURES").map(PathBuf::from),
+    ) else {
+        eprintln!("set CONROD_FACE_MODELS and CONROD_EYES_FIXTURES to run");
+        return;
+    };
+    let mut detector = FaceDetector::load(&dir.join(models::FACES)).unwrap();
+    detector.load_eyes(&dir.join(models::EYES)).unwrap();
+    let mut embedder = FaceEmbedder::load(&dir.join(models::FACE_ID)).unwrap();
+    let mut judged = 0;
+    for entry in std::fs::read_dir(&frames).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let closed = name.starts_with("closed_eyes");
+        if !closed && !name.starts_with("open_eyes") {
+            continue;
+        }
+        let image = Rgb::open(&path).unwrap();
+        let faces = detector.detect(&image).unwrap();
+        let face = faces.first().unwrap_or_else(|| panic!("no face in {name}"));
+        let open = detector.eyes_open(&image, face);
+        eprintln!("{name}: prob_open {open:?}");
+        let mean = open.iter().flatten().sum::<f32>() / open.iter().flatten().count() as f32;
+        assert_eq!(mean < EYES_CLOSED_BELOW, closed, "{name}: {open:?}");
+
+        let v = embedder.embed(&image, face).unwrap();
+        assert_eq!(v.len(), IDENTITY_DIM);
+        assert!((v.iter().map(|x| x * x).sum::<f32>() - 1.0).abs() < 1e-3);
+        // The same face cropped differently is still the same person.
+        let [x0, y0, ..] = face.bbox.map(|v| (v.max(0.0) as usize).saturating_sub(20));
+        let crop = image.crop(x0, y0, image.width, image.height);
+        let shifted = detector.detect(&crop).unwrap().remove(0);
+        let w = embedder.embed(&crop, &shifted).unwrap();
+        let same: f32 = v.iter().zip(&w).map(|(a, b)| a * b).sum();
+        assert!(same >= SAME_PERSON, "{name}: {same}");
+        judged += 1;
+    }
+    assert!(judged > 0, "no labelled frames in {}", frames.display());
+}

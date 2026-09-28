@@ -185,10 +185,18 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("images", "rating_verdict", "TEXT"),
     ("images", "stars", "INTEGER"),
     ("images", "rejected", "INTEGER NOT NULL DEFAULT 0"),
+    // Manually flagged as a keeper, mutually exclusive with rejected.
+    ("images", "picked", "INTEGER NOT NULL DEFAULT 0"),
     ("images", "thumb_path", "TEXT"),
+    // Perceptual hash of the thumbnail, and the near-duplicate stack it landed in
+    // (the stack's smallest image id). See bursts::near_dupes.
+    ("images", "phash", "INTEGER"),
+    ("images", "dupe_key", "INTEGER"),
     ("detections", "features", "TEXT"),
     ("detections", "heuristic", "REAL"),
     ("detections", "region_type", "TEXT DEFAULT 'vehicle'"),
+    // NIMA technical quality, 0..1. NULL when the model is off or absent.
+    ("detections", "quality", "REAL"),
 ];
 
 fn now_unix() -> f64 {

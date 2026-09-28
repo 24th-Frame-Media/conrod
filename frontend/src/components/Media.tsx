@@ -40,6 +40,8 @@ export type ZoomPanRef = {
   zoom2to1: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
+  /** Zoom so a fractional (0..1) box fills roughly 3/4 of the view. */
+  zoomToBox: (box: [number, number, number, number]) => void;
 };
 
 type ZoomProps = {
@@ -74,6 +76,27 @@ function getFitScaleAndSize(containerW: number, containerH: number, naturalW: nu
 function clampPan(val: number, scale: number, imageDimension: number, containerDimension: number) {
   const max = Math.max(0, (imageDimension * scale - containerDimension) / 2);
   return Math.max(-max, Math.min(max, val));
+}
+
+/** Scale + pan that centers `box` (fractional 0..1 of the image) in the container. */
+function focusView(
+  box: [number, number, number, number],
+  containerW: number,
+  containerH: number,
+  imageW: number,
+  imageH: number,
+  scale1to1: number,
+) {
+  const [x1, y1, x2, y2] = box;
+  const cx = (x1 + x2) / 2;
+  const cy = (y1 + y2) / 2;
+  const bw = Math.max(0.01, x2 - x1);
+  const bh = Math.max(0.01, y2 - y1);
+  const fitSubjectScale = 0.75 / Math.max(bw, bh);
+  const scale = Math.max(scale1to1, Math.min(scale1to1 * 2, fitSubjectScale));
+  const rawX = -(cx - 0.5) * imageW * scale;
+  const rawY = -(cy - 0.5) * imageH * scale;
+  return { scale, x: clampPan(rawX, scale, imageW, containerW), y: clampPan(rawY, scale, imageH, containerH) };
 }
 
 /** Lightroom-inspired zoom & pan: single-click toggle, true 1:1 resolution, bounded panning, presets. */
@@ -183,8 +206,13 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
       },
       zoomIn: () => zoomTo(view.scale * 1.3),
       zoomOut: () => zoomTo(view.scale / 1.3),
+      zoomToBox: (box) => {
+        const { containerW, containerH, scale1to1, imageW, imageH } = getDimensions();
+        setView(focusView(box, containerW, containerH, imageW, imageH, scale1to1));
+        onZoomChange?.(true);
+      },
     }),
-    [getDimensions, reset, toggleZoom, view.scale, zoomTo],
+    [getDimensions, onZoomChange, reset, toggleZoom, view.scale, zoomTo],
   );
 
   // Sync with external zoomed prop (e.g., Train screen)
@@ -192,18 +220,7 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
     if (zoomed) {
       const { containerW, containerH, scale1to1, imageW, imageH } = getDimensions();
       if (focusBox) {
-        const [x1, y1, x2, y2] = focusBox;
-        const cx = (x1 + x2) / 2;
-        const cy = (y1 + y2) / 2;
-        const bw = Math.max(0.01, x2 - x1);
-        const bh = Math.max(0.01, y2 - y1);
-        const fitSubjectScale = 0.75 / Math.max(bw, bh);
-        const targetScale = Math.max(scale1to1, Math.min(scale1to1 * 2, fitSubjectScale));
-        const rawX = -(cx - 0.5) * imageW * targetScale;
-        const rawY = -(cy - 0.5) * imageH * targetScale;
-        const clampedX = clampPan(rawX, targetScale, imageW, containerW);
-        const clampedY = clampPan(rawY, targetScale, imageH, containerH);
-        setView({ scale: targetScale, x: clampedX, y: clampedY });
+        setView(focusView(focusBox, containerW, containerH, imageW, imageH, scale1to1));
       } else {
         setView({ scale: scale1to1, x: 0, y: 0 });
       }

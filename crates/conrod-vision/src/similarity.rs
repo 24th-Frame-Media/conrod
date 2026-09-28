@@ -7,7 +7,7 @@
 //! against the network.
 
 use crate::detect::Device;
-use crate::imageops::{Filter, Rgb};
+use crate::imageops::{Filter, Gray, Rgb};
 use ort::ep;
 use ort::session::Session;
 use ort::value::Tensor;
@@ -123,6 +123,40 @@ pub fn nearness(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
+/// Perceptual hash: 32x32 greyscale, 2-D DCT-II, the 8x8 lowest frequencies
+/// each compared against their median (DC excluded from the median). Near
+/// copies land within a few bits; compare with `(a ^ b).count_ones()`.
+pub fn phash(image: &Gray) -> u64 {
+    const N: usize = 32;
+    let small = image.resize(N, N, Filter::Bilinear);
+    let px: Vec<f64> = small.data.iter().map(|&v| f64::from(v)).collect();
+    let cos: Vec<f64> = (0..8 * N)
+        .map(|i| {
+            let (u, x) = (i / N, i % N);
+            (std::f64::consts::PI * (2 * x + 1) as f64 * u as f64 / (2 * N) as f64).cos()
+        })
+        .collect();
+    let mut coeffs = [0f64; 64];
+    for u in 0..8 {
+        for v in 0..8 {
+            let mut sum = 0.0;
+            for y in 0..N {
+                for x in 0..N {
+                    sum += px[y * N + x] * cos[u * N + y] * cos[v * N + x];
+                }
+            }
+            coeffs[u * 8 + v] = sum;
+        }
+    }
+    let mut ac = coeffs[1..].to_vec();
+    ac.sort_by(f64::total_cmp);
+    let median = ac[ac.len() / 2];
+    coeffs
+        .iter()
+        .enumerate()
+        .fold(0u64, |h, (i, &c)| if c > median { h | 1 << i } else { h })
+}
+
 /// Store as text, because that is what the detections table holds.
 pub fn pack(vector: &[f32]) -> String {
     vector
@@ -157,6 +191,27 @@ mod tests {
     fn unpack_rejects_garbage() {
         assert_eq!(unpack(""), None);
         assert_eq!(unpack("1.0,not a number"), None);
+    }
+
+    fn picture(seed: u32) -> Gray {
+        let (w, h) = (96, 64);
+        let data = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as u32, (i / w) as u32);
+                (x.wrapping_mul(seed) ^ y.wrapping_mul(seed * 7 + 3)).wrapping_add(x * y) as u8
+            })
+            .collect();
+        Gray::new(w, h, data)
+    }
+
+    #[test]
+    fn phash_matches_itself_and_tells_pictures_apart() {
+        let a = picture(3);
+        assert_eq!((phash(&a) ^ phash(&a.clone())).count_ones(), 0);
+        let gradient = Gray::new(64, 64, (0..64 * 64).map(|i| (i % 64 * 4) as u8).collect());
+        let flipped = Gray::new(64, 64, (0..64 * 64).map(|i| (i / 64 * 4) as u8).collect());
+        assert!((phash(&gradient) ^ phash(&flipped)).count_ones() > 20);
+        assert!((phash(&a) ^ phash(&picture(11))).count_ones() > 10);
     }
 
     #[test]

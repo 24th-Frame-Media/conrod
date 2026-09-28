@@ -13,7 +13,7 @@ use conrod_core::{
     settings::Settings,
     tasks::Task,
 };
-use conrod_vision::faces::FaceDetector;
+use conrod_vision::faces::{FaceEmbedder, IDENTITY_DIM, SAME_PERSON};
 use conrod_vision::{detect::Device, imageops::Rgb, similarity};
 use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
@@ -40,15 +40,18 @@ pub(crate) fn region_name(kind: Subject) -> &'static str {
 ///
 /// The unit is the car in the pass: (burst, group), or the burst alone where
 /// grouping has not run. A star given by hand (or already in the file) wins
-/// outright; otherwise the measured rating decides, and a tie goes to the
-/// earlier frame so a re-run picks the same one. Of a frame's subjects only
-/// those of the kind the profile rates the frame by compete, as they do for
-/// the frame's own rating.
+/// outright; otherwise the measured rating decides. On a rating tie, NIMA
+/// quality breaks it when `use_quality_score` is on and both frames have a
+/// score; otherwise (as always below that) a tie leaves the earlier frame in
+/// place, so a re-run picks the same one. Of a frame's subjects only those of
+/// the kind the profile rates the frame by compete, as they do for the
+/// frame's own rating.
 pub fn pick_of_pass(
     conn: &Connection,
     job: i64,
     profile: ScanProfile,
     include_people: bool,
+    use_quality_score: bool,
 ) -> Result<Value> {
     let rank = |main: Option<Subject>, region: &str| {
         let priority = profile.frame_priority(include_people, main);
@@ -59,7 +62,7 @@ pub fn pick_of_pass(
     };
     let found = rows(
         conn,
-        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
         [job],
     )?;
     // Each frame's main subject: its largest person or vehicle.
@@ -94,8 +97,8 @@ pub fn pick_of_pass(
             .or_insert(usize::MAX);
         *best = (*best).min(region_of(r));
     }
-    // (burst, group) -> (star by hand, measured score, detection)
-    let mut best: HashMap<(i64, Option<i64>), (i64, f64, i64)> = HashMap::new();
+    // (burst, group) -> (star by hand, measured score, quality, detection)
+    let mut best: HashMap<(i64, Option<i64>), (i64, f64, Option<f64>, i64)> = HashMap::new();
     for r in &found {
         if primary[&r["image_id"].as_i64().unwrap_or_default()] != region_of(r) {
             continue;
@@ -103,20 +106,33 @@ pub fn pick_of_pass(
         let Some(score) = r["rating"].as_f64().or_else(|| r["sharpness"].as_f64()) else {
             continue;
         };
+        let quality = r["quality"].as_f64();
         let unit = (
             r["burst_key"].as_i64().unwrap_or_default(),
             r["group_key"].as_i64(),
         );
         let by_hand = r["by_hand"].as_i64().unwrap_or(0);
-        // Strictly greater: an equal score leaves the earlier frame in place.
-        if best
-            .get(&unit)
-            .is_none_or(|(h, s, _)| by_hand > *h || (by_hand == *h && score > *s))
-        {
-            best.insert(unit, (by_hand, score, r["id"].as_i64().unwrap_or_default()));
+        // Strictly greater wins; on a rating tie, quality (opt-in) breaks it;
+        // still tied, or quality off/missing, leaves the earlier frame in place.
+        let wins = best.get(&unit).is_none_or(|(h, s, q, _)| {
+            by_hand > *h
+                || (by_hand == *h && score > *s)
+                || (by_hand == *h
+                    && score == *s
+                    && use_quality_score
+                    && match (quality, q) {
+                        (Some(a), Some(b)) => a > *b,
+                        _ => false,
+                    })
+        });
+        if wins {
+            best.insert(
+                unit,
+                (by_hand, score, quality, r["id"].as_i64().unwrap_or_default()),
+            );
         }
     }
-    let picks: Vec<i64> = best.values().map(|b| b.2).collect();
+    let picks: Vec<i64> = best.values().map(|b| b.3).collect();
     let tx = conn.unchecked_transaction().map_err(err)?;
     tx.execute(
         "UPDATE detections SET burst_pick=NULL WHERE image_id IN (SELECT id FROM images WHERE job_id=?)",
@@ -137,7 +153,7 @@ pub fn pick_keepers(d: &Desktop, job: i64) -> Result<Value> {
     let cfg = settings(d, job)?;
     let profile = ScanProfile::parse(&cfg.scan_profile);
     let task = d.hub.start("Picking keepers", 0);
-    match pick_of_pass(&lock(&d.db), job, profile, cfg.include_people) {
+    match pick_of_pass(&lock(&d.db), job, profile, cfg.include_people, cfg.use_quality_score) {
         Ok(stats) => {
             task.detail(format!(
                 "{} keepers from {} frames across {} passes",
@@ -162,8 +178,9 @@ pub fn group(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             return Ok(());
         }
         let (groups, vehicles) = consolidate(d, job, task)?;
+        let dupes = near_duplicates(d, job, stop)?;
         task.detail(format!(
-            "{groups} cars from {vehicles} vehicles ({looked} looked at for the first time)"
+            "{groups} cars from {vehicles} vehicles ({looked} looked at for the first time), {dupes} frames re-shot elsewhere"
         ));
         Ok(())
     })
@@ -231,7 +248,7 @@ fn find_people(
     }
     if !frames.is_empty() {
         crate::setup::ensure(&d.hub, stop, crate::setup::FACES)?;
-        let detector = std::sync::Mutex::new(FaceDetector::load(&models::expected(models::FACES))?);
+        let detector = std::sync::Mutex::new(crate::load_faces()?);
         let region_models: HashMap<String, _> = ["face", "eye"]
             .into_iter()
             .filter_map(|r| crate::load_region_model(r).map(|m| (r.to_string(), m)))
@@ -296,7 +313,7 @@ fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
         .map_err(err)?;
     }
     tx.commit().map_err(err)?;
-    pick_of_pass(&db, job, profile, cfg.include_people)?;
+    pick_of_pass(&db, job, profile, cfg.include_people, cfg.use_quality_score)?;
     Ok(())
 }
 
@@ -352,26 +369,125 @@ fn embed_missing(d: &Desktop, job: i64, stop: &AtomicBool, task: &Task) -> Resul
     Ok(done)
 }
 
-/// Create conservative visual fingerprints for detected faces. DINO is not a
-/// biometric identity model, so consumers must present matches as suggestions
-/// and require a human click before applying a name.
+/// Hash every frame that has a thumbnail but no pHash yet (so older albums
+/// backfill), then stack re-shoots of one picture across the whole shoot into
+/// `images.dupe_key`. Returns how many frames landed in a stack.
+pub(crate) fn near_duplicates(d: &Desktop, job: i64, stop: &AtomicBool) -> Result<usize> {
+    let todo = rows(
+        &lock(&d.reader),
+        "SELECT id, thumb_path FROM images WHERE job_id=? AND phash IS NULL AND thumb_path IS NOT NULL",
+        [job],
+    )?;
+    let mut hashed = Vec::new();
+    for row in &todo {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(0);
+        }
+        let gray = row["thumb_path"]
+            .as_str()
+            .and_then(|p| conrod_vision::imageops::Gray::open(std::path::Path::new(p)).ok());
+        if let (Some(id), Some(gray)) = (row["id"].as_i64(), gray) {
+            hashed.push((id, similarity::phash(&gray) as i64));
+        }
+    }
+    {
+        let db = lock(&d.db);
+        let tx = db.unchecked_transaction().map_err(err)?;
+        for (id, hash) in &hashed {
+            tx.execute("UPDATE images SET phash=? WHERE id=?", params![hash, id])
+                .map_err(err)?;
+        }
+        tx.commit().map_err(err)?;
+    }
+    let frames = rows(
+        &lock(&d.reader),
+        "SELECT id, phash, burst_key FROM images WHERE job_id=? AND phash IS NOT NULL AND status='done' AND rejected=0",
+        [job],
+    )?;
+    let looks = rows(
+        &lock(&d.reader),
+        "SELECT d.image_id, d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.embedding IS NOT NULL AND d.embedding!=''",
+        [job],
+    )?;
+    let mut by_image: HashMap<i64, Vec<Vec<f32>>> = HashMap::new();
+    for r in &looks {
+        if let (Some(id), Some(v)) = (
+            r["image_id"].as_i64(),
+            r["embedding"].as_str().and_then(similarity::unpack),
+        ) {
+            by_image.entry(id).or_default().push(v);
+        }
+    }
+    let frames: Vec<_> = frames
+        .iter()
+        .filter_map(|r| {
+            let id = r["id"].as_i64()?;
+            Some(conrod_core::bursts::DupeFrame {
+                id,
+                phash: r["phash"].as_i64()? as u64,
+                burst: r["burst_key"].as_i64(),
+                looks: by_image.remove(&id).unwrap_or_default(),
+            })
+        })
+        .collect();
+    let stacks = conrod_core::bursts::near_dupes(&frames, grouping::SAME_CAR as f32);
+    let db = lock(&d.db);
+    let tx = db.unchecked_transaction().map_err(err)?;
+    tx.execute("UPDATE images SET dupe_key=NULL WHERE job_id=?", [job])
+        .map_err(err)?;
+    for (id, key) in &stacks {
+        tx.execute("UPDATE images SET dupe_key=? WHERE id=?", params![key, id])
+            .map_err(err)?;
+    }
+    tx.commit().map_err(err)?;
+    Ok(stacks.len())
+}
+
+/// Identity vectors for detected faces: SFace on the face re-found in its
+/// stored box and aligned by its landmarks. A face is (re)embedded when it has
+/// no SFace vector yet, which is how the older DINOv2 face vectors (384 long,
+/// not 128) are replaced. Without SFace it falls back to DINOv2 for faces that
+/// have nothing at all. Matches are suggestions; a human click applies a name.
 pub(crate) fn embed_faces_missing(
     d: &Desktop,
     job: i64,
     stop: &AtomicBool,
     task: &Task,
 ) -> Result<usize> {
-    let todo = rows(
+    let todo: Vec<Value> = rows(
         &lock(&d.reader),
-        &format!("SELECT d.id,d.x1,d.y1,d.x2,d.y2,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'')='face' AND (d.embedding IS NULL OR d.embedding='') ORDER BY i.id,d.id"),
+        &format!("SELECT d.id,d.x1,d.y1,d.x2,d.y2,i.path,d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'')='face' ORDER BY i.id,d.id"),
         [job],
-    )?;
+    )?
+    .into_iter()
+    .filter(|r| match r["embedding"].as_str().unwrap_or_default() {
+        "" => true,
+        text => similarity::unpack(text).is_some_and(|v| v.len() != IDENTITY_DIM),
+    })
+    .collect();
     if todo.is_empty() {
+        cluster_people(d, job)?;
         return Ok(0);
     }
-    crate::setup::ensure(&d.hub, stop, crate::setup::SIMILARITY)?;
-    let mut embedder =
-        similarity::Embedder::load(&models::expected(models::SIMILARITY), Device::Cpu)?;
+    // Optional: `ensure` reports a failed SFace install and carries on.
+    crate::setup::ensure(&d.hub, stop, &[models::FACE_ID])?;
+    let mut identity = models::find(models::FACE_ID)
+        .and_then(|model| FaceEmbedder::load(&model).ok())
+        .zip(crate::load_faces().ok());
+    let (todo, mut dino) = if identity.is_some() {
+        (todo, None)
+    } else {
+        let bare: Vec<Value> = todo
+            .into_iter()
+            .filter(|r| r["embedding"].as_str().is_none_or(str::is_empty))
+            .collect();
+        if bare.is_empty() {
+            return Ok(0);
+        }
+        crate::setup::ensure(&d.hub, stop, crate::setup::SIMILARITY)?;
+        let model = models::expected(models::SIMILARITY);
+        (bare, Some(similarity::Embedder::load(&model, Device::Cpu)?))
+    };
     let mut current: Option<(String, Rgb)> = None;
     let mut found = Vec::new();
     for (index, row) in todo.iter().enumerate() {
@@ -409,21 +525,105 @@ pub(crate) fn embed_faces_missing(
         let id = row["id"].as_i64().unwrap_or_default();
         let crop_path = d.root.join(format!("cache/native/face-{id}.jpg"));
         crate::desktop::save_jpeg(&crop, &crop_path)?;
-        let packed = similarity::pack(&embedder.embed(&crop)?);
-        found.push((id, packed, crop_path.to_string_lossy().into_owned()));
+        let vector = match (&mut identity, &mut dino) {
+            (Some((sface, yunet)), _) => {
+                // The landmarks are not stored: find the face again in its box
+                // with a margin, which YuNet needs to see a whole head.
+                let (pw, ph) = ((x2 - x1) / 3, (y2 - y1) / 3);
+                let (ox, oy) = (x1.saturating_sub(pw), y1.saturating_sub(ph));
+                let area = image.crop(ox, oy, x2 + pw, y2 + ph);
+                let Some(face) = yunet.detect(&area)?.into_iter().next() else {
+                    continue;
+                };
+                sface.embed(&area, &face)?
+            }
+            (None, Some(dino)) => dino.embed(&crop)?,
+            (None, None) => continue,
+        };
+        found.push((
+            id,
+            similarity::pack(&vector),
+            crop_path.to_string_lossy().into_owned(),
+        ));
         task.progress((index + 1) as u64, todo.len() as u64);
     }
+    {
+        let db = lock(&d.db);
+        let tx = db.unchecked_transaction().map_err(err)?;
+        for (id, packed, crop_path) in &found {
+            tx.execute(
+                "UPDATE detections SET embedding=?,crop_path=? WHERE id=?",
+                params![packed, crop_path, id],
+            )
+            .map_err(err)?;
+        }
+        tx.commit().map_err(err)?;
+    }
+    cluster_people(d, job)?;
+    Ok(found.len())
+}
+
+/// Sort an album's faces into people: each face joins the person whose mean
+/// it is nearest, if at least [`SAME_PERSON`], else starts a new one. The
+/// person is stored as the face's `group_key` (its first face's id) and
+/// `group_size`. Faces without an SFace vector are left out.
+///
+/// ponytail: greedy single pass, O(faces x people); agglomerative clustering
+/// if order effects show up on big albums.
+fn cluster_people(d: &Desktop, job: i64) -> Result<()> {
+    let faces: Vec<(i64, Vec<f32>)> = rows(
+        &lock(&d.reader),
+        "SELECT d.id,d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'')='face' AND COALESCE(d.rejected,0)=0 ORDER BY i.id,d.id",
+        [job],
+    )?
+    .into_iter()
+    .filter_map(|r| {
+        let v = similarity::unpack(r["embedding"].as_str()?)?;
+        (v.len() == IDENTITY_DIM).then(|| (r["id"].as_i64().unwrap_or_default(), v))
+    })
+    .collect();
+    let people = group_faces(&faces);
     let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
-    for (id, packed, crop_path) in &found {
-        tx.execute(
-            "UPDATE detections SET embedding=?,crop_path=? WHERE id=?",
-            params![packed, crop_path, id],
-        )
-        .map_err(err)?;
+    tx.execute(
+        "UPDATE detections SET group_key=NULL,group_size=NULL WHERE region_type='face' AND image_id IN (SELECT id FROM images WHERE job_id=?)",
+        [job],
+    )
+    .map_err(err)?;
+    for members in &people {
+        for id in members {
+            tx.execute(
+                "UPDATE detections SET group_key=?,group_size=? WHERE id=?",
+                params![members[0], members.len() as i64, id],
+            )
+            .map_err(err)?;
+        }
     }
     tx.commit().map_err(err)?;
-    Ok(found.len())
+    Ok(())
+}
+
+/// The people among `(id, unit vector)` faces, each a list of face ids.
+fn group_faces(faces: &[(i64, Vec<f32>)]) -> Vec<Vec<i64>> {
+    let mut people: Vec<(Vec<f32>, Vec<i64>)> = Vec::new();
+    for (id, v) in faces {
+        let best = people
+            .iter_mut()
+            .map(|(sum, ids)| {
+                let norm = sum.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-6);
+                (similarity::nearness(sum, v) / norm, sum, ids)
+            })
+            .filter(|(near, ..)| *near >= SAME_PERSON)
+            .max_by(|a, b| a.0.total_cmp(&b.0));
+        match best {
+            Some((_, sum, ids)) => {
+                sum.iter_mut().zip(v).for_each(|(s, x)| *s += x);
+                ids.push(*id);
+            }
+            None => people.push((v.clone(), vec![*id])),
+        }
+    }
+    people.into_iter().map(|(_, ids)| ids).collect()
 }
 
 /// The group's own answer if it has one, else what this frame's reader said.
@@ -565,7 +765,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         .map_err(err)?;
     }
     tx.commit().map_err(err)?;
-    pick_of_pass(&db, job, profile, cfg.include_people)?;
+    pick_of_pass(&db, job, profile, cfg.include_people, cfg.use_quality_score)?;
     Ok((members.len(), looks.len()))
 }
 
@@ -834,5 +1034,44 @@ mod tests {
         assert!(lib
             .run("set_include_people", json!({"jobId": 4242, "value": true}))
             .is_err());
+    }
+
+    #[test]
+    fn faces_of_one_person_share_a_group_and_older_vectors_are_left_out() {
+        let lib = Lib::new("people-sface");
+        let toward = |i: usize, j: usize, lean: f32| {
+            let mut v = vec![0f32; IDENTITY_DIM];
+            v[i] = 1.0;
+            v[j] += lean;
+            let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            v.into_iter().map(|x| x / n).collect::<Vec<_>>()
+        };
+        let frame = lib.frame("a.cr3", Some(1));
+        let face = |v: &[f32]| {
+            let id = lib.detection(frame, "face", 0.9);
+            lib.sql(
+                "UPDATE detections SET embedding=? WHERE id=?",
+                params![similarity::pack(v), id],
+            );
+            id
+        };
+        let alex = face(&toward(0, 1, 0.0));
+        let alex_again = face(&toward(0, 1, 0.5));
+        let sam = face(&toward(5, 6, 0.0));
+        let dino = face(&[0.5; 384]);
+        cluster_people(lib.d(), lib.job).unwrap();
+        let key = |id: i64| -> Option<i64> {
+            lib.one("SELECT group_key FROM detections WHERE id=?", [id])
+        };
+        assert_eq!(key(alex), Some(alex));
+        assert_eq!(key(alex_again), Some(alex));
+        assert_eq!(key(sam), Some(sam));
+        assert_eq!(key(dino), None, "a DINOv2 vector waits to be re-embedded");
+        let size: i64 = lib.one("SELECT group_size FROM detections WHERE id=?", [alex_again]);
+        assert_eq!(size, 2);
+        // Shut eyes: every judged eye below one half, and at least one judged.
+        assert!(crate::eyes_closed([Some(0.1), None]));
+        assert!(!crate::eyes_closed([Some(0.1), Some(0.9)]));
+        assert!(!crate::eyes_closed([None, None]));
     }
 }

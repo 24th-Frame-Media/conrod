@@ -121,6 +121,10 @@ pub struct Subject {
     pub features: Vec<f64>,
     pub heuristic: f64,
     pub region_type: &'static str,
+    /// NIMA technical quality, 0..1; `None` when the model is off or absent.
+    pub quality: Option<f64>,
+    /// A face's OCEC `prob_open`, right eye then left; `None` where not judged.
+    pub eyes_open: [Option<f32>; 2],
 }
 
 #[derive(Debug, Clone)]
@@ -194,6 +198,28 @@ fn options(settings: &Settings, _profile: ScanProfile) -> DetectOptions {
     }
 }
 
+/// YuNet, and OCEC with it when installed: without OCEC eyes go unjudged.
+pub(crate) fn load_faces() -> Result<FaceDetector, String> {
+    use conrod_core::models;
+    let mut detector = FaceDetector::load(&models::expected(models::FACES))?;
+    if let Some(eyes) = models::find(models::EYES) {
+        let _ = detector.load_eyes(&eyes);
+    }
+    Ok(detector)
+}
+
+/// The cull reason of a face whose eyes are shut.
+pub const EYES_CLOSED: &str = "eyes closed";
+
+/// Every eye OCEC judged is shut, and it judged at least one.
+pub(crate) fn eyes_closed(open: [Option<f32>; 2]) -> bool {
+    let judged: Vec<f32> = open.into_iter().flatten().collect();
+    !judged.is_empty()
+        && judged
+            .iter()
+            .all(|p| *p < conrod_vision::faces::EYES_CLOSED_BELOW)
+}
+
 /// Faces and eyes found inside each person box, measured like any subject.
 pub(crate) fn face_subjects(
     image: &Rgb,
@@ -210,7 +236,9 @@ pub(crate) fn face_subjects(
             continue;
         }
         let crop = image.crop(x0, y0, x1.min(fw), y1.min(fh));
-        for face in lock(detector).detect(&crop)? {
+        let found = lock(detector).detect(&crop)?;
+        for face in found {
+            let open = lock(detector).eyes_open(&crop, &face);
             let face_box = [
                 face.bbox[0] + x0 as f64,
                 face.bbox[1] + y0 as f64,
@@ -255,6 +283,11 @@ pub(crate) fn face_subjects(
                 } else {
                     String::new()
                 };
+                let reason = if kind == "face" && eyes_closed(open) {
+                    EYES_CLOSED.to_string()
+                } else {
+                    reason
+                };
                 out.push(Subject {
                     class: kind,
                     conf: face.score,
@@ -272,6 +305,10 @@ pub(crate) fn face_subjects(
                         focus.score
                     },
                     region_type: kind,
+                    // Quality scoring is only wired up for the frame's main
+                    // subjects (see `cull_frame`), not each face/eye crop.
+                    quality: None,
+                    eyes_open: if kind == "face" { open } else { [None, None] },
                 });
             }
         }
@@ -320,6 +357,7 @@ pub fn cull_frame(
     profile: ScanProfile,
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
     faces: Option<&Mutex<FaceDetector>>,
+    quality: Option<&Mutex<conrod_vision::quality::QualityModel>>,
 ) -> Result<FrameResult, String> {
     let preset = ShootPreset::parse(&settings.scan_profile);
     let frame = raw::read(path)?;
@@ -368,6 +406,13 @@ pub fn cull_frame(
         } else {
             String::new()
         };
+        let quality_score = quality.and_then(|q| {
+            match lock(q).score(&crop) {
+                Ok(v) => Some(v),
+                // A failed read costs only the tiebreak, never the cull.
+                Err(_) => None,
+            }
+        });
         subjects.push(Subject {
             class: detect::class_name(det.class_id),
             conf: det.conf,
@@ -389,6 +434,8 @@ pub fn cull_frame(
             } else {
                 focus.score
             },
+            quality: quality_score,
+            eyes_open: [None, None],
         });
     }
     if let Some(detector) = faces {
@@ -528,28 +575,36 @@ pub(crate) fn scan_files_filtered(
             }
         };
         let device = lock(&detector).device;
-        let faces = if ShootPreset::parse(&settings.scan_profile)
-            .wants_faces(settings.include_people)
-        {
-            let task = hub.start("Loading face detector", 0);
-            match FaceDetector::load(&conrod_core::models::expected(conrod_core::models::FACES)) {
-                Ok(detector) => {
-                    task.finish();
-                    Some(Mutex::new(detector))
+        let faces =
+            if ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people) {
+                let task = hub.start("Loading face detector", 0);
+                match load_faces() {
+                    Ok(detector) => {
+                        task.finish();
+                        Some(Mutex::new(detector))
+                    }
+                    Err(e) => {
+                        *lock(&failure) = Some(e.clone());
+                        task.fail(e);
+                        return;
+                    }
                 }
-                Err(e) => {
-                    *lock(&failure) = Some(e.clone());
-                    task.fail(e);
-                    return;
-                }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         let models: std::collections::HashMap<_, _> = ["vehicle", "person", "face", "eye"]
             .into_iter()
             .filter_map(|region| load_region_model(region).map(|m| (region.to_string(), m)))
             .collect();
+        // Opt-in and best-effort: an absent or unconvertible model just means
+        // no quality score, never a failed scan.
+        let quality = settings.use_quality_score.then(|| {
+            let path = conrod_core::models::expected(conrod_core::models::QUALITY);
+            path.is_file()
+                .then(|| conrod_vision::quality::QualityModel::load(&path, true).ok())
+                .flatten()
+                .map(Mutex::new)
+        }).flatten();
         let task = hub.start(
             format!("Culling ({}, {device})", profile.label()),
             paths.len() as u64,
@@ -586,7 +641,7 @@ pub(crate) fn scan_files_filtered(
                         task.progress(n as u64, paths.len() as u64);
                         continue;
                     }
-                    match cull_frame(path, &detector, &settings, profile, &models, faces.as_ref()) {
+                    match cull_frame(path, &detector, &settings, profile, &models, faces.as_ref(), quality.as_ref()) {
                         Ok(result) => on_frame(Ok(result)),
                         Err(e) => {
                             on_frame(Err((path.clone(), e.clone())));

@@ -23,6 +23,9 @@ pub struct VehicleAnalysis {
     pub plate: Option<String>,
     pub plate_state: Option<String>,
     pub plate_conf: f64,
+    /// The plate's box, in the coordinates of whichever crop it was found in (`crop` or `native`);
+    /// `analyze::analyze`'s caller translates this to full-frame pixels before it is stored.
+    pub plate_bbox: Option<[i64; 4]>,
     pub race_number: Option<String>,
     pub number_source: Option<String>,
     pub number_conf: f64,
@@ -48,6 +51,7 @@ impl Default for VehicleAnalysis {
             plate: None,
             plate_state: None,
             plate_conf: 0.0,
+            plate_bbox: None,
             race_number: None,
             number_source: None,
             number_conf: 0.0,
