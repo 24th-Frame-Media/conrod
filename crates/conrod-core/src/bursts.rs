@@ -242,3 +242,108 @@ pub fn collect(frames: &[Frame]) -> Vec<Burst> {
     });
     out
 }
+
+/// pHash bits two frames may differ by and still be candidate duplicates.
+pub const DUPE_BITS: u32 = 10;
+/// Tighter bound for a pair with no embeddings to confirm it (scenery, crowds).
+pub const DUPE_BITS_UNCONFIRMED: u32 = 4;
+
+/// One frame as the duplicate finder sees it.
+pub struct DupeFrame {
+    pub id: i64,
+    pub phash: u64,
+    pub burst: Option<i64>,
+    /// Unit-vector embeddings of the frame's subjects.
+    pub looks: Vec<Vec<f32>>,
+}
+
+/// Re-shoots of the same picture across the whole shoot: pHash within
+/// [`DUPE_BITS`] as candidates, confirmed by any subject pair's cosine at or
+/// above `same`, joined transitively. Pairs within one burst are skipped since
+/// the burst already stacks them. Returns frame id -> group key (the group's
+/// smallest id), only for frames in a group of two or more.
+pub fn near_dupes(frames: &[DupeFrame], same: f32) -> BTreeMap<i64, i64> {
+    let mut parent: Vec<usize> = (0..frames.len()).collect();
+    fn root(p: &mut [usize], mut i: usize) -> usize {
+        while p[i] != i {
+            p[i] = p[p[i]];
+            i = p[i];
+        }
+        i
+    }
+    // ponytail: O(n²) Hamming scan, fine to ~20k frames; bucket by hash prefix beyond.
+    for i in 0..frames.len() {
+        for j in i + 1..frames.len() {
+            let (a, b) = (&frames[i], &frames[j]);
+            if a.burst.is_some() && a.burst == b.burst {
+                continue;
+            }
+            let bits = (a.phash ^ b.phash).count_ones();
+            if bits > DUPE_BITS {
+                continue;
+            }
+            let confirmed = if a.looks.is_empty() || b.looks.is_empty() {
+                bits <= DUPE_BITS_UNCONFIRMED
+            } else {
+                a.looks.iter().any(|x| {
+                    b.looks
+                        .iter()
+                        .any(|y| x.iter().zip(y).map(|(p, q)| p * q).sum::<f32>() >= same)
+                })
+            };
+            if confirmed {
+                let (ra, rb) = (root(&mut parent, i), root(&mut parent, j));
+                parent[ra.max(rb)] = ra.min(rb);
+            }
+        }
+    }
+    let mut members: BTreeMap<usize, Vec<i64>> = BTreeMap::new();
+    for i in 0..frames.len() {
+        let r = root(&mut parent, i);
+        members.entry(r).or_default().push(frames[i].id);
+    }
+    let mut out = BTreeMap::new();
+    for ids in members.values().filter(|ids| ids.len() > 1) {
+        let key = *ids.iter().min().unwrap();
+        out.extend(ids.iter().map(|&id| (id, key)));
+    }
+    out
+}
+
+#[cfg(test)]
+mod dupe_tests {
+    use super::*;
+
+    fn f(id: i64, phash: u64, burst: Option<i64>, look: &[f32]) -> DupeFrame {
+        DupeFrame {
+            id,
+            phash,
+            burst,
+            looks: if look.is_empty() { vec![] } else { vec![look.to_vec()] },
+        }
+    }
+
+    #[test]
+    fn reshoots_group_across_bursts_but_not_within_or_when_the_look_differs() {
+        let car = [1.0, 0.0];
+        let other = [0.0, 1.0];
+        let h = 0xFFFF_0000;
+        let frames = [
+            f(1, 0, Some(1), &car),
+            f(2, 0b111, Some(2), &car),  // 3 bits, same car, other burst: joins 1
+            f(3, 0b1111, Some(3), &car), // joins 2, so 1 transitively
+            f(5, 0b1, Some(5), &[]),     // no looks, 1 bit: joins by hash alone
+            f(4, h, Some(4), &other),
+            f(10, h, Some(10), &car),     // same hash as 4, different car: apart
+            f(6, u64::MAX, Some(6), &car), // far hash: alone
+            f(7, h | 0b11111, Some(7), &[]), // no looks, 5 bits: too far unconfirmed
+            f(8, !0xFF, Some(9), &other),
+            f(9, !0xFF, Some(9), &other), // same burst as 8: not joined
+        ];
+        let got = near_dupes(&frames, 0.9);
+        for id in [1, 2, 3, 5] {
+            assert_eq!(got.get(&id), Some(&1), "frame {id}");
+        }
+        assert_eq!(got.len(), 4, "{got:?}");
+    }
+}

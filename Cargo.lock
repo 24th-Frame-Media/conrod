@@ -831,6 +831,7 @@ dependencies = [
  "jpeg-decoder",
  "oar-ocr",
  "ort",
+ "rustfft",
  "serde_json",
 ]
 

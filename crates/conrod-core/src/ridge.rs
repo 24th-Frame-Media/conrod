@@ -130,12 +130,19 @@ pub fn fit_sharp(vectors: &[Vec<f64>], stars: &[f64]) -> Option<SharpModel> {
 }
 
 /// The rating this photographer would give, on the one-to-five scale but not
-/// rounded or clamped. `None` for a model of another version or a vector of the
-/// wrong length.
+/// rounded or clamped. `None` for a model of another version or a vector
+/// shorter than the model expects.
+///
+/// A model trained before a feature was appended to the vector (e.g. the FFT
+/// high-frequency ratio) is shorter than today's vector; new features are
+/// always appended, so the model's own dimensions are simply the vector's
+/// leading ones, and the extra trailing features are ignored until the model
+/// is retrained.
 pub fn predict_sharp(model: &SharpModel, vector: &[f64]) -> Option<f64> {
-    if model.version != FEATURE_VERSION || vector.is_empty() || model.mean.len() != vector.len() {
+    if model.version != FEATURE_VERSION || vector.is_empty() || model.mean.len() > vector.len() {
         return None;
     }
+    let vector = &vector[..model.mean.len()];
     let dot: f64 = vector
         .iter()
         .zip(&model.mean)

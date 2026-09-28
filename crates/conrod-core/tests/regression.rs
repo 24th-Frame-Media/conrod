@@ -1216,6 +1216,7 @@ fn settings_match_snapshot() {
         m.remove("workers");
         m.remove("scan_profile"); // Rust-only
         m.remove("include_people"); // Rust-only
+        m.remove("use_quality_score"); // Rust-only
         m.remove("vlm_services");
         m.remove("vlm_strategy");
         v
