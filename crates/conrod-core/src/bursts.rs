@@ -298,9 +298,9 @@ pub fn near_dupes(frames: &[DupeFrame], same: f32) -> BTreeMap<i64, i64> {
         }
     }
     let mut members: BTreeMap<usize, Vec<i64>> = BTreeMap::new();
-    for i in 0..frames.len() {
+    for (i, frame) in frames.iter().enumerate() {
         let r = root(&mut parent, i);
-        members.entry(r).or_default().push(frames[i].id);
+        members.entry(r).or_default().push(frame.id);
     }
     let mut out = BTreeMap::new();
     for ids in members.values().filter(|ids| ids.len() > 1) {
@@ -319,7 +319,11 @@ mod dupe_tests {
             id,
             phash,
             burst,
-            looks: if look.is_empty() { vec![] } else { vec![look.to_vec()] },
+            looks: if look.is_empty() {
+                vec![]
+            } else {
+                vec![look.to_vec()]
+            },
         }
     }
 
@@ -330,11 +334,11 @@ mod dupe_tests {
         let h = 0xFFFF_0000;
         let frames = [
             f(1, 0, Some(1), &car),
-            f(2, 0b111, Some(2), &car),  // 3 bits, same car, other burst: joins 1
+            f(2, 0b111, Some(2), &car), // 3 bits, same car, other burst: joins 1
             f(3, 0b1111, Some(3), &car), // joins 2, so 1 transitively
-            f(5, 0b1, Some(5), &[]),     // no looks, 1 bit: joins by hash alone
+            f(5, 0b1, Some(5), &[]),    // no looks, 1 bit: joins by hash alone
             f(4, h, Some(4), &other),
-            f(10, h, Some(10), &car),     // same hash as 4, different car: apart
+            f(10, h, Some(10), &car), // same hash as 4, different car: apart
             f(6, u64::MAX, Some(6), &car), // far hash: alone
             f(7, h | 0b11111, Some(7), &[]), // no looks, 5 bits: too far unconfirmed
             f(8, !0xFF, Some(9), &other),

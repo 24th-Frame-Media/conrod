@@ -17,7 +17,7 @@ use crate::operations::{launch, settings};
 use crate::passes::{pick_of_pass, region_name};
 use conrod_core::{
     framing,
-    profile::{ScanProfile, Subject},
+    profile::{ScanProfile, ShootPreset, Subject},
     ridge::SharpModel,
     settings::Settings,
     tasks::Task,
@@ -26,7 +26,7 @@ use conrod_vision::sharpness;
 use rusqlite::params;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -118,6 +118,170 @@ pub fn rescore(d: &Arc<Desktop>, job: i64) -> Result<Value> {
     launch(d, job, "Re-measuring", move |d, stop, task| {
         run(d, job, &cfg, stop, task)
     })
+}
+
+/// The action: read every photo of the album again and re-measure each stored
+/// subject, as a background operation.
+pub fn rescan(d: &Arc<Desktop>, job: i64) -> Result<Value> {
+    require_job(d, job)?;
+    if !d.status()["activeJob"].is_null() {
+        return Err("A scan is running. Stop it first.".into());
+    }
+    let cfg = settings(d, job)?;
+    launch(d, job, "Rescanning", move |d, stop, task| {
+        let unread = remeasure_pixels(d, job, &cfg, stop, task)?;
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        run(d, job, &cfg, stop, task)?;
+        task.detail(format!(
+            "Rescanned the album; {unread} photos could not be read and were left as they were"
+        ));
+        Ok(())
+    })
+}
+
+/// Re-measure the focus features of each stored subject from the image's pixels,
+/// exactly as `cull_frame` measures a detection, but inside the boxes already
+/// stored: nothing is re-detected, so no row is replaced and no hand work (stars,
+/// rejects, reviews, numbers, attributes, people) can be lost. Only `features`,
+/// `heuristic`, `panning` and `sharp_end` (and the whole-frame sharpness) are
+/// written; `run` then derives the ratings, verdicts and cull reasons from them.
+/// Returns how many photos could not be read (moved or deleted originals).
+fn remeasure_pixels(
+    d: &Desktop,
+    job: i64,
+    cfg: &Settings,
+    stop: &AtomicBool,
+    task: &Task,
+) -> Result<usize> {
+    let images = rows(
+        &lock(&d.reader),
+        "SELECT id, path FROM images WHERE job_id=? AND status='done' ORDER BY id",
+        [job],
+    )?;
+    let subjects = rows(
+        &lock(&d.reader),
+        "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
+        [job],
+    )?;
+    let mut by_image: HashMap<i64, Vec<&Value>> = HashMap::new();
+    for s in &subjects {
+        by_image
+            .entry(s["image_id"].as_i64().unwrap_or_default())
+            .or_default()
+            .push(s);
+    }
+    let total = images.len() as u64;
+    task.progress(0, total);
+    task.detail(format!("Reading {total} photos"));
+    let (next, done, unread) = (
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    );
+    let workers = std::thread::available_parallelism()
+        .map_or(4, |n| n.get() * 4 / 5)
+        .clamp(2, 16);
+    let pan_ok = ShootPreset::parse(&cfg.scan_profile).pan_compatible();
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| loop {
+                let n = next.fetch_add(1, Ordering::Relaxed);
+                if n >= images.len() || stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                let image = &images[n];
+                let id = image["id"].as_i64().unwrap_or_default();
+                let path = std::path::Path::new(image["path"].as_str().unwrap_or_default());
+                let empty = Vec::new();
+                match measure_frame(path, by_image.get(&id).unwrap_or(&empty), cfg, pan_ok) {
+                    Ok((found, whole)) => {
+                        let db = lock(&d.db);
+                        for (det, m) in found {
+                            let _ = db.execute(
+                                "UPDATE detections SET features=?,heuristic=?,panning=?,sharp_end=? WHERE id=?",
+                                params![serde_json::to_string(&m.features).unwrap_or_default(), m.heuristic, m.panning, m.sharp_end, det],
+                            );
+                        }
+                        if let Some(whole) = whole {
+                            let _ = db.execute(
+                                "UPDATE images SET sharpness=? WHERE id=?",
+                                params![whole, id],
+                            );
+                        }
+                    }
+                    Err(_) => {
+                        unread.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                task.progress(done.fetch_add(1, Ordering::Relaxed) as u64 + 1, total);
+            });
+        }
+    });
+    Ok(unread.into_inner())
+}
+
+type Measures = (Vec<(i64, sharpness::Sharpness)>, Option<f64>);
+
+/// What `cull_frame` would have measured for each stored subject of one frame
+/// (subject id, measure), and for the frame as a whole.
+fn measure_frame(
+    path: &std::path::Path,
+    subjects: &[&Value],
+    cfg: &Settings,
+    pan_ok: bool,
+) -> Result<Measures> {
+    let frame = conrod_io::raw::read(path)?;
+    let image =
+        conrod_vision::imageops::Rgb::decode_jpeg(&frame.preview, 1)?.orient(frame.orientation);
+    let opts = conrod_vision::detect::DetectOptions {
+        crop_padding: cfg.crop_padding,
+        dominant_subject_fraction: cfg.dominant_subject_fraction,
+        ..Default::default()
+    };
+    let mut out = Vec::new();
+    for s in subjects {
+        let c = |k: &str| s[k].as_f64().unwrap_or_default();
+        let bbox = [c("x1"), c("y1"), c("x2"), c("y2")];
+        let focus = if matches!(s["region"].as_str(), Some("face" | "eye")) {
+            let [a, b, x, y] = bbox.map(|v| v.max(0.0) as usize);
+            if x <= a || y <= b {
+                continue;
+            }
+            sharpness::measure(
+                &image
+                    .crop(a, b, x.min(image.width), y.min(image.height))
+                    .to_gray(),
+                None,
+                None,
+            )
+        } else {
+            let crop_box =
+                conrod_vision::detect::expand_box(bbox, image.width, image.height, &opts);
+            let crop = crate::cut(&image, crop_box, cfg);
+            let scale = crop.width as f64 / (crop_box[2] - crop_box[0]);
+            let inner = [
+                (bbox[0] - crop_box[0]) * scale,
+                (bbox[1] - crop_box[1]) * scale,
+                (bbox[2] - crop_box[0]) * scale,
+                (bbox[3] - crop_box[1]) * scale,
+            ];
+            let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), None);
+            if !pan_ok {
+                focus.panning = false;
+            }
+            focus
+        };
+        if focus.measured {
+            // As the scan stores it: without a model the hand-built score is the score.
+            let mut focus = focus;
+            focus.heuristic = focus.score;
+            out.push((s["id"].as_i64().unwrap_or_default(), focus));
+        }
+    }
+    let whole = sharpness::measure(&image.to_gray(), None, None);
+    Ok((out, whole.measured.then_some(whole.score)))
 }
 
 /// A frame's subjects' ratings, for the rating of the frame itself.
@@ -260,7 +424,13 @@ pub(crate) fn run(
         tx.commit().map_err(err)?;
     }
     // The stars have moved, so the keeper of a pass may have moved with them.
-    let picked = pick_of_pass(&lock(&d.db), job, profile, cfg.include_people, cfg.use_quality_score)?;
+    let picked = pick_of_pass(
+        &lock(&d.db),
+        job,
+        profile,
+        cfg.include_people,
+        cfg.use_quality_score,
+    )?;
     task.detail(format!(
         "Re-measured {} subjects: {changed} changed, {skipped} could not be (no stored features); {} keepers",
         found.len() - skipped,
@@ -508,6 +678,99 @@ mod tests {
         lib.run("rescore", json!({"jobId": lib.job})).unwrap();
         lib.wait_idle();
         assert!((rating(high) - 0.825).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rescan_reads_pixels_again_and_spares_hand_work() {
+        let lib = Lib::new("rescan");
+        let (w, h) = (1200usize, 800usize);
+        let mut seed = 7u32;
+        let data: Vec<u8> = (0..w * h * 3)
+            .map(|_| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                (seed >> 24) as u8
+            })
+            .collect();
+        crate::desktop::save_jpeg(
+            &conrod_vision::imageops::Rgb::new(w, h, data),
+            &lib.root.join("real.jpg"),
+        )
+        .unwrap();
+        let (real, gone) = (lib.frame("real.jpg", None), lib.frame("gone.jpg", None));
+        let (car, lost) = (
+            lib.detection(real, "vehicle", 0.5),
+            lib.detection(gone, "vehicle", 0.5),
+        );
+        for det in [car, lost] {
+            lib.sql(
+                "UPDATE detections SET x1=200,y1=150,x2=1000,y2=650,features='[]',heuristic=0.123,panning=1,sharp_end='left' WHERE id=?",
+                [det],
+            );
+        }
+        lib.sql(
+            "UPDATE detections SET stars=5,reviewed=1,rejected=1,number='42',number_source='manual',attributes='{\"make\":\"Ford\"}' WHERE id=?",
+            [car],
+        );
+
+        let started = lib.run("rescan", json!({"jobId": lib.job})).unwrap();
+        assert!(started["operation"]
+            .as_str()
+            .unwrap()
+            .starts_with("Rescanning"));
+        lib.wait_idle();
+        let task = lib.task("Rescanning");
+        assert_eq!(task["state"], "done", "{task}");
+        assert!(
+            task["detail"]
+                .as_str()
+                .unwrap()
+                .contains("1 photos could not"),
+            "{task}"
+        );
+
+        // Recomputed from the pixels.
+        let features: String = lib.one("SELECT features FROM detections WHERE id=?", [car]);
+        let features: Vec<f64> = serde_json::from_str(&features).unwrap();
+        assert_eq!(features.len(), sharpness::FEATURE_NAMES.len());
+        let heuristic: f64 = lib.one("SELECT heuristic FROM detections WHERE id=?", [car]);
+        let rating: f64 = lib.one("SELECT rating FROM detections WHERE id=?", [car]);
+        assert_ne!(heuristic, 0.123);
+        assert!(
+            (rating - heuristic).abs() < 1e-9,
+            "no model: the heuristic is the rating"
+        );
+        // Hand work and the box stand.
+        let kept: (i64, i64, i64, String, String, f64) = lib
+            .db()
+            .query_row(
+                "SELECT stars,reviewed,rejected,number,attributes,x2 FROM detections WHERE id=?",
+                [car],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            kept,
+            (5, 1, 1, "42".into(), "{\"make\":\"Ford\"}".into(), 1000.0)
+        );
+        // A missing original is left exactly as it was.
+        let (heuristic, sharp_end): (f64, String) = lib
+            .db()
+            .query_row(
+                "SELECT heuristic,sharp_end FROM detections WHERE id=?",
+                [lost],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((heuristic, sharp_end.as_str()), (0.123, "left"));
     }
 
     #[test]

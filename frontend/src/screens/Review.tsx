@@ -217,7 +217,7 @@ type Props = {
 export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite }: Props) {
   const [known, setKnown] = useState<KnownVehicle[]>([]);
   const [grouping, setGrouping] = useState<'bursts' | 'vehicles' | 'dupes' | 'flat'>('bursts');
-  const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | null>(null);
+  const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
   const run = useRun();
   const toast = useToast();
@@ -383,6 +383,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           toast('Sharpness re-scoring started. Progress in Activity.');
         });
       },
+    },
+    {
+      id: 'rescan',
+      label: 'Rescan from pixels…',
+      hint: 'Re-read every photo and re-measure sharpness; keeps your edits',
+      onClick: () => setConfirmReset('rescan'),
     },
     {
       id: 'pick_keepers',
@@ -613,6 +619,23 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           }}
         >
           <p>This removes all detections, bounding boxes, and cached crop images for this album. Original photograph files stay untouched.</p>
+        </Confirm>
+      )}
+      {confirmReset === 'rescan' && (
+        <Confirm
+          title="Rescan this album?"
+          action="Rescan"
+          onCancel={() => setConfirmReset(null)}
+          onConfirm={() => {
+            void run(async () => {
+              await call('rescan', { jobId });
+              await rv.refresh();
+              toast('Rescan started. Progress in Activity.');
+            });
+            setConfirmReset(null);
+          }}
+        >
+          <p>This re-reads every photograph in this album and re-measures its sharpness, so it can take a while. Boxes, stars, rejections, reviews, numbers and names are kept.</p>
         </Confirm>
       )}
       {identifyTask && <IdentificationBanner task={identifyTask} settings={settings} onSkip={onSkipIdentify} />}

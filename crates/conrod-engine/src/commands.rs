@@ -366,6 +366,7 @@ pub enum Command {
     TrainTaste {},
     // Album operations (see API.md).
     Rescore(JobArgs),
+    Rescan(JobArgs),
     PickKeepers(JobArgs),
     Group(JobArgs),
     /// The old name for `group`, kept so an older window still works.
@@ -519,6 +520,11 @@ mod tests {
             Ok(Command::Group(_))
         ));
         assert!(Command::parse("rescore", json!({})).is_err());
+        assert!(matches!(
+            Command::parse("rescan", json!({"jobId": 2})),
+            Ok(Command::Rescan(_))
+        ));
+        assert!(Command::parse("rescan", json!({})).is_err());
         let Ok(Command::RenameJob(a)) =
             Command::parse("rename_job", json!({"jobId": 1, "label": null}))
         else {

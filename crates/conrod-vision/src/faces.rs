@@ -79,7 +79,7 @@ impl FaceDetector {
         let plane = EYE_W * EYE_H;
         let mut tensor = vec![0f32; present.len() * plane * 3];
         for (n, patch) in present.iter().enumerate() {
-            for (i, px) in patch.data.chunks_exact(3).enumerate() {
+            for (i, px) in patch.data.as_chunks::<3>().0.iter().enumerate() {
                 for c in 0..3 {
                     tensor[(n * 3 + c) * plane + i] = f32::from(px[c]) / 255.0;
                 }
@@ -335,7 +335,7 @@ impl FaceEmbedder {
         // RGB 0..255, no normalisation: OpenCV's blobFromImage(swapRB=true).
         let plane = ALIGNED * ALIGNED;
         let mut tensor = vec![0f32; plane * 3];
-        for (i, px) in aligned.data.chunks_exact(3).enumerate() {
+        for (i, px) in aligned.data.as_chunks::<3>().0.iter().enumerate() {
             for c in 0..3 {
                 tensor[c * plane + i] = f32::from(px[c]);
             }

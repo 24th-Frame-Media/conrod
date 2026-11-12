@@ -43,6 +43,8 @@ pub mod selftest;
 pub mod setup;
 #[cfg(test)]
 mod testkit;
+#[cfg(test)]
+mod blurtest;
 pub mod training;
 pub mod updating;
 pub mod watching;
@@ -406,13 +408,8 @@ pub fn cull_frame(
         } else {
             String::new()
         };
-        let quality_score = quality.and_then(|q| {
-            match lock(q).score(&crop) {
-                Ok(v) => Some(v),
-                // A failed read costs only the tiebreak, never the cull.
-                Err(_) => None,
-            }
-        });
+        // A failed read costs only the tiebreak, never the cull.
+        let quality_score = quality.and_then(|q| lock(q).score(&crop).ok());
         subjects.push(Subject {
             class: detect::class_name(det.class_id),
             conf: det.conf,
@@ -598,13 +595,16 @@ pub(crate) fn scan_files_filtered(
             .collect();
         // Opt-in and best-effort: an absent or unconvertible model just means
         // no quality score, never a failed scan.
-        let quality = settings.use_quality_score.then(|| {
-            let path = conrod_core::models::expected(conrod_core::models::QUALITY);
-            path.is_file()
-                .then(|| conrod_vision::quality::QualityModel::load(&path, true).ok())
-                .flatten()
-                .map(Mutex::new)
-        }).flatten();
+        let quality = settings
+            .use_quality_score
+            .then(|| {
+                let path = conrod_core::models::expected(conrod_core::models::QUALITY);
+                path.is_file()
+                    .then(|| conrod_vision::quality::QualityModel::load(&path, true).ok())
+                    .flatten()
+                    .map(Mutex::new)
+            })
+            .flatten();
         let task = hub.start(
             format!("Culling ({}, {device})", profile.label()),
             paths.len() as u64,
@@ -641,7 +641,15 @@ pub(crate) fn scan_files_filtered(
                         task.progress(n as u64, paths.len() as u64);
                         continue;
                     }
-                    match cull_frame(path, &detector, &settings, profile, &models, faces.as_ref(), quality.as_ref()) {
+                    match cull_frame(
+                        path,
+                        &detector,
+                        &settings,
+                        profile,
+                        &models,
+                        faces.as_ref(),
+                        quality.as_ref(),
+                    ) {
                         Ok(result) => on_frame(Ok(result)),
                         Err(e) => {
                             on_frame(Err((path.clone(), e.clone())));

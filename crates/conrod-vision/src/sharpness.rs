@@ -466,7 +466,7 @@ fn log_raw(tiles: &[f64]) -> f64 {
     percentile(tiles, TILE_PERCENTILE).max(1e-4).ln()
 }
 
-/// The subject as the 18 numbers the learned model reads; see FEATURE_NAMES.
+/// The subject as the numbers the learned model reads; see FEATURE_NAMES.
 /// Change the meaning or the length and `ridge::FEATURE_VERSION` moves too.
 fn features(
     data: &Plane,
@@ -569,8 +569,16 @@ fn fft_hf_ratio(region: &Plane) -> f64 {
             let c = cols[x * h + y];
             let energy = f64::from(c.re * c.re + c.im * c.im);
             // Frequency distance from the origin, after an implicit fftshift.
-            let fx = if x as f64 > cx { w as f64 - x as f64 } else { x as f64 };
-            let fy = if y as f64 > cy { h as f64 - y as f64 } else { y as f64 };
+            let fx = if x as f64 > cx {
+                w as f64 - x as f64
+            } else {
+                x as f64
+            };
+            let fy = if y as f64 > cy {
+                h as f64 - y as f64
+            } else {
+                y as f64
+            };
             total += energy;
             if (fx * fx + fy * fy).sqrt() > r_max {
                 high += energy;
