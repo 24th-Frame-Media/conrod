@@ -216,6 +216,7 @@ impl Desktop {
             Command::ForgetModel(a) => crate::region_training::forget(self, a.region),
             Command::TrainTaste {} => crate::region_training::taste(self),
             Command::Rescore(a) => crate::rescore::rescore(self, a.job_id),
+            Command::Rescan(a) => crate::rescore::rescan(self, a.job_id),
             Command::PickKeepers(a) => crate::passes::pick_keepers(self, a.job_id),
             Command::Group(a) => crate::passes::group(self, a.job_id),
             Command::Regroup(a) => {

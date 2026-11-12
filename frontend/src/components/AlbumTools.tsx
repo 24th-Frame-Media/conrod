@@ -43,6 +43,8 @@ export function AlbumTools({ jobId, label, refresh, ids, imageIds }: { jobId: nu
 
     <button onClick={() => void act('rescore')}>Rescore</button>
 
+    <button onClick={() => setReset('rescan')}>Rescan</button>
+
     <button onClick={() => void act('pick_keepers')}>Pick keepers</button>
 
     <button onClick={() => void act('group')}>Group cars</button>
@@ -69,7 +71,7 @@ export function AlbumTools({ jobId, label, refresh, ids, imageIds }: { jobId: nu
 
   </div>
 
-  {reset && <Confirm title="Reset this album?" action="Reset" onCancel={() => setReset(null)} onConfirm={() => { void act(reset); setReset(null); }}><p>This removes {reset === 'reset_detections' ? 'detections and cached crops' : 'identification results'} from this album. Your original photographs stay untouched.</p></Confirm>}
+  {reset && <Confirm title={reset === 'rescan' ? 'Rescan this album?' : 'Reset this album?'} action={reset === 'rescan' ? 'Rescan' : 'Reset'} onCancel={() => setReset(null)} onConfirm={() => { void act(reset); setReset(null); }}>{reset === 'rescan' ? <p>This re-reads every photograph in this album and re-measures its sharpness, so it can take a while. Boxes, stars, rejections, reviews, numbers and names are kept.</p> : <p>This removes {reset === 'reset_detections' ? 'detections and cached crops' : 'identification results'} from this album. Your original photographs stay untouched.</p>}</Confirm>}
 
   </details>;
 

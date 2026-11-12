@@ -98,7 +98,8 @@ pub fn pick_of_pass(
         *best = (*best).min(region_of(r));
     }
     // (burst, group) -> (star by hand, measured score, quality, detection)
-    let mut best: HashMap<(i64, Option<i64>), (i64, f64, Option<f64>, i64)> = HashMap::new();
+    type Best = (i64, f64, Option<f64>, i64);
+    let mut best: HashMap<(i64, Option<i64>), Best> = HashMap::new();
     for r in &found {
         if primary[&r["image_id"].as_i64().unwrap_or_default()] != region_of(r) {
             continue;
@@ -128,7 +129,12 @@ pub fn pick_of_pass(
         if wins {
             best.insert(
                 unit,
-                (by_hand, score, quality, r["id"].as_i64().unwrap_or_default()),
+                (
+                    by_hand,
+                    score,
+                    quality,
+                    r["id"].as_i64().unwrap_or_default(),
+                ),
             );
         }
     }
@@ -153,7 +159,13 @@ pub fn pick_keepers(d: &Desktop, job: i64) -> Result<Value> {
     let cfg = settings(d, job)?;
     let profile = ScanProfile::parse(&cfg.scan_profile);
     let task = d.hub.start("Picking keepers", 0);
-    match pick_of_pass(&lock(&d.db), job, profile, cfg.include_people, cfg.use_quality_score) {
+    match pick_of_pass(
+        &lock(&d.db),
+        job,
+        profile,
+        cfg.include_people,
+        cfg.use_quality_score,
+    ) {
         Ok(stats) => {
             task.detail(format!(
                 "{} keepers from {} frames across {} passes",

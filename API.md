@@ -29,6 +29,7 @@ with a nonzero exit code if a task fails.
 | preview | imageId | Cached, oriented preview path |
 | filling | jobId | Start missing-thumbnail extraction; also used when opening indexed albums |
 | rescore | jobId | operation; apply learned/current scoring to stored features, preserving hand ratings |
+| rescan | jobId | operation; re-read every photo and re-measure sharpness inside the stored boxes, preserving all hand edits |
 | pick_keepers | jobId | Best subject per car per pass |
 | group / regroup | jobId | operation; embeddings, groups and consensus |
 | rename_job | jobId, label? | Trim label; blank/null restores folder name |
