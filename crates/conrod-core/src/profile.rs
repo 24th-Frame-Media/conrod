@@ -205,8 +205,11 @@ impl ShootPreset {
             )
     }
 
-    pub fn wants_pets(self) -> bool {
-        matches!(self, ShootPreset::PortraitPets)
+    /// Animals are looked for in every preset: a wildlife frame can turn up in
+    /// any album, and frame priority still lets a vehicle or a person decide
+    /// the frame where the profile says so.
+    pub fn wants_animals(self) -> bool {
+        true
     }
 
     pub fn priority(self) -> &'static [Subject] {
@@ -379,6 +382,13 @@ mod tests {
             if preset.profile() != Motorsport {
                 assert_eq!(preset.wants_faces(false), preset.wants_faces(true));
             }
+        }
+    }
+
+    #[test]
+    fn every_preset_looks_for_animals() {
+        for preset in ShootPreset::ALL {
+            assert!(preset.wants_animals(), "{preset:?}");
         }
     }
 
