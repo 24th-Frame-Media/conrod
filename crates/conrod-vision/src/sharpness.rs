@@ -37,9 +37,10 @@ pub const SHARP_AT: f64 = 0.825;
 pub const BLURRED_BELOW: f64 = 0.606;
 /// Edge-blur (`sigma_worst`, normalised to
 /// [`conrod_vision::edgeblur::REFERENCE_EDGE`]) at or below which a subject is
-/// plainly sharp. The photographer's delivered frames read 0.875 px median and
-/// 1.29 px at p90, so this passes essentially all of them.
-pub const BLUR_SHARP: f64 = 0.9;
+/// plainly sharp. Deliberately low: the ramp from here to [`BLUR_AT_SHARP`]
+/// is what lets a sharp frame rank above a merely sharp one, and the
+/// photographer's delivered frames read 0.875 px median, so most sit on it.
+pub const BLUR_SHARP: f64 = 0.4;
 /// Blur at which a subject scores exactly `SHARP_AT`.
 pub const BLUR_AT_SHARP: f64 = 1.5;
 /// Blur at which a subject scores exactly `BLURRED_BELOW`.
@@ -320,8 +321,8 @@ pub fn normalise(raw: f64) -> f64 {
 /// Monotone decreasing and piecewise linear between the measured knots, so it
 /// speaks the same 0..1 language as the tile score and the configured star and
 /// verdict thresholds keep their meaning: at or below [`BLUR_SHARP`] it is 1.0,
-/// at [`BLUR_AT_SHARP`] exactly [`SHARP_AT`], at [`BLUR_AT_BLURRED`] exactly
-/// [`BLURRED_BELOW`], and at or beyond [`BLUR_HOPELESS`] zero. The line keeps
+/// then it descends to exactly [`SHARP_AT`] at 1.5 px, exactly
+/// [`BLURRED_BELOW`] at 2.2 px, and zero from 3.5 px. The line keeps
 /// descending below one star, which is what keeps the worst frames orderable.
 /// `None` when there is no measurement (NaN).
 pub fn rating_from_blur(sigma_worst_ref: f64) -> Option<f64> {
@@ -898,6 +899,11 @@ mod tests {
         assert!((score(BLUR_AT_BLURRED) - conrod_core::settings::BLURRED_BELOW).abs() < 1e-12);
         assert!(score(BLUR_HOPELESS).abs() < 1e-12);
         assert!(score(10.0).abs() < 1e-12);
+        // The top is a ramp, not a plateau: a sharper frame still ranks higher.
+        assert!(score(BLUR_SHARP + 0.1) < 1.0);
+        assert!(score(BLUR_SHARP + 0.1) > score(0.9));
+        assert!(score(0.9) > score(1.2));
+        assert!(score(1.2) > score(BLUR_AT_SHARP));
         // The anchors land in the intended verdict bands.
         assert_eq!(
             verdict_for(score(BLUR_SHARP), SHARP_AT, BLURRED_BELOW),
