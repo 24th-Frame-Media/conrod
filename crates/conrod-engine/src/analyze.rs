@@ -9,6 +9,7 @@
 //! misconfigured vision model ends it).
 
 use conrod_core::analysis::{corroborated, merge_number, OcrReading, VehicleAnalysis};
+use conrod_core::entrylist::{self, EntryList};
 use conrod_core::registry::{self, KnownVehicle};
 use conrod_core::settings::Settings;
 use conrod_io::settings::Settings as IoSettings;
@@ -16,7 +17,9 @@ use conrod_io::vlm::{self, VehicleDescription, VlmClient, VlmError};
 use conrod_vision::imageops::Rgb;
 use conrod_vision::{ocr, plates};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 /// The readers one worker has loaded; a reader whose setting is off is `None`.
 #[derive(Default)]
@@ -107,6 +110,9 @@ pub fn analyze(
         OcrReading::default()
     };
 
+    let (entries, entry_warning) = entry_list(&s.entry_list);
+    failures.extend(entry_warning);
+
     // 3. The semantic pass.
     let mut described = VehicleDescription::default();
     if let (true, Some((client, io))) = (s.use_vlm, describer.as_ref()) {
@@ -118,7 +124,10 @@ pub fn analyze(
                     | conrod_core::profile::ShootPreset::MotorsportTrack
                     | conrod_core::profile::ShootPreset::MotorsportRally
             ),
-            candidates: Vec::new(),
+            candidates: entries
+                .as_deref()
+                .map(EntryList::candidates)
+                .unwrap_or_default(),
         };
         match vlm::describe(client, crop, io, is_bike, &hints) {
             Ok(d) => {
@@ -162,11 +171,24 @@ pub fn analyze(
         .flatten();
     let (number, source, confidence) =
         merge_number(&ocr_number, vlm_number.as_deref(), s.ocr_accept_confidence);
+    // A number the model alone supplied keeps the model's own lowered confidence
+    // (windscreen and nose reads), rather than merge_number's flat 0.7.
+    let from_vlm = vlm_number.is_some() && number == vlm_number;
+    let confidence = if from_vlm {
+        confidence.min(described.number_confidence)
+    } else {
+        confidence
+    };
     a.race_number = number;
     a.number_source = source;
     a.number_conf = confidence;
 
+    let entry_team = entries
+        .as_deref()
+        .is_some_and(|list| apply_entry(&mut a, list));
+
     // 5. Free text, minus anything already captured as a field.
+    a.team_corroborated = entry_team;
     if s.read_text {
         let key = |t: &str| -> String {
             t.to_uppercase()
@@ -201,7 +223,7 @@ pub fn analyze(
             .collect();
         // Only OCR counts as evidence for a team name the model reported:
         // its own livery text would "confirm" its own invention.
-        a.team_corroborated = corroborated(a.team.as_deref(), &found);
+        a.team_corroborated = entry_team || corroborated(a.team.as_deref(), &found);
     }
 
     // Last, and only into the gaps: what was read on the day always wins.
@@ -300,6 +322,131 @@ fn trusted_vlm_number(
     (!disowned).then_some(claim)
 }
 
+type EntryCache = Option<(String, Option<SystemTime>, Option<Arc<EntryList>>)>;
+static ENTRY_LIST: Mutex<EntryCache> = Mutex::new(None);
+
+/// The race entry list at `path`, loaded once and reloaded when the file's
+/// modified time changes. The warning is only returned by the load that failed,
+/// so a bad file is reported once rather than per crop.
+fn entry_list(path: &str) -> (Option<Arc<EntryList>>, Option<String>) {
+    let path = path.trim();
+    if path.is_empty() {
+        return (None, None);
+    }
+    let stamp = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let mut cache = ENTRY_LIST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((p, t, list)) = cache.as_ref() {
+        if p == path && *t == stamp {
+            return (list.clone(), None);
+        }
+    }
+    let (list, warning) = match entrylist::load(Path::new(path)) {
+        Ok(list) => (Some(Arc::new(list)), None),
+        Err(e) => (None, Some(format!("entry list ignored: {e}"))),
+    };
+    *cache = Some((path.to_string(), stamp, list.clone()));
+    (list, warning)
+}
+
+/// Fills the car from the entry list, where the final number is in it: team,
+/// drivers, make/model (the list wins over a missing, suggested or differing
+/// model read) and sponsors spelled as the list has them. A number missing from
+/// a non-empty list is kept but trusted half as much, and fills nothing.
+/// Returns whether the team came from the list.
+fn apply_entry(a: &mut VehicleAnalysis, list: &EntryList) -> bool {
+    if list.is_empty() {
+        return false;
+    }
+    let Some(entry) = a.race_number.as_deref().and_then(|n| list.get(n)) else {
+        if a.race_number.is_some() {
+            a.number_conf *= 0.5;
+        }
+        canonical_sponsors(a, &list.sponsors());
+        return false;
+    };
+    if let Some(team) = &entry.team {
+        a.team = Some(team.clone());
+    }
+    if !entry.drivers.is_empty() {
+        a.driver = Some(entry.drivers.join(", "));
+    }
+    let differs = |have: &Option<String>, want: &Option<String>| {
+        want.as_deref()
+            .is_some_and(|w| !have.as_deref().is_some_and(|h| h.eq_ignore_ascii_case(w)))
+    };
+    let disputed = a.make.is_none()
+        || a.model.is_none()
+        || a.model_suggested
+        || differs(&a.make, &entry.make)
+        || differs(&a.model, &entry.model);
+    if disputed && (entry.make.is_some() || entry.model.is_some()) {
+        if let Some(make) = &entry.make {
+            a.make = Some(make.clone());
+        }
+        if let Some(model) = &entry.model {
+            a.model = Some(model.clone());
+            a.model_suggested = false;
+            a.model_evidence = Some("entry_list".into());
+        }
+    }
+    if entry.sponsors.is_empty() {
+        canonical_sponsors(a, &list.sponsors());
+    } else {
+        canonical_sponsors(a, &entry.sponsors);
+    }
+    entry.team.is_some()
+}
+
+/// Spells each read sponsor as the list does where they match; unmatched reads
+/// are kept as read, and nothing is added from the list.
+fn canonical_sponsors(a: &mut VehicleAnalysis, known: &[String]) {
+    let mut out: Vec<String> = Vec::new();
+    for read in &a.sponsors {
+        let name = known.iter().find(|k| same_sponsor(read, k)).unwrap_or(read);
+        if !out.contains(name) {
+            out.push(name.clone());
+        }
+    }
+    a.sponsors = out;
+}
+
+fn same_sponsor(read: &str, known: &str) -> bool {
+    let (r, k) = (sponsor_key(read), sponsor_key(known));
+    if r.is_empty() || k.is_empty() {
+        return false;
+    }
+    let (short, long) = if r.len() <= k.len() { (&r, &k) } else { (&k, &r) };
+    (short.len() >= 4 && long.contains(short.as_str())) || similar(&r, &k)
+}
+
+fn sponsor_key(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Edit distance ratio of at least 0.85 between the longer string's length.
+fn similar(a: &str, b: &str) -> bool {
+    let longest = a.chars().count().max(b.chars().count());
+    longest > 0 && 1.0 - edit_distance(a, b) as f64 / longest as f64 >= 0.85
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cur = row[j + 1];
+            row[j + 1] = (prev + usize::from(ca != *cb)).min(row[j] + 1).min(cur + 1);
+            prev = cur;
+        }
+    }
+    row[b.len()]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +457,92 @@ mod tests {
             confidence,
             area: 0.05,
         }
+    }
+
+    const TWO_ENTRIES: &str = "number,team,drivers,make,model,sponsors\n\
+        7,Team Alpha,Ann Ash; Ben Birch,Ford,Mustang,Mobil 1;Optus\n\
+        42,Team Beta,Cal Cole,Toyota,GR Supra,Liqui Moly\n";
+
+    #[test]
+    fn a_number_in_the_list_fills_the_car_from_it() {
+        let list = entrylist::parse(TWO_ENTRIES).unwrap();
+        let mut a = VehicleAnalysis {
+            race_number: Some("7".into()),
+            number_conf: 0.9,
+            make: Some("Ford".into()),
+            model: Some("Focus".into()),
+            model_suggested: true,
+            sponsors: vec!["MOBIL 1".into(), "Random Co".into()],
+            ..VehicleAnalysis::default()
+        };
+        assert!(apply_entry(&mut a, &list));
+        assert_eq!(a.team.as_deref(), Some("Team Alpha"));
+        assert_eq!(a.driver.as_deref(), Some("Ann Ash, Ben Birch"));
+        assert_eq!(a.make.as_deref(), Some("Ford"));
+        assert_eq!(a.model.as_deref(), Some("Mustang"));
+        assert!(!a.model_suggested);
+        assert_eq!(a.model_evidence.as_deref(), Some("entry_list"));
+        assert_eq!(a.sponsors, ["Mobil 1", "Random Co"]);
+        assert_eq!(a.number_conf, 0.9);
+    }
+
+    #[test]
+    fn a_number_missing_from_the_list_is_kept_but_doubted() {
+        let list = entrylist::parse(TWO_ENTRIES).unwrap();
+        let mut a = VehicleAnalysis {
+            race_number: Some("99".into()),
+            number_conf: 0.8,
+            ..VehicleAnalysis::default()
+        };
+        assert!(!apply_entry(&mut a, &list));
+        assert_eq!(a.race_number.as_deref(), Some("99"));
+        assert!((a.number_conf - 0.4).abs() < 1e-9);
+        assert_eq!(a.team, None);
+        assert_eq!(a.driver, None);
+    }
+
+    #[test]
+    fn leading_zeros_find_the_entry() {
+        let list = entrylist::parse(TWO_ENTRIES).unwrap();
+        let mut a = VehicleAnalysis {
+            race_number: Some("0042".into()),
+            number_conf: 0.9,
+            ..VehicleAnalysis::default()
+        };
+        assert!(apply_entry(&mut a, &list));
+        assert_eq!(a.team.as_deref(), Some("Team Beta"));
+        assert_eq!(a.model.as_deref(), Some("GR Supra"));
+    }
+
+    #[test]
+    fn an_empty_list_changes_nothing() {
+        let list = entrylist::parse("number,team\n").unwrap();
+        let mut a = VehicleAnalysis {
+            race_number: Some("7".into()),
+            number_conf: 0.9,
+            ..VehicleAnalysis::default()
+        };
+        assert!(!apply_entry(&mut a, &list));
+        assert_eq!(a.race_number.as_deref(), Some("7"));
+        assert_eq!(a.number_conf, 0.9);
+        assert_eq!(a.team, None);
+    }
+
+    #[test]
+    fn an_empty_path_or_a_missing_file_is_no_list() {
+        assert!(entry_list("").0.is_none());
+        assert!(entry_list("   ").0.is_none());
+        let missing = std::env::temp_dir().join("conrod-no-such-entry-list.csv");
+        let (list, warning) = entry_list(&missing.to_string_lossy());
+        assert!(list.is_none());
+        assert!(warning.is_some());
+    }
+
+    #[test]
+    fn sponsor_spellings_are_matched_loosely() {
+        assert!(same_sponsor("Optus Sport", "Optus"));
+        assert!(same_sponsor("Liqui-Moly", "Liqui Moly"));
+        assert!(!same_sponsor("Castrol", "Mobil 1"));
     }
 
     #[test]
