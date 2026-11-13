@@ -793,6 +793,7 @@ dependencies = [
  "conrod-vision",
  "dunce",
  "image",
+ "rayon",
  "rusqlite",
  "serde",
  "serde_json",
