@@ -22,6 +22,12 @@ pub const BANDS: usize = 3;
 pub const END_MARGIN: f64 = 0.12;
 pub const UNCERTAIN_MARGIN: f64 = 0.06;
 pub const MIN_SUBJECT_TILES: usize = 4;
+/// Tiles per side for the in-focus area score: finer than [`TILE_GRID`], so a
+/// detail a tenth of the frame wide still fills whole tiles.
+pub const FOCAL_GRID: usize = 12;
+/// How many of the sharpest tiles make a frame "focused somewhere": about 4%
+/// of a 144-tile frame, so one sharp speck or noisy tile cannot pass.
+pub const FOCAL_MIN_TILES: usize = 6;
 /// Raw focus ratios mapped onto 0..1 on a log scale between these.
 pub const RAW_BLURRED: f64 = 0.10;
 pub const RAW_SHARP: f64 = 0.85;
@@ -378,6 +384,25 @@ pub fn measure(image: &Gray, bbox: Option<[f64; 4]>, model: Option<&SharpModel>)
     }
 }
 
+/// The frame's in-focus area: how sharp its sharpest real region is.
+///
+/// A frame with no subject is often a deliberate detail -- a badge or a gear
+/// shifter held sharp against a background thrown out of focus. Scoring the
+/// whole frame with [`measure`] needs a fifth of it sharp and calls those
+/// blurred; this asks only that [`FOCAL_MIN_TILES`] of a finer grid are.
+/// `None` when too few tiles carry enough contrast to be measurable.
+pub fn focal_score(image: &Gray) -> Option<f64> {
+    let grey = image.thumbnail(WORKING_EDGE);
+    let data = Plane::from_gray(&grey);
+    let mut scores = tile_scores(&data, FOCAL_GRID);
+    if scores.len() < FOCAL_MIN_TILES {
+        return None;
+    }
+    // The FOCAL_MIN_TILES-th best tile: a low percentile of the best ones.
+    scores.sort_by(f64::total_cmp);
+    Some(normalise(scores[scores.len() - FOCAL_MIN_TILES]))
+}
+
 /// Focus of the crop outside the vehicle, in tiles the subject's size so the
 /// two scores share a scale. Tiles touching the box are dropped.
 fn background_score(data: &Plane, (x1, y1, x2, y2): (usize, usize, usize, usize)) -> f64 {
@@ -687,4 +712,126 @@ pub fn doubtful(result: &Sharpness, rating_verdict: &str, blurred_below: f64) ->
 /// A held pan is never culled automatically, however low the number is.
 pub fn cullable(result: &Sharpness, rating_verdict: &str) -> bool {
     rating_verdict == "poor" && !result.panning
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deterministic value noise at several block scales: the coarse scales
+    /// keep their contrast through a blur, the fine ones are what it eats.
+    fn texture(edge: usize) -> Gray {
+        let mut data = vec![0u8; edge * edge];
+        for y in 0..edge {
+            for x in 0..edge {
+                let mut v = 0.0;
+                for (block, amp) in [(16usize, 90.0), (8, 60.0), (4, 40.0), (2, 25.0)] {
+                    let n = hash(x / block, y / block) % 256;
+                    v += amp * (f64::from(n) / 255.0 - 0.5);
+                }
+                data[y * edge + x] = (128.0 + v).clamp(0.0, 255.0) as u8;
+            }
+        }
+        Gray::new(edge, edge, data)
+    }
+
+    fn hash(x: usize, y: usize) -> u32 {
+        let mut h = (x as u32).wrapping_mul(0x9E37_79B9) ^ (y as u32).wrapping_mul(0x85EB_CA6B);
+        h ^= h >> 13;
+        h = h.wrapping_mul(0xC2B2_AE35);
+        h ^ (h >> 16)
+    }
+
+    /// Separable box blur twice over, edges clamped: out of focus, cheaply.
+    fn blur(g: &Gray, radius: usize) -> Gray {
+        let (w, h) = (g.width, g.height);
+        let mut cur: Vec<f64> = g.data.iter().map(|&v| f64::from(v)).collect();
+        for _ in 0..2 {
+            let mut rows = vec![0.0; cur.len()];
+            for y in 0..h {
+                for x in 0..w {
+                    let (lo, hi) = (x.saturating_sub(radius), (x + radius).min(w - 1));
+                    rows[y * w + x] = cur[y * w + lo..=y * w + hi].iter().sum::<f64>()
+                        / (hi - lo + 1) as f64;
+                }
+            }
+            let mut out = vec![0.0; cur.len()];
+            for y in 0..h {
+                for x in 0..w {
+                    let (lo, hi) = (y.saturating_sub(radius), (y + radius).min(h - 1));
+                    let sum: f64 = (lo..=hi).map(|yy| rows[yy * w + x]).sum();
+                    out[y * w + x] = sum / (hi - lo + 1) as f64;
+                }
+            }
+            cur = out;
+        }
+        let data = cur
+            .iter()
+            .map(|&v| v.round().clamp(0.0, 255.0) as u8)
+            .collect();
+        Gray::new(w, h, data)
+    }
+
+    /// A frame blurred all over but for a square `fraction` of its area, which
+    /// keeps the sharp texture: the detail shot the whole-frame score misses.
+    fn detail_shot(edge: usize, fraction: f64, radius: usize) -> Gray {
+        let sharp = texture(edge);
+        let mut data = blur(&sharp, radius).data;
+        let side = (edge as f64 * fraction.sqrt()) as usize;
+        let corner = (edge - side) / 2;
+        for y in corner..corner + side {
+            for x in corner..corner + side {
+                data[y * edge + x] = sharp.data[y * edge + x];
+            }
+        }
+        Gray::new(edge, edge, data)
+    }
+
+    #[test]
+    fn a_sharp_detail_against_a_blurred_background_is_sharp_where_it_counts() {
+        // The detail shot: a sixth of the frame sharp, the rest thrown out.
+        let shot = detail_shot(768, 0.06, 3);
+        let whole = measure(&shot, None, None).score;
+        let focal = focal_score(&shot).expect("measurable tiles");
+        assert!(
+            whole < conrod_core::settings::BLURRED_BELOW,
+            "whole frame {whole:.3} should read as blurred"
+        );
+        assert!(
+            focal >= conrod_core::settings::SHARP_AT,
+            "in-focus area {focal:.3} should read as sharp"
+        );
+    }
+
+    #[test]
+    fn the_same_frame_blurred_all_over_has_no_focal_sharpness() {
+        let soft = blur(&texture(768), 3);
+        let focal = focal_score(&soft).expect("measurable tiles");
+        assert!(
+            focal < conrod_core::settings::BLURRED_BELOW,
+            "in-focus area {focal:.3} should read as blurred"
+        );
+    }
+
+    #[test]
+    fn a_speck_of_detail_does_not_carry_the_frame() {
+        // One percent is fewer than FOCAL_MIN_TILES of the 12x12 grid.
+        let shot = detail_shot(768, 0.01, 3);
+        let focal = focal_score(&shot);
+        assert!(
+            focal.is_none_or(|f| f < conrod_core::settings::BLURRED_BELOW),
+            "a speck should not lift the in-focus area, got {focal:?}"
+        );
+    }
+
+    #[test]
+    fn sharp_all_over_is_never_worse_than_the_whole_frame_score() {
+        let sharp = texture(768);
+        let focal = focal_score(&sharp).expect("measurable tiles");
+        assert!(focal >= measure(&sharp, None, None).score);
+        // And where neither score is saturated, the finer grid only gains.
+        let soft = blur(&sharp, 1);
+        let focal = focal_score(&soft).expect("measurable tiles");
+        assert!(focal >= measure(&soft, None, None).score);
+    }
 }

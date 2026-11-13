@@ -447,8 +447,19 @@ pub fn cull_frame(
         subjects.extend(face_subjects(&image, people, detector, settings, models)?);
     }
     let whole = {
-        let focus = sharpness::measure(&image.to_gray(), None, None);
-        focus.measured.then_some(focus.score)
+        let grey = image.to_gray();
+        let focus = sharpness::measure(&grey, None, None);
+        let measured = focus.measured.then_some(focus.score);
+        if subjects.is_empty() {
+            // Nothing to judge: rate the frame on its in-focus area, so a sharp
+            // detail against a deliberately blurred background is not "blurred".
+            match (measured, sharpness::focal_score(&grey)) {
+                (Some(whole), Some(focal)) => Some(whole.max(focal)),
+                (whole, focal) => whole.or(focal),
+            }
+        } else {
+            measured
+        }
     };
     let rated: Vec<_> = subjects
         .iter()
