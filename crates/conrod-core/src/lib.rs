@@ -7,6 +7,7 @@
 pub mod analysis;
 pub mod bursts;
 pub mod culling;
+pub mod entrylist;
 pub mod framing;
 pub mod grouping;
 pub mod keywords;

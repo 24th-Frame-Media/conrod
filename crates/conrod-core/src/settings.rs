@@ -131,6 +131,8 @@ pub struct Settings {
     /// How hard blur culls: "strict", "moderate" or "lenient". Unknown text
     /// reads as "moderate".
     pub blur_strictness: String,
+    /// Path to a race entry list (CSV or JSON). Empty means none.
+    pub entry_list: String,
 }
 
 impl Default for Settings {
@@ -225,6 +227,7 @@ impl Default for Settings {
             include_people: false,
             use_quality_score: false,
             blur_strictness: "moderate".into(),
+            entry_list: String::new(),
         }
     }
 }

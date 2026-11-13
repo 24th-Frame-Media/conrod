@@ -25,7 +25,7 @@ import type { Runner } from '../state/hooks';
 
 const GROUPS: [string, string[]][] = [
   ['Detection & focus', ['detect_conf', 'min_box_fraction', 'max_vehicles_per_frame', 'include_cars', 'include_bikes', 'include_trucks', 'sharp_at', 'blurred_below', 'blur_strictness', 'auto_reject_below_stars', 'cull_blurred', 'burst_gap']],
-  ['Identification & AI', ['read_plates', 'read_numbers', 'read_text', 'use_vlm', 'vlm_timeout', 'vlm_max_retries', 'vlm_input_edge', 'use_known_vehicles', 'normalise_names']],
+  ['Identification & AI', ['read_plates', 'read_numbers', 'read_text', 'use_vlm', 'vlm_timeout', 'vlm_max_retries', 'vlm_input_edge', 'use_known_vehicles', 'entry_list', 'normalise_names']],
   ['Metadata & desktop', ['write_rating', 'write_label', 'overwrite_rating', 'overwrite_label', 'write_caption', 'overwrite_caption', 'write_plate_keyword', 'write_sidecar_for_raw', 'keyword_prefix', 'close_to_tray']],
 ];
 
@@ -45,6 +45,7 @@ const META: Record<string, [string, string?]> = {
   vlm_max_retries: ['Max retries'],
   vlm_input_edge: ['Input image edge (px)', 'Images are resized so their longest edge fits this before upload.'],
   use_known_vehicles: ['Use known vehicles', 'Fill blanks from cars you have met.'],
+  entry_list: ['Entry list', 'Optional race entry list (CSV or JSON: number, team, drivers, make, model, sponsors). Team and drivers are filled from the car number instead of guessed.'],
   normalise_names: ['Tidy makes and models'],
   write_sidecar_for_raw: ['Write sidecars next to RAW files'],
   keyword_prefix: ['Keyword prefix'],
