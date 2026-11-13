@@ -827,6 +827,11 @@ fn export_recall() {
     }
     println!("stars: {:?}", stars.iter().collect::<Vec<_>>());
     println!("verdict: {:?}", verdicts.iter().collect::<Vec<_>>());
+    let saturated = keepers.iter().filter(|r| r.rating >= 1.0).count();
+    println!(
+        "rated exactly 1.0: {saturated} ({:.0}%)",
+        100.0 * saturated as f64 / keepers.len() as f64
+    );
     let rejected: Vec<&Row> = keepers.iter().copied().filter(|r| !r.cull.is_empty()).collect();
     println!(
         "with a cull reason (false rejects): {} ({:.0}%)",

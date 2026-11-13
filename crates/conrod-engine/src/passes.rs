@@ -48,13 +48,15 @@ struct Candidate {
     by_hand: i64,
     culled: bool,
     score: f64,
+    /// The stored subject sharpness, which ranks an exact rating tie.
+    sharpness: f64,
     quality: Option<f64>,
 }
 
 impl Candidate {
     /// In the order the keeper is decided: a hand star first, then a frame no
-    /// rule culled, then the measured score, then (opt-in) NIMA quality. A
-    /// true tie keeps the earlier candidate.
+    /// rule culled, then the measured score, then (opt-in) NIMA quality, then
+    /// the stored subject sharpness, and finally the earlier frame.
     fn beats(&self, other: &Self, use_quality_score: bool) -> bool {
         if self.by_hand != other.by_hand {
             return self.by_hand > other.by_hand;
@@ -65,7 +67,17 @@ impl Candidate {
         if self.score != other.score {
             return self.score > other.score;
         }
-        use_quality_score && matches!((self.quality, other.quality), (Some(a), Some(b)) if a > b)
+        if use_quality_score {
+            if let (Some(a), Some(b)) = (self.quality, other.quality) {
+                if a != b {
+                    return a > b;
+                }
+            }
+        }
+        if self.sharpness != other.sharpness {
+            return self.sharpness > other.sharpness;
+        }
+        self.frame < other.frame
     }
 }
 
@@ -75,8 +87,9 @@ impl Candidate {
 /// grouping has not run. A star given by hand (or already in the file) wins
 /// outright; then a candidate no rule culled; otherwise the measured rating
 /// decides. On a rating tie, NIMA quality breaks it when `use_quality_score` is
-/// on and both frames have a score; otherwise (as always below that) a tie
-/// leaves the earlier frame in place, so a re-run picks the same one. Of a
+/// on and both frames have a score, then the sharper stored subject decides,
+/// and a full tie leaves the earlier frame in place, so a re-run picks the same
+/// one. Of a
 /// frame's subjects only those of the kind the profile rates the frame by
 /// compete, as they do for the frame's own rating. A frame with no subject
 /// that competes is picked on the frame's own rating instead, so a pass of
@@ -160,6 +173,7 @@ pub fn pick_of_pass(
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
                 culled: r["culled"].as_i64().unwrap_or(0) != 0,
                 score,
+                sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: r["quality"].as_f64(),
             },
         ));
@@ -189,6 +203,7 @@ pub fn pick_of_pass(
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
                 culled: false,
                 score,
+                sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: None,
             },
         ));
@@ -940,6 +955,34 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("keepers"));
+    }
+
+    #[test]
+    fn a_rating_tie_goes_to_the_sharper_subject_then_the_earlier_frame() {
+        let lib = Lib::new("pick-tie");
+        let (f1, f2, f3) = (
+            lib.frame("1.jpg", Some(1)),
+            lib.frame("2.jpg", Some(1)),
+            lib.frame("3.jpg", Some(1)),
+        );
+        // Equal ratings: the stored sharpness has to rank them.
+        let a = lib.detection(f1, "vehicle", 0.80);
+        let b = lib.detection(f2, "vehicle", 0.80);
+        let c = lib.detection(f3, "vehicle", 0.80);
+        lib.sql("UPDATE detections SET sharpness=0.70 WHERE id=?", [a]);
+        lib.sql("UPDATE detections SET sharpness=0.90 WHERE id=?", [b]);
+        lib.sql("UPDATE detections SET sharpness=0.70 WHERE id=?", [c]);
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![b],
+            "the sharper subject wins an exact rating tie, even on a later frame"
+        );
+        // With the sharpness equal too, the tie keeps the earlier frame.
+        lib.sql("UPDATE detections SET sharpness=0.80 WHERE id=?", [b]);
+        lib.sql("UPDATE detections SET sharpness=0.80 WHERE id=?", [a]);
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(picks(&lib), vec![a], "a full tie keeps the earlier frame");
     }
 
     #[test]
