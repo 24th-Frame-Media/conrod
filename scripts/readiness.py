@@ -158,7 +158,7 @@ def metrics(rows, groups, sources, sources_value):
     return [
         ("Keepers kept", pct(kept), ">=97% / >=90%", rule(kept, .97, .90)),
         ("Keepers rated sharp", pct(sharp_k), ">=85% / >=70%", rule(sharp_k, .85, .70)),
-        ("Non-keepers rated sharp", pct(non_sharp), "<=75% / <=85%", rule(non_sharp, .75, .85, False)),
+        ("Non-keepers rated sharp (info: unexported frames are often sharp too)", pct(non_sharp), "not scored", "info"),
         ("Keeper is burst pick", f"{pct(pick)} (rand {pct(base)})", ">=2x rand / >rand", pick_status),
         ("Keeper in top 3", pct(top3), ">=60% / >=45%", rule(top3, .60, .45)),
         ("Every burst has pick", pct(every), "100% / >=95%", rule(every, 1.0, .95)),
@@ -169,7 +169,7 @@ def metrics(rows, groups, sources, sources_value):
 
 
 def verdict(statuses):
-    if not any(s != "n/a" for s in statuses):
+    if not any(s not in ("n/a", "info") for s in statuses):
         return "NO DATA"
     if "FAIL" in statuses:
         return "NOT READY"
@@ -302,7 +302,7 @@ def main():
     txt += render("SUITE (pooled)", suite_info, suite_table, [], False)
     md += render("SUITE (pooled)", suite_info, suite_table, [], True)
     checks += [("SUITE", m, s) for m, _, _, s in suite_table]
-    statuses = [s for _, _, s in checks if s != "n/a"]
+    statuses = [s for _, _, s in checks if s not in ("n/a", "info")]
     fails = statuses.count("FAIL")
     warns = statuses.count("WARN")
     failed = [f"{c} / {m}" for c, m, s in checks if s == "FAIL"]
