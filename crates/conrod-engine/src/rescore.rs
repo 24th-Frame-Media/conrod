@@ -280,8 +280,19 @@ fn measure_frame(
             out.push((s["id"].as_i64().unwrap_or_default(), focus));
         }
     }
-    let whole = sharpness::measure(&image.to_gray(), None, None);
-    Ok((out, whole.measured.then_some(whole.score)))
+    let grey = image.to_gray();
+    let whole = sharpness::measure(&grey, None, None);
+    let whole = whole.measured.then_some(whole.score);
+    // As `cull_frame` rates a subject-less frame: on its in-focus area.
+    let whole = if subjects.is_empty() {
+        match (whole, sharpness::focal_score(&grey)) {
+            (Some(whole), Some(focal)) => Some(whole.max(focal)),
+            (whole, focal) => whole.or(focal),
+        }
+    } else {
+        whole
+    };
+    Ok((out, whole))
 }
 
 /// A frame's subjects' ratings, for the rating of the frame itself.
