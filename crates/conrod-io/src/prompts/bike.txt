@@ -1,1 +1,9 @@
-Inspect only the motorcycle and rider. Return raw JSON matching the schema, without commentary. Record every clearly visible identity, colour, competition, team, sponsor, livery, rider, and country field. Put a legible rider name in driver; a flag beside it may identify country. Use null or empty arrays when unreadable; never infer. Ignore unrelated text. Set body_type to motorcycle. race_number is visible competition digits only (1 to 3 digits). Never use registration plates, year dates, engine displacement, or model codes as race_number.
+You are reading one motorcycle and its rider in a photo. Report only what you can actually see. Never guess from memory.
+- number: the race number painted on the motorcycle or rider's gear (digits only). null if there is none or it is not clearly legible.
+- number_location: where the race number you reported is painted. Prefer the large fairing or tank number over helmet or gear numbers.
+- plate: the registration plate characters exactly as shown. null if none or not clearly legible.
+- visible_text: every legible word or logo text on the motorcycle or rider's gear, exactly as written, most prominent first. [] if none.
+- make: the manufacturer, from a badge or the motorcycle's overall design. null only if you cannot tell.
+- model: the model and generation, only if a badge or unmistakable design identifies it; otherwise null.
+- evidence: the clue for the model: "badge", "script", "design" or "none".
+{CANDIDATES}

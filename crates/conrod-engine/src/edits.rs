@@ -57,6 +57,27 @@ fn manual_number(attrs: &mut Map<String, Value>, number: &Option<String>) {
     attrs.insert("number_conf".into(), json!(1.0));
 }
 
+/// A person typed the model: it is no longer the design-only suggestion.
+fn manual_model(attrs: &mut Map<String, Value>, model: Option<String>) {
+    attrs.insert("model".into(), json!(model));
+    attrs.insert("model_suggested".into(), json!(false));
+    attrs.insert("model_evidence".into(), json!("manual"));
+}
+
+#[cfg(test)]
+mod manual_model_tests {
+    use super::*;
+
+    #[test]
+    fn manual_model_clears_suggestion() {
+        let mut attrs = attributes_of(Some(r#"{"model":"Focus","model_suggested":true,"model_evidence":"design"}"#));
+        manual_model(&mut attrs, Some("Fiesta".into()));
+        assert_eq!(attrs["model"], json!("Fiesta"));
+        assert_eq!(attrs["model_suggested"], json!(false));
+        assert_eq!(attrs["model_evidence"], json!("manual"));
+    }
+}
+
 struct Row {
     attributes: Option<String>,
     cls: Option<String>,
@@ -141,7 +162,11 @@ pub fn edit_detection(d: &Desktop, a: &EditArgs) -> Result<Value> {
                 if key == "team" && text.is_some() {
                     attrs.insert("team_corroborated".into(), json!(true));
                 }
-                attrs.insert(key.into(), json!(text));
+                if key == "model" {
+                    manual_model(&mut attrs, text);
+                } else {
+                    attrs.insert(key.into(), json!(text));
+                }
             }
         }
     }

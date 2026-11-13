@@ -245,6 +245,7 @@ export function DetectionsTable({
           filtered.map((d, idx) => {
             const cat = getCategory(d);
             const a = parseAttributes(d);
+            const modelSuggested = a.model_suggested === true;
             const isSelected = selectedId === d.id;
             const isHovered = hoveredId === d.id;
             const vehicleName = [a.make, a.model].filter(Boolean).join(' ');
@@ -466,10 +467,20 @@ export function DetectionsTable({
                                 const val = a[key] ?? '';
                                 return (
                                   <label className="det-edit-field" key={`${d.id}-${key}-${val}`}>
-                                    <span className="det-edit-lbl">{LABELS[key]}</span>
+                                    <span className="det-edit-lbl">
+                                      {LABELS[key]}
+                                      {key === 'model' && modelSuggested && (
+                                        <span
+                                          className="tag suggested"
+                                          title="Judged from the car's shape only — check before relying on it"
+                                        >
+                                          suggested
+                                        </span>
+                                      )}
+                                    </span>
                                     <input
                                       type="text"
-                                      className="det-edit-input"
+                                      className={key === 'model' && modelSuggested ? 'det-edit-input det-model-suggested' : 'det-edit-input'}
                                       defaultValue={val}
                                       placeholder="—"
                                       autoComplete="off"
@@ -565,7 +576,17 @@ export function DetectionsTable({
                         {a.model && (
                           <div className="det-meta-item">
                             <dt>Model</dt>
-                            <dd>{a.model}</dd>
+                            <dd className={modelSuggested ? 'det-model-suggested' : undefined}>
+                              {a.model}
+                              {modelSuggested && (
+                                <span
+                                  className="tag suggested"
+                                  title="Judged from the car's shape only — check before relying on it"
+                                >
+                                  suggested
+                                </span>
+                              )}
+                            </dd>
                           </div>
                         )}
                         {a.team && (
