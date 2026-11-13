@@ -376,6 +376,8 @@ pub fn cull_frame(
         .detect_letterboxed(input, &options(settings, profile))?;
 
     let (fw, fh) = (image.width, image.height);
+    // Native-resolution luma, once: the subject's blur is measured on it.
+    let grey = image.to_gray();
 
     let mut subjects = Vec::new();
     for det in &found {
@@ -394,6 +396,24 @@ pub fn cull_frame(
             "vehicle"
         };
         let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), models.get(kind));
+        // The subject's score is the edge-blur estimate inside the detector box
+        // on native pixels; the tile measure above still supplies background,
+        // bands, features and the held-pan flag. A loaded learned model keeps
+        // priority, and an unmeasurable box keeps the tile score.
+        if !focus.learned {
+            let region = [
+                (det.bbox[0].max(0.0) as usize).min(fw),
+                (det.bbox[1].max(0.0) as usize).min(fh),
+                (det.bbox[2].max(0.0) as usize).min(fw),
+                (det.bbox[3].max(0.0) as usize).min(fh),
+            ];
+            let blur = conrod_vision::edgeblur::measure(&grey, Some(region));
+            if let Some(score) =
+                sharpness::rating_from_blur(blur.sigma_worst_at_reference(fw.max(fh)))
+            {
+                focus.score = score;
+            }
+        }
         if !preset.pan_compatible() {
             focus.panning = false;
         }
@@ -447,7 +467,6 @@ pub fn cull_frame(
         subjects.extend(face_subjects(&image, people, detector, settings, models)?);
     }
     let whole = {
-        let grey = image.to_gray();
         let focus = sharpness::measure(&grey, None, None);
         let measured = focus.measured.then_some(focus.score);
         if subjects.is_empty() {

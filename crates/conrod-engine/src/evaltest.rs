@@ -149,6 +149,11 @@ struct Subj {
     stars: u8,
     cull: String,
     setter: bool,
+    /// Edge-blur estimate inside the box: worst direction at REFERENCE_EDGE,
+    /// the score it maps to, and how long the measure took.
+    blur_worst: f64,
+    blur_score: f64,
+    blur_ms: f64,
 }
 
 /// Every class the network produced on the frame, before the profile's class
@@ -214,6 +219,22 @@ fn measure_box(
         (bbox[3] - crop_box[1]) * scale,
     ];
     let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), models.get(region));
+    // As `cull_frame` scores a subject: edge blur inside the box on native
+    // pixels, the tile score kept as the fallback and for everything else.
+    if !focus.learned {
+        let box_region = [
+            (bbox[0].max(0.0) as usize).min(image.width),
+            (bbox[1].max(0.0) as usize).min(image.height),
+            (bbox[2].max(0.0) as usize).min(image.width),
+            (bbox[3].max(0.0) as usize).min(image.height),
+        ];
+        let blur = conrod_vision::edgeblur::measure(&image.to_gray(), Some(box_region));
+        if let Some(score) = sharpness::rating_from_blur(
+            blur.sigma_worst_at_reference(image.width.max(image.height)),
+        ) {
+            focus.score = score;
+        }
+    }
     if !ShootPreset::parse(&settings.scan_profile).pan_compatible() {
         focus.panning = false;
     }
@@ -526,12 +547,36 @@ fn export_recall() {
                         );
                     }
                 }
+                // One native-resolution grey per frame for the new measure.
+                let grey = image.as_ref().map(|i| i.to_gray());
                 for (i, s) in f.subjects.iter().enumerate() {
                     let edges = framing::assess(
                         Some(s.bbox),
                         f.size.0 as i64,
                         f.size.1 as i64,
                     );
+                    // The new subject measure, timed on the same native pixels
+                    // the scan now uses (one grey per frame, not one per subject).
+                    let (blur_worst, blur_score, blur_ms) = match (&grey, s.region_type) {
+                        (Some(g), "person" | "vehicle") => {
+                            let region = [
+                                (s.bbox[0].max(0.0) as usize).min(f.size.0),
+                                (s.bbox[1].max(0.0) as usize).min(f.size.1),
+                                (s.bbox[2].max(0.0) as usize).min(f.size.0),
+                                (s.bbox[3].max(0.0) as usize).min(f.size.1),
+                            ];
+                            let t = Instant::now();
+                            let e = conrod_vision::edgeblur::measure(g, Some(region));
+                            let ms = t.elapsed().as_secs_f64() * 1000.0;
+                            let worst = e.sigma_worst_at_reference(f.size.0.max(f.size.1));
+                            (
+                                worst,
+                                sharpness::rating_from_blur(worst).unwrap_or(f64::NAN),
+                                ms,
+                            )
+                        }
+                        _ => (f64::NAN, f64::NAN, f64::NAN),
+                    };
                     let m = focus.as_ref().and_then(|v| v.get(i).cloned().flatten());
                     let area = ((s.bbox[2] - s.bbox[0]).max(0.0)
                         * (s.bbox[3] - s.bbox[1]).max(0.0))
@@ -560,6 +605,9 @@ fn export_recall() {
                         stars: s.stars,
                         cull: s.cull_reason.clone(),
                         setter: setter == Some(i),
+                        blur_worst,
+                        blur_score,
+                        blur_ms,
                     });
                 }
                 records.push(Rec {
@@ -673,11 +721,11 @@ fn export_recall() {
     std::fs::write(out_dir.join("frames.csv"), &csv).expect("write frames.csv");
 
     let mut subject_csv = String::from(
-        "file,exported,index,class,region,conf,x1,y1,x2,y2,frame_w,frame_h,box_fraction,sharpness,learned,measured,uncertain,background,panning,partly_sharp,band0,band1,band2,framing_factor,sides,rating,stars,cull_reason,set_frame_rating\n",
+        "file,exported,index,class,region,conf,x1,y1,x2,y2,frame_w,frame_h,box_fraction,sharpness,learned,measured,uncertain,background,panning,partly_sharp,band0,band1,band2,framing_factor,sides,rating,stars,cull_reason,set_frame_rating,blur_worst_ref,blur_score,blur_ms\n",
     );
     for s in &subs {
         subject_csv += &format!(
-            "\"{}\",{},{},{},{},{:.4},{:.2},{:.2},{:.2},{:.2},{},{},{:.6},{:.4},{},{},{},{:.4},{},{},{},{},{},{:.4},{},{:.4},{},\"{}\",{}\n",
+            "\"{}\",{},{},{},{},{:.4},{:.2},{:.2},{:.2},{:.2},{},{},{:.6},{:.4},{},{},{},{:.4},{},{},{},{},{},{:.4},{},{:.4},{},\"{}\",{},{:.4},{:.4},{:.1}\n",
             s.file.replace('"', "\"\""),
             u8::from(s.exported),
             s.index,
@@ -706,7 +754,10 @@ fn export_recall() {
             s.rating,
             s.stars,
             s.cull.replace('"', "\"\""),
-            u8::from(s.setter)
+            u8::from(s.setter),
+            s.blur_worst,
+            s.blur_score,
+            s.blur_ms
         );
     }
     std::fs::write(out_dir.join("subjects.csv"), &subject_csv).expect("write subjects.csv");
@@ -749,6 +800,17 @@ fn export_recall() {
             times[0],
             times[times.len() / 2],
             times[times.len() - 1]
+        );
+    }
+    let mut blur_ms: Vec<f64> = subs.iter().map(|s| s.blur_ms).filter(|v| v.is_finite()).collect();
+    blur_ms.sort_by(f64::total_cmp);
+    if !blur_ms.is_empty() {
+        println!(
+            "edgeblur: {} subject measure(s), min {:.1} ms, median {:.1} ms, max {:.1} ms",
+            blur_ms.len(),
+            blur_ms[0],
+            blur_ms[blur_ms.len() / 2],
+            blur_ms[blur_ms.len() - 1]
         );
     }
 

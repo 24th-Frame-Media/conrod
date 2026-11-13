@@ -35,6 +35,17 @@ pub const RAW_SHARP: f64 = 0.85;
 pub const STAR_BANDS: [(f64, u8); 5] = [(0.958, 5), (0.825, 4), (0.728, 3), (0.606, 2), (0.0, 1)];
 pub const SHARP_AT: f64 = 0.825;
 pub const BLURRED_BELOW: f64 = 0.606;
+/// Edge-blur (`sigma_worst`, normalised to
+/// [`conrod_vision::edgeblur::REFERENCE_EDGE`]) at or below which a subject is
+/// plainly sharp. The photographer's delivered frames read 0.875 px median and
+/// 1.29 px at p90, so this passes essentially all of them.
+pub const BLUR_SHARP: f64 = 0.9;
+/// Blur at which a subject scores exactly `SHARP_AT`.
+pub const BLUR_AT_SHARP: f64 = 1.5;
+/// Blur at which a subject scores exactly `BLURRED_BELOW`.
+pub const BLUR_AT_BLURRED: f64 = 2.2;
+/// Blur at or above which a subject scores zero: nothing left to recover.
+pub const BLUR_HOPELESS: f64 = 3.5;
 
 pub const FEATURE_NAMES: [&str; 19] = [
     "score",
@@ -301,6 +312,48 @@ pub fn normalise(raw: f64) -> f64 {
     }
     let (lo, hi) = (RAW_BLURRED.ln(), RAW_SHARP.ln());
     ((raw.ln() - lo) / (hi - lo)).clamp(0.0, 1.0)
+}
+
+/// Subject score from the edge-blur measure's worst direction, in pixels at
+/// [`conrod_vision::edgeblur::REFERENCE_EDGE`].
+///
+/// Monotone decreasing and piecewise linear between the measured knots, so it
+/// speaks the same 0..1 language as the tile score and the configured star and
+/// verdict thresholds keep their meaning: at or below [`BLUR_SHARP`] it is 1.0,
+/// at [`BLUR_AT_SHARP`] exactly [`SHARP_AT`], at [`BLUR_AT_BLURRED`] exactly
+/// [`BLURRED_BELOW`], and at or beyond [`BLUR_HOPELESS`] zero. The line keeps
+/// descending below one star, which is what keeps the worst frames orderable.
+/// `None` when there is no measurement (NaN).
+pub fn rating_from_blur(sigma_worst_ref: f64) -> Option<f64> {
+    if sigma_worst_ref.is_nan() {
+        return None;
+    }
+    let sharp_at = conrod_core::settings::SHARP_AT;
+    let blurred_below = conrod_core::settings::BLURRED_BELOW;
+    let score = if sigma_worst_ref <= BLUR_SHARP {
+        1.0
+    } else if sigma_worst_ref <= BLUR_AT_SHARP {
+        interp(
+            sigma_worst_ref,
+            &[BLUR_SHARP, BLUR_AT_SHARP],
+            &[1.0, sharp_at],
+        )
+    } else if sigma_worst_ref <= BLUR_AT_BLURRED {
+        interp(
+            sigma_worst_ref,
+            &[BLUR_AT_SHARP, BLUR_AT_BLURRED],
+            &[sharp_at, blurred_below],
+        )
+    } else if sigma_worst_ref < BLUR_HOPELESS {
+        interp(
+            sigma_worst_ref,
+            &[BLUR_AT_BLURRED, BLUR_HOPELESS],
+            &[blurred_below, 0.0],
+        )
+    } else {
+        0.0
+    };
+    Some(score)
 }
 
 /// Score how sharp the subject is, and say what is behind it. `bbox` is the
@@ -833,5 +886,48 @@ mod tests {
         let soft = blur(&sharp, 1);
         let focal = focal_score(&soft).expect("measurable tiles");
         assert!(focal >= measure(&soft, None, None).score);
+    }
+
+    #[test]
+    fn blur_mapping_hits_its_anchors_and_never_turns_back() {
+        assert_eq!(rating_from_blur(f64::NAN), None);
+        let score = |v: f64| rating_from_blur(v).expect("finite sigma");
+        assert!((score(0.0) - 1.0).abs() < 1e-12);
+        assert!((score(BLUR_SHARP) - 1.0).abs() < 1e-12);
+        assert!((score(BLUR_AT_SHARP) - conrod_core::settings::SHARP_AT).abs() < 1e-12);
+        assert!((score(BLUR_AT_BLURRED) - conrod_core::settings::BLURRED_BELOW).abs() < 1e-12);
+        assert!(score(BLUR_HOPELESS).abs() < 1e-12);
+        assert!(score(10.0).abs() < 1e-12);
+        // The anchors land in the intended verdict bands.
+        assert_eq!(
+            verdict_for(score(BLUR_SHARP), SHARP_AT, BLURRED_BELOW),
+            "sharp"
+        );
+        assert_eq!(
+            verdict_for(score(BLUR_AT_SHARP), SHARP_AT, BLURRED_BELOW),
+            "sharp"
+        );
+        assert_eq!(
+            verdict_for(score(1.6), SHARP_AT, BLURRED_BELOW),
+            "soft"
+        );
+        assert_eq!(
+            verdict_for(score(BLUR_AT_BLURRED), SHARP_AT, BLURRED_BELOW),
+            "soft"
+        );
+        assert_eq!(
+            verdict_for(score(BLUR_AT_BLURRED + 0.01), SHARP_AT, BLURRED_BELOW),
+            "blurred"
+        );
+        // Monotone decreasing and inside 0..1 everywhere.
+        let mut x = 0.0;
+        let mut prev = score(0.0);
+        while x < 6.0 {
+            x += 0.01;
+            let v = score(x);
+            assert!(v <= prev + 1e-12, "score rose at {x:.2}: {prev:.3} -> {v:.3}");
+            assert!((0.0..=1.0).contains(&v), "score {v} out of range at {x:.2}");
+            prev = v;
+        }
     }
 }

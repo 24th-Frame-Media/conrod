@@ -240,6 +240,8 @@ fn measure_frame(
         dominant_subject_fraction: cfg.dominant_subject_fraction,
         ..Default::default()
     };
+    let grey = image.to_gray();
+    let (fw, fh) = (image.width, image.height);
     let mut out = Vec::new();
     for s in subjects {
         let c = |k: &str| s[k].as_f64().unwrap_or_default();
@@ -268,6 +270,21 @@ fn measure_frame(
                 (bbox[3] - crop_box[1]) * scale,
             ];
             let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), None);
+            // As `cull_frame` scores a subject: the edge-blur estimate inside
+            // the stored box on native pixels; the tile score stays the fallback
+            // and still supplies the pan flag and the features.
+            let region = [
+                (bbox[0].max(0.0) as usize).min(fw),
+                (bbox[1].max(0.0) as usize).min(fh),
+                (bbox[2].max(0.0) as usize).min(fw),
+                (bbox[3].max(0.0) as usize).min(fh),
+            ];
+            let blur = conrod_vision::edgeblur::measure(&grey, Some(region));
+            if let Some(score) =
+                sharpness::rating_from_blur(blur.sigma_worst_at_reference(fw.max(fh)))
+            {
+                focus.score = score;
+            }
             if !pan_ok {
                 focus.panning = false;
             }
@@ -280,7 +297,6 @@ fn measure_frame(
             out.push((s["id"].as_i64().unwrap_or_default(), focus));
         }
     }
-    let grey = image.to_gray();
     let whole = sharpness::measure(&grey, None, None);
     let whole = whole.measured.then_some(whole.score);
     // As `cull_frame` rates a subject-less frame: on its in-focus area.
