@@ -24,7 +24,7 @@ import type {
 import type { Runner } from '../state/hooks';
 
 const GROUPS: [string, string[]][] = [
-  ['Detection & focus', ['detect_conf', 'min_box_fraction', 'max_vehicles_per_frame', 'include_cars', 'include_bikes', 'include_trucks', 'sharp_at', 'blurred_below', 'auto_reject_below_stars', 'cull_blurred', 'burst_gap']],
+  ['Detection & focus', ['detect_conf', 'min_box_fraction', 'max_vehicles_per_frame', 'include_cars', 'include_bikes', 'include_trucks', 'sharp_at', 'blurred_below', 'blur_strictness', 'auto_reject_below_stars', 'cull_blurred', 'burst_gap']],
   ['Identification & AI', ['read_plates', 'read_numbers', 'read_text', 'use_vlm', 'vlm_timeout', 'vlm_max_retries', 'vlm_input_edge', 'use_known_vehicles', 'normalise_names']],
   ['Metadata & desktop', ['write_rating', 'write_label', 'overwrite_rating', 'overwrite_label', 'write_caption', 'overwrite_caption', 'write_plate_keyword', 'write_sidecar_for_raw', 'keyword_prefix', 'close_to_tray']],
 ];
@@ -36,6 +36,7 @@ const META: Record<string, [string, string?]> = {
   max_vehicles_per_frame: ['Vehicles per frame'],
   sharp_at: ['Counts as sharp at', 'Subject sharpness at or above this.'],
   blurred_below: ['Counts as blurred below'],
+  blur_strictness: ['Blur strictness', 'How much softness to accept before a photo is rated soft or culled. Moderate suits long-lens and heat-haze shots; Strict flags any softness.'],
   auto_reject_below_stars: ['Auto-reject below (stars)', '0 never rejects on its own.'],
   cull_blurred: ['Cull blurred frames', 'A red rating, never a deletion.'],
   burst_gap: ['Burst gap (seconds)', 'Frames closer than this belong to one pass.'],
@@ -56,6 +57,12 @@ const VLM_PROVIDERS: { id: VlmProvider; name: string; defaultModel: string }[] =
   { id: 'openai', name: 'OpenAI (GPT-4o, etc.)', defaultModel: 'gpt-4o' },
   { id: 'anthropic', name: 'Anthropic (Claude 3.5 / 3.7)', defaultModel: 'claude-3-7-sonnet-20250219' },
   { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini-1.5-flash' },
+];
+
+const BLUR_STRICTNESS: { id: string; name: string }[] = [
+  { id: 'strict', name: 'Strict' },
+  { id: 'moderate', name: 'Moderate' },
+  { id: 'lenient', name: 'Lenient' },
 ];
 
 const VLM_STRATEGIES: { id: VlmStrategy; name: string }[] = [
@@ -367,14 +374,34 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
               <section className="setting-group">
                 <h3>Detection & Culling</h3>
                 {GROUPS[0][1].filter((k) => draft[k] !== undefined).map((k) => (
-                  <label className="setting" key={k}>
-                    <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
-                    <Control
-                      name={k}
-                      value={draft[k]}
-                      onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
-                    />
-                  </label>
+                  k === 'blur_strictness' ? (
+                    <div className="setting" key={k}>
+                      <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
+                      <div className="segmented" role="radiogroup" aria-label={labelOf(k)}>
+                        {BLUR_STRICTNESS.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={String(draft[k]) === s.id}
+                            className={`segmented-btn ${String(draft[k]) === s.id ? 'active' : ''}`}
+                            onClick={() => setDraft((d) => ({ ...d, [k]: s.id }))}
+                          >
+                            {s.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <label className="setting" key={k}>
+                      <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
+                      <Control
+                        name={k}
+                        value={draft[k]}
+                        onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
+                      />
+                    </label>
+                  )
                 ))}
               </section>
               <div className="actions-row">
