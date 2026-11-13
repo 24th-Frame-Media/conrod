@@ -18,7 +18,7 @@ use conrod_vision::{detect::Device, imageops::Rgb, similarity};
 use rayon::prelude::*;
 use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -37,16 +37,52 @@ pub(crate) fn region_name(kind: Subject) -> &'static str {
     }
 }
 
+/// One candidate for the keeper of a unit: a subject, or a frame with no
+/// subject the profile rates.
+struct Candidate {
+    /// The frame it sits on, so a tie still leaves the earlier frame in place.
+    frame: i64,
+    /// A detection id, or the image id when the candidate is the frame itself.
+    row: i64,
+    on_frame: bool,
+    by_hand: i64,
+    culled: bool,
+    score: f64,
+    quality: Option<f64>,
+}
+
+impl Candidate {
+    /// In the order the keeper is decided: a hand star first, then a frame no
+    /// rule culled, then the measured score, then (opt-in) NIMA quality. A
+    /// true tie keeps the earlier candidate.
+    fn beats(&self, other: &Self, use_quality_score: bool) -> bool {
+        if self.by_hand != other.by_hand {
+            return self.by_hand > other.by_hand;
+        }
+        if self.culled != other.culled {
+            return !self.culled;
+        }
+        if self.score != other.score {
+            return self.score > other.score;
+        }
+        use_quality_score && matches!((self.quality, other.quality), (Some(a), Some(b)) if a > b)
+    }
+}
+
 /// Mark the one frame of each pass worth keeping.
 ///
 /// The unit is the car in the pass: (burst, group), or the burst alone where
 /// grouping has not run. A star given by hand (or already in the file) wins
-/// outright; otherwise the measured rating decides. On a rating tie, NIMA
-/// quality breaks it when `use_quality_score` is on and both frames have a
-/// score; otherwise (as always below that) a tie leaves the earlier frame in
-/// place, so a re-run picks the same one. Of a frame's subjects only those of
-/// the kind the profile rates the frame by compete, as they do for the
-/// frame's own rating.
+/// outright; then a candidate no rule culled; otherwise the measured rating
+/// decides. On a rating tie, NIMA quality breaks it when `use_quality_score` is
+/// on and both frames have a score; otherwise (as always below that) a tie
+/// leaves the earlier frame in place, so a re-run picks the same one. Of a
+/// frame's subjects only those of the kind the profile rates the frame by
+/// compete, as they do for the frame's own rating. A frame with no subject
+/// that competes is picked on the frame's own rating instead, so a pass of
+/// frames the detector found nothing in still gets a keeper. A subject or
+/// frame some rule culled (a stored cull reason) only wins when every
+/// candidate of its unit is culled.
 pub fn pick_of_pass(
     conn: &Connection,
     job: i64,
@@ -63,7 +99,7 @@ pub fn pick_of_pass(
     };
     let found = rows(
         conn,
-        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
         [job],
     )?;
     // Each frame's main subject: its largest person or vehicle.
@@ -98,60 +134,106 @@ pub fn pick_of_pass(
             .or_insert(usize::MAX);
         *best = (*best).min(region_of(r));
     }
-    // (burst, group) -> (star by hand, measured score, quality, detection)
-    type Best = (i64, f64, Option<f64>, i64);
-    let mut best: HashMap<(i64, Option<i64>), Best> = HashMap::new();
+    // (burst, group) of the candidates, with the frame each sits on. Frames
+    // whose subjects all lost the profile's region test still compete on the
+    // frame's own rating, so a pass never goes unpicked for want of a subject.
+    let mut units: Vec<((i64, Option<i64>), Candidate)> = Vec::new();
+    let mut marked: HashSet<i64> = HashSet::new();
     for r in &found {
-        if primary[&r["image_id"].as_i64().unwrap_or_default()] != region_of(r) {
+        let image = r["image_id"].as_i64().unwrap_or_default();
+        if primary[&image] != region_of(r) {
             continue;
         }
         let Some(score) = r["rating"].as_f64().or_else(|| r["sharpness"].as_f64()) else {
             continue;
         };
-        let quality = r["quality"].as_f64();
         let unit = (
             r["burst_key"].as_i64().unwrap_or_default(),
             r["group_key"].as_i64(),
         );
-        let by_hand = r["by_hand"].as_i64().unwrap_or(0);
-        // Strictly greater wins; on a rating tie, quality (opt-in) breaks it;
-        // still tied, or quality off/missing, leaves the earlier frame in place.
-        let wins = best.get(&unit).is_none_or(|(h, s, q, _)| {
-            by_hand > *h
-                || (by_hand == *h && score > *s)
-                || (by_hand == *h
-                    && score == *s
-                    && use_quality_score
-                    && match (quality, q) {
-                        (Some(a), Some(b)) => a > *b,
-                        _ => false,
-                    })
-        });
-        if wins {
-            best.insert(
-                unit,
-                (
-                    by_hand,
-                    score,
-                    quality,
-                    r["id"].as_i64().unwrap_or_default(),
-                ),
-            );
+        units.push((
+            unit,
+            Candidate {
+                frame: image,
+                row: r["id"].as_i64().unwrap_or_default(),
+                on_frame: false,
+                by_hand: r["by_hand"].as_i64().unwrap_or(0),
+                culled: r["culled"].as_i64().unwrap_or(0) != 0,
+                score,
+                quality: r["quality"].as_f64(),
+            },
+        ));
+        marked.insert(image);
+    }
+    // A frame with no competing subject: it is its own candidate, in the
+    // burst's ungrouped unit, rated by the frame.
+    let spare = rows(
+        conn,
+        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 ORDER BY id",
+        [job],
+    )?;
+    for r in &spare {
+        let image = r["id"].as_i64().unwrap_or_default();
+        if marked.contains(&image) {
+            continue;
+        }
+        let Some(score) = r["rating"].as_f64().or_else(|| r["sharpness"].as_f64()) else {
+            continue;
+        };
+        units.push((
+            (r["burst_key"].as_i64().unwrap_or_default(), None),
+            Candidate {
+                frame: image,
+                row: image,
+                on_frame: true,
+                by_hand: r["by_hand"].as_i64().unwrap_or(0),
+                culled: false,
+                score,
+                quality: None,
+            },
+        ));
+    }
+    // Earlier frame first, so an exact tie keeps it, as a re-run always has.
+    units.sort_by_key(|(_, c)| (c.frame, c.row));
+    let mut best: HashMap<(i64, Option<i64>), Candidate> = HashMap::new();
+    for (unit, candidate) in units {
+        if best
+            .get(&unit)
+            .is_none_or(|held| candidate.beats(held, use_quality_score))
+        {
+            best.insert(unit, candidate);
         }
     }
-    let picks: Vec<i64> = best.values().map(|b| b.3).collect();
+    let (mut picks, mut frame_picks): (Vec<i64>, Vec<i64>) = (Vec::new(), Vec::new());
+    for candidate in best.values() {
+        if candidate.on_frame {
+            frame_picks.push(candidate.row);
+        } else {
+            picks.push(candidate.row);
+        }
+    }
     let tx = conn.unchecked_transaction().map_err(err)?;
     tx.execute(
         "UPDATE detections SET burst_pick=NULL WHERE image_id IN (SELECT id FROM images WHERE job_id=?)",
         [job],
     )
     .map_err(err)?;
+    tx.execute("UPDATE images SET burst_pick=NULL WHERE job_id=?", [job])
+        .map_err(err)?;
     for id in &picks {
         tx.execute("UPDATE detections SET burst_pick=1 WHERE id=?", [id])
             .map_err(err)?;
     }
+    for id in &frame_picks {
+        tx.execute("UPDATE images SET burst_pick=1 WHERE id=?", [id])
+            .map_err(err)?;
+    }
     tx.commit().map_err(err)?;
-    Ok(json!({"passes": best.len(), "picks": picks.len(), "considered": found.len()}))
+    Ok(json!({
+        "passes": best.len(),
+        "picks": picks.len() + frame_picks.len(),
+        "considered": found.len()
+    }))
 }
 
 /// The action: run the pick and report it as a task.
@@ -1053,6 +1135,119 @@ mod tests {
         assert!(lib
             .run("set_include_people", json!({"jobId": 4242, "value": true}))
             .is_err());
+    }
+
+    /// The frame-level keepers: frames with no subject to mark.
+    fn frame_picks(lib: &Lib) -> Vec<i64> {
+        let db = lib.db();
+        let mut stmt = db
+            .prepare("SELECT id FROM images WHERE burst_pick=1 ORDER BY id")
+            .unwrap();
+        let ids = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        ids
+    }
+
+    #[test]
+    fn a_pass_of_frames_the_detector_found_nothing_in_keeps_its_best_rated_frame() {
+        let lib = Lib::new("pick-blind");
+        let (f1, f2, f3) = (
+            lib.frame("1.jpg", Some(1)),
+            lib.frame("2.jpg", Some(1)),
+            lib.frame("3.jpg", Some(1)),
+        );
+        for (image, rating) in [(f1, 0.4), (f2, 0.9), (f3, 0.7)] {
+            lib.sql(
+                "UPDATE images SET rating=? WHERE id=?",
+                params![rating, image],
+            );
+        }
+        let out = lib
+            .run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(
+            (out["passes"].as_i64(), out["picks"].as_i64()),
+            (Some(1), Some(1)),
+            "a pass without subjects still gets exactly one keeper"
+        );
+        assert_eq!(frame_picks(&lib), vec![f2], "the frame's own rating decides");
+        assert!(picks(&lib).is_empty(), "there is no subject to mark");
+        // The review grid carries that pick on the frame the UI already reads.
+        let review = lib.run("review", json!({"jobId": lib.job})).unwrap();
+        let picked: Vec<i64> = review["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["burst_pick"].as_i64() == Some(1))
+            .filter_map(|f| f["id"].as_i64())
+            .collect();
+        assert_eq!(picked, vec![f2]);
+    }
+
+    #[test]
+    fn a_mixed_pass_keeps_one_frame_per_unit_and_never_none() {
+        let lib = Lib::new("pick-mixed");
+        let (f1, f2, f3) = (
+            lib.frame("1.jpg", Some(1)),
+            lib.frame("2.jpg", Some(1)),
+            lib.frame("3.jpg", Some(1)),
+        );
+        let (a, c) = (
+            lib.detection(f1, "vehicle", 0.8),
+            lib.detection(f3, "vehicle", 0.5),
+        );
+        lib.sql("UPDATE images SET rating=0.9 WHERE id=?", [f2]);
+        lib.run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(
+            frame_picks(&lib),
+            vec![f2],
+            "before grouping the whole burst is one unit, and the best rating wins"
+        );
+        assert!(picks(&lib).is_empty());
+        // Grouping makes the subject-less frame a unit of its own: one pick
+        // each, neither pass nor frame left without a keeper.
+        lib.sql(
+            "UPDATE detections SET group_key=7 WHERE id IN(?,?)",
+            params![a, c],
+        );
+        lib.run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(picks(&lib), vec![a]);
+        assert_eq!(frame_picks(&lib), vec![f2]);
+    }
+
+    #[test]
+    fn a_culled_frame_loses_to_an_unculled_one_and_an_all_culled_pass_still_keeps_one() {
+        let lib = Lib::new("pick-cull");
+        let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
+        let (f3, f4) = (lib.frame("3.jpg", Some(2)), lib.frame("4.jpg", Some(2)));
+        let clean = lib.detection(f1, "vehicle", 0.4);
+        let blurred = lib.detection(f2, "vehicle", 0.9);
+        lib.sql(
+            "UPDATE detections SET cull_reason='too blurred' WHERE id=?",
+            [blurred],
+        );
+        let closed = lib.detection(f3, "vehicle", 0.7);
+        lib.sql(
+            "UPDATE detections SET cull_reason='eyes closed' WHERE id=?",
+            [closed],
+        );
+        let starred = lib.detection(f4, "vehicle", 0.2);
+        lib.sql(
+            "UPDATE detections SET cull_reason='1 star', stars=1 WHERE id=?",
+            [starred],
+        );
+        lib.run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![clean, starred],
+            "a cull only wins when every candidate of its pass is culled, and a hand star still leads"
+        );
     }
 
     #[test]

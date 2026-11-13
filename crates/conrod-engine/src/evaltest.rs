@@ -5,7 +5,12 @@
 //!
 //! Env: `CONROD_EVAL_LABELS` (labels.json), `CONROD_EVAL_SHOOT` (required
 //! substring of the shoot folder), `CONROD_EVAL_NEIGHBOURS` (12), `CONROD_EVAL_MAX`
-//! (40 exported frames).
+//! (40 exported frames), `CONROD_EVAL_ONLY` (comma-separated file-name
+//! substrings; when set, only exported frames matching one are scanned).
+//!
+//! `subjects.csv` has one row per detected subject, and `frames.csv` gained a
+//! `raw_detections` column: every class the detector produced before the
+//! profile's class list and confidence cut it down.
 //!
 //! Reads nothing but file names from the shoot folder -- the frames themselves
 //! are opened read-only by `raw::read`. Every write (DB, CSV) goes under
@@ -113,6 +118,154 @@ struct Rec {
     cull: String,
     subjects: usize,
     secs: f64,
+    raw: String,
+    top_raw: String,
+}
+
+/// One detected subject, as printed to `subjects.csv`. `Subject` keeps only
+/// the score, so the rest of the `Sharpness` is re-measured from the same
+/// decoded frame with the same crop and model (see `remeasure`).
+struct Subj {
+    file: String,
+    exported: bool,
+    index: usize,
+    class: &'static str,
+    region: &'static str,
+    conf: f32,
+    bbox: [f64; 4],
+    frame: (usize, usize),
+    fraction: f64,
+    sharpness: f64,
+    learned: bool,
+    measured: bool,
+    uncertain: bool,
+    background: f64,
+    panning: bool,
+    partly: bool,
+    bands: Vec<f64>,
+    factor: f64,
+    sides: u32,
+    rating: f64,
+    stars: u8,
+    cull: String,
+    setter: bool,
+}
+
+/// Every class the network produced on the frame, before the profile's class
+/// list and the confidence threshold in `detect::decode` drop any of them.
+/// `Detector::raw` runs the network alone (`detect.rs:161`); asking for all
+/// 80 COCO classes at a floor of 0.01 is what production never does.
+fn raw_listing(
+    path: &Path,
+    detector: &Mutex<Detector>,
+) -> Result<(Rgb, Vec<(usize, f32, [f64; 4])>), String> {
+    let frame = raw::read(path)?;
+    let image = Rgb::decode_jpeg(&frame.preview, 1)?.orient(frame.orientation);
+    let mut opts = DetectOptions::default();
+    opts.classes = (0..80).collect();
+    opts.conf = 0.01;
+    let found = lock(detector).raw(&image, &opts)?;
+    Ok((image, found))
+}
+
+fn raw_text(found: &[(usize, f32, [f64; 4])], image: &Rgb) -> String {
+    let area = (image.width.max(1) * image.height.max(1)) as f64;
+    found
+        .iter()
+        .map(|(class, conf, bbox)| {
+            let box_area = ((bbox[2] - bbox[0]).max(0.0) * (bbox[3] - bbox[1]).max(0.0)) / area;
+            format!(
+                "{}#{}:{:.3}@{:.4}",
+                detect::class_name(*class),
+                class,
+                conf,
+                box_area
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// `cull_frame`'s own crop and measure for one detector box (`lib.rs:380-394`),
+/// so the fields `Subject` drops (background, bands, measured, uncertain) are
+/// the production values and not a re-derivation.
+fn measure_box(
+    image: &Rgb,
+    bbox: [f64; 4],
+    region: &str,
+    settings: &Settings,
+    profile: ScanProfile,
+    models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
+) -> Option<sharpness::Sharpness> {
+    if region != "person" && region != "vehicle" {
+        return None;
+    }
+    let opts = options(settings, profile);
+    let crop_box = detect::expand_box(bbox, image.width, image.height, &opts);
+    if crop_box[2] <= crop_box[0] || crop_box[3] <= crop_box[1] {
+        return None;
+    }
+    let crop = cut(image, crop_box, settings);
+    let scale = crop.width as f64 / (crop_box[2] - crop_box[0]);
+    let inner = [
+        (bbox[0] - crop_box[0]) * scale,
+        (bbox[1] - crop_box[1]) * scale,
+        (bbox[2] - crop_box[0]) * scale,
+        (bbox[3] - crop_box[1]) * scale,
+    ];
+    let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), models.get(region));
+    if !ShootPreset::parse(&settings.scan_profile).pan_compatible() {
+        focus.panning = false;
+    }
+    Some(focus)
+}
+
+fn remeasure(
+    image: &Rgb,
+    subjects: &[Subject],
+    settings: &Settings,
+    profile: ScanProfile,
+    models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
+) -> Vec<Option<sharpness::Sharpness>> {
+    subjects
+        .iter()
+        .map(|s| measure_box(image, s.bbox, s.region_type, settings, profile, models))
+        .collect()
+}
+
+/// The index of the subject whose rating became the frame's rating, decided
+/// the way `frame_rating` decides it (`lib.rs:325-355`).
+fn frame_setter(profile: ScanProfile, include_people: bool, subjects: &[Subject]) -> Option<usize> {
+    use conrod_core::profile::{main_subject, Subject as Kind};
+    let kind_of = |region: &str| match region {
+        "person" => Some(Kind::Person),
+        "vehicle" => Some(Kind::Vehicle),
+        _ => None,
+    };
+    let main = main_subject(subjects.iter().filter_map(|s| {
+        kind_of(s.region_type)
+            .map(|k| (k, (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1])))
+    }));
+    let region = profile
+        .frame_priority(include_people, main)
+        .iter()
+        .find_map(|kind| {
+            if *kind == Kind::WholeFrame {
+                return None;
+            }
+            let name = crate::passes::region_name(*kind);
+            subjects.iter().any(|s| s.region_type == name).then_some(name)
+        })?;
+    subjects
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.region_type == region)
+        .max_by(|a, b| a.1.rating.total_cmp(&b.1.rating))
+        .map(|(i, _)| i)
+}
+
+fn band(bands: &[f64], i: usize) -> String {
+    bands.get(i).map(|v| format!("{v:.4}")).unwrap_or_default()
 }
 
 #[test]
@@ -124,6 +277,15 @@ fn export_recall() {
     let filter = std::env::var("CONROD_EVAL_SHOOT").expect("CONROD_EVAL_SHOOT");
     let neighbours = env_usize("CONROD_EVAL_NEIGHBOURS", 12);
     let max = env_usize("CONROD_EVAL_MAX", 40);
+    // Filename substrings: when set, only exported frames that match are run.
+    let only: Vec<String> = std::env::var("CONROD_EVAL_ONLY")
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
 
     let labels: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&labels_path).expect("labels.json"))
@@ -136,6 +298,14 @@ fn export_recall() {
         .filter(|f| f["exported"].as_bool() == Some(true))
         .filter_map(|f| Some((f["shoot"].as_str()?.to_string(), PathBuf::from(f["path"].as_str()?))))
         .filter(|(shoot, _)| shoot.contains(&filter))
+        .filter(|(_, path)| {
+            only.is_empty()
+                || only.iter().any(|needle| {
+                    path.file_name()
+                        .map(|n| n.to_string_lossy().to_lowercase().contains(needle))
+                        .unwrap_or(false)
+                })
+        })
         .take(max)
         .collect();
     assert!(
@@ -267,6 +437,12 @@ fn export_recall() {
     );
 
     let mut records: Vec<Rec> = Vec::new();
+    let mut subs: Vec<Subj> = Vec::new();
+    let exported_names: HashSet<String> = exported
+        .iter()
+        .map(|(_, p)| p.to_string_lossy().to_lowercase())
+        .collect();
+    let mut mismatched = 0;
     let mut total = std::time::Duration::ZERO;
     let mut failures = 0;
     for path in &paths {
@@ -294,6 +470,98 @@ fn export_recall() {
                 let verdict =
                     sharpness::verdict_for(f.rating, settings.sharp_at, settings.blurred_below);
                 let best = f.subjects.iter().max_by(|a, b| a.rating.total_cmp(&b.rating));
+                let exported = exported_names.contains(&path.to_string_lossy().to_lowercase());
+                // The network's own answer, and the rest of each subject's
+                // measurement, from one extra decode of the same preview.
+                let (image, raw_found) = match raw_listing(path, &detector) {
+                    Ok((image, found)) => (Some(image), found),
+                    Err(e) => {
+                        println!("could not list detections for {}: {e}", path.display());
+                        (None, Vec::new())
+                    }
+                };
+                let raw = match &image {
+                    Some(image) => raw_text(&raw_found, image),
+                    None => String::new(),
+                };
+                let focus = image
+                    .as_ref()
+                    .map(|image| remeasure(image, &f.subjects, &settings, profile, &models));
+                // No subject to judge: what the fallback would have said had the
+                // network's best box been allowed through the profile filter.
+                let top_raw = match (&image, f.subjects.is_empty()) {
+                    (Some(image), true) => raw_found
+                        .iter()
+                        .max_by(|a, b| a.1.total_cmp(&b.1))
+                        .and_then(|(class, conf, bbox)| {
+                            let region = if *class == detect::PERSON
+                                || detect::PETS.contains(class)
+                            {
+                                "person"
+                            } else {
+                                "vehicle"
+                            };
+                            measure_box(image, *bbox, region, &settings, profile, &models)
+                                .map(|m| format!("{}#{class}:{conf:.3}={:.4}", detect::class_name(*class), m.score))
+                        }),
+                    _ => None,
+                };
+                if let Some(focus) = &focus {
+                    for (s, m) in f.subjects.iter().zip(focus) {
+                        if let Some(m) = m {
+                            if (m.score - s.sharpness).abs() > 1e-9 {
+                                mismatched += 1;
+                            }
+                        }
+                    }
+                }
+                let setter = frame_setter(profile, settings.include_people, &f.subjects);
+                if let Some(i) = setter {
+                    if (f.subjects[i].rating - f.rating).abs() > 1e-9 {
+                        println!(
+                            "note {}: subject {i} rates {:.4} but the frame rates {:.4}",
+                            path.display(),
+                            f.subjects[i].rating,
+                            f.rating
+                        );
+                    }
+                }
+                for (i, s) in f.subjects.iter().enumerate() {
+                    let edges = framing::assess(
+                        Some(s.bbox),
+                        f.size.0 as i64,
+                        f.size.1 as i64,
+                    );
+                    let m = focus.as_ref().and_then(|v| v.get(i).cloned().flatten());
+                    let area = ((s.bbox[2] - s.bbox[0]).max(0.0)
+                        * (s.bbox[3] - s.bbox[1]).max(0.0))
+                        / (f.size.0.max(1) as f64 * f.size.1.max(1) as f64);
+                    subs.push(Subj {
+                        file: path.to_string_lossy().into_owned(),
+                        exported,
+                        index: i,
+                        class: s.class,
+                        region: s.region_type,
+                        conf: s.conf,
+                        bbox: s.bbox,
+                        frame: f.size,
+                        fraction: area,
+                        sharpness: s.sharpness,
+                        learned: m.as_ref().map_or(s.heuristic != s.sharpness, |m| m.learned),
+                        measured: m.as_ref().map_or(!s.features.is_empty(), |m| m.measured),
+                        uncertain: m.as_ref().map_or(s.features.is_empty(), |m| m.uncertain),
+                        background: m.as_ref().map_or(-1.0, |m| m.background),
+                        panning: m.as_ref().map_or(s.panning, |m| m.panning),
+                        partly: m.as_ref().is_some_and(|m| m.partly_sharp()),
+                        bands: m.as_ref().map(|m| m.bands.clone()).unwrap_or_default(),
+                        factor: edges.factor,
+                        sides: edges.sides,
+                        rating: s.rating,
+                        stars: s.stars,
+                        cull: s.cull_reason.clone(),
+                        setter: setter == Some(i),
+                    });
+                }
                 records.push(Rec {
                     path: path.to_string_lossy().into_owned(),
                     rating: f.rating,
@@ -304,6 +572,8 @@ fn export_recall() {
                     cull: best.map(|s| s.cull_reason.clone()).unwrap_or_default(),
                     subjects: f.subjects.len(),
                     secs,
+                    raw,
+                    top_raw: top_raw.unwrap_or_default(),
                 });
             }
             Err(e) => {
@@ -317,99 +587,35 @@ fn export_recall() {
         }
     }
 
-    // The same burst grouping `desktop::regroup` does, then the keeper pick
-    // (`passes::pick_of_pass`), from the rows just stored.
-    {
-        let db = lock(&desktop.db);
-        let images = crate::desktop::rows(
-            &db,
-            "SELECT id,path,camera,taken_at,rating FROM images WHERE job_id=? AND status='done'",
-            [job],
-        )
-        .expect("read the scanned frames");
-        let mut frames: Vec<conrod_core::bursts::Frame> = images
-            .iter()
-            .map(|v| conrod_core::bursts::Frame {
-                path: v["path"].as_str().unwrap_or_default().into(),
-                camera: v["camera"].as_str().unwrap_or_default().into(),
-                taken: v["taken_at"].as_f64(),
-                burst: 0,
-            })
-            .collect();
-        let gap = if (settings.burst_gap - 4.0).abs() < f64::EPSILON || settings.burst_gap <= 0.0 {
-            1.5
-        } else {
-            settings.burst_gap
-        };
-        conrod_core::bursts::assign_bursts(&mut frames, gap);
-        let tx = db.unchecked_transaction().expect("group the bursts");
-        for frame in frames {
-            tx.execute(
-                "UPDATE images SET burst_key=? WHERE job_id=? AND path=?",
-                rusqlite::params![frame.burst, job, frame.path],
-            )
-            .expect("store the burst");
-        }
-        tx.execute(
-            "UPDATE detections SET burst_pick=0 WHERE image_id IN(SELECT id FROM images WHERE job_id=?)",
-            [job],
-        )
-        .expect("clear the picks");
-        tx.execute(
-            "UPDATE detections SET burst_pick=1 WHERE image_id IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER(PARTITION BY burst_key ORDER BY COALESCE(stars,rating*5,0) DESC, COALESCE(sharpness,0) DESC, id) AS rank FROM images WHERE job_id=? AND status='done' AND rejected=0) WHERE rank=1)",
-            [job],
-        )
-        .expect("pick the keepers of the bursts");
-        tx.commit().expect("commit the grouping");
-    }
-    let regrouped: Vec<i64> = crate::desktop::rows(
-        &lock(&desktop.db),
-        "SELECT DISTINCT image_id FROM detections WHERE burst_pick=1 AND image_id IN(SELECT id FROM images WHERE job_id=?)",
-        [job],
-    )
-    .expect("read the regrouped picks")
-    .iter()
-    .filter_map(|v| v["image_id"].as_i64())
-    .collect();
-    let picked = crate::passes::pick_of_pass(
-        &lock(&desktop.db),
-        job,
-        profile,
-        settings.include_people,
-        settings.use_quality_score,
-    )
-    .expect("pick the keepers");
+    // The app's own post-scan grouping and keeper pick (`desktop::regroup`,
+    // which calls `passes::pick_of_pass`).
+    desktop
+        .regroup(job, settings.burst_gap)
+        .expect("group the bursts and pick the keepers");
 
+    // The frame's pick the way the review query reads it (`desktop.rs:389`).
     let rows = crate::desktop::rows(
         &lock(&desktop.db),
         "SELECT i.id, i.path, i.burst_key, i.rating, i.sharpness, \
          (SELECT count(*) FROM images b WHERE b.job_id=i.job_id AND b.burst_key=i.burst_key) AS burst_size, \
-         COALESCE((SELECT max(COALESCE(d.burst_pick,0)) FROM detections d WHERE d.image_id=i.id),0) AS pick \
+         COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick, 0) AS pick \
          FROM images i WHERE i.job_id=? AND i.status='done' ORDER BY i.path",
         [job],
     )
     .expect("read the evaluated frames");
 
-    // A burst whose pick is still the regroup pick (no subject to rate) keeps it.
-    let mut picked_bursts: HashSet<i64> = HashSet::new();
-    for r in &rows {
-        if r["pick"].as_i64() == Some(1) {
-            if let Some(k) = r["burst_key"].as_i64() {
-                picked_bursts.insert(k);
-            }
-        }
-    }
+    let picked_bursts: HashSet<i64> = rows
+        .iter()
+        .filter(|r| r["pick"].as_i64() == Some(1))
+        .filter_map(|r| r["burst_key"].as_i64())
+        .collect();
     let by_path: std::collections::HashMap<String, &Rec> = records
         .iter()
         .map(|r| (r.path.to_lowercase(), r))
         .collect();
-    let exported: HashSet<String> = exported
-        .iter()
-        .map(|(_, p)| p.to_string_lossy().to_lowercase())
-        .collect();
 
     let mut csv = String::from(
-        "file,exported,rating,score,stars,verdict,panning,cull_reason,subjects,burst_key,burst_size,burst_pick,seconds\n",
+        "file,exported,rating,score,stars,verdict,panning,cull_reason,subjects,burst_key,burst_size,burst_pick,seconds,raw_detections,top_raw_subject_score\n",
     );
     // (path, exported, rating, stars, verdict, panning, cull, burst, size, pick)
     struct Row {
@@ -431,11 +637,10 @@ fn export_recall() {
             continue;
         };
         let burst = r["burst_key"].as_i64().unwrap_or(-1);
-        let is_exported = exported.contains(&file.to_lowercase());
-        let pick = r["pick"].as_i64() == Some(1)
-            || (!picked_bursts.contains(&burst) && regrouped.contains(&r["id"].as_i64().unwrap_or(0)));
+        let is_exported = exported_names.contains(&file.to_lowercase());
+        let pick = r["pick"].as_i64() == Some(1);
         csv += &format!(
-            "\"{}\",{},{:.4},{:.4},{},{},{},\"{}\",{},{},{},{},{:.3}\n",
+            "\"{}\",{},{:.4},{:.4},{},{},{},\"{}\",{},{},{},{},{:.3},\"{}\",\"{}\"\n",
             file.replace('"', "\"\""),
             u8::from(is_exported),
             rec.rating,
@@ -448,7 +653,9 @@ fn export_recall() {
             burst,
             r["burst_size"].as_i64().unwrap_or(0),
             u8::from(pick),
-            rec.secs
+            rec.secs,
+            rec.raw.replace('"', "\"\""),
+            rec.top_raw.replace('"', "\"\"")
         );
         listed.push(Row {
             file,
@@ -464,6 +671,49 @@ fn export_recall() {
         });
     }
     std::fs::write(out_dir.join("frames.csv"), &csv).expect("write frames.csv");
+
+    let mut subject_csv = String::from(
+        "file,exported,index,class,region,conf,x1,y1,x2,y2,frame_w,frame_h,box_fraction,sharpness,learned,measured,uncertain,background,panning,partly_sharp,band0,band1,band2,framing_factor,sides,rating,stars,cull_reason,set_frame_rating\n",
+    );
+    for s in &subs {
+        subject_csv += &format!(
+            "\"{}\",{},{},{},{},{:.4},{:.2},{:.2},{:.2},{:.2},{},{},{:.6},{:.4},{},{},{},{:.4},{},{},{},{},{},{:.4},{},{:.4},{},\"{}\",{}\n",
+            s.file.replace('"', "\"\""),
+            u8::from(s.exported),
+            s.index,
+            s.class,
+            s.region,
+            s.conf,
+            s.bbox[0],
+            s.bbox[1],
+            s.bbox[2],
+            s.bbox[3],
+            s.frame.0,
+            s.frame.1,
+            s.fraction,
+            s.sharpness,
+            u8::from(s.learned),
+            u8::from(s.measured),
+            u8::from(s.uncertain),
+            s.background,
+            u8::from(s.panning),
+            u8::from(s.partly),
+            band(&s.bands, 0),
+            band(&s.bands, 1),
+            band(&s.bands, 2),
+            s.factor,
+            s.sides,
+            s.rating,
+            s.stars,
+            s.cull.replace('"', "\"\""),
+            u8::from(s.setter)
+        );
+    }
+    std::fs::write(out_dir.join("subjects.csv"), &subject_csv).expect("write subjects.csv");
+    println!(
+        "subjects.csv: {} row(s); re-measured scores differing from the app's: {mismatched}",
+        subs.len()
+    );
 
     // --- summary -------------------------------------------------------------
     println!("\nshoot: {shoot}");
@@ -481,7 +731,11 @@ fn export_recall() {
         bursts.insert(r.burst);
         *sizes.entry(r.size).or_default() += 1;
     }
-    println!("bursts: {} ({picked})", bursts.len(), picked = picked["picks"]);
+    println!(
+        "bursts: {}, of which {} have a pick",
+        bursts.len(),
+        bursts.intersection(&picked_bursts).count()
+    );
     println!(
         "burst-size histogram: {:?}",
         sizes.iter().collect::<Vec<_>>()
@@ -584,4 +838,5 @@ fn export_recall() {
         before.iter().map(|(_, v)| v.len()).sum::<usize>()
     );
     println!("csv: {}", out_dir.join("frames.csv").display());
+    println!("csv: {}", out_dir.join("subjects.csv").display());
 }

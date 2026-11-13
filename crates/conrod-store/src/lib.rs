@@ -175,6 +175,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("detections", "predicted_stars", "INTEGER"),
     // 1 on the one frame of a pass worth keeping. Stored for the same reason.
     ("detections", "burst_pick", "INTEGER"),
+    // The same flag at frame level, for a frame with no subject to mark.
+    ("images", "burst_pick", "INTEGER"),
     // Other readings of the same car's plate. See known_vehicles.
     ("known_vehicles", "aliases", "TEXT"),
     ("known_vehicles", "driver", "TEXT"),
