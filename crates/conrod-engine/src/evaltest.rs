@@ -150,10 +150,18 @@ struct Subj {
     cull: String,
     setter: bool,
     /// Edge-blur estimate inside the box: worst direction at REFERENCE_EDGE,
-    /// the score it maps to, and how long the measure took.
+    /// all directions pooled at the same scale, the score the worst maps to,
+    /// and how long the measure took.
     blur_worst: f64,
+    blur_pooled: f64,
     blur_score: f64,
     blur_ms: f64,
+    /// `sharpness::measure`'s tile score for the same crop, before the
+    /// edge-blur score replaced it: the app's previous subject score.
+    tile: f64,
+    /// Box centre as fractions of the frame.
+    cx: f64,
+    cy: f64,
 }
 
 /// Every class the network produced on the frame, before the profile's class
@@ -193,7 +201,9 @@ fn raw_text(found: &[(usize, f32, [f64; 4])], image: &Rgb) -> String {
 
 /// `cull_frame`'s own crop and measure for one detector box (`lib.rs:380-394`),
 /// so the fields `Subject` drops (background, bands, measured, uncertain) are
-/// the production values and not a re-derivation.
+/// the production values and not a re-derivation. Returns that measure and the
+/// tile score `sharpness::measure` produced before the edge-blur score replaced
+/// it (the app's previous subject score).
 fn measure_box(
     image: &Rgb,
     bbox: [f64; 4],
@@ -201,7 +211,7 @@ fn measure_box(
     settings: &Settings,
     profile: ScanProfile,
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
-) -> Option<sharpness::Sharpness> {
+) -> Option<(sharpness::Sharpness, f64)> {
     if region != "person" && region != "vehicle" {
         return None;
     }
@@ -219,6 +229,7 @@ fn measure_box(
         (bbox[3] - crop_box[1]) * scale,
     ];
     let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), models.get(region));
+    let tile = focus.score;
     // As `cull_frame` scores a subject: edge blur inside the box on native
     // pixels, the tile score kept as the fallback and for everything else.
     if !focus.learned {
@@ -238,7 +249,7 @@ fn measure_box(
     if !ShootPreset::parse(&settings.scan_profile).pan_compatible() {
         focus.panning = false;
     }
-    Some(focus)
+    Some((focus, tile))
 }
 
 fn remeasure(
@@ -247,7 +258,7 @@ fn remeasure(
     settings: &Settings,
     profile: ScanProfile,
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
-) -> Vec<Option<sharpness::Sharpness>> {
+) -> Vec<Option<(sharpness::Sharpness, f64)>> {
     subjects
         .iter()
         .map(|s| measure_box(image, s.bbox, s.region_type, settings, profile, models))
@@ -354,7 +365,7 @@ fn export_recall() {
                     .extension()
                     .and_then(|x| x.to_str())
                     .map(|x| x.to_ascii_lowercase());
-                matches!(ext.as_deref(), Some("cr3") | Some("dng"))
+                matches!(ext.as_deref(), Some("cr2") | Some("cr3") | Some("dng"))
                     .then(|| e.file_name().to_string_lossy().into_owned())
             })
             .collect();
@@ -523,13 +534,13 @@ fn export_recall() {
                                 "vehicle"
                             };
                             measure_box(image, *bbox, region, &settings, profile, &models)
-                                .map(|m| format!("{}#{class}:{conf:.3}={:.4}", detect::class_name(*class), m.score))
+                                .map(|(m, _)| format!("{}#{class}:{conf:.3}={:.4}", detect::class_name(*class), m.score))
                         }),
                     _ => None,
                 };
                 if let Some(focus) = &focus {
                     for (s, m) in f.subjects.iter().zip(focus) {
-                        if let Some(m) = m {
+                        if let Some((m, _)) = m {
                             if (m.score - s.sharpness).abs() > 1e-9 {
                                 mismatched += 1;
                             }
@@ -557,27 +568,34 @@ fn export_recall() {
                     );
                     // The new subject measure, timed on the same native pixels
                     // the scan now uses (one grey per frame, not one per subject).
-                    let (blur_worst, blur_score, blur_ms) = match (&grey, s.region_type) {
-                        (Some(g), "person" | "vehicle") => {
-                            let region = [
-                                (s.bbox[0].max(0.0) as usize).min(f.size.0),
-                                (s.bbox[1].max(0.0) as usize).min(f.size.1),
-                                (s.bbox[2].max(0.0) as usize).min(f.size.0),
-                                (s.bbox[3].max(0.0) as usize).min(f.size.1),
-                            ];
-                            let t = Instant::now();
-                            let e = conrod_vision::edgeblur::measure(g, Some(region));
-                            let ms = t.elapsed().as_secs_f64() * 1000.0;
-                            let worst = e.sigma_worst_at_reference(f.size.0.max(f.size.1));
-                            (
-                                worst,
-                                sharpness::rating_from_blur(worst).unwrap_or(f64::NAN),
-                                ms,
-                            )
-                        }
-                        _ => (f64::NAN, f64::NAN, f64::NAN),
-                    };
+                    let (blur_worst, blur_pooled, blur_score, blur_ms) =
+                        match (&grey, s.region_type) {
+                            (Some(g), "person" | "vehicle") => {
+                                let region = [
+                                    (s.bbox[0].max(0.0) as usize).min(f.size.0),
+                                    (s.bbox[1].max(0.0) as usize).min(f.size.1),
+                                    (s.bbox[2].max(0.0) as usize).min(f.size.0),
+                                    (s.bbox[3].max(0.0) as usize).min(f.size.1),
+                                ];
+                                let t = Instant::now();
+                                let e = conrod_vision::edgeblur::measure(g, Some(region));
+                                let ms = t.elapsed().as_secs_f64() * 1000.0;
+                                let long = f.size.0.max(f.size.1);
+                                let worst = e.sigma_worst_at_reference(long);
+                                (
+                                    worst,
+                                    conrod_vision::edgeblur::at_reference(e.sigma, long),
+                                    sharpness::rating_from_blur(worst).unwrap_or(f64::NAN),
+                                    ms,
+                                )
+                            }
+                            _ => (f64::NAN, f64::NAN, f64::NAN, f64::NAN),
+                        };
                     let m = focus.as_ref().and_then(|v| v.get(i).cloned().flatten());
+                    let (m, tile) = match m {
+                        Some((sharp, tile)) => (Some(sharp), tile),
+                        None => (None, f64::NAN),
+                    };
                     let area = ((s.bbox[2] - s.bbox[0]).max(0.0)
                         * (s.bbox[3] - s.bbox[1]).max(0.0))
                         / (f.size.0.max(1) as f64 * f.size.1.max(1) as f64);
@@ -606,8 +624,12 @@ fn export_recall() {
                         cull: s.cull_reason.clone(),
                         setter: setter == Some(i),
                         blur_worst,
+                        blur_pooled,
                         blur_score,
                         blur_ms,
+                        tile,
+                        cx: (s.bbox[0] + s.bbox[2]) / 2.0 / f.size.0.max(1) as f64,
+                        cy: (s.bbox[1] + s.bbox[3]) / 2.0 / f.size.1.max(1) as f64,
                     });
                 }
                 records.push(Rec {
@@ -721,11 +743,11 @@ fn export_recall() {
     std::fs::write(out_dir.join("frames.csv"), &csv).expect("write frames.csv");
 
     let mut subject_csv = String::from(
-        "file,exported,index,class,region,conf,x1,y1,x2,y2,frame_w,frame_h,box_fraction,sharpness,learned,measured,uncertain,background,panning,partly_sharp,band0,band1,band2,framing_factor,sides,rating,stars,cull_reason,set_frame_rating,blur_worst_ref,blur_score,blur_ms\n",
+        "file,exported,index,class,region,conf,x1,y1,x2,y2,frame_w,frame_h,box_fraction,sharpness,learned,measured,uncertain,background,panning,partly_sharp,band0,band1,band2,framing_factor,sides,rating,stars,cull_reason,set_frame_rating,blur_worst_ref,blur_pooled_ref,blur_score,blur_ms,tile_score,cx,cy\n",
     );
     for s in &subs {
         subject_csv += &format!(
-            "\"{}\",{},{},{},{},{:.4},{:.2},{:.2},{:.2},{:.2},{},{},{:.6},{:.4},{},{},{},{:.4},{},{},{},{},{},{:.4},{},{:.4},{},\"{}\",{},{:.4},{:.4},{:.1}\n",
+            "\"{}\",{},{},{},{},{:.4},{:.2},{:.2},{:.2},{:.2},{},{},{:.6},{:.4},{},{},{},{:.4},{},{},{},{},{},{:.4},{},{:.4},{},\"{}\",{},{:.4},{:.4},{:.4},{:.1},{:.4},{:.5},{:.5}\n",
             s.file.replace('"', "\"\""),
             u8::from(s.exported),
             s.index,
@@ -756,8 +778,12 @@ fn export_recall() {
             s.cull.replace('"', "\"\""),
             u8::from(s.setter),
             s.blur_worst,
+            s.blur_pooled,
             s.blur_score,
-            s.blur_ms
+            s.blur_ms,
+            s.tile,
+            s.cx,
+            s.cy
         );
     }
     std::fs::write(out_dir.join("subjects.csv"), &subject_csv).expect("write subjects.csv");
