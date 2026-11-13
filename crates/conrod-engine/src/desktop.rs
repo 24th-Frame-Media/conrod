@@ -386,7 +386,7 @@ impl Desktop {
         let db = lock(&self.reader);
         // Only what the UI reads: `SELECT *` was 17 MB and 0.8 s for 4,808
         // frames, 3.6 MB of it the raw sharpness `features`.
-        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, (SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id) AS burst_pick FROM images i WHERE job_id=? ORDER BY path",[job])?;
+        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick FROM images i WHERE job_id=? ORDER BY path",[job])?;
         let mut detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
         let known: Vec<(Value, Vec<f32>)> = rows(&db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
             .into_iter()
@@ -692,8 +692,11 @@ impl Desktop {
         Ok(())
     }
 
-    fn regroup(&self, job: i64, gap: f64) -> Result<()> {
+    pub(crate) fn regroup(&self, job: i64, gap: f64) -> Result<()> {
         let task = self.hub.start("Grouping bursts", 0);
+        // Settings before the write lock: reading them takes it too.
+        let cfg = crate::operations::settings(self, job)?;
+        let profile = ScanProfile::parse(&cfg.scan_profile);
         let db = lock(&self.db);
         let images = rows(
             &db,
@@ -719,9 +722,16 @@ impl Desktop {
             )
             .map_err(err)?;
         }
-        tx.execute("UPDATE detections SET burst_pick=0 WHERE image_id IN(SELECT id FROM images WHERE job_id=?)",[job]).map_err(err)?;
-        tx.execute("UPDATE detections SET burst_pick=1 WHERE image_id IN(SELECT id FROM (SELECT id, ROW_NUMBER() OVER(PARTITION BY burst_key ORDER BY COALESCE(stars,rating*5,0) DESC, COALESCE(sharpness,0) DESC, id) AS rank FROM images WHERE job_id=? AND status='done' AND rejected=0) WHERE rank=1)",[job]).map_err(err)?;
         tx.commit().map_err(err)?;
+        // The same rule the identify stage uses, so the keeper regroup leaves
+        // is the one a later pick would choose anyway.
+        crate::passes::pick_of_pass(
+            &db,
+            job,
+            profile,
+            cfg.include_people,
+            cfg.use_quality_score,
+        )?;
         task.finish();
         Ok(())
     }
@@ -825,6 +835,45 @@ mod tests {
         );
         drop(desktop);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn regroup_alone_picks_the_keeper_the_same_way_pick_of_pass_does() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("regroup-pick");
+        // Two frames a half second apart: one burst, no grouping stage.
+        let (f1, f2) = (lib.frame("1.jpg", None), lib.frame("2.jpg", None));
+        for (taken, image) in [(0.0, f1), (0.5, f2)] {
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                params![taken, image],
+            );
+        }
+        let (weak, strong) = (
+            lib.detection(f1, "vehicle", 0.3),
+            lib.detection(f2, "vehicle", 0.7),
+        );
+        // The frame rating would favour the first; the subjects favour the second.
+        lib.sql("UPDATE images SET rating=0.9 WHERE id=?", [f1]);
+        lib.sql("UPDATE images SET rating=0.1 WHERE id=?", [f2]);
+        lib.d().regroup(lib.job, 1.5).unwrap();
+        assert_eq!(
+            lib.one::<i64>("SELECT id FROM detections WHERE burst_pick=1", []),
+            strong,
+            "regroup must not leave a keeper of its own choosing"
+        );
+        assert_eq!(
+            lib.one::<Option<i64>>("SELECT burst_pick FROM images WHERE id=?", [f1]),
+            None
+        );
+        // A later pick by the identify rule keeps exactly that frame.
+        let profile = ScanProfile::parse(&Settings::default().scan_profile);
+        crate::passes::pick_of_pass(&lock(&lib.d().db), lib.job, profile, false, false).unwrap();
+        assert_eq!(
+            lib.one::<i64>("SELECT id FROM detections WHERE burst_pick=1", []),
+            strong
+        );
+        let _ = weak;
     }
 
     #[test]
