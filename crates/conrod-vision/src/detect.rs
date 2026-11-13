@@ -23,6 +23,9 @@ const CLASS_OFFSET: f64 = 7680.0;
 pub const PERSON: usize = 0;
 pub const VEHICLES: [usize; 4] = [2, 3, 5, 7];
 pub const PETS: [usize; 2] = [15, 16];
+/// Every COCO animal: bird, cat, dog, horse, sheep, cow, elephant, bear,
+/// zebra, giraffe. Wildlife shows up in any kind of album.
+pub const ANIMALS: [usize; 10] = [14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
 
 pub fn class_name(id: usize) -> &'static str {
     match id {

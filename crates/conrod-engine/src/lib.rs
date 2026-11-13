@@ -188,8 +188,8 @@ fn options(settings: &Settings, _profile: ScanProfile) -> DetectOptions {
     if preset.wants_people() {
         classes.push(detect::PERSON);
     }
-    if preset.wants_pets() {
-        classes.extend(detect::PETS);
+    if preset.wants_animals() {
+        classes.extend(detect::ANIMALS);
     }
     DetectOptions {
         conf: settings.detect_conf as f32,
@@ -386,7 +386,7 @@ pub fn cull_frame(
             (det.bbox[2] - cx) * scale,
             (det.bbox[3] - cy) * scale,
         ];
-        let kind = if det.class_id == detect::PERSON || detect::PETS.contains(&det.class_id) {
+        let kind = if det.class_id == detect::PERSON || detect::ANIMALS.contains(&det.class_id) {
             "person"
         } else {
             "vehicle"
@@ -423,7 +423,7 @@ pub fn cull_frame(
             stars,
             cull_reason,
             features: focus.features,
-            region_type: if det.class_id == detect::PERSON || detect::PETS.contains(&det.class_id) {
+            region_type: if det.class_id == detect::PERSON || detect::ANIMALS.contains(&det.class_id) {
                 "person"
             } else {
                 "vehicle"
