@@ -281,7 +281,10 @@ fn measure_frame(
             ];
             let blur = conrod_vision::edgeblur::measure(&grey, Some(region));
             if let Some(score) =
-                sharpness::rating_from_blur(blur.sigma_worst_at_reference(fw.max(fh)))
+                sharpness::rating_from_blur(
+                    blur.sigma_worst_at_reference(fw.max(fh)),
+                    sharpness::BlurStrictness::parse(&cfg.blur_strictness),
+                )
             {
                 focus.score = score;
             }

@@ -41,12 +41,37 @@ pub const BLURRED_BELOW: f64 = 0.606;
 /// is what lets a sharp frame rank above a merely sharp one, and the
 /// photographer's delivered frames read 0.875 px median, so most sit on it.
 pub const BLUR_SHARP: f64 = 0.4;
-/// Blur at which a subject scores exactly `SHARP_AT`.
-pub const BLUR_AT_SHARP: f64 = 1.5;
-/// Blur at which a subject scores exactly `BLURRED_BELOW`.
-pub const BLUR_AT_BLURRED: f64 = 2.2;
-/// Blur at or above which a subject scores zero: nothing left to recover.
-pub const BLUR_HOPELESS: f64 = 3.5;
+
+/// How hard the album culls on blur, from the per-album `blur_strictness`
+/// setting. Unknown text is `Moderate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlurStrictness {
+    Strict,
+    Moderate,
+    Lenient,
+}
+
+impl BlurStrictness {
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "strict" => BlurStrictness::Strict,
+            "lenient" => BlurStrictness::Lenient,
+            _ => BlurStrictness::Moderate,
+        }
+    }
+
+    /// Blur in px at which the subject scores exactly `SHARP_AT`, exactly
+    /// `BLURRED_BELOW`, and zero. Moderate sits where delivered keepers shot
+    /// through heat haze (up to ~2.7 px) stay above `BLURRED_BELOW`, so none of
+    /// them is culled, while heavy blur is still flagged as soft.
+    fn knots(self) -> (f64, f64, f64) {
+        match self {
+            BlurStrictness::Strict => (1.5, 2.2, 3.5),
+            BlurStrictness::Moderate => (2.0, 3.0, 4.5),
+            BlurStrictness::Lenient => (2.5, 3.5, 5.0),
+        }
+    }
+}
 
 pub const FEATURE_NAMES: [&str; 19] = [
     "score",
@@ -321,34 +346,35 @@ pub fn normalise(raw: f64) -> f64 {
 /// Monotone decreasing and piecewise linear between the measured knots, so it
 /// speaks the same 0..1 language as the tile score and the configured star and
 /// verdict thresholds keep their meaning: at or below [`BLUR_SHARP`] it is 1.0,
-/// then it descends to exactly [`SHARP_AT`] at 1.5 px, exactly
-/// [`BLURRED_BELOW`] at 2.2 px, and zero from 3.5 px. The line keeps
-/// descending below one star, which is what keeps the worst frames orderable.
-/// `None` when there is no measurement (NaN).
-pub fn rating_from_blur(sigma_worst_ref: f64) -> Option<f64> {
+/// then it descends to exactly [`SHARP_AT`] and [`BLURRED_BELOW`] at the
+/// strictness's knots (see [`BlurStrictness`]), and zero from its last knot.
+/// The line keeps descending below one star, which is what keeps the worst
+/// frames orderable. `None` when there is no measurement (NaN).
+pub fn rating_from_blur(sigma_worst_ref: f64, strictness: BlurStrictness) -> Option<f64> {
     if sigma_worst_ref.is_nan() {
         return None;
     }
     let sharp_at = conrod_core::settings::SHARP_AT;
     let blurred_below = conrod_core::settings::BLURRED_BELOW;
+    let (blur_at_sharp, blur_at_blurred, blur_hopeless) = strictness.knots();
     let score = if sigma_worst_ref <= BLUR_SHARP {
         1.0
-    } else if sigma_worst_ref <= BLUR_AT_SHARP {
+    } else if sigma_worst_ref <= blur_at_sharp {
         interp(
             sigma_worst_ref,
-            &[BLUR_SHARP, BLUR_AT_SHARP],
+            &[BLUR_SHARP, blur_at_sharp],
             &[1.0, sharp_at],
         )
-    } else if sigma_worst_ref <= BLUR_AT_BLURRED {
+    } else if sigma_worst_ref <= blur_at_blurred {
         interp(
             sigma_worst_ref,
-            &[BLUR_AT_SHARP, BLUR_AT_BLURRED],
+            &[blur_at_sharp, blur_at_blurred],
             &[sharp_at, blurred_below],
         )
-    } else if sigma_worst_ref < BLUR_HOPELESS {
+    } else if sigma_worst_ref < blur_hopeless {
         interp(
             sigma_worst_ref,
-            &[BLUR_AT_BLURRED, BLUR_HOPELESS],
+            &[blur_at_blurred, blur_hopeless],
             &[blurred_below, 0.0],
         )
     } else {
@@ -891,49 +917,74 @@ mod tests {
 
     #[test]
     fn blur_mapping_hits_its_anchors_and_never_turns_back() {
-        assert_eq!(rating_from_blur(f64::NAN), None);
-        let score = |v: f64| rating_from_blur(v).expect("finite sigma");
-        assert!((score(0.0) - 1.0).abs() < 1e-12);
-        assert!((score(BLUR_SHARP) - 1.0).abs() < 1e-12);
-        assert!((score(BLUR_AT_SHARP) - conrod_core::settings::SHARP_AT).abs() < 1e-12);
-        assert!((score(BLUR_AT_BLURRED) - conrod_core::settings::BLURRED_BELOW).abs() < 1e-12);
-        assert!(score(BLUR_HOPELESS).abs() < 1e-12);
-        assert!(score(10.0).abs() < 1e-12);
-        // The top is a ramp, not a plateau: a sharper frame still ranks higher.
-        assert!(score(BLUR_SHARP + 0.1) < 1.0);
-        assert!(score(BLUR_SHARP + 0.1) > score(0.9));
-        assert!(score(0.9) > score(1.2));
-        assert!(score(1.2) > score(BLUR_AT_SHARP));
-        // The anchors land in the intended verdict bands.
-        assert_eq!(
-            verdict_for(score(BLUR_SHARP), SHARP_AT, BLURRED_BELOW),
-            "sharp"
-        );
-        assert_eq!(
-            verdict_for(score(BLUR_AT_SHARP), SHARP_AT, BLURRED_BELOW),
-            "sharp"
-        );
-        assert_eq!(
-            verdict_for(score(1.6), SHARP_AT, BLURRED_BELOW),
-            "soft"
-        );
-        assert_eq!(
-            verdict_for(score(BLUR_AT_BLURRED), SHARP_AT, BLURRED_BELOW),
-            "soft"
-        );
-        assert_eq!(
-            verdict_for(score(BLUR_AT_BLURRED + 0.01), SHARP_AT, BLURRED_BELOW),
-            "blurred"
-        );
-        // Monotone decreasing and inside 0..1 everywhere.
-        let mut x = 0.0;
-        let mut prev = score(0.0);
-        while x < 6.0 {
-            x += 0.01;
-            let v = score(x);
-            assert!(v <= prev + 1e-12, "score rose at {x:.2}: {prev:.3} -> {v:.3}");
-            assert!((0.0..=1.0).contains(&v), "score {v} out of range at {x:.2}");
-            prev = v;
+        for strictness in [
+            BlurStrictness::Strict,
+            BlurStrictness::Moderate,
+            BlurStrictness::Lenient,
+        ] {
+            let (at_sharp, at_blurred, hopeless) = strictness.knots();
+            assert_eq!(rating_from_blur(f64::NAN, strictness), None);
+            let score = |v: f64| rating_from_blur(v, strictness).expect("finite sigma");
+            assert!((score(0.0) - 1.0).abs() < 1e-12);
+            assert!((score(BLUR_SHARP) - 1.0).abs() < 1e-12);
+            assert!((score(at_sharp) - SHARP_AT).abs() < 1e-12);
+            assert!((score(at_blurred) - BLURRED_BELOW).abs() < 1e-12);
+            assert!(score(hopeless).abs() < 1e-12);
+            assert!(score(10.0).abs() < 1e-12);
+            // The top is a ramp, not a plateau: a sharper frame still ranks higher.
+            assert!(score(BLUR_SHARP + 0.1) < 1.0);
+            assert!(score(BLUR_SHARP + 0.1) > score(0.9));
+            assert!(score(0.9) > score(1.2));
+            assert!(score(1.2) > score(at_sharp));
+            // Monotone decreasing and inside 0..1 everywhere.
+            let mut x = 0.0;
+            let mut prev = score(0.0);
+            while x < 6.0 {
+                x += 0.01;
+                let v = score(x);
+                assert!(v <= prev + 1e-12, "score rose at {x:.2}: {prev:.3} -> {v:.3}");
+                assert!((0.0..=1.0).contains(&v), "score {v} out of range at {x:.2}");
+                prev = v;
+            }
         }
+    }
+
+    #[test]
+    fn blur_verdicts_follow_strictness() {
+        let verdict = |sigma: f64, strictness: BlurStrictness| {
+            verdict_for(
+                rating_from_blur(sigma, strictness).expect("finite sigma"),
+                SHARP_AT,
+                BLURRED_BELOW,
+            )
+        };
+        assert_eq!(verdict(BLUR_SHARP, BlurStrictness::Strict), "sharp");
+        assert_eq!(verdict(1.5, BlurStrictness::Strict), "sharp");
+        assert_eq!(verdict(1.6, BlurStrictness::Strict), "soft");
+        assert_eq!(verdict(2.2, BlurStrictness::Strict), "soft");
+        assert_eq!(verdict(2.21, BlurStrictness::Strict), "blurred");
+        // Heat-haze keepers, up to ~2.7 px, are not culled at Moderate.
+        assert_ne!(verdict(2.7, BlurStrictness::Moderate), "blurred");
+        assert_eq!(verdict(3.0, BlurStrictness::Moderate), "soft");
+        assert_eq!(verdict(3.01, BlurStrictness::Moderate), "blurred");
+    }
+
+    #[test]
+    fn looser_strictness_never_scores_a_frame_lower() {
+        for i in 0..=60 {
+            let sigma = f64::from(i) / 10.0;
+            let at = |s: BlurStrictness| rating_from_blur(sigma, s).expect("finite sigma");
+            assert!(at(BlurStrictness::Strict) <= at(BlurStrictness::Moderate) + 1e-12);
+            assert!(at(BlurStrictness::Moderate) <= at(BlurStrictness::Lenient) + 1e-12);
+        }
+    }
+
+    #[test]
+    fn blur_strictness_parses_known_names_and_unknown_is_moderate() {
+        assert_eq!(BlurStrictness::parse("strict"), BlurStrictness::Strict);
+        assert_eq!(BlurStrictness::parse("moderate"), BlurStrictness::Moderate);
+        assert_eq!(BlurStrictness::parse("lenient"), BlurStrictness::Lenient);
+        assert_eq!(BlurStrictness::parse("loose"), BlurStrictness::Moderate);
+        assert_eq!(BlurStrictness::parse(""), BlurStrictness::Moderate);
     }
 }

@@ -128,6 +128,9 @@ pub struct Settings {
     /// a burst tiebreak after sharpness. Opt-in: off until the model is
     /// installed and a photographer turns it on.
     pub use_quality_score: bool,
+    /// How hard blur culls: "strict", "moderate" or "lenient". Unknown text
+    /// reads as "moderate".
+    pub blur_strictness: String,
 }
 
 impl Default for Settings {
@@ -221,6 +224,7 @@ impl Default for Settings {
             scan_profile: "motorsport".into(),
             include_people: false,
             use_quality_score: false,
+            blur_strictness: "moderate".into(),
         }
     }
 }
@@ -370,5 +374,16 @@ impl Settings {
         } else {
             wanted
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_without_blur_strictness_load_as_moderate() {
+        let settings: Settings = serde_json::from_str(r#"{"scan_profile":"motorsport"}"#).unwrap();
+        assert_eq!(settings.blur_strictness, "moderate");
     }
 }
