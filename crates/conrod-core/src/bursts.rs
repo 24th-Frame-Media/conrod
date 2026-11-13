@@ -252,8 +252,6 @@ pub fn collect(frames: &[Frame]) -> Vec<Burst> {
 pub const MOMENT_SCALE_RATIO: f64 = 1.6;
 /// The subject's centre may move at most this fraction of the frame diagonal from the moment's first frame.
 pub const MOMENT_SHIFT: f64 = 0.25;
-/// A moment is never closed with fewer frames than this, so a lone frame is never split off.
-pub const MOMENT_MIN_FRAMES: usize = 2;
 
 /// One frame as the moment splitter sees it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -285,40 +283,18 @@ fn same_moment(anchor: Option<[f64; 4]>, subject: Option<[f64; 4]>) -> bool {
 /// main subject's framing changes. Input is in time order. Keys are dense from
 /// 1 and never shared across bursts.
 pub fn split_moments(frames: &[MomentFrame]) -> Vec<i64> {
-    // Per burst: the open moment's anchor subject and its provisional index.
-    let mut open: HashMap<i64, (Option<[f64; 4]>, usize)> = HashMap::new();
-    let mut sizes: Vec<usize> = Vec::new();
-    let mut previous: Vec<Option<usize>> = Vec::new();
-    let mut moment_of: Vec<usize> = Vec::with_capacity(frames.len());
-    for frame in frames {
-        let start = match open.get(&frame.burst) {
-            None => true,
-            Some(&(anchor, current)) => {
-                sizes[current] >= MOMENT_MIN_FRAMES && !same_moment(anchor, frame.subject)
-            }
-        };
-        if start {
-            previous.push(open.get(&frame.burst).map(|&(_, current)| current));
-            sizes.push(0);
-            open.insert(frame.burst, (frame.subject, sizes.len() - 1));
-        }
-        let current = open[&frame.burst].1;
-        sizes[current] += 1;
-        moment_of.push(current);
-    }
-    // A burst's final moment of one frame folds back into the one before it.
-    let mut target: Vec<usize> = (0..sizes.len()).collect();
-    for &(_, last) in open.values() {
-        if let (1, Some(before)) = (sizes[last], previous[last]) {
-            target[last] = before;
-        }
-    }
-    let mut keys: HashMap<usize, i64> = HashMap::new();
-    moment_of
+    // Per burst: the open moment's anchor subject and its key.
+    let mut open: HashMap<i64, (Option<[f64; 4]>, i64)> = HashMap::new();
+    let mut moments: i64 = 0;
+    frames
         .iter()
-        .map(|&m| {
-            let next = keys.len() as i64 + 1;
-            *keys.entry(target[m]).or_insert(next)
+        .map(|frame| match open.get(&frame.burst) {
+            Some(&(anchor, key)) if same_moment(anchor, frame.subject) => key,
+            _ => {
+                moments += 1;
+                open.insert(frame.burst, (frame.subject, moments));
+                moments
+            }
         })
         .collect()
 }
@@ -560,7 +536,7 @@ mod moment_tests {
             .collect();
         let keys = split_moments(&frames);
         let moments = *keys.iter().max().unwrap();
-        assert!((3..=5).contains(&moments), "{keys:?}");
+        assert!((5..=7).contains(&moments), "{keys:?}");
         assert!(keys.windows(2).all(|w| w[0] <= w[1]), "{keys:?}");
         assert_eq!(keys[0], 1);
     }
@@ -584,10 +560,10 @@ mod moment_tests {
     }
 
     #[test]
-    fn a_trailing_single_frame_merges_back() {
+    fn a_trailing_frame_with_a_different_framing_stands_alone() {
         let mut frames: Vec<_> = (0..4).map(|_| mf(1, boxed(0.5, 0.5, 0.1))).collect();
         frames.push(mf(1, boxed(0.5, 0.5, 0.5)));
-        assert_eq!(split_moments(&frames), vec![1, 1, 1, 1, 1]);
+        assert_eq!(split_moments(&frames), vec![1, 1, 1, 1, 2]);
     }
 
     #[test]
