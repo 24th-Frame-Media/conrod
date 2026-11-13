@@ -8,7 +8,7 @@ use crate::library::require_job;
 use crate::lock;
 use crate::operations::{launch, ml_eligible, settings, ML_ELIGIBLE};
 use conrod_core::{
-    grouping, models,
+    framing, grouping, models,
     profile::{ScanProfile, ShootPreset, Subject},
     settings::Settings,
     tasks::Task,
@@ -37,6 +37,11 @@ pub(crate) fn region_name(kind: Subject) -> &'static str {
     }
 }
 
+/// Ratings this close are the same rating: differences smaller than the
+/// measurement noise of the sharpness score say nothing about which frame is
+/// better, so the subject's prominence decides between them.
+const RATING_BAND: f64 = 0.03;
+
 /// One candidate for the keeper of a unit: a subject, or a frame with no
 /// subject the profile rates.
 struct Candidate {
@@ -51,18 +56,35 @@ struct Candidate {
     /// The stored subject sharpness, which ranks an exact rating tie.
     sharpness: f64,
     quality: Option<f64>,
+    /// How many frame edges the subject runs off; 0 for a frame with no subject.
+    sides: u32,
+    /// The subject's box as a share of the frame; 0 for a frame with no subject.
+    area: f64,
 }
 
 impl Candidate {
     /// In the order the keeper is decided: a hand star first, then a frame no
-    /// rule culled, then the measured score, then (opt-in) NIMA quality, then
-    /// the stored subject sharpness, and finally the earlier frame.
+    /// rule culled, then the rating in `RATING_BAND`s, then the subject that
+    /// the frame edge cuts off least, then the larger subject, then the exact
+    /// rating, then (opt-in) NIMA quality, then the stored subject sharpness,
+    /// and finally the earlier frame.
     fn beats(&self, other: &Self, use_quality_score: bool) -> bool {
         if self.by_hand != other.by_hand {
             return self.by_hand > other.by_hand;
         }
         if self.culled != other.culled {
             return !self.culled;
+        }
+        let band = (self.score / RATING_BAND).floor();
+        let other_band = (other.score / RATING_BAND).floor();
+        if band != other_band {
+            return band > other_band;
+        }
+        if self.sides != other.sides {
+            return self.sides < other.sides;
+        }
+        if self.area != other.area {
+            return self.area > other.area;
         }
         if self.score != other.score {
             return self.score > other.score;
@@ -112,7 +134,7 @@ pub fn pick_of_pass(
     };
     let found = rows(
         conn,
-        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
         [job],
     )?;
     // Each frame's main subject: its largest person or vehicle.
@@ -164,6 +186,25 @@ pub fn pick_of_pass(
             r["burst_key"].as_i64().unwrap_or_default(),
             r["group_key"].as_i64(),
         );
+        let (width, height) = (
+            r["width"].as_i64().unwrap_or_default(),
+            r["height"].as_i64().unwrap_or_default(),
+        );
+        let bbox = match (
+            r["x1"].as_f64(),
+            r["y1"].as_f64(),
+            r["x2"].as_f64(),
+            r["y2"].as_f64(),
+        ) {
+            (Some(x1), Some(y1), Some(x2), Some(y2)) => Some([x1, y1, x2, y2]),
+            _ => None,
+        };
+        let area = match bbox {
+            Some([x1, y1, x2, y2]) if width > 0 && height > 0 => {
+                (x2 - x1) * (y2 - y1) / (width as f64 * height as f64)
+            }
+            _ => 0.0,
+        };
         units.push((
             unit,
             Candidate {
@@ -175,6 +216,8 @@ pub fn pick_of_pass(
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: r["quality"].as_f64(),
+                sides: framing::assess(bbox, width, height).sides,
+                area,
             },
         ));
         marked.insert(image);
@@ -205,6 +248,8 @@ pub fn pick_of_pass(
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: None,
+                sides: 0,
+                area: 0.0,
             },
         ));
     }
@@ -983,6 +1028,67 @@ mod tests {
         lib.sql("UPDATE detections SET sharpness=0.80 WHERE id=?", [a]);
         lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(picks(&lib), vec![a], "a full tie keeps the earlier frame");
+    }
+
+    fn place(lib: &Lib, det: i64, bbox: [f64; 4]) {
+        lib.sql(
+            "UPDATE detections SET x1=?,y1=?,x2=?,y2=? WHERE id=?",
+            params![bbox[0], bbox[1], bbox[2], bbox[3], det],
+        );
+    }
+
+    #[test]
+    fn within_the_rating_band_the_larger_uncut_subject_wins() {
+        let lib = Lib::new("pick-band");
+        let (f1, f2, f3) = (
+            lib.frame("1.jpg", Some(1)),
+            lib.frame("2.jpg", Some(1)),
+            lib.frame("3.jpg", Some(1)),
+        );
+        let small = lib.detection(f1, "vehicle", 0.80);
+        let medium = lib.detection(f2, "vehicle", 0.80);
+        let large = lib.detection(f3, "vehicle", 0.80);
+        place(&lib, small, [2000.0, 1500.0, 3000.0, 2500.0]);
+        place(&lib, medium, [1500.0, 1000.0, 3500.0, 3000.0]);
+        place(&lib, large, [800.0, 600.0, 4500.0, 3400.0]);
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![large],
+            "equal ratings: the largest subject the frame edge does not cut off"
+        );
+    }
+
+    #[test]
+    fn within_the_rating_band_an_uncut_subject_beats_a_bigger_cut_off_one() {
+        let lib = Lib::new("pick-cut");
+        let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
+        let cut = lib.detection(f1, "vehicle", 0.80);
+        let uncut = lib.detection(f2, "vehicle", 0.79);
+        place(&lib, cut, [0.0, 0.0, 4000.0, 3000.0]);
+        place(&lib, uncut, [1000.0, 1000.0, 2500.0, 2500.0]);
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![uncut],
+            "a subject cut off on two sides loses to a smaller one inside the frame"
+        );
+    }
+
+    #[test]
+    fn a_rating_clearly_above_the_band_beats_a_bigger_subject() {
+        let lib = Lib::new("pick-sharp");
+        let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
+        let sharp = lib.detection(f1, "vehicle", 0.90);
+        let big = lib.detection(f2, "vehicle", 0.80);
+        place(&lib, sharp, [2000.0, 1500.0, 3000.0, 2500.0]);
+        place(&lib, big, [500.0, 500.0, 5000.0, 3500.0]);
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![sharp],
+            "a frame sharper than the band keeps the pick over a bigger subject"
+        );
     }
 
     #[test]

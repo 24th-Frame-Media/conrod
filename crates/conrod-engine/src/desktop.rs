@@ -700,7 +700,7 @@ impl Desktop {
         let db = lock(&self.db);
         let images = rows(
             &db,
-            "SELECT id,path,camera,taken_at,rating FROM images WHERE job_id=? AND status='done'",
+            "SELECT id,path,camera,taken_at,rating,width,height FROM images WHERE job_id=? AND status='done'",
             [job],
         )?;
         let mut frames: Vec<_> = images
@@ -714,11 +714,59 @@ impl Desktop {
             .collect();
         let effective_gap = burst_gap(gap);
         conrod_core::bursts::assign_bursts(&mut frames, effective_gap);
+        // Each image's largest subject, as a box: pixels until normalised below.
+        let mut main: std::collections::HashMap<i64, (f64, [f64; 4])> =
+            std::collections::HashMap::new();
+        for d in rows(
+            &db,
+            "SELECT d.image_id AS image,d.x1,d.y1,d.x2,d.y2 FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
+            [job],
+        )? {
+            let bbox = ["x1", "y1", "x2", "y2"].map(|k| d[k].as_f64().unwrap_or_default());
+            let area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]);
+            let image = d["image"].as_i64().unwrap_or_default();
+            if main.get(&image).is_none_or(|&(seen, _)| area > seen) {
+                main.insert(image, (area, bbox));
+            }
+        }
+        let mut order: Vec<usize> = (0..frames.len()).collect();
+        order.sort_by(|&a, &b| {
+            frames[a]
+                .taken
+                .unwrap_or_default()
+                .total_cmp(&frames[b].taken.unwrap_or_default())
+                .then_with(|| frames[a].path.cmp(&frames[b].path))
+        });
+        let moment_frames: Vec<_> = order
+            .iter()
+            .map(|&i| {
+                let (w, h) = (images[i]["width"].as_f64(), images[i]["height"].as_f64());
+                let id = images[i]["id"].as_i64().unwrap_or_default();
+                let subject = match (main.get(&id), w, h) {
+                    (Some(&(_, [x1, y1, x2, y2])), Some(w), Some(h)) if w > 0.0 && h > 0.0 => {
+                        Some([x1 / w, y1 / h, x2 / w, y2 / h])
+                    }
+                    _ => None,
+                };
+                conrod_core::bursts::MomentFrame {
+                    burst: i64::from(frames[i].burst),
+                    taken: frames[i].taken,
+                    subject,
+                }
+            })
+            .collect();
+        let mut key = vec![0; frames.len()];
+        for (&i, moment) in order
+            .iter()
+            .zip(conrod_core::bursts::split_moments(&moment_frames))
+        {
+            key[i] = moment;
+        }
         let tx = db.unchecked_transaction().map_err(err)?;
-        for frame in frames {
+        for (i, frame) in frames.iter().enumerate() {
             tx.execute(
                 "UPDATE images SET burst_key=? WHERE job_id=? AND path=?",
-                params![frame.burst, job, frame.path],
+                params![key[i], job, frame.path],
             )
             .map_err(err)?;
         }
@@ -874,6 +922,49 @@ mod tests {
             strong
         );
         let _ = weak;
+    }
+
+    #[test]
+    fn regroup_splits_a_burst_whose_subject_grows_and_picks_once_per_moment() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("regroup-moments");
+        // Eight frames, a second apart, in one burst; the car grows from 2% to 30% of the frame.
+        for i in 0..8 {
+            let image = lib.frame(&format!("{i}.jpg"), None);
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                params![f64::from(i) * 0.2, image],
+            );
+            let detection = lib.detection(image, "vehicle", 0.5);
+            let scale = (0.02 + 0.04 * f64::from(i)).sqrt();
+            let (w, h) = (6000.0 * scale, 4000.0 * scale);
+            lib.sql(
+                "UPDATE detections SET x1=?,y1=?,x2=?,y2=? WHERE id=?",
+                params![
+                    3000.0 - w / 2.0,
+                    2000.0 - h / 2.0,
+                    3000.0 + w / 2.0,
+                    2000.0 + h / 2.0,
+                    detection
+                ],
+            );
+        }
+        lib.d().regroup(lib.job, 1.5).unwrap();
+        let keys: i64 = lib.one(
+            "SELECT count(DISTINCT burst_key) FROM images WHERE job_id=?",
+            [lib.job],
+        );
+        assert!(
+            keys > 1,
+            "a growing subject must split the burst, got {keys} key(s)"
+        );
+        let picks: i64 = lib.one("SELECT count(*) FROM detections WHERE burst_pick=1", []);
+        assert_eq!(picks, keys, "one pick per burst_key");
+        let one_each: i64 = lib.one(
+            "SELECT count(*) FROM (SELECT i.burst_key FROM detections d JOIN images i ON i.id=d.image_id WHERE d.burst_pick=1 GROUP BY i.burst_key HAVING count(*)=1)",
+            [],
+        );
+        assert_eq!(one_each, keys, "every key gets exactly one pick");
     }
 
     #[test]
