@@ -1,0 +1,514 @@
+//! How many pixels wide is the blur that softened an edge?
+//!
+//! Gradient-ratio defocus estimation (Zhuo & Sim, "Defocus map estimation from
+//! a single blurred image", 2011). An edge blurred by `sigma`, blurred again by
+//! `sigma0`, loses gradient magnitude in the ratio
+//! `R = sqrt(sigma^2 + sigma0^2) / sigma`, so `sigma = sigma0 / sqrt(R^2 - 1)`.
+//! The answer is in native pixels, per edge direction, and does not care how
+//! much texture the edge sits in -- which is what the tile-based score is
+//! sensitive to.
+//!
+//! Calibrated constants (native pixels; gradients in 0..255 luma units, after
+//! the 0.5 factor of the central difference cancels in the ratio):
+//! - `PRE_SMOOTH = 0.6`: pre-blur that tames noise and JPEG blocks. Its
+//!   variance is subtracted in quadrature afterwards, clamped at `MIN_SIGMA`.
+//! - `SIGMA0 = 1.0`: the re-blur whose loss of gradient measures the blur.
+//!   With it, R saturates at 1.01 (a flat-topped 8 px box edge reads as 7 px
+//!   of Gaussian, since no Gaussian re-blur can narrow it): motion blur longer
+//!   than about 6 native px all lands near the top of the scale.
+//! - `MIN_SIGMA = 0.3`: the floor of what a sharp edge can read as.
+//! - Edge floor = `max(2.0, 3.16 * p20(|Laplacian|), 0.2 * p98(rgm))`. The
+//!   Laplacian term is a white-noise estimate: for white noise `p20(|L|)`
+//!   is `0.2533 * sigma_L`, and the gradient of the pre-smoothed plane has
+//!   about `0.2 * sigma_L`, so this is four gradient sigmas -- which is above
+//!   every noise gradient and below every real edge.
+//! - The pooled value is the 20th percentile of the per-edge estimates: depth
+//!   of field legitimately leaves most of a subject soft, and the question is
+//!   whether *any* of it is sharp.
+
+use crate::imageops::Gray;
+
+/// Blur of the sharpest edges, all directions pooled (px); NaN if unmeasured.
+#[derive(Debug, Clone, Copy)]
+pub struct EdgeBlur {
+    pub sigma: f64,
+    /// Lowest per-direction value.
+    pub sigma_best: f64,
+    /// Highest per-direction value.
+    pub sigma_worst: f64,
+    /// Index of that direction bin (edge-normal angle: 0=0deg, 1=45, 2=90, 3=135).
+    pub worst_dir: u8,
+    /// Per-bin value, NaN where the bin had too few edges.
+    pub dirs: [f64; 4],
+    /// Edge pixels used.
+    pub edges: usize,
+}
+
+const PRE_SMOOTH: f32 = 0.6;
+const SIGMA0: f32 = 1.0;
+const MIN_SIGMA: f32 = 0.3;
+const R_MIN: f32 = 1.01;
+const R_MAX: f32 = 5.0;
+const MIN_EDGES: usize = 80;
+const MAX_EDGES: usize = 200_000;
+/// Share of the region's 98th-percentile gradient magnitude that still counts.
+const FLOOR_SHARE: f32 = 0.2;
+/// `p20(|Laplacian|)` of white noise, divided by its sigma.
+const LAP_P20_OVER_SIGMA: f32 = 0.2533;
+/// Noise floor in gradient sigmas, times the gradient/Laplacian sigma ratio.
+const NOISE_MULT: f32 = 4.0;
+const GRAD_OVER_LAP: f32 = 0.2;
+/// Below this there is nothing worth calling an edge, in luma units.
+const ABS_FLOOR: f32 = 2.0;
+/// Pixels of context the gradients and the re-blur need on each side.
+const PAD: usize = 4;
+/// Edge directions: the normal along x, 45deg, along y, 135deg.
+const NORMALS: [(isize, isize); 4] = [(1, 0), (1, 1), (0, 1), (-1, 1)];
+
+impl EdgeBlur {
+    fn unmeasured(edges: usize) -> EdgeBlur {
+        EdgeBlur {
+            sigma: f64::NAN,
+            sigma_best: f64::NAN,
+            sigma_worst: f64::NAN,
+            worst_dir: 0,
+            dirs: [f64::NAN; 4],
+            edges,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Rect {
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+}
+
+impl Rect {
+    fn contains(self, x: usize, y: usize) -> bool {
+        x >= self.x0 && x < self.x1 && y >= self.y0 && y < self.y1
+    }
+}
+
+fn gauss(sigma: f32) -> Vec<f32> {
+    let r = (sigma * 3.0).ceil() as isize;
+    let k: Vec<f32> = (-r..=r)
+        .map(|i| (-((i * i) as f32) / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let sum: f32 = k.iter().sum();
+    k.iter().map(|v| v / sum).collect()
+}
+
+/// Separable Gaussian, edge-clamped.
+fn blur(src: &[f32], w: usize, h: usize, k: &[f32]) -> Vec<f32> {
+    let r = (k.len() / 2) as isize;
+    let mut tmp = vec![0f32; w * h];
+    for y in 0..h {
+        let row = &src[y * w..(y + 1) * w];
+        let out = &mut tmp[y * w..(y + 1) * w];
+        for (x, o) in out.iter_mut().enumerate() {
+            let mut acc = 0.0;
+            for (i, &wt) in k.iter().enumerate() {
+                let sx = (x as isize + i as isize - r).clamp(0, w as isize - 1) as usize;
+                acc += wt * row[sx];
+            }
+            *o = acc;
+        }
+    }
+    let mut out = vec![0f32; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0;
+            for (i, &wt) in k.iter().enumerate() {
+                let sy = (y as isize + i as isize - r).clamp(0, h as isize - 1) as usize;
+                acc += wt * tmp[sy * w + x];
+            }
+            out[y * w + x] = acc;
+        }
+    }
+    out
+}
+
+/// Central differences; the 0.5 factor cancels in the ratio, so it is left out.
+fn gradients(p: &[f32], w: usize, h: usize) -> (Vec<f32>, Vec<f32>) {
+    let mut gx = vec![0f32; w * h];
+    let mut gy = vec![0f32; w * h];
+    for y in 1..h.saturating_sub(1) {
+        for x in 1..w.saturating_sub(1) {
+            gx[y * w + x] = p[y * w + x + 1] - p[y * w + x - 1];
+            gy[y * w + x] = p[(y + 1) * w + x] - p[(y - 1) * w + x];
+        }
+    }
+    (gx, gy)
+}
+
+/// The gradient normal quantised to 0/45/90/135 degrees, without `atan2`:
+/// `tan(22.5deg) = 0.4142`, so the 45-degree sectors are half the 90s.
+fn dir_bin(rx: f32, ry: f32) -> u8 {
+    let (ax, ay) = (rx.abs(), ry.abs());
+    if ax >= 2.414_213_6 * ay {
+        0
+    } else if ay >= 2.414_213_6 * ax {
+        2
+    } else if rx * ry > 0.0 {
+        1
+    } else {
+        3
+    }
+}
+
+fn pick(sorted: &[f32], p: f32) -> f32 {
+    if sorted.is_empty() {
+        return f32::NAN;
+    }
+    let i = ((sorted.len() - 1) as f32 * p).round() as usize;
+    sorted[i.min(sorted.len() - 1)]
+}
+
+fn sorted(v: &mut [f32]) {
+    v.sort_by(f32::total_cmp);
+}
+
+/// Blur of the edges inside `region` (`x1,y1,x2,y2`); `None` is the whole image.
+pub fn measure(image: &Gray, region: Option<[usize; 4]>) -> EdgeBlur {
+    estimate(image, region, false)
+}
+
+/// Blur of the edges outside `region` only.
+pub fn measure_outside(image: &Gray, region: [usize; 4]) -> EdgeBlur {
+    estimate(image, Some(region), true)
+}
+
+fn estimate(image: &Gray, region: Option<[usize; 4]>, outside: bool) -> EdgeBlur {
+    let (iw, ih) = (image.width, image.height);
+    if iw < 16 || ih < 16 {
+        return EdgeBlur::unmeasured(0);
+    }
+    let mut region = match region {
+        None => Rect {
+            x0: 0,
+            y0: 0,
+            x1: iw,
+            y1: ih,
+        },
+        Some([a, b, c, d]) => {
+            let (x0, y0) = (a.min(iw), b.min(ih));
+            let (x1, y1) = (c.min(iw).max(x0), d.min(ih).max(y0));
+            Rect { x0, y0, x1, y1 }
+        }
+    };
+    // Measuring "outside" the whole frame has nothing to measure.
+    if region.x1 <= region.x0 || region.y1 <= region.y0 {
+        return EdgeBlur::unmeasured(0);
+    }
+    // Flat images are cheaper and cleaner to reject up front.
+    let (px0, py0, px1, py1) = if outside {
+        (0, 0, iw, ih)
+    } else {
+        (
+            region.x0.saturating_sub(PAD),
+            region.y0.saturating_sub(PAD),
+            (region.x1 + PAD).min(iw),
+            (region.y1 + PAD).min(ih),
+        )
+    };
+    let (w, h) = (px1 - px0, py1 - py0);
+    if w < 8 || h < 8 {
+        return EdgeBlur::unmeasured(0);
+    }
+    region = Rect {
+        x0: region.x0 - px0,
+        y0: region.y0 - py0,
+        x1: region.x1 - px0,
+        y1: region.y1 - py0,
+    };
+
+    let src: Vec<f32> = (0..h)
+        .flat_map(|y| {
+            let row = &image.data[(y + py0) * iw + px0..(y + py0) * iw + px1];
+            row.iter().map(|&v| f32::from(v))
+        })
+        .collect();
+    // Outside, the pixels within the blur's reach of the region still carry
+    // the region's gradient, so they are not answers about what is outside it.
+    let excluded = Rect {
+        x0: region.x0.saturating_sub(PAD),
+        y0: region.y0.saturating_sub(PAD),
+        x1: (region.x1 + PAD).min(w),
+        y1: (region.y1 + PAD).min(h),
+    };
+    let wanted = |x: usize, y: usize| {
+        if outside {
+            !excluded.contains(x, y)
+        } else {
+            region.contains(x, y)
+        }
+    };
+    let pre = blur(&src, w, h, &gauss(PRE_SMOOTH));
+    let (gx, gy) = gradients(&pre, w, h);
+    // The Laplacian's low percentile is the noise level; it wants the raw
+    // plane, which is not needed after this point.
+    let mut laps = Vec::new();
+    for y in (2..h.saturating_sub(2)).step_by(4) {
+        for x in (2..w.saturating_sub(2)).step_by(4) {
+            if !wanted(x, y) {
+                continue;
+            }
+            let i = y * w + x;
+            laps.push((src[i - w] + src[i + w] + src[i - 1] + src[i + 1] - 4.0 * src[i]).abs());
+        }
+    }
+    drop(src);
+    let reblurred = blur(&pre, w, h, &gauss(SIGMA0));
+    drop(pre);
+    let (rx, ry) = gradients(&reblurred, w, h);
+    drop(reblurred);
+    // The re-blurred magnitude and direction at every pixel, once: the
+    // non-maximum suppression reads each of them three times.
+    let mut rm = vec![0f32; w * h];
+    let mut bins = vec![0u8; w * h];
+    for i in 0..w * h {
+        rm[i] = rx[i].hypot(ry[i]);
+        bins[i] = dir_bin(rx[i], ry[i]);
+    }
+    drop(rx);
+    drop(ry);
+
+    // One stride-4 sample of the region answers the gradient percentile,
+    // without sorting a whole 32 MP plane.
+    let mut mags = Vec::new();
+    for y in (2..h.saturating_sub(2)).step_by(4) {
+        for x in (2..w.saturating_sub(2)).step_by(4) {
+            if wanted(x, y) {
+                mags.push(rm[y * w + x]);
+            }
+        }
+    }
+    sorted(&mut mags);
+    sorted(&mut laps);
+    let p98 = pick(&mags, 0.98);
+    let noise = NOISE_MULT * GRAD_OVER_LAP * pick(&laps, 0.20) / LAP_P20_OVER_SIGMA;
+    let floor = if p98.is_nan() {
+        return EdgeBlur::unmeasured(0);
+    } else {
+        ABS_FLOOR.max(noise).max(FLOOR_SHARE * p98)
+    };
+
+    // Non-maximum suppression along the (quantised) gradient normal, then the
+    // ratio of the gradient before and after the extra blur.
+    let mut edges: Vec<(f32, u8)> = Vec::new();
+    for y in 2..h.saturating_sub(2) {
+        for x in 2..w.saturating_sub(2) {
+            let i = y * w + x;
+            let m = rm[i];
+            if m < floor || !wanted(x, y) {
+                continue;
+            }
+            let bin = bins[i] as usize;
+            let (dx, dy) = NORMALS[bin];
+            let (ax, ay) = ((x as isize + dx) as usize, (y as isize + dy) as usize);
+            let (bx, by) = ((x as isize - dx) as usize, (y as isize - dy) as usize);
+            if m <= rm[ay * w + ax] || m <= rm[by * w + bx] {
+                continue;
+            }
+            let r = (gx[i].hypot(gy[i]) / m).clamp(R_MIN, R_MAX);
+            let sp = SIGMA0 / (r * r - 1.0).sqrt();
+            let st = (sp * sp - PRE_SMOOTH * PRE_SMOOTH).max(MIN_SIGMA * MIN_SIGMA).sqrt();
+            edges.push((st, bin as u8));
+        }
+    }
+
+    if edges.len() > MAX_EDGES {
+        let stride = edges.len().div_ceil(MAX_EDGES);
+        edges = edges.into_iter().step_by(stride).collect();
+    }
+    let n = edges.len();
+    if n < MIN_EDGES {
+        return EdgeBlur::unmeasured(n);
+    }
+
+    let mut all: Vec<f32> = edges.iter().map(|&(s, _)| s).collect();
+    sorted(&mut all);
+    let sigma = f64::from(pick(&all, 0.2));
+
+    // Per direction bin: the same 20th percentile, for bins with enough edges.
+    let need = 40.max((n as f32 * 0.04).round() as usize);
+    let mut dirs = [f64::NAN; 4];
+    for (bin, slot) in dirs.iter_mut().enumerate() {
+        let mut v: Vec<f32> = edges
+            .iter()
+            .filter(|&&(_, b)| b as usize == bin)
+            .map(|&(s, _)| s)
+            .collect();
+        if v.len() >= need {
+            sorted(&mut v);
+            *slot = f64::from(pick(&v, 0.2));
+        }
+    }
+    let valid: Vec<(usize, f64)> = dirs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &v)| (!v.is_nan()).then_some((i, v)))
+        .collect();
+    let (worst_dir, sigma_worst) = valid
+        .iter()
+        .copied()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .unwrap_or((0, f64::NAN));
+    let sigma_best = valid.iter().map(|&(_, v)| v).fold(f64::NAN, f64::min);
+
+    EdgeBlur {
+        sigma,
+        sigma_best,
+        sigma_worst,
+        worst_dir: worst_dir as u8,
+        dirs,
+        edges: n,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deterministic xorshift, so the tests never depend on a crate.
+    struct Rng(u64);
+
+    impl Rng {
+        fn unit(&mut self) -> f32 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 >> 40) as f32 / (1u64 << 24) as f32
+        }
+    }
+
+    /// 32 px blocks of two luma levels, with uniform noise on top.
+    fn blocks(w: usize, h: usize, contrast: f32, noise: f32, seed: u64) -> Gray {
+        let mut rng = Rng(seed | 1);
+        let mut data = vec![0u8; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let mut s = (x / 32).wrapping_mul(73856093) ^ (y / 32).wrapping_mul(19349663);
+                s ^= s >> 13;
+                s = s.wrapping_mul(2654435761);
+                let base = if s & 1 == 0 {
+                    128.0 - contrast / 2.0
+                } else {
+                    128.0 + contrast / 2.0
+                };
+                let v = base + (rng.unit() - 0.5) * 2.0 * noise;
+                data[y * w + x] = v.clamp(0.0, 255.0) as u8;
+            }
+        }
+        Gray::new(w, h, data)
+    }
+
+    fn blurred(img: &Gray, sigma: f32) -> Gray {
+        let (w, h) = (img.width, img.height);
+        let src: Vec<f32> = img.data.iter().map(|&v| f32::from(v)).collect();
+        let k = gauss(sigma);
+        let out = blur(&src, w, h, &k);
+        Gray::new(w, h, out.iter().map(|v| v.round().clamp(0.0, 255.0) as u8).collect())
+    }
+
+    /// Horizontal box of `len` px: camera shake along x.
+    fn shaken(img: &Gray, len: usize) -> Gray {
+        let (w, h) = (img.width, img.height);
+        let l = len as f32;
+        let mut out = vec![0u8; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let mut acc = 0.0;
+                for i in 0..len {
+                    let sx = (x as isize + i as isize - len as isize / 2).clamp(0, w as isize - 1);
+                    acc += f32::from(img.data[y * w + sx as usize]);
+                }
+                out[y * w + x] = (acc / l).round() as u8;
+            }
+        }
+        Gray::new(w, h, out)
+    }
+
+    #[test]
+    fn gaussian_blur_is_measured_in_native_pixels() {
+        let sharp = blocks(384, 384, 140.0, 4.0, 7);
+        for &s in &[1.0f32, 2.0, 3.0, 5.0] {
+            let m = measure(&blurred(&sharp, s), None);
+            println!("gauss {s}: sigma {:.3}, dirs {:?}, edges {}", m.sigma, m.dirs, m.edges);
+            assert!(m.edges >= 80, "sigma {s}: only {} edges", m.edges);
+            assert!(
+                (m.sigma - f64::from(s)).abs() <= 0.25 * f64::from(s),
+                "sigma {s} read as {:.3} (edges {})",
+                m.sigma,
+                m.edges
+            );
+        }
+    }
+
+    #[test]
+    fn directional_motion_blur_splits_the_bins() {
+        let e = measure(&shaken(&blocks(384, 384, 140.0, 4.0, 11), 15), None);
+        assert!(e.edges >= 80, "only {} edges", e.edges);
+        assert!(
+            e.sigma_worst >= 2.0 * e.sigma_best,
+            "worst {:.3} vs best {:.3}",
+            e.sigma_worst,
+            e.sigma_best
+        );
+        assert_eq!(e.worst_dir, 0, "dirs {:?}", e.dirs);
+    }
+
+    #[test]
+    fn noise_and_flat_images_are_rejected() {
+        let mut rng = Rng(3);
+        let noise: Vec<u8> = (0..256 * 256)
+            .map(|_| (128.0 + (rng.unit() - 0.5) * 80.0) as u8)
+            .collect();
+        let e = measure(&Gray::new(256, 256, noise), None);
+        assert!(e.edges < 80, "noise gave {} edges", e.edges);
+        assert!(e.sigma.is_nan() && e.sigma_best.is_nan() && e.sigma_worst.is_nan());
+
+        let flat = Gray::new(256, 256, vec![90; 256 * 256]);
+        let e = measure(&flat, None);
+        assert_eq!(e.edges, 0);
+        assert!(e.sigma.is_nan() && e.dirs.iter().all(|v| v.is_nan()));
+        assert_eq!(e.worst_dir, 0);
+    }
+
+    #[test]
+    fn contrast_does_not_move_the_estimate() {
+        let full = blocks(384, 384, 140.0, 4.0, 5);
+        let half = blocks(384, 384, 70.0, 4.0, 5);
+        let a = measure(&blurred(&full, 3.0), None).sigma;
+        let b = measure(&blurred(&half, 3.0), None).sigma;
+        assert!(
+            (a - b).abs() <= 0.15 * a.max(b),
+            "contrast 140 read {a:.3}, contrast 70 read {b:.3}"
+        );
+    }
+
+    #[test]
+    fn outside_ignores_what_is_inside_the_region() {
+        let sharp = blocks(256, 256, 140.0, 4.0, 13);
+        let mut other = sharp.clone();
+        for y in 64..192 {
+            for x in 64..192 {
+                other.data[y * 256 + x] = 200u8.wrapping_add((x as u8) ^ (y as u8));
+            }
+        }
+        let region = [64, 64, 192, 192];
+        let a = measure_outside(&sharp, region);
+        let b = measure_outside(&other, region);
+        assert_eq!(a.edges, b.edges);
+        assert_eq!(a.sigma.to_bits(), b.sigma.to_bits());
+        assert_eq!(a.sigma_worst.to_bits(), b.sigma_worst.to_bits());
+        // And the inside measure does see the difference.
+        assert_ne!(
+            measure(&sharp, Some(region)).sigma.to_bits(),
+            measure(&other, Some(region)).sigma.to_bits()
+        );
+    }
+}

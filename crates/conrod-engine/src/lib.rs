@@ -46,6 +46,8 @@ mod testkit;
 #[cfg(test)]
 mod blurtest;
 #[cfg(test)]
+mod edgetest;
+#[cfg(test)]
 mod evaltest;
 pub mod training;
 pub mod updating;
