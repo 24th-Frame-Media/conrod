@@ -1,7 +1,7 @@
 use conrod_io::settings::Settings;
 use conrod_io::vlm::{
     anthropic_auth, build_request, parse_anthropic_response, parse_gemini_response,
-    parse_ollama_response, parse_openai_response, schema, vehicle_prompt,
+    parse_ollama_response, parse_openai_response, schema, vehicle_prompt, VlmHints,
 };
 use serde_json::{json, Value};
 
@@ -160,33 +160,54 @@ fn settings_hosts_and_anthropic_auth_match_fixture() {
 
 #[test]
 fn schema_is_stable() {
-    let req = schema()["required"].as_array().unwrap().clone();
-    assert_eq!(req.len(), 12);
+    let req = schema(true)["required"].as_array().unwrap().clone();
+    assert_eq!(req.len(), 10);
     assert!(req.iter().any(|v| v.as_str() == Some("is_competition")));
+    assert!(req.iter().any(|v| v.as_str() == Some("plate")));
+    let without = schema(false)["required"].as_array().unwrap().clone();
+    assert_eq!(without.len(), 9);
+    assert!(!without.iter().any(|v| v.as_str() == Some("plate")));
 }
 
 #[test]
 fn vehicle_prompt_matches_the_album_targets() {
     let mut settings = Settings::default();
-    let baseline = vehicle_prompt(&settings, false);
+    let hints = VlmHints::default();
+    let baseline = vehicle_prompt(&settings, false, &hints);
     assert!(baseline.contains("Motorsport: capture vehicle identity"));
-    assert!(baseline.contains("separate reader handles registration plates"));
-    assert!(!baseline.contains("e.g."));
-    assert!(baseline.len() < 900, "local prompt should stay concise");
+    assert!(baseline.contains("- plate: the registration plate"));
+    assert!(!baseline.contains("{CANDIDATES}"));
+    assert!(baseline.len() < 1500, "local prompt should stay concise");
     settings.scan_profile = "motorsport-rally".into();
-    assert!(vehicle_prompt(&settings, false).contains("Rallies:"));
+    assert!(vehicle_prompt(&settings, false, &hints).contains("Rallies:"));
     settings.read_numbers = false;
-    let road = vehicle_prompt(&settings, false);
-    assert!(road.contains("Set race_number to null"));
+    let road = vehicle_prompt(&settings, false, &hints);
+    assert!(road.contains("Set number to null."));
     settings.read_plates = false;
-    let bike = vehicle_prompt(&settings, true);
-    assert!(bike.contains("Set body_type to motorcycle"));
-    assert!(bike.contains("ignore registration plates"));
+    let bike = vehicle_prompt(&settings, true, &hints);
+    assert!(bike.contains("motorcycle and its rider"));
+    assert!(!bike.contains("- plate:"));
+}
+
+#[test]
+fn racing_hints_drop_the_plate_from_prompt_and_schema() {
+    let settings = Settings::default();
+    let racing = VlmHints {
+        racing: true,
+        candidates: vec!["Ford Mustang S650".into(), "Toyota GR Supra".into()],
+    };
+    let prompt = vehicle_prompt(&settings, false, &racing);
+    assert!(!prompt.contains("- plate:"));
+    assert!(prompt.contains("make/model must be one of: Ford Mustang S650, Toyota GR Supra."));
+    assert!(!schema(false)["properties"]
+        .as_object()
+        .unwrap()
+        .contains_key("plate"));
 }
 
 #[test]
 fn openai_schema_has_all_properties_in_required() {
-    let s = schema();
+    let s = schema(true);
     let req = conrod_io::vlm::openai_request("gpt-4o", "sk-test", "describe", &[], &s, 500);
     let strict_schema = &req.json["response_format"]["json_schema"]["schema"];
     assert_eq!(strict_schema["additionalProperties"], false);

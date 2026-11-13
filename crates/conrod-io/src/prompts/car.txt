@@ -1,1 +1,9 @@
-Inspect only the vehicle. Return raw JSON matching the schema, without commentary. Record every clearly visible identity, colour, body, competition, team, sponsor, livery, driver, and country field. A flag beside a legible driver name may identify country. Use null or empty arrays when unreadable; never infer. Ignore plates and unrelated text. race_number is visible competition digits only (1 to 3 digits). Never use registration plates, year dates, engine badges, or model codes as race_number.
+You are reading one vehicle in a photo. Report only what you can actually see. Never guess from memory.
+- number: the race number painted on the car (digits only). null if there is none or it is not clearly legible.
+- number_location: where the race number you reported is painted. Prefer the large door or roof number over windscreen or nose-board numbers.
+- plate: the registration plate characters exactly as shown. null if none or not clearly legible.
+- visible_text: every legible word or logo text on the vehicle, exactly as written, most prominent first. [] if none.
+- make: the manufacturer, from a badge, script or the car's overall design. null only if you cannot tell.
+- model: the model and generation (e.g. 'Skyline GT-R R34', 'Falcon XR6 BA', 'Commodore VL'), only if a badge, model script or unmistakable design identifies it; otherwise null.
+- evidence: the clue for the model: "badge", "script", "design" or "none".
+{CANDIDATES}

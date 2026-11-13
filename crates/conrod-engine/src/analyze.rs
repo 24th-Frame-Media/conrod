@@ -110,9 +110,21 @@ pub fn analyze(
     // 3. The semantic pass.
     let mut described = VehicleDescription::default();
     if let (true, Some((client, io))) = (s.use_vlm, describer.as_ref()) {
-        match vlm::describe(client, crop, io, is_bike) {
+        let hints = vlm::VlmHints {
+            racing: matches!(
+                conrod_core::profile::ShootPreset::parse(&io.scan_profile),
+                conrod_core::profile::ShootPreset::Motorsport
+                    | conrod_core::profile::ShootPreset::MotorsportBurnouts
+                    | conrod_core::profile::ShootPreset::MotorsportTrack
+                    | conrod_core::profile::ShootPreset::MotorsportRally
+            ),
+            candidates: Vec::new(),
+        };
+        match vlm::describe(client, crop, io, is_bike, &hints) {
             Ok(d) => {
                 a.vlm_conf = d.confidence;
+                a.model_evidence = d.model_evidence.clone();
+                a.model_suggested = d.model_suggested;
                 if s.identify_make_model {
                     a.make = d.make.clone();
                     a.model = d.model.clone();

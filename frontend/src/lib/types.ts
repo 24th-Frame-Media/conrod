@@ -28,7 +28,7 @@ export type Bootstrap = { jobs: Job[]; settings: Settings; models: ModelInfo[]; 
 
 export const ATTRIBUTE_KEYS = ['plate', 'race_number', 'make', 'model', 'colour', 'team', 'driver', 'country', 'plate_state', 'body_type'] as const;
 export type AttributeKey = (typeof ATTRIBUTE_KEYS)[number];
-export type Attributes = Partial<Record<AttributeKey, string>> & { colour_hex?: string; sponsors?: string[]; person_name?: string; plate_bbox?: [number, number, number, number] };
+export type Attributes = Partial<Record<AttributeKey, string>> & { colour_hex?: string; sponsors?: string[]; person_name?: string; plate_bbox?: [number, number, number, number]; model_suggested?: boolean; model_evidence?: string };
 export type KnownVehicle = { plate: string; old_plate?: string; make?: string; model?: string; colour?: string; team?: string; race_number?: string; driver?: string; country?: string };
 export type Training = { labels: number; active?: boolean; validation?: unknown };
 

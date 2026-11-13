@@ -37,6 +37,10 @@ pub struct VehicleAnalysis {
     pub text: Vec<String>,
     pub is_competition: bool,
     pub vlm_conf: f64,
+    /// What the model based make/model on: "badge", "script" or "design".
+    pub model_evidence: Option<String>,
+    /// Make/model came from the car's design alone: a suggestion, not a read.
+    pub model_suggested: bool,
 }
 
 impl Default for VehicleAnalysis {
@@ -63,6 +67,8 @@ impl Default for VehicleAnalysis {
             text: Vec::new(),
             is_competition: false,
             vlm_conf: 0.0,
+            model_evidence: None,
+            model_suggested: false,
         }
     }
 }
@@ -101,6 +107,7 @@ impl VehicleAnalysis {
         text("team", &mut a.team);
         text("driver", &mut a.driver);
         text("country", &mut a.country);
+        text("model_evidence", &mut a.model_evidence);
         if let Some(Value::String(kind)) = data.get("kind") {
             a.kind = kind.clone();
         }
@@ -108,6 +115,7 @@ impl VehicleAnalysis {
         a.is_bike = flag("is_bike").unwrap_or(false);
         a.team_corroborated = flag("team_corroborated").unwrap_or(false);
         a.is_competition = flag("is_competition").unwrap_or(false);
+        a.model_suggested = flag("model_suggested").unwrap_or(false);
         let number = |key: &str| data.get(key).and_then(Value::as_f64).unwrap_or(0.0);
         a.plate_conf = number("plate_conf");
         a.number_conf = number("number_conf");
@@ -129,9 +137,18 @@ impl VehicleAnalysis {
         a
     }
 
+    /// The model, unless it is only a suggestion from the car's shape.
+    pub fn confirmed_model(&self) -> Option<&str> {
+        if self.model_suggested {
+            None
+        } else {
+            given(&self.model)
+        }
+    }
+
     /// A short human label for the review UI.
     pub fn title(&self) -> String {
-        let model = given(&self.model).unwrap_or("");
+        let model = self.confirmed_model().unwrap_or("");
         let mut make = given(&self.make).unwrap_or("");
         // The model often already carries the make ("Holden Commodore").
         if !make.is_empty() && model.to_lowercase().starts_with(&make.to_lowercase()) {
@@ -278,4 +295,24 @@ pub fn corroborated(claim: Option<&str>, evidence: &[String]) -> bool {
         return false;
     }
     words.iter().any(|w| haystack.contains(w.as_str()))
+}
+
+#[cfg(test)]
+mod suggested_model_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn parse(value: Value) -> VehicleAnalysis {
+        VehicleAnalysis::from_map(value.as_object().unwrap())
+    }
+
+    #[test]
+    fn suggested_model_is_left_out_of_title() {
+        let suggested = parse(json!({"make": "Ford", "model": "Focus", "colour": "red", "model_suggested": true}));
+        assert_eq!(suggested.title(), "Red Ford");
+        let confirmed = parse(json!({"make": "Ford", "model": "Focus", "colour": "red"}));
+        assert_eq!(confirmed.title(), "Red Ford Focus");
+        let missing_flag = parse(json!({"make": "Ford", "model": "Focus", "model_suggested": false}));
+        assert_eq!(missing_flag.title(), "Ford Focus");
+    }
 }
