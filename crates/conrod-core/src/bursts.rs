@@ -7,7 +7,7 @@
 
 use crate::text::value_to_string;
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Longer than this between two frames of one camera starts a new burst. The
 /// gap being detected is the one between two cars, not between two frames.
@@ -248,6 +248,81 @@ pub fn collect(frames: &[Frame]) -> Vec<Burst> {
     out
 }
 
+/// A moment's main subject may grow or shrink by at most this area factor, either way, from the moment's first frame.
+pub const MOMENT_SCALE_RATIO: f64 = 1.6;
+/// The subject's centre may move at most this fraction of the frame diagonal from the moment's first frame.
+pub const MOMENT_SHIFT: f64 = 0.25;
+/// A moment is never closed with fewer frames than this, so a lone frame is never split off.
+pub const MOMENT_MIN_FRAMES: usize = 2;
+
+/// One frame as the moment splitter sees it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MomentFrame {
+    pub burst: i64,
+    /// Seconds since the epoch; `None` when the file carries no time.
+    pub taken: Option<f64>,
+    /// The main subject's box as fractions of the frame: (x1, y1, x2, y2).
+    pub subject: Option<[f64; 4]>,
+}
+
+fn same_moment(anchor: Option<[f64; 4]>, subject: Option<[f64; 4]>) -> bool {
+    match (anchor, subject) {
+        (None, None) => true,
+        (Some(a), Some(b)) => {
+            let area = |[x1, y1, x2, y2]: [f64; 4]| (x2 - x1).abs() * (y2 - y1).abs();
+            let centre = |[x1, y1, x2, y2]: [f64; 4]| ((x1 + x2) / 2.0, (y1 + y2) / 2.0);
+            let (fa, fb) = (area(a), area(b));
+            let scale_ok = fa.max(fb) <= MOMENT_SCALE_RATIO * fa.min(fb);
+            let ((ax, ay), (bx, by)) = (centre(a), centre(b));
+            let shift = (ax - bx).hypot(ay - by) / std::f64::consts::SQRT_2;
+            scale_ok && shift <= MOMENT_SHIFT
+        }
+        _ => false,
+    }
+}
+
+/// A new group key per frame, splitting each burst into moments where the
+/// main subject's framing changes. Input is in time order. Keys are dense from
+/// 1 and never shared across bursts.
+pub fn split_moments(frames: &[MomentFrame]) -> Vec<i64> {
+    // Per burst: the open moment's anchor subject and its provisional index.
+    let mut open: HashMap<i64, (Option<[f64; 4]>, usize)> = HashMap::new();
+    let mut sizes: Vec<usize> = Vec::new();
+    let mut previous: Vec<Option<usize>> = Vec::new();
+    let mut moment_of: Vec<usize> = Vec::with_capacity(frames.len());
+    for frame in frames {
+        let start = match open.get(&frame.burst) {
+            None => true,
+            Some(&(anchor, current)) => {
+                sizes[current] >= MOMENT_MIN_FRAMES && !same_moment(anchor, frame.subject)
+            }
+        };
+        if start {
+            previous.push(open.get(&frame.burst).map(|&(_, current)| current));
+            sizes.push(0);
+            open.insert(frame.burst, (frame.subject, sizes.len() - 1));
+        }
+        let current = open[&frame.burst].1;
+        sizes[current] += 1;
+        moment_of.push(current);
+    }
+    // A burst's final moment of one frame folds back into the one before it.
+    let mut target: Vec<usize> = (0..sizes.len()).collect();
+    for &(_, last) in open.values() {
+        if let (1, Some(before)) = (sizes[last], previous[last]) {
+            target[last] = before;
+        }
+    }
+    let mut keys: HashMap<usize, i64> = HashMap::new();
+    moment_of
+        .iter()
+        .map(|&m| {
+            let next = keys.len() as i64 + 1;
+            *keys.entry(target[m]).or_insert(next)
+        })
+        .collect()
+}
+
 /// pHash bits two frames may differ by and still be candidate duplicates.
 pub const DUPE_BITS: u32 = 10;
 /// Tighter bound for a pair with no embeddings to confirm it (scenery, crowds).
@@ -451,5 +526,81 @@ mod dupe_tests {
         let took = started.elapsed();
         assert!(got.is_empty(), "{got:?}");
         assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
+    }
+}
+
+#[cfg(test)]
+mod moment_tests {
+    use super::*;
+
+    /// A square box centred at (cx, cy) covering `area` of the frame.
+    fn boxed(cx: f64, cy: f64, area: f64) -> Option<[f64; 4]> {
+        let half = area.sqrt() / 2.0;
+        Some([cx - half, cy - half, cx + half, cy + half])
+    }
+
+    fn mf(burst: i64, subject: Option<[f64; 4]>) -> MomentFrame {
+        MomentFrame {
+            burst,
+            taken: None,
+            subject,
+        }
+    }
+
+    #[test]
+    fn a_steady_burst_stays_one_moment() {
+        let frames: Vec<_> = (0..10).map(|_| mf(1, boxed(0.5, 0.5, 0.1))).collect();
+        assert_eq!(split_moments(&frames), vec![1; 10]);
+    }
+
+    #[test]
+    fn a_car_growing_from_two_to_thirty_percent_becomes_a_few_moments() {
+        let frames: Vec<_> = (0..20)
+            .map(|i| mf(1, boxed(0.5, 0.5, 0.02 + 0.28 * f64::from(i) / 19.0)))
+            .collect();
+        let keys = split_moments(&frames);
+        let moments = *keys.iter().max().unwrap();
+        assert!((3..=5).contains(&moments), "{keys:?}");
+        assert!(keys.windows(2).all(|w| w[0] <= w[1]), "{keys:?}");
+        assert_eq!(keys[0], 1);
+    }
+
+    #[test]
+    fn a_centre_jump_splits_the_burst() {
+        let mut frames: Vec<_> = (0..5).map(|_| mf(1, boxed(0.3, 0.5, 0.1))).collect();
+        frames.extend((0..5).map(|_| mf(1, boxed(0.8, 0.5, 0.1))));
+        assert_eq!(split_moments(&frames), vec![1, 1, 1, 1, 1, 2, 2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn different_bursts_never_merge() {
+        let frames = [
+            mf(1, boxed(0.5, 0.5, 0.1)),
+            mf(2, boxed(0.5, 0.5, 0.1)),
+            mf(1, boxed(0.5, 0.5, 0.1)),
+            mf(2, boxed(0.5, 0.5, 0.1)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 2, 1, 2]);
+    }
+
+    #[test]
+    fn a_trailing_single_frame_merges_back() {
+        let mut frames: Vec<_> = (0..4).map(|_| mf(1, boxed(0.5, 0.5, 0.1))).collect();
+        frames.push(mf(1, boxed(0.5, 0.5, 0.5)));
+        assert_eq!(split_moments(&frames), vec![1, 1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn subjects_that_appear_or_vanish_split_but_none_throughout_stays_one() {
+        let frames = [
+            mf(1, None),
+            mf(1, None),
+            mf(1, None),
+            mf(1, boxed(0.5, 0.5, 0.1)),
+            mf(1, boxed(0.5, 0.5, 0.1)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 1, 1, 2, 2]);
+        let none: Vec<_> = (0..6).map(|_| mf(1, None)).collect();
+        assert_eq!(split_moments(&none), vec![1; 6]);
     }
 }
