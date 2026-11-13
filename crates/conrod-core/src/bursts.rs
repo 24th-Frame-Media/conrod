@@ -13,6 +13,11 @@ use std::collections::BTreeMap;
 /// gap being detected is the one between two cars, not between two frames.
 pub const BURST_GAP_SECONDS: f64 = 4.0;
 
+/// The gap the engine groups with when a job carries no setting: tight enough
+/// that a lull at the corner does not split a burst, loose enough to keep the
+/// next car out of it.
+pub const DEFAULT_BURST_GAP_SECONDS: f64 = 1.5;
+
 /// The tags that identify a body and a moment.
 pub const TAGS: [&str; 9] = [
     "SerialNumber",
@@ -248,20 +253,29 @@ pub const DUPE_BITS: u32 = 10;
 /// Tighter bound for a pair with no embeddings to confirm it (scenery, crowds).
 pub const DUPE_BITS_UNCONFIRMED: u32 = 4;
 
+/// Re-shoots of one scene happen minutes apart, not hours: two timed frames
+/// further apart than this are never compared, which also keeps look-alikes
+/// from different sessions out of one stack.
+pub const DUPE_WINDOW_SECONDS: f64 = 600.0;
+
 /// One frame as the duplicate finder sees it.
 pub struct DupeFrame {
     pub id: i64,
     pub phash: u64,
     pub burst: Option<i64>,
+    /// Seconds since the epoch; `None` when the file carries no time.
+    pub taken: Option<f64>,
     /// Unit-vector embeddings of the frame's subjects.
     pub looks: Vec<Vec<f32>>,
 }
 
 /// Re-shoots of the same picture across the whole shoot: pHash within
 /// [`DUPE_BITS`] as candidates, confirmed by any subject pair's cosine at or
-/// above `same`, joined transitively. Pairs within one burst are skipped since
-/// the burst already stacks them. Returns frame id -> group key (the group's
-/// smallest id), only for frames in a group of two or more.
+/// above `same`, joined transitively. Only pairs shot within
+/// [`DUPE_WINDOW_SECONDS`] of each other are compared; a frame with no time is
+/// offered every frame. Pairs within one burst are skipped since the burst
+/// already stacks them. Returns frame id -> group key (the group's smallest
+/// id), only for frames in a group of two or more.
 pub fn near_dupes(frames: &[DupeFrame], same: f32) -> BTreeMap<i64, i64> {
     let mut parent: Vec<usize> = (0..frames.len()).collect();
     fn root(p: &mut [usize], mut i: usize) -> usize {
@@ -271,30 +285,53 @@ pub fn near_dupes(frames: &[DupeFrame], same: f32) -> BTreeMap<i64, i64> {
         }
         i
     }
-    // ponytail: O(n²) Hamming scan, fine to ~20k frames; bucket by hash prefix beyond.
-    for i in 0..frames.len() {
-        for j in i + 1..frames.len() {
-            let (a, b) = (&frames[i], &frames[j]);
-            if a.burst.is_some() && a.burst == b.burst {
-                continue;
+    fn consider(frames: &[DupeFrame], parent: &mut [usize], same: f32, i: usize, j: usize) {
+        let (a, b) = (&frames[i], &frames[j]);
+        if a.burst.is_some() && a.burst == b.burst {
+            return;
+        }
+        let bits = (a.phash ^ b.phash).count_ones();
+        if bits > DUPE_BITS {
+            return;
+        }
+        let confirmed = if a.looks.is_empty() || b.looks.is_empty() {
+            bits <= DUPE_BITS_UNCONFIRMED
+        } else {
+            a.looks.iter().any(|x| {
+                b.looks
+                    .iter()
+                    .any(|y| x.iter().zip(y).map(|(p, q)| p * q).sum::<f32>() >= same)
+            })
+        };
+        if confirmed {
+            let (ra, rb) = (root(parent, i), root(parent, j));
+            parent[ra.max(rb)] = ra.min(rb);
+        }
+    }
+    let mut timed: Vec<(usize, f64)> = frames
+        .iter()
+        .enumerate()
+        .filter_map(|(i, frame)| Some((i, frame.taken?)))
+        .collect();
+    timed.sort_by(|&(a, ta), &(b, tb)| {
+        ta.total_cmp(&tb)
+            .then_with(|| frames[a].id.cmp(&frames[b].id))
+    });
+    // A sliding window over the time order: each frame only meets the next few
+    // minutes of frames, not the whole shoot.
+    for p in 0..timed.len() {
+        let (i, start) = timed[p];
+        for &(j, when) in &timed[p + 1..] {
+            if when - start > DUPE_WINDOW_SECONDS {
+                break;
             }
-            let bits = (a.phash ^ b.phash).count_ones();
-            if bits > DUPE_BITS {
-                continue;
-            }
-            let confirmed = if a.looks.is_empty() || b.looks.is_empty() {
-                bits <= DUPE_BITS_UNCONFIRMED
-            } else {
-                a.looks.iter().any(|x| {
-                    b.looks
-                        .iter()
-                        .any(|y| x.iter().zip(y).map(|(p, q)| p * q).sum::<f32>() >= same)
-                })
-            };
-            if confirmed {
-                let (ra, rb) = (root(&mut parent, i), root(&mut parent, j));
-                parent[ra.max(rb)] = ra.min(rb);
-            }
+            consider(frames, &mut parent, same, i, j);
+        }
+    }
+    // A frame with no time is rare, so it still meets every other frame.
+    for i in (0..frames.len()).filter(|&i| frames[i].taken.is_none()) {
+        for j in (0..frames.len()).filter(|&j| j != i && (frames[j].taken.is_some() || j > i)) {
+            consider(frames, &mut parent, same, i, j);
         }
     }
     let mut members: BTreeMap<usize, Vec<i64>> = BTreeMap::new();
@@ -319,11 +356,19 @@ mod dupe_tests {
             id,
             phash,
             burst,
+            taken: None,
             looks: if look.is_empty() {
                 vec![]
             } else {
                 vec![look.to_vec()]
             },
+        }
+    }
+
+    fn at(taken: f64, id: i64, phash: u64, burst: Option<i64>, look: &[f32]) -> DupeFrame {
+        DupeFrame {
+            taken: Some(taken),
+            ..f(id, phash, burst, look)
         }
     }
 
@@ -349,5 +394,62 @@ mod dupe_tests {
             assert_eq!(got.get(&id), Some(&1), "frame {id}");
         }
         assert_eq!(got.len(), 4, "{got:?}");
+    }
+
+    #[test]
+    fn a_reshoot_minutes_apart_joins_but_one_from_another_session_does_not() {
+        let car = [1.0, 0.0];
+        let close = [
+            at(1_000.0, 1, 0, Some(1), &car),
+            at(1_030.0, 2, 0b111, Some(2), &car),
+        ];
+        assert_eq!(
+            near_dupes(&close, 0.9),
+            BTreeMap::from([(1, 1), (2, 1)]),
+            "30 s apart in different bursts is a re-shoot"
+        );
+        let later = [
+            at(1_000.0, 1, 0, Some(1), &car),
+            at(1_000.0 + 2.0 * 3600.0, 2, 0b111, Some(2), &car),
+        ];
+        assert!(
+            near_dupes(&later, 0.9).is_empty(),
+            "two hours apart is a look-alike, not a re-shoot"
+        );
+    }
+
+    #[test]
+    fn an_untimed_frame_still_pairs_with_a_timed_look_alike() {
+        let car = [1.0, 0.0];
+        let frames = [at(1_000.0, 1, 0, Some(1), &car), f(2, 0b111, Some(2), &car)];
+        assert_eq!(
+            near_dupes(&frames, 0.9),
+            BTreeMap::from([(1, 1), (2, 1)]),
+            "no clock is not a reason to stop comparing"
+        );
+    }
+
+    #[test]
+    fn five_thousand_unrelated_frames_finish_quickly() {
+        // The id sits in four 16-bit lanes, so any two hashes differ in at
+        // least four bits. The look vector is that hash as +/-1s, whose cosine
+        // (1 - bits/32) never reaches 0.9, so nothing is confirmed.
+        let frames: Vec<DupeFrame> = (0..5_000)
+            .map(|i| {
+                let phash = i as u64 * 0x0001_0001_0001_0001;
+                let looks = (0..64)
+                    .map(|b| if phash >> b & 1 == 1 { 0.125 } else { -0.125 })
+                    .collect();
+                DupeFrame {
+                    looks: vec![looks],
+                    ..at(1_000.0 + i as f64, i, phash, Some(i), &[])
+                }
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let got = near_dupes(&frames, 0.9);
+        let took = started.elapsed();
+        assert!(got.is_empty(), "{got:?}");
+        assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
     }
 }

@@ -15,6 +15,7 @@ use conrod_core::{
 };
 use conrod_vision::faces::{FaceEmbedder, IDENTITY_DIM, SAME_PERSON};
 use conrod_vision::{detect::Device, imageops::Rgb, similarity};
+use rayon::prelude::*;
 use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -390,17 +391,22 @@ pub(crate) fn near_duplicates(d: &Desktop, job: i64, stop: &AtomicBool) -> Resul
         "SELECT id, thumb_path FROM images WHERE job_id=? AND phash IS NULL AND thumb_path IS NOT NULL",
         [job],
     )?;
-    let mut hashed = Vec::new();
-    for row in &todo {
-        if stop.load(Ordering::Relaxed) {
-            return Ok(0);
-        }
-        let gray = row["thumb_path"]
-            .as_str()
-            .and_then(|p| conrod_vision::imageops::Gray::open(std::path::Path::new(p)).ok());
-        if let (Some(id), Some(gray)) = (row["id"].as_i64(), gray) {
-            hashed.push((id, similarity::phash(&gray) as i64));
-        }
+    // Opening and hashing a thumbnail is decode-bound: the rows are independent,
+    // so they go through the pool and come back in the same order they went in.
+    let hashed: Vec<(i64, i64)> = if stop.load(Ordering::Relaxed) {
+        Vec::new()
+    } else {
+        todo.par_iter()
+            .filter_map(|row| {
+                let gray = row["thumb_path"].as_str().and_then(|p| {
+                    conrod_vision::imageops::Gray::open(std::path::Path::new(p)).ok()
+                })?;
+                Some((row["id"].as_i64()?, similarity::phash(&gray) as i64))
+            })
+            .collect()
+    };
+    if stop.load(Ordering::Relaxed) {
+        return Ok(0);
     }
     {
         let db = lock(&d.db);
@@ -413,7 +419,7 @@ pub(crate) fn near_duplicates(d: &Desktop, job: i64, stop: &AtomicBool) -> Resul
     }
     let frames = rows(
         &lock(&d.reader),
-        "SELECT id, phash, burst_key FROM images WHERE job_id=? AND phash IS NOT NULL AND status='done' AND rejected=0",
+        "SELECT id, phash, burst_key, taken_at FROM images WHERE job_id=? AND phash IS NOT NULL AND status='done' AND rejected=0",
         [job],
     )?;
     let looks = rows(
@@ -438,6 +444,7 @@ pub(crate) fn near_duplicates(d: &Desktop, job: i64, stop: &AtomicBool) -> Resul
                 id,
                 phash: r["phash"].as_i64()? as u64,
                 burst: r["burst_key"].as_i64(),
+                taken: r["taken_at"].as_f64(),
                 looks: by_image.remove(&id).unwrap_or_default(),
             })
         })

@@ -26,6 +26,17 @@ fn now() -> f64 {
         .as_secs_f64()
 }
 
+/// The burst gap to group with: a positive setting is honoured as-is, anything
+/// else falls back to the default. 4.0 was the old settings default and still
+/// sits in stored settings files, so it keeps meaning the default.
+fn burst_gap(setting: f64) -> f64 {
+    if setting <= 0.0 || (setting - 4.0).abs() < f64::EPSILON {
+        conrod_core::bursts::DEFAULT_BURST_GAP_SECONDS
+    } else {
+        setting
+    }
+}
+
 pub struct Desktop {
     pub hub: TaskHub,
     pub root: PathBuf,
@@ -698,11 +709,7 @@ impl Desktop {
                 burst: 0,
             })
             .collect();
-        let effective_gap = if (gap - 4.0).abs() < f64::EPSILON || gap <= 0.0 {
-            1.5
-        } else {
-            gap
-        };
+        let effective_gap = burst_gap(gap);
         conrod_core::bursts::assign_bursts(&mut frames, effective_gap);
         let tx = db.unchecked_transaction().map_err(err)?;
         for frame in frames {
@@ -771,6 +778,23 @@ pub fn save_jpeg(rgb: &Rgb, path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_gap_setting_defaults_to_one_and_a_half_seconds_and_honours_a_value() {
+        assert_eq!(
+            burst_gap(Settings::default().burst_gap),
+            conrod_core::bursts::DEFAULT_BURST_GAP_SECONDS,
+            "the stored default is the legacy 4.0, which still means the default"
+        );
+        assert_eq!(
+            burst_gap(conrod_core::bursts::DEFAULT_BURST_GAP_SECONDS),
+            1.5
+        );
+        for nonsense in [0.0, -2.5] {
+            assert_eq!(burst_gap(nonsense), 1.5, "setting {nonsense} falls back");
+        }
+        assert_eq!(burst_gap(2.5), 2.5, "a user's gap is honoured");
+    }
 
     #[test]
     fn delete_all_known_removes_every_vehicle() {
