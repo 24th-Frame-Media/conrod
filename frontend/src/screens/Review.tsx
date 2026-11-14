@@ -4,7 +4,7 @@ import { Facets } from '../components/Facets';
 import { Inspector } from '../components/Inspector';
 import { PhotoGrid } from '../components/PhotoGrid';
 import { LoadableImage } from '../components/Media';
-import { burstGroups, burstPickOf, defaultFilters, frameStars, parseAttributes, filename } from '../lib/review';
+import { burstGroups, burstPickOf, burstRanksOf, defaultFilters, frameStars, parseAttributes, filename } from '../lib/review';
 import { StarPill } from '../components/Stars';
 import { BurstFilmstrip } from '../components/BurstFilmstrip';
 import { asset, call, engine } from '../lib/api';
@@ -25,7 +25,7 @@ export type ReviewView = 'grid' | 'loupe' | 'compare';
 export type ReviewVerbs = { view: ReviewView; setView: (v: ReviewView) => void; stepFrame: (delta: number) => void; stepBurst: (delta: number) => void; mark: (values: MarkValues) => void; rejected: boolean };
 export const noReviewVerbs: ReviewVerbs = { view: 'grid', setView: () => {}, stepFrame: () => {}, stepBurst: () => {}, mark: () => {}, rejected: false };
 
-type Stack = { key: string; frames: Frame[]; pick: Frame; title: string; subtitle: string; photoWord?: string };
+type Stack = { key: string; frames: Frame[]; pick: Frame; title: string; subtitle: string; photoWord?: string; ranks?: Map<number, number> };
 
 /** Shared renderer for grouped-photo grids (vehicle identity or burst grouping): identical markup either way. */
 function StackGrid({ stacks, rv, onOpenViewer, ariaLabel, emptyTitle }: {
@@ -59,6 +59,7 @@ function StackGrid({ stacks, rv, onOpenViewer, ariaLabel, emptyTitle }: {
             pickId={group.pick.id}
             selectedId={rv.selected}
             culled={(frame) => Boolean(rv.facts.get(frame.id)?.cull)}
+            rankOf={(frame) => group.ranks?.get(frame.id)}
             onSelect={rv.setSelected}
             onOpen={onOpenViewer}
           />
@@ -191,14 +192,15 @@ function BurstStacks({ rv, onOpenViewer, dupes = false }: { rv: ReviewModel; onO
         const sortedByBest = [...rawFrames].sort((a, b) => scoreOf(b) - scoreOf(a));
         const pick = sortedByBest.find((f) => !rv.facts.get(f.id)?.cull) ?? sortedByBest[0];
         const remaining = rawFrames.filter((f) => f.id !== pick.id).sort((a, b) => a.id - b.id);
-        const frames = [pick, ...remaining];
+        const ranks = burstRanksOf(rawFrames, rv.facts);
+        const frames = [pick, ...remaining].filter((f) => rv.filters.view !== 'top3' || ranks.has(f.id));
         const facts = rv.facts.get(pick.id);
         const title = facts?.vehicle || facts?.plate || (facts?.number && `#${facts.number}`) || filename(pick.path);
         const subtitle = `${frames.length} shot${frames.length === 1 ? '' : 's'}${facts?.plate ? ` · ${facts.plate}` : ''}${facts?.number ? ` · #${facts.number}` : ''}${facts?.team ? ` · ${facts.team}` : ''}`;
-        return { key, frames, pick, title, subtitle };
+        return { key, frames, pick, title, subtitle, ranks };
       })
       .sort((a, b) => a.pick.id - b.pick.id);
-  }, [rv.review.frames, rv.facts, visibleIds, dupes]);
+  }, [rv.review.frames, rv.facts, rv.filters.view, visibleIds, dupes]);
 
   return <StackGrid stacks={bursts} rv={rv} onOpenViewer={onOpenViewer} ariaLabel={dupes ? 'Duplicate stacks' : 'Burst stacks'}
     emptyTitle={dupes ? 'No re-shot frames found across this shoot.' : 'No burst stacks match these filters.'} />;
@@ -526,7 +528,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         <input id="search" type="search" aria-label="Search photos" placeholder="Search make, team, plate…" spellCheck={false}
           value={filters.search} onChange={(e) => patchFilters({ search: e.target.value })} />
         <select aria-label="Photo filter" value={filters.view} onChange={(e) => patchFilters({ view: e.target.value as typeof filters.view })}>
-          <option value="all">All photos</option><option value="kept">Kept photos</option><option value="rejected">Culled / rejected</option><option value="picks">Burst picks</option><option value="review">Needs review</option><option value="needsLook">Needs a look</option>
+          <option value="all">All photos</option><option value="kept">Kept photos</option><option value="rejected">Culled / rejected</option><option value="picks">Burst picks</option><option value="top3">Show top 3 per burst</option><option value="review">Needs review</option><option value="needsLook">Needs a look</option>
         </select>
         <select aria-label="Group photos" value={grouping} onChange={(e) => setGrouping(e.target.value as typeof grouping)}>
           <option value="bursts">Group: Burst stacks</option><option value="vehicles">Group: By vehicle</option><option value="dupes">Group: Duplicates</option><option value="flat">Group: Individual photos</option>
