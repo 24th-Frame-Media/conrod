@@ -111,7 +111,7 @@ export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Re
 /** Frames that survive the toolbar. */
 export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f: Filters): Frame[] {
   const needle = f.search.trim().toLowerCase();
-  const top3 = new Set(f.view === 'top3' ? burstGroups(frames).flatMap((g) => [...burstRanksOf(g, facts).keys()]) : []);
+  const top3 = f.view === 'top3' ? burstRankMap(frames, facts) : null;
   const keep = (frame: Frame) => {
     const x = facts.get(frame.id);
     if (needle && !x?.text.includes(needle)) return false;
@@ -120,7 +120,7 @@ export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f
     if (f.view === 'kept') return !x?.cull;
     if (f.view === 'review') return !x?.cull && !x?.reviewed;
     if (f.view === 'picks') return !x?.cull && Boolean(x?.pick);
-    if (f.view === 'top3') return top3.has(frame.id);
+    if (f.view === 'top3') return Boolean(top3?.has(frame.id));
     if (f.view === 'needsLook') return !x?.cull && needsLook(x);
     return true;
   };
@@ -185,6 +185,13 @@ export function burstPickOf(group: Frame[], facts: Map<number, FrameFacts>): Fra
 /** Candidate rank 1..3 per frame id for one burst; the flagged pick is always rank 1. Frames beyond 3 are absent. */
 export function burstRanksOf(group: Frame[], facts: Map<number, FrameFacts>): Map<number, number> {
   return burstTopRanks(group, (f: Frame) => Boolean(facts.get(f.id)?.pick));
+}
+
+/** Candidate ranks for every burst in `frames`, keyed by frame id. */
+export function burstRankMap(frames: Frame[], facts: Map<number, FrameFacts>): Map<number, number> {
+  const ranks = new Map<number, number>();
+  for (const group of burstGroups(frames)) for (const [id, rank] of burstRanksOf(group, facts)) ranks.set(id, rank);
+  return ranks;
 }
 
 export type Verdict = 'good' | 'fair' | 'poor' | 'none';

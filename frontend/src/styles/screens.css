@@ -214,7 +214,9 @@
 .focus.good { color: var(--good); } .focus.fair { color: var(--warn2); } .focus.poor { color: var(--bad); } .focus.none { color: var(--text-mute); }
 .focus.panning { color: var(--scan); border-color: #1c4a3c; top: 32px; }
 .focus.keeper { color: #dbeafe; background: rgba(37, 99, 235, .85); border-color: #3b82f6; top: 56px; }
-.card:not(:has(.focus.panning)) .focus.keeper { top: 32px; }
+.focus.rank { color: var(--text); background: rgba(0, 0, 0, .78); border-color: var(--line); top: 56px; }
+.card:not(:has(.focus.panning)) .focus.keeper, .card:not(:has(.focus.panning)) .focus.rank { top: 32px; }
+.burst-strip .focus.rank { top: 4px; right: 4px; z-index: 2; }
 .focus.picked { color: #dcfce7; background: rgba(22, 163, 74, .85); border-color: var(--good); top: 8px; left: 8px; right: auto; }
 .focus.stars.by-hand { color: var(--text); background: rgba(47, 109, 246, .3); border-color: var(--accent); }
 .icon-btn { position: absolute; top: 8px; left: 8px; z-index: 2; width: 25px; height: 25px; padding: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .6); backdrop-filter: blur(4px); border: 1px solid var(--line); border-radius: 6px; color: var(--text-dim); font-size: 12px; line-height: 1; opacity: 0; transition: opacity .12s, color .12s, border-color .12s; }

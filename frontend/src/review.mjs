@@ -5,14 +5,16 @@ export const subjectExcluded = (frame, d) => Boolean(frame.rejected || d.rejecte
 export const frameExcluded = (frame, detections) => Boolean(frame.rejected || (detections.length && detections.every(d => subjectExcluded(frame, d))));
 // Burst candidates: manual stars first, then not rejected, then rating, then the engine's pick on ties.
 // The engine's pick always takes rank 1; the rest of the top `top` follow the ordering.
+// Rejected frames are not candidates unless the photographer rated them by hand; a missing or NaN rating sorts last.
+const ratingOf = f => Number.isFinite(f.rating) ? f.rating : -1;
 export function burstTopRanks(group, isPick, top = 3) {
-  const ordered = [...group].sort((a, b) =>
+  const eligible = group.filter(f => !f.rejected || f.manual_stars != null);
+  const ordered = [...eligible].sort((a, b) =>
     Number(b.manual_stars != null) - Number(a.manual_stars != null) ||
     (b.manual_stars ?? 0) - (a.manual_stars ?? 0) ||
-    Number(!b.rejected) - Number(!a.rejected) ||
-    (b.rating ?? -1) - (a.rating ?? -1) ||
+    ratingOf(b) - ratingOf(a) ||
     Number(isPick(b)) - Number(isPick(a)));
-  const pick = group.find(isPick);
+  const pick = eligible.find(isPick);
   const list = pick ? [pick, ...ordered.filter((f) => f !== pick)] : ordered;
   return new Map(list.slice(0, top).map((f, i) => [f.id, i + 1]));
 }

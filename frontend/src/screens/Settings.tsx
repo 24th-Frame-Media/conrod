@@ -378,13 +378,27 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                   k === 'blur_strictness' ? (
                     <div className="setting" key={k}>
                       <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
-                      <div className="segmented" role="radiogroup" aria-label={labelOf(k)}>
-                        {BLUR_STRICTNESS.map((s) => (
+                      <div
+                        className="segmented"
+                        role="radiogroup"
+                        aria-label={labelOf(k)}
+                        onKeyDown={(e) => {
+                          const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+                          if (!step) return;
+                          e.preventDefault();
+                          const at = BLUR_STRICTNESS.findIndex((s) => s.id === String(draft[k]));
+                          const next = BLUR_STRICTNESS[(Math.max(at, 0) + step + BLUR_STRICTNESS.length) % BLUR_STRICTNESS.length];
+                          setDraft((d) => ({ ...d, [k]: next.id }));
+                          e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[BLUR_STRICTNESS.indexOf(next)]?.focus();
+                        }}
+                      >
+                        {BLUR_STRICTNESS.map((s, i) => (
                           <button
                             key={s.id}
                             type="button"
                             role="radio"
                             aria-checked={String(draft[k]) === s.id}
+                            tabIndex={String(draft[k]) === s.id || (i === 0 && !BLUR_STRICTNESS.some((o) => o.id === String(draft[k]))) ? 0 : -1}
                             className={`segmented-btn ${String(draft[k]) === s.id ? 'active' : ''}`}
                             onClick={() => setDraft((d) => ({ ...d, [k]: s.id }))}
                           >

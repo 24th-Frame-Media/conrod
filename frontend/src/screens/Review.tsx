@@ -4,7 +4,7 @@ import { Facets } from '../components/Facets';
 import { Inspector } from '../components/Inspector';
 import { PhotoGrid } from '../components/PhotoGrid';
 import { LoadableImage } from '../components/Media';
-import { burstGroups, burstPickOf, burstRanksOf, defaultFilters, frameStars, parseAttributes, filename } from '../lib/review';
+import { burstGroups, burstPickOf, burstRankMap, burstRanksOf, defaultFilters, frameStars, parseAttributes, filename } from '../lib/review';
 import { StarPill } from '../components/Stars';
 import { BurstFilmstrip } from '../components/BurstFilmstrip';
 import { asset, call, engine } from '../lib/api';
@@ -190,10 +190,13 @@ function BurstStacks({ rv, onOpenViewer, dupes = false }: { rv: ReviewModel; onO
       .filter(([, rawFrames]) => rawFrames.some((f) => visibleIds.has(f.id)) && (!dupes || rawFrames.length > 1))
       .map(([key, rawFrames]) => {
         const sortedByBest = [...rawFrames].sort((a, b) => scoreOf(b) - scoreOf(a));
-        const pick = sortedByBest.find((f) => !rv.facts.get(f.id)?.cull) ?? sortedByBest[0];
-        const remaining = rawFrames.filter((f) => f.id !== pick.id).sort((a, b) => a.id - b.id);
         const ranks = burstRanksOf(rawFrames, rv.facts);
-        const frames = [pick, ...remaining].filter((f) => rv.filters.view !== 'top3' || ranks.has(f.id));
+        const top3 = rv.filters.view === 'top3';
+        const pick = (top3 ? rawFrames.find((f) => ranks.get(f.id) === 1) : undefined)
+          ?? sortedByBest.find((f) => !rv.facts.get(f.id)?.cull) ?? sortedByBest[0];
+        const remaining = rawFrames.filter((f) => f.id !== pick.id && (!top3 || ranks.has(f.id)))
+          .sort(top3 ? (a, b) => (ranks.get(a.id) ?? 0) - (ranks.get(b.id) ?? 0) : (a, b) => a.id - b.id);
+        const frames = [pick, ...remaining];
         const facts = rv.facts.get(pick.id);
         const title = facts?.vehicle || facts?.plate || (facts?.number && `#${facts.number}`) || filename(pick.path);
         const subtitle = `${frames.length} shot${frames.length === 1 ? '' : 's'}${facts?.plate ? ` · ${facts.plate}` : ''}${facts?.number ? ` · #${facts.number}` : ''}${facts?.team ? ` · ${facts.team}` : ''}`;
@@ -247,6 +250,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   // 1.4: the burst groups behind the loupe/compare filmstrip and the up/down (across bursts) vs. left/right (within
   // a burst, clamped at its edges) hotkeys. Grid view keeps the plain flat-list step it always had.
   const groups = useMemo(() => burstGroups(frames), [frames]);
+  const ranks = useMemo(() => burstRankMap(review.frames, facts), [review.frames, facts]);
   const withinBurst = (base: Frame | null, delta: number): Frame | null => {
     if (!base) return null;
     const group = groups.find((g) => g.some((f) => f.id === base.id));
@@ -647,7 +651,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           : grouping === 'bursts' || filters.view === 'stacks'
           ? <BurstStacks rv={rv} onOpenViewer={openViewer} />
           : grouping === 'vehicles' || filters.view === 'vehicles' ? <VehicleStacks rv={rv} onOpenViewer={openViewer} identifying={identifying} />
-          : <PhotoGrid frames={frames} facts={facts} selected={selected} onSelect={rv.setSelected} onOpen={openViewer}
+          : <PhotoGrid frames={frames} facts={facts} ranks={ranks} selected={selected} onSelect={rv.setSelected} onOpen={openViewer}
               onReject={(id, rejected) => void rv.mark({ rejected }, id)}
               empty={
                 <Empty icon="images" title={review.frames.length ? 'Nothing matches these filters.' : scanning ? 'Waiting for the first frames…' : 'No photographs to show yet.'}>
