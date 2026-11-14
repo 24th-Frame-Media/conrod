@@ -1,4 +1,4 @@
-import { filename, filterFrames, frameStars, frameExcluded } from '../review.mjs';
+import { burstTopRanks, filename, filterFrames, frameStars, frameExcluded } from '../review.mjs';
 import type { AttributeKey, Attributes, Detection, Facet, Frame, Review, Sort, View } from './types';
 
 export { filename, frameStars, frameExcluded };
@@ -111,6 +111,7 @@ export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Re
 /** Frames that survive the toolbar. */
 export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f: Filters): Frame[] {
   const needle = f.search.trim().toLowerCase();
+  const top3 = new Set(f.view === 'top3' ? burstGroups(frames).flatMap((g) => [...burstRanksOf(g, facts).keys()]) : []);
   const keep = (frame: Frame) => {
     const x = facts.get(frame.id);
     if (needle && !x?.text.includes(needle)) return false;
@@ -119,6 +120,7 @@ export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f
     if (f.view === 'kept') return !x?.cull;
     if (f.view === 'review') return !x?.cull && !x?.reviewed;
     if (f.view === 'picks') return !x?.cull && Boolean(x?.pick);
+    if (f.view === 'top3') return top3.has(frame.id);
     if (f.view === 'needsLook') return !x?.cull && needsLook(x);
     return true;
   };
@@ -178,6 +180,11 @@ export function burstGroups(frames: Frame[]): Frame[][] {
 /** The burst's keeper: the flagged pick, or its first frame. */
 export function burstPickOf(group: Frame[], facts: Map<number, FrameFacts>): Frame {
   return group.find((f) => facts.get(f.id)?.pick) ?? group[0];
+}
+
+/** Candidate rank 1..3 per frame id for one burst; the flagged pick is always rank 1. Frames beyond 3 are absent. */
+export function burstRanksOf(group: Frame[], facts: Map<number, FrameFacts>): Map<number, number> {
+  return burstTopRanks(group, (f: Frame) => Boolean(facts.get(f.id)?.pick));
 }
 
 export type Verdict = 'good' | 'fair' | 'poor' | 'none';
