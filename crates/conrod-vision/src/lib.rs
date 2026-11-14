@@ -6,6 +6,7 @@ pub mod colour;
 pub mod detect;
 pub mod edgeblur;
 pub mod faces;
+pub mod framing;
 pub mod imageops;
 pub mod ocr;
 pub mod plates;
