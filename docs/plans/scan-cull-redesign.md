@@ -73,6 +73,22 @@ Frontend: Scan screen shown for an album until the scan finishes (other albums s
 thumbnail strip/grid with small verdict marks, stage list with ticks, counts, ETA, cancel; summary card
 with one button into Review.
 
+**Pipeline view (user request):** show which AI component is active and what each worker is doing, as a
+workflow flowchart. The engine already runs worker pools (`settings.rs:117-120`: preview_workers 4,
+detect_workers 2, analysis_workers 3, workers; `lib.rs:739-746`; `operations.rs:130` identify workers)
+but the UI shows none of it, so the scan looks single-threaded.
+- Engine: a `pipeline` snapshot in the progress event: per stage node `{id, label, model (e.g. "YOLO
+  v8 · DirectML", "edge blur · CPU", "face detector", "qwen2.5vl:7b via Ollama"), device, workers_total,
+  workers_busy, queue_len, done, rate_per_s}` and per worker `{stage, worker_index, state: idle|busy|
+  waiting(gpu/lock/ollama), file, step, ms_in_step}`. Instrument the existing pools; no new threads needed.
+- Frontend: horizontal flowchart of stage nodes connected by arrows (Read → Detect → Sharpness/blur →
+  Faces → Identify → Group → Pick), each node showing model, device, busy/total workers, queue depth and
+  rate; the bottleneck node highlighted. Expand a node to see its worker lanes (one row per worker:
+  current file thumbnail, step, elapsed).
+- Worker counts per stage adjustable (Settings > Performance, and live +/- on a node during a scan
+  if the pool supports resizing; otherwise applies to the next scan and says so). Sensible caps: GPU
+  stages limited by VRAM, Ollama by its parallel setting, CPU stages by cores minus headroom for the UI.
+
 ### F4: Culling speed
 Auto-advance, Tab, N, undo/redo log, survey/compare of a whole burst with synced zoom, face/eye zoom panel.
 
