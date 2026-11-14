@@ -12,3 +12,4 @@ pub mod plates;
 pub mod quality;
 pub mod sharpness;
 pub mod similarity;
+pub mod streaks;

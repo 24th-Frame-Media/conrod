@@ -199,7 +199,9 @@ fn gradients(p: &[f32], w: usize, h: usize) -> (Vec<f32>, Vec<f32>) {
 
 /// The gradient normal quantised to 0/45/90/135 degrees, without `atan2`:
 /// `tan(22.5deg) = 0.4142`, so the 45-degree sectors are half the 90s.
-fn dir_bin(rx: f32, ry: f32) -> u8 {
+/// Public so a caller can count edges per bin with the same quantisation this
+/// module's per-direction estimates use.
+pub fn dir_bin(rx: f32, ry: f32) -> u8 {
     let (ax, ay) = (rx.abs(), ry.abs());
     if ax >= 2.414_213_6 * ay {
         0
