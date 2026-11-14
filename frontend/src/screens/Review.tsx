@@ -5,7 +5,7 @@ import { Inspector } from '../components/Inspector';
 import { PhotoGrid } from '../components/PhotoGrid';
 import { LoadableImage } from '../components/Media';
 import { burstGroups, burstPickOf, burstRankMap, burstRanksOf, defaultFilters, frameStars, parseAttributes, filename } from '../lib/review';
-import { StarPill } from '../components/Stars';
+import { KeeperMark, StarPill } from '../components/Stars';
 import { BurstFilmstrip } from '../components/BurstFilmstrip';
 import { asset, call, engine } from '../lib/api';
 import { useRun } from '../state/hooks';
@@ -14,6 +14,7 @@ import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
 import { ShootSettingsModal } from '../components/ShootSettingsModal';
 import type { Frame, Job, KnownVehicle, MarkValues, Settings, Status, Task } from '../lib/types';
 import { profileLabel, profileParent } from '../lib/types';
+import { facetsFor } from '../lib/facets.mjs';
 import type { ReviewModel } from '../state/useReview';
 import { subjectExcluded } from '../review.mjs';
 import { Viewer } from './Viewer';
@@ -42,7 +43,7 @@ function StackGrid({ stacks, rv, onOpenViewer, ariaLabel, emptyTitle }: {
             <LoadableImage src={asset(group.pick.thumb_path)} alt={group.title} />
             <StarPill frame={group.pick} />
             <span className="stack-count">{group.frames.length}</span>
-            <span className="focus keeper">Best</span>
+            <KeeperMark />
           </div>
           <div className="burst-caption">
             <b>{group.title}</b>
@@ -102,7 +103,7 @@ function VehicleStacks({ rv, onOpenViewer, identifying }: { rv: ReviewModel; onO
       .sort((a, b) => a.pick.id - b.pick.id);
   }, [rv.review.detections, rv.review.frames, rv.facts, identifying, visible]);
 
-  return <StackGrid stacks={stacks} rv={rv} onOpenViewer={onOpenViewer} ariaLabel="Vehicle stacks" emptyTitle="No vehicles match these filters." />;
+  return <StackGrid stacks={stacks} rv={rv} onOpenViewer={onOpenViewer} ariaLabel="Vehicle stacks" emptyTitle="No vehicles match these filters" />;
 }
 
 function currentItem(task: Task): string {
@@ -159,7 +160,7 @@ function PipelineStepper({ job, scanning, identified, identifying, written }: { 
     <nav className="pipeline" aria-label="Processing pipeline">
       {steps.map((step, i) => (
         <span key={step.key} className={`pipeline-step${step.done ? ' done' : ''}${step.active ? ' active' : ''}`}>
-          <span className="pipeline-dot">{step.done ? '✓' : i + 1}</span>
+          <span className="pipeline-dot">{step.done ? <Icon name="check" size={12} /> : i + 1}</span>
           <span className="pipeline-label">{step.label}</span>
         </span>
       ))}
@@ -308,6 +309,9 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const kind = currentParent === 'portrait' ? 'portrait'
     : currentParent === 'motorsport' ? (currentJob?.include_people ? 'motorsport+people' : 'motorsport')
     : 'mixed';
+  // Vehicle-only controls (by-vehicle grouping, "needs a look" for unread numbers and plates) go away for shoots with no vehicles to read.
+  const vehicleBrowse = facetsFor(currentProfile).some((k) => k === 'number' || k === 'plate' || k === 'make');
+  const groupingNow = grouping === 'vehicles' && !vehicleBrowse ? 'bursts' : grouping;
 
   const primaryStep = !busy && pending > 0
     ? {
@@ -526,16 +530,16 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
             title={`Preset: ${profileLabel(currentProfile)} (Click to change shoot preset or detection options)`}
             onClick={() => setShootSettingsOpen(true)}
           >
-            {profileLabel(currentProfile)} ⚙
+            {profileLabel(currentProfile)}<Icon name="sliders" />
           </button>
         )}
-        <input id="search" type="search" aria-label="Search photos" placeholder="Search make, team, plate…" spellCheck={false}
+        <input id="search" type="search" aria-label="Search photos" placeholder="Search" spellCheck={false}
           value={filters.search} onChange={(e) => patchFilters({ search: e.target.value })} />
         <select aria-label="Photo filter" value={filters.view} onChange={(e) => patchFilters({ view: e.target.value as typeof filters.view })}>
-          <option value="all">All photos</option><option value="kept">Kept photos</option><option value="rejected">Culled / rejected</option><option value="picks">Burst picks</option><option value="top3">Show top 3 per burst</option><option value="review">Needs review</option><option value="needsLook">Needs a look</option>
+          <option value="all">All photos</option><option value="kept">Kept photos</option><option value="rejected">Culled / rejected</option><option value="picks">Burst picks</option><option value="top3">Show top 3 per burst</option><option value="review">Needs review</option>{(vehicleBrowse || filters.view === 'needsLook') && <option value="needsLook">Needs a look</option>}
         </select>
-        <select aria-label="Group photos" value={grouping} onChange={(e) => setGrouping(e.target.value as typeof grouping)}>
-          <option value="bursts">Group: Burst stacks</option><option value="vehicles">Group: By vehicle</option><option value="dupes">Group: Duplicates</option><option value="flat">Group: Individual photos</option>
+        <select aria-label="Group photos" value={groupingNow} onChange={(e) => setGrouping(e.target.value as typeof grouping)}>
+          <option value="bursts">Group: Burst stacks</option>{vehicleBrowse && <option value="vehicles">Group: By vehicle</option>}<option value="dupes">Group: Duplicates</option><option value="flat">Group: Individual photos</option>
         </select>
         <select aria-label="Photo order" value={filters.sort} onChange={(e) => patchFilters({ sort: e.target.value as typeof filters.sort })}>
           <option value="frame">Filename order</option><option value="best">Highest rated first</option><option value="worst">Lowest rated first</option><option value="pick">Burst picks first</option>
@@ -646,11 +650,11 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       )}
       {identifyTask && <IdentificationBanner task={identifyTask} settings={settings} onSkip={onSkipIdentify} />}
       <div className="review-main">
-        <Facets facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
-        {grouping === 'dupes' ? <BurstStacks rv={rv} onOpenViewer={openViewer} dupes />
-          : grouping === 'bursts' || filters.view === 'stacks'
+        <Facets preset={currentProfile} facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
+        {groupingNow === 'dupes' ? <BurstStacks rv={rv} onOpenViewer={openViewer} dupes />
+          : groupingNow === 'bursts' || filters.view === 'stacks'
           ? <BurstStacks rv={rv} onOpenViewer={openViewer} />
-          : grouping === 'vehicles' || filters.view === 'vehicles' ? <VehicleStacks rv={rv} onOpenViewer={openViewer} identifying={identifying} />
+          : groupingNow === 'vehicles' || filters.view === 'vehicles' ? <VehicleStacks rv={rv} onOpenViewer={openViewer} identifying={identifying} />
           : <PhotoGrid frames={frames} facts={facts} ranks={ranks} selected={selected} onSelect={rv.setSelected} onOpen={openViewer}
               onReject={(id, rejected) => void rv.mark({ rejected }, id)}
               empty={

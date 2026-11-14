@@ -28,3 +28,5 @@ crates/conrod-app/resources/models/
 crates/conrod-app/resources/exiftool/
 
 MEMORY.md
+
+.playwright-mcp/

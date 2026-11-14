@@ -2,8 +2,9 @@ import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } fr
 import { asset } from '../lib/api';
 import { filename, frameStars, verdictOf, type FrameFacts } from '../lib/review';
 import type { Frame } from '../lib/types';
-import { RankBadge, StarPill } from './Stars';
+import { KeeperMark, RankBadge, StarPill } from './Stars';
 import { LoadableImage } from './Media';
+import { Icon } from './basics';
 
 const GAP = 10, MIN_W = 190, BODY_H = 64, PAD = 18;
 
@@ -27,11 +28,11 @@ const Card = memo(function Card({ frame, facts, rank, selected, left, top, width
         <LoadableImage className="thumb" loading="lazy" decoding="async" draggable={false} src={asset(frame.thumb_path)} alt={filename(frame.path)} />
         <StarPill frame={frame} />
         {facts?.panned && <span className="focus panning" title="Subject sharp against a blurred background. Kept, never auto-culled">panned</span>}
-        {facts?.pick && <span className="focus keeper" title="The sharpest frame of this pass">keeper</span>}
+        {facts?.pick && <KeeperMark label="Best of the burst, the sharpest frame of this pass" />}
         {rank != null && !facts?.pick && <RankBadge rank={rank} />}
         {Boolean(frame.picked) && <span className="focus picked" title="Picked (P)">picked</span>}
         <button className="icon-btn" aria-label={facts?.cull ? 'Restore for ML' : 'Reject'} title={facts?.cull ? 'Restore for ML (U)' : 'Reject (X)'}
-          onClick={(e) => { e.stopPropagation(); onReject(frame.id, !facts?.cull); }}>{facts?.cull ? '↺' : '✕'}</button>
+          onClick={(e) => { e.stopPropagation(); onReject(frame.id, !facts?.cull); }}><Icon name={facts?.cull ? 'undo' : 'x'} size={14} /></button>
         {facts?.cull && <div className="culled-note" title={facts.cullDetail ?? facts.cull}>{facts.cull}</div>}
         {frame.status !== 'done' && <span className="stack-count">{frame.status}</span>}
       </div>

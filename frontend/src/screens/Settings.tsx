@@ -464,7 +464,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                       />
                     );
                   })}
-                  {getVlmServices(draft).length === 0 && <p className="muted">No vision providers configured.</p>}
+                  {getVlmServices(draft).length === 0 && <p className="muted">No vision providers configured</p>}
                 </div>
 
                 {!showAddVlm ? (

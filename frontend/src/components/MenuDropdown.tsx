@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, ReactNode } from 'react';
+import { Icon } from './basics';
 
 export type ActionMenuItem = {
   id: string;
@@ -95,7 +96,7 @@ export function MenuDropdown({
             title={title || 'More actions'}
             onClick={toggle}
           >
-            ▾
+            <Icon name="chevron" size={14} />
           </button>
         </div>
       ) : (
@@ -108,7 +109,7 @@ export function MenuDropdown({
           onClick={toggle}
         >
           {label}
-          <span className="menu-caret">▾</span>
+          <span className="menu-caret"><Icon name="chevron" size={14} /></span>
         </button>
       )}
 

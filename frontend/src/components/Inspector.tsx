@@ -120,7 +120,7 @@ export function Inspector({
           onDoubleClick={handleResetWidth}
           title="Drag to resize inspector · Double-click to reset"
         />
-        <p className="muted">{scanning ? 'Results appear here while the scan runs.' : 'Select a photograph.'}</p>
+        <p className="muted">{scanning ? 'Results appear here while the scan runs' : 'Select a photograph'}</p>
       </aside>
     );
   }
@@ -180,7 +180,7 @@ export function Inspector({
         <dt>Focus</dt>
         <dd>{frame.rating != null ? frame.rating.toFixed(3) : '—'}</dd>
         <dt>Burst</dt>
-        <dd>{frame.burst_key ?? '—'}</dd>
+        <dd>{frame.burst_key == null || (allFrames.length > 0 && allFrames.filter((f) => f.burst_key === frame.burst_key).length < 2) ? '—' : frame.burst_key}</dd>
       </dl>
 
       {frame.error && <p className="error-text">{frame.error}</p>}

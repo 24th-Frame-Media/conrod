@@ -1,39 +1,55 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { asset } from '../lib/api';
+import { facetsFor, tabsWithData, validTab, type FacetKind } from '../lib/facets.mjs';
 import type { FacetItem } from '../lib/review';
 import type { Facet } from '../lib/types';
 
-type Props = { facets: Record<Facet['kind'], FacetItem[]>; facet: Facet | null; onPick: (facet: Facet | null) => void };
+type Props = { preset: string; facets: Record<FacetKind, FacetItem[]>; facet: Facet | null; onPick: (facet: Facet | null) => void };
 
-const TABS = { number: 'Numbers', plate: 'Plates', person: 'People' } as const;
-const EMPTY = { number: 'No race numbers read yet.', plate: 'No plates read yet.', person: 'No people found yet. Turn on people for this album.' } as const;
+const TABS: Record<FacetKind, string> = { number: 'Numbers', plate: 'Plates', make: 'Makes', team: 'Teams', person: 'People', subject: 'Subjects' };
+const EMPTY: Record<FacetKind, string> = {
+  number: 'No race numbers read yet', plate: 'No plates read yet', make: 'No makes read yet', team: 'No teams read yet',
+  person: 'No people found yet. Turn on people for this album', subject: 'No subjects found yet',
+};
+const sentence = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
-/** The review sidebar: numbers, plates or people found in the album; pick one to narrow the grid to it. */
-export function Facets({ facets, facet, onPick }: Props) {
-  const [kind, setKind] = useState<Facet['kind']>('number');
-  const items = facets[kind];
+/** The review sidebar: what this kind of shoot can be browsed by, narrowed to what the album has. Pick one to narrow the grid to it. */
+export function Facets({ preset, facets, facet, onPick }: Props) {
+  const [wanted, setWanted] = useState<FacetKind | null>(null);
+  const allowed = facetsFor(preset);
+  const tabs = tabsWithData(preset, facets);
+  const kind = validTab(wanted, tabs);
+  const active = facet && allowed.includes(facet.kind) ? facet : null;
+  // A filter that this preset no longer offers would hide frames with no way to clear it.
+  useEffect(() => { if (facet && !allowed.includes(facet.kind)) onPick(null); });
+
+  if (!allowed.length) return null;
+  const items = kind ? facets[kind] : [];
   // A person is shown by name once someone is named, else by their place in the list.
   const personLabel = (value: string) => {
     const at = facets.person.findIndex((p) => p.value === value);
     return facets.person[at]?.who || `Person ${at + 1}`;
   };
-  const label = (f: Facet) => (f.kind === 'plate' ? f.value : f.kind === 'person' ? personLabel(f.value) : `#${f.value}`);
+  const label = (f: Facet) => (f.kind === 'person' ? personLabel(f.value) : f.kind === 'number' ? `#${f.value}` : f.kind === 'subject' ? sentence(f.value) : f.value);
   return (
-    <aside className="facets" aria-label="Numbers, plates and people">
-      <div className="facet-tabs" role="tablist">
-        {(['number', 'plate', 'person'] as const).map((k) => (
-          <button key={k} role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setKind(k)}>
-            {TABS[k]}
-          </button>
-        ))}
-      </div>
-      {facet && <button className="ghost small facet-clear" onClick={() => onPick(null)}>Clear {label(facet)}</button>}
+    <aside className="facets" aria-label={allowed.map((k) => TABS[k]).join(', ')}>
+      {tabs.length > 1 && (
+        <div className="facet-tabs" role="tablist">
+          {tabs.map((k) => (
+            <button key={k} role="tab" aria-selected={kind === k} className={kind === k ? 'active' : ''} onClick={() => setWanted(k)}>
+              {TABS[k]}
+            </button>
+          ))}
+        </div>
+      )}
+      {tabs.length === 1 && <h3 className="facet-title">{TABS[tabs[0]]}</h3>}
+      {active && <button className="ghost small facet-clear" onClick={() => onPick(null)}>Clear {label(active)}</button>}
       <ul className="facet-list">
         {items.map((item, i) => {
-          const active = facet?.kind === kind && facet.value === item.value;
+          const on = active?.kind === kind && active.value === item.value;
           return (
-            <li key={item.value} className={active ? 'active' : ''}>
-              <button aria-pressed={active} onClick={() => onPick(active ? null : { kind, value: item.value })}>
+            <li key={item.value} className={on ? 'active' : ''}>
+              <button aria-pressed={on} onClick={() => kind && onPick(on ? null : { kind, value: item.value })}>
                 {kind === 'person' ? (
                   <>
                     {item.thumb && <img className="facet-face" src={asset(item.thumb)} alt="" />}
@@ -41,7 +57,7 @@ export function Facets({ facets, facet, onPick }: Props) {
                   </>
                 ) : (
                   <>
-                    <span className="n">{kind === 'number' ? '#' : ''}{item.value}</span>
+                    <span className="n">{kind === 'number' ? '#' : ''}{kind === 'subject' ? sentence(item.value) : item.value}</span>
                     <span className="who">{item.who}</span>
                   </>
                 )}
@@ -51,7 +67,7 @@ export function Facets({ facets, facet, onPick }: Props) {
           );
         })}
       </ul>
-      {!items.length && <p className="muted facet-empty">{EMPTY[kind]}</p>}
+      {!tabs.length && <p className="muted facet-empty">{EMPTY[allowed[0]]}</p>}
     </aside>
   );
 }
