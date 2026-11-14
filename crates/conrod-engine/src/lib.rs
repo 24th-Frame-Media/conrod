@@ -50,6 +50,8 @@ mod edgetest;
 #[cfg(test)]
 mod evaltest;
 #[cfg(test)]
+mod vlmeval;
+#[cfg(test)]
 mod pantest;
 pub mod training;
 pub mod updating;

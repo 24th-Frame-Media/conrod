@@ -66,6 +66,21 @@ fn sorted(mut pairs: Vec<(String, String)>) -> Vec<(String, String)> {
 }
 
 #[test]
+fn ollama_request_caps_the_context_and_keeps_the_model_loaded() {
+    let request = build_request(
+        &settings_for("ollama"),
+        "describe it",
+        &["b64img".to_string()],
+        &json!({"type": "object"}),
+        600,
+    )
+    .unwrap();
+    assert_eq!(request.json["options"]["num_ctx"], json!(8192));
+    assert_eq!(request.json["keep_alive"], json!("2m"));
+    assert_eq!(request.json["options"]["num_predict"], json!(600));
+}
+
+#[test]
 fn provider_requests_match_recorded_fixture() {
     let payload = fixture();
     let images = vec!["b64img".to_string()];
@@ -174,12 +189,15 @@ fn vehicle_prompt_matches_the_album_targets() {
     let mut settings = Settings::default();
     let hints = VlmHints::default();
     let baseline = vehicle_prompt(&settings, false, &hints);
-    assert!(baseline.contains("Motorsport: capture vehicle identity"));
+    // The shoot preset's sentence is deliberately absent: it costs the number.
+    assert!(!baseline.contains("Motorsport: capture vehicle identity"));
+    assert!(baseline.contains("never infer unseen details."));
+    assert!(baseline.contains("Reply with one JSON object only."));
     assert!(baseline.contains("- plate: the registration plate"));
     assert!(!baseline.contains("{CANDIDATES}"));
     assert!(baseline.len() < 1500, "local prompt should stay concise");
     settings.scan_profile = "motorsport-rally".into();
-    assert!(vehicle_prompt(&settings, false, &hints).contains("Rallies:"));
+    assert!(vehicle_prompt(&settings, false, &hints).len() < 1500);
     settings.read_numbers = false;
     let road = vehicle_prompt(&settings, false, &hints);
     assert!(road.contains("Set number to null."));

@@ -41,6 +41,12 @@ pub struct Analysed {
     pub analysis: VehicleAnalysis,
     /// Readers that failed on this crop, for the status area's log.
     pub failures: Vec<String>,
+    /// The number gates in the order they ran, for debugging a wrong number.
+    pub trace: Vec<String>,
+    /// The model's parsed reply, for the eval harness; null when it was not asked.
+    pub vlm_reply: serde_json::Value,
+    /// How many asks the model's answer took (a truncated reply is re-asked).
+    pub vlm_attempts: u32,
 }
 
 pub fn analyze(
@@ -104,7 +110,7 @@ pub fn analyze(
     };
 
     // 2. Competition number.
-    let ocr_number = if s.read_numbers {
+    let mut ocr_reading = if s.read_numbers {
         ocr_number(&roundels, &tokens, a.plate.as_deref(), s)
     } else {
         OcrReading::default()
@@ -114,23 +120,30 @@ pub fn analyze(
     failures.extend(entry_warning);
 
     // 3. The semantic pass.
+    let racing = matches!(
+        conrod_core::profile::ShootPreset::parse(&s.scan_profile),
+        conrod_core::profile::ShootPreset::Motorsport
+            | conrod_core::profile::ShootPreset::MotorsportBurnouts
+            | conrod_core::profile::ShootPreset::MotorsportTrack
+            | conrod_core::profile::ShootPreset::MotorsportRally
+    );
     let mut described = VehicleDescription::default();
+    let mut vlm_reply = serde_json::Value::Null;
+    let mut vlm_attempts = 0;
+    let mut vlm_ran = false;
     if let (true, Some((client, io))) = (s.use_vlm, describer.as_ref()) {
         let hints = vlm::VlmHints {
-            racing: matches!(
-                conrod_core::profile::ShootPreset::parse(&io.scan_profile),
-                conrod_core::profile::ShootPreset::Motorsport
-                    | conrod_core::profile::ShootPreset::MotorsportBurnouts
-                    | conrod_core::profile::ShootPreset::MotorsportTrack
-                    | conrod_core::profile::ShootPreset::MotorsportRally
-            ),
+            racing,
             candidates: entries
                 .as_deref()
                 .map(EntryList::candidates)
                 .unwrap_or_default(),
         };
-        match vlm::describe(client, crop, io, is_bike, &hints) {
-            Ok(d) => {
+        match vlm::describe_with_reply(client, crop, io, is_bike, &hints) {
+            Ok((d, reply, attempts)) => {
+                vlm_ran = true;
+                vlm_reply = reply;
+                vlm_attempts = attempts;
                 a.vlm_conf = d.confidence;
                 a.model_evidence = d.model_evidence.clone();
                 a.model_suggested = d.model_suggested;
@@ -156,21 +169,83 @@ pub fn analyze(
         }
     }
 
-    // 4. Reconcile the number.
+    // A plate read by the model sees the whole vehicle, so it is kept over the
+    // plate reader's crop-level pass, which occasionally clips a character
+    // ("78S" for "78SQ"). The reader still fills the field when the model gave
+    // none.
+    let reader_plate = a.plate.clone();
+    if let Some(plate) = described.plate.clone() {
+        if reader_plate.as_deref() != Some(plate.as_str()) {
+            a.plate = Some(plate);
+            a.plate_state = None;
+            a.plate_conf = described.confidence.max(0.5);
+        }
+    }
+
+    // Whole-crop OCR is the weakest number read: off a race car it takes digits
+    // out of a sponsor's livery ("253" off a road-going GT-R). Where the model
+    // neither claims a number nor this is a race shoot, it is not a number.
+    if vlm_ran
+        && !racing
+        && ocr_reading.source == "ocr"
+        && described.race_number.as_deref() != ocr_reading.number.as_deref()
+    {
+        ocr_reading = OcrReading::default();
+    }
+
+    // 4. Reconcile the number. An entry-list number the model read is trusted
+    // on its own, and beats an OCR read the list does not have (OCR over-reads
+    // digits off sponsor and livery text).
+    let listed = |n: &str| entries.as_deref().is_some_and(|list| list.get(n).is_some());
+    // With a race list, a whole-crop OCR digit run the list does not have is a
+    // livery or sponsor read ("220" off a GR Supra), not a number.
+    if ocr_reading.source == "ocr"
+        && entries.as_deref().is_some_and(|list| !list.is_empty())
+        && ocr_reading.number.as_deref().is_some_and(|n| !listed(n))
+    {
+        ocr_reading = OcrReading::default();
+    }
     let vlm_number = s
         .read_numbers
         .then(|| {
             trusted_vlm_number(
                 &described,
                 &roundels,
-                &ocr_number,
+                &ocr_reading,
                 a.plate.as_deref(),
                 &tokens,
+                entries.as_deref(),
             )
         })
         .flatten();
-    let (number, source, confidence) =
-        merge_number(&ocr_number, vlm_number.as_deref(), s.ocr_accept_confidence);
+    let ocr_listed = ocr_reading.number.as_deref().is_some_and(listed);
+    let (number, source, confidence) = match vlm_number.as_deref() {
+        Some(v) if listed(v) && !ocr_listed => {
+            merge_number(&OcrReading::default(), Some(v), s.ocr_accept_confidence)
+        }
+        _ => merge_number(&ocr_reading, vlm_number.as_deref(), s.ocr_accept_confidence),
+    };
+    let mut trace = vec![
+        format!(
+            "vlm {vlm_attempts} ask(s): number {:?} ({:?}), make {:?}, model {:?}, evidence {:?}, competition {}",
+            described.race_number,
+            described.number_confidence,
+            described.make,
+            described.model,
+            described.model_evidence,
+            described.is_competition
+        ),
+        format!(
+            "ocr number {:?} from {} (listed={ocr_listed}), roundels {roundels:?}",
+            ocr_reading.number, ocr_reading.source
+        ),
+        format!("trusted vlm number {vlm_number:?}"),
+        format!("merged {number:?} from {source:?} at {confidence:.2}"),
+        format!(
+            "plate model {:?} / reader {reader_plate:?} -> {:?}",
+            described.plate, a.plate
+        ),
+    ];
     // A number the model alone supplied keeps the model's own lowered confidence
     // (windscreen and nose reads), rather than merge_number's flat 0.7.
     let from_vlm = vlm_number.is_some() && number == vlm_number;
@@ -186,6 +261,10 @@ pub fn analyze(
     let entry_team = entries
         .as_deref()
         .is_some_and(|list| apply_entry(&mut a, list));
+    trace.push(format!(
+        "entry list: team {:?} (from list={entry_team}), make {:?}, model {:?}",
+        a.team, a.make, a.model
+    ));
 
     // 5. Free text, minus anything already captured as a field.
     a.team_corroborated = entry_team;
@@ -232,6 +311,9 @@ pub fn analyze(
     Ok(Analysed {
         analysis: a,
         failures,
+        trace,
+        vlm_reply,
+        vlm_attempts,
     })
 }
 
@@ -289,6 +371,7 @@ fn trusted_vlm_number(
     ocr_number: &OcrReading,
     plate: Option<&str>,
     tokens: &[ocr::Token],
+    list: Option<&EntryList>,
 ) -> Option<String> {
     let claim = described.race_number.clone()?;
     let digits: String = claim.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -308,6 +391,9 @@ fn trusted_vlm_number(
         {
             return None;
         }
+    }
+    if list.is_some_and(|l| l.get(&claim).is_some()) {
+        return Some(claim);
     }
     if !tokens.is_empty()
         && digits.len() >= 3
@@ -583,7 +669,7 @@ mod tests {
             ..VehicleDescription::default()
         };
         let none = OcrReading::default();
-        assert_eq!(trusted_vlm_number(&road_car, &[], &none, None, &[]), None);
+        assert_eq!(trusted_vlm_number(&road_car, &[], &none, None, &[], None), None);
         // ...unless OCR read the same number, or a roundel was found.
         let same = OcrReading {
             number: Some("220".into()),
@@ -591,11 +677,11 @@ mod tests {
             source: "ocr".into(),
         };
         assert_eq!(
-            trusted_vlm_number(&road_car, &[], &same, None, &[]).as_deref(),
+            trusted_vlm_number(&road_car, &[], &same, None, &[], None).as_deref(),
             Some("220")
         );
         assert_eq!(
-            trusted_vlm_number(&road_car, &[("5".into(), 0.5)], &none, None, &[]).as_deref(),
+            trusted_vlm_number(&road_car, &[("5".into(), 0.5)], &none, None, &[], None).as_deref(),
             Some("220")
         );
         let racer = VehicleDescription {
@@ -603,9 +689,26 @@ mod tests {
             ..road_car
         };
         assert_eq!(
-            trusted_vlm_number(&racer, &[], &none, None, &[]).as_deref(),
+            trusted_vlm_number(&racer, &[], &none, None, &[], None).as_deref(),
             Some("220")
         );
+    }
+
+    #[test]
+    fn a_listed_number_is_trusted_without_ocr_agreement() {
+        let list = entrylist::parse("number,team\n142,Team Gamma\n").unwrap();
+        let racer = VehicleDescription {
+            race_number: Some("142".into()),
+            is_competition: true,
+            ..VehicleDescription::default()
+        };
+        let none = OcrReading::default();
+        let tok = vec![token("GAMMA", 0.9)];
+        assert_eq!(
+            trusted_vlm_number(&racer, &[], &none, None, &tok, Some(&list)).as_deref(),
+            Some("142")
+        );
+        assert_eq!(trusted_vlm_number(&racer, &[], &none, None, &tok, None), None);
     }
 
     #[test]
@@ -618,7 +721,7 @@ mod tests {
         let none = OcrReading::default();
         // Rejected because "100" is part of registration plate "TZ100"
         assert_eq!(
-            trusted_vlm_number(&racer, &[], &none, Some("TZ100"), &[]),
+            trusted_vlm_number(&racer, &[], &none, Some("TZ100"), &[], None),
             None
         );
 
@@ -628,11 +731,11 @@ mod tests {
             is_competition: true,
             ..VehicleDescription::default()
         };
-        assert_eq!(trusted_vlm_number(&year_car, &[], &none, None, &[]), None);
+        assert_eq!(trusted_vlm_number(&year_car, &[], &none, None, &[], None), None);
 
         // Rejected uncorroborated 3-digit number when OCR tokens are present
         let tok = vec![token("FORD", 0.9)];
-        assert_eq!(trusted_vlm_number(&racer, &[], &none, None, &tok), None);
+        assert_eq!(trusted_vlm_number(&racer, &[], &none, None, &tok, None), None);
     }
 
     #[test]
