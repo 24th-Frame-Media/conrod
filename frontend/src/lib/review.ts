@@ -6,6 +6,8 @@ export { filename, frameStars, frameExcluded };
 /** What a card, facet list and search need to know about one frame, read once per review load. */
 export type FrameFacts = {
   dets: Detection[]; plates: string[]; numbers: string[];
+  /** Make and model, team, and subject classes (animals and the like) seen in the frame. */
+  makes: string[]; teams: string[]; subjects: string[];
   /** The people (face clusters, by `group_key`) seen in the frame. */
   people: string[];
   plate: string | null; number: string | null; vehicle: string | null;
@@ -54,6 +56,8 @@ function needsLook(x: FrameFacts | undefined): boolean {
   });
 }
 
+const NOT_SUBJECT = new Set(['person', 'face', 'eye', 'plate']);
+
 function factsFor(frame: Frame, dets: Detection[]): FrameFacts {
   const attrs = dets.map(parseAttributes);
   const pick = (key: AttributeKey) => first(attrs.map((a) => a[key]));
@@ -63,8 +67,11 @@ function factsFor(frame: Frame, dets: Detection[]): FrameFacts {
   const vehicle = [pick('make'), pick('model')].filter(Boolean).join(' ') || null;
   const colour = pick('colour');
   const team = pick('team');
+  const makes = unique(attrs.map((a) => [a.make, a.model].filter(Boolean).join(' ')));
+  const teams = unique(attrs.map((a) => a.team));
+  const subjects = unique(dets.filter((d) => !NOT_SUBJECT.has((d.cls || '').toLowerCase()) && d.region_type !== 'face' && d.region_type !== 'eye').map((d) => (d.cls || '').toLowerCase()));
   return {
-    dets, plates, numbers, people, plate: plates[0] ?? null, number: numbers[0] ?? null, vehicle, colour,
+    dets, plates, numbers, makes, teams, subjects, people, plate: plates[0] ?? null, number: numbers[0] ?? null, vehicle, colour,
     colourCss: first(attrs.map((a) => a.colour_hex)) ?? colour, team,
     panned: dets.some((d) => d.panning), pick: dets.some((d) => Boolean(d.burst_pick)) || Boolean(frame.burst_pick),
     reviewed: dets.length > 0 && dets.every((d) => Boolean(d.reviewed)),
@@ -84,7 +91,7 @@ export function buildFacts(review: Review): Map<number, FrameFacts> {
 }
 
 export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Record<Facet['kind'], FacetItem[]> {
-  const bucket = { number: new Map<string, FacetItem>(), plate: new Map<string, FacetItem>(), person: new Map<string, FacetItem>() };
+  const bucket = { number: new Map<string, FacetItem>(), plate: new Map<string, FacetItem>(), person: new Map<string, FacetItem>(), make: new Map<string, FacetItem>(), team: new Map<string, FacetItem>(), subject: new Map<string, FacetItem>() };
   const bump = (map: Map<string, FacetItem>, value: string, who: string | null) => {
     const item = map.get(value);
     if (item) { item.count += 1; if (!item.who && who) item.who = who; } else map.set(value, { value, count: 1, who: who ?? '' });
@@ -94,6 +101,9 @@ export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Re
     if (!x) continue;
     x.numbers.forEach((n) => bump(bucket.number, n, x.vehicle));
     x.plates.forEach((p) => bump(bucket.plate, p, x.vehicle));
+    x.makes.forEach((m) => bump(bucket.make, m, null));
+    x.teams.forEach((t) => bump(bucket.team, t, null));
+    x.subjects.forEach((s) => bump(bucket.subject, s, null));
     for (const key of x.people) {
       const face = x.dets.find((d) => d.region_type === 'face' && String(d.group_key) === key);
       bump(bucket.person, key, face?.known_person_match?.name ?? null);
@@ -105,7 +115,15 @@ export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Re
     number: [...bucket.number.values()].sort((a, b) => Number(a.value) - Number(b.value) || a.value.localeCompare(b.value)),
     plate: [...bucket.plate.values()].sort((a, b) => a.value.localeCompare(b.value)),
     person: [...bucket.person.values()].sort((a, b) => b.count - a.count || Number(a.value) - Number(b.value)),
+    make: [...bucket.make.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)),
+    team: [...bucket.team.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)),
+    subject: [...bucket.subject.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)),
   };
+}
+
+function facetValues(x: FrameFacts | undefined, kind: Facet['kind']): string[] | undefined {
+  if (!x) return undefined;
+  return { number: x.numbers, plate: x.plates, make: x.makes, team: x.teams, person: x.people, subject: x.subjects }[kind];
 }
 
 /** Frames that survive the toolbar. */
@@ -115,7 +133,7 @@ export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f
   const keep = (frame: Frame) => {
     const x = facts.get(frame.id);
     if (needle && !x?.text.includes(needle)) return false;
-    if (f.facet && !(f.facet.kind === 'number' ? x?.numbers : f.facet.kind === 'plate' ? x?.plates : x?.people)?.includes(f.facet.value)) return false;
+    if (f.facet && !facetValues(x, f.facet.kind)?.includes(f.facet.value)) return false;
     if (f.view === 'rejected') return Boolean(x?.cull);
     if (f.view === 'kept') return !x?.cull;
     if (f.view === 'review') return !x?.cull && !x?.reviewed;

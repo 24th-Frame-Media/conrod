@@ -12,12 +12,19 @@ const PATHS = {
   plus: 'M12 5v14M5 12h14',
   check: 'M5 12.5l4.5 4.5L19 7.5',
   drop: 'M12 4v11 M7.5 10.5L12 15l4.5-4.5 M5 19h14',
+  car: 'M4 16v-4l2-5h12l2 5v4z M4 12h16 M7.5 14.2h.01 M16.5 14.2h.01',
+  person: 'M12 11a3.5 3.5 0 100-7 3.5 3.5 0 000 7z M5 20c0-3.5 3-6 7-6s7 2.5 7 6',
+  plate: 'M3 7.5h18v9H3z M7 12h10',
+  eye: 'M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z M12 14.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z',
+  sliders: 'M4 7h9 M17 7h3 M4 17h3 M11 17h9 M15 4.5v5 M9 14.5v5',
+  undo: 'M9 14L4 9l5-5 M4 9h10.5a5.5 5.5 0 010 11H11',
 } as const;
 export type IconName = keyof typeof PATHS;
 
+/** The one icon set: 24px grid, 1.5 stroke, takes the colour of its text. */
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={PATHS[name]} />
     </svg>

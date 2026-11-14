@@ -62,7 +62,7 @@ function ServerModelGroup({ service, selected, onToggle }: {
             {m}
           </label>
         ))}
-        {!models.length && <span className="muted">No vision models found on this server.</span>}
+        {!models.length && <span className="muted">No vision models found on this server</span>}
       </div>
     </div>
   );
@@ -194,7 +194,7 @@ export function Benchmark({ run, toast, settings, status }: Props) {
           {enabledServices.map((s) => (
             <ServerModelGroup key={s.id} service={s} selected={selected} onToggle={toggleModel} />
           ))}
-          {!enabledServices.length && <span className="muted">No vision providers enabled above.</span>}
+          {!enabledServices.length && <span className="muted">No vision providers enabled above</span>}
         </div>
       )}
 

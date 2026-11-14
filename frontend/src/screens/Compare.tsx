@@ -40,7 +40,7 @@ function Pane({ frame, run, rv, showBoxes, onToggleBoxes, active, onActivate, zo
           </div>
         </>
       ) : (
-        <div className="empty muted">No next frame or burst pick to compare against.</div>
+        <div className="empty muted">No next frame or burst pick to compare against</div>
       )}
     </div>
   );

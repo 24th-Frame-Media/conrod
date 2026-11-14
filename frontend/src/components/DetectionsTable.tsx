@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { asset } from '../lib/api';
 import { parseAttributes } from '../lib/review';
+import { Icon, type IconName } from './basics';
+import { KeeperMark } from './Stars';
 import {
   ATTRIBUTE_KEYS,
   type AttributeKey,
@@ -35,16 +37,16 @@ export function getCategory(d: Detection): 'vehicle' | 'person' | 'plate' | 'lan
   return 'vehicle';
 }
 
-function categoryIcon(cat: 'vehicle' | 'person' | 'plate' | 'landmark'): string {
+function categoryIcon(cat: 'vehicle' | 'person' | 'plate' | 'landmark'): IconName {
   switch (cat) {
     case 'vehicle':
-      return '🚗';
+      return 'car';
     case 'person':
-      return '👤';
+      return 'person';
     case 'plate':
-      return '🔢';
+      return 'plate';
     case 'landmark':
-      return '👁';
+      return 'eye';
   }
 }
 
@@ -300,7 +302,7 @@ export function DetectionsTable({
                       />
                     ) : (
                       <span className="det-avatar-icon" title={cat}>
-                        {categoryIcon(cat)}
+                        <Icon name={categoryIcon(cat)} size={20} />
                       </span>
                     )}
                   </div>
@@ -310,7 +312,7 @@ export function DetectionsTable({
                     <div className="det-title-row">
                       <span className={`det-pill pill-${cat}`}>{d.cls}</span>
                       {a.plate && <span className="det-chip-plate">{a.plate}</span>}
-                      {d.burst_pick ? <span className="det-badge badge-keeper">★ Best</span> : null}
+                      {d.burst_pick ? <span className="det-badge badge-keeper"><KeeperMark inline />Best</span> : null}
                       {d.panning ? <span className="det-badge badge-panned">panned</span> : null}
                       {d.cull_reason ? <span className="det-badge badge-culled">{d.cull_reason}</span> : null}
                     </div>

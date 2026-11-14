@@ -9,7 +9,19 @@ export function StarPill({ frame }: { frame: Frame }) {
   return <span className={`focus stars ${verdictOf(stars)}${byHand ? ' by-hand' : ''}`} title={title}>{stars ? '★'.repeat(stars) : '—'}</span>;
 }
 
-/** Marks a runner-up in its burst (#2, #3); the burst's best frame carries the "Best"/"keeper" badge instead. */
+/** The china-pencil keeper tick: the burst's best frame, in amber. Used for "Best" and nowhere else. */
+export function KeeperMark({ inline = false, label = 'Best of the burst' }: { inline?: boolean; label?: string }) {
+  return (
+    <span className={`keeper-mark${inline ? ' inline' : ''}`} role="img" aria-label={label} title={label}>
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M2.2 7.7C3.4 8.3 4.4 9.5 5.2 11C6.8 7.4 9 4.7 12 2.7" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M4.6 9.6C6.2 6.9 8.3 4.6 10.8 3.2" stroke="currentColor" strokeWidth=".8" opacity=".55" />
+      </svg>
+    </span>
+  );
+}
+
+/** Marks a runner-up in its burst (#2, #3); the burst's best frame carries the keeper mark instead. Quiet mono text, same corner style as the stars. */
 export function RankBadge({ rank }: { rank: number }) {
   return <span className="focus rank" title={`Burst candidate #${rank}`} aria-label={`Burst candidate number ${rank}`}>#{rank}</span>;
 }

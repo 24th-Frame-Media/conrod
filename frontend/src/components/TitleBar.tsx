@@ -93,7 +93,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
           </div>
           {activeJob && active?.total ? <div className="bar scan-overall" title="Overall scan progress"><div className="fill" style={{ width: `${pct(active.done, active.total)}%` }} /></div> : null}
           <div className="activity-section"><span>Running now</span><span>{activeTasks.length}</span></div>
-          {activeTasks.length === 0 && <p className="muted activity-empty">No background tasks.</p>}
+          {activeTasks.length === 0 && <p className="muted activity-empty">No background tasks</p>}
           {activeTasks.map((t) => (
             <div className="task" key={t.id}>
               <div className="task-row"><b>{workLabel(t.label)}</b><span className={`state ${t.state}`}>{t.state}</span></div>
@@ -125,7 +125,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
                 <small className="muted">{t.error || t.detail || (t.total > 0 ? `${t.done.toLocaleString()} of ${t.total.toLocaleString()}` : '')}</small>
               </div>
             ))}
-            {!finishedTasks.length && <p className="muted activity-empty">Nothing finished yet.</p>}
+            {!finishedTasks.length && <p className="muted activity-empty">Nothing finished yet</p>}
             <details><summary>Event log</summary><pre className="log mono">{status.log.join('\n') || 'Nothing yet.'}</pre></details>
           </details>
         </div>

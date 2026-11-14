@@ -37,7 +37,7 @@ export type Region = (typeof REGIONS)[number];
 export type Page = 'Library' | 'Scan' | 'Review' | 'Train' | 'Known vehicles' | 'Settings';
 export type View = 'review' | 'all' | 'picks' | 'top3' | 'rejected' | 'kept' | 'stacks' | 'vehicles' | 'needsLook';
 export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick';
-export type Facet = { kind: 'number' | 'plate' | 'person'; value: string };
+export type Facet = { kind: import('./facets.mjs').FacetKind; value: string };
 export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean } | { jobId: number };
 export type MarkValues = { stars?: number | null; rejected?: boolean; picked?: boolean };
 export type Toaster = (message: string, options?: { tone?: 'error' | 'ok'; ms?: number }) => void;
