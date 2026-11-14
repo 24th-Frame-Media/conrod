@@ -548,6 +548,12 @@ pub struct ProviderRequest {
     pub json: Value,
 }
 
+/// Ollama's context window per request. One 1568 px image is about 2000
+/// tokens, the prompt and schema a few hundred, the reply at most 600: 8192
+/// fits all of it. Without this Ollama uses the model's 128k default, whose
+/// KV cache alone is several GB and spills qwen2.5vl:7b off the GPU.
+pub const OLLAMA_NUM_CTX: i64 = 8192;
+
 pub fn ollama_request(
     host: &str,
     model: &str,
@@ -567,7 +573,12 @@ pub fn ollama_request(
             "images": images,
             "stream": false,
             "format": schema,
-            "options": {"temperature": 0.0, "num_predict": num_predict},
+            "keep_alive": "2m",
+            "options": {
+                "temperature": 0.0,
+                "num_predict": num_predict,
+                "num_ctx": OLLAMA_NUM_CTX,
+            },
         }),
     }
 }
@@ -800,7 +811,26 @@ pub fn parse_ollama_response(body: &Value) -> Result<Value, VlmError> {
     } else {
         body.get("thinking").and_then(Value::as_str).unwrap_or("")
     };
-    serde_json::from_str(text).map_err(|e| VlmError::BadReply(e.to_string()))
+    serde_json::from_str(text)
+        .or_else(|e| first_json(text).ok_or(e))
+        .map_err(|e| VlmError::BadReply(e.to_string()))
+}
+
+/// The first complete JSON object in `text`, ignoring anything written around
+/// it. A local model sometimes wraps the object in prose even when a schema
+/// was requested; the bench reads that reply, so the app does too.
+fn first_json(text: &str) -> Option<Value> {
+    let mut from = text.find('{')?;
+    loop {
+        let mut values =
+            serde_json::Deserializer::from_str(&text[from..]).into_iter::<Value>();
+        if let Some(Ok(value)) = values.next() {
+            if value.is_object() {
+                return Some(value);
+            }
+        }
+        from = text[from + 1..].find('{').map(|i| from + 1 + i)?;
+    }
 }
 
 pub fn parse_openai_response(body: &Value) -> Result<Value, VlmError> {
@@ -888,9 +918,23 @@ impl VlmClient {
         schema: &Value,
         num_predict: i64,
     ) -> Result<Value, VlmError> {
+        self.call_with(settings, prompt, images, schema, num_predict, None)
+    }
+
+    /// `call`, with an optional Ollama `repeat_penalty` for this ask only.
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_with(
+        &self,
+        settings: &Settings,
+        prompt: &str,
+        images: &[String],
+        schema: &Value,
+        num_predict: i64,
+        repeat_penalty: Option<f64>,
+    ) -> Result<Value, VlmError> {
         let enabled: Vec<_> = settings.vlm_services.iter().filter(|s| s.enabled).collect();
         if enabled.is_empty() {
-            return self.call_one(settings, prompt, images, schema, num_predict);
+            return self.call_one(settings, prompt, images, schema, num_predict, repeat_penalty);
         }
         let ids: Vec<String> = enabled.iter().map(|s| s.id.clone()).collect();
         let pool = self.services.pool_for(ids.clone());
@@ -899,7 +943,7 @@ impl VlmClient {
         let start = pick_service(&settings.vlm_strategy, &ids, held.as_deref(), &self.turn);
         let ask = |i: usize| {
             let one = for_service(settings, enabled[i]);
-            self.call_one(&one, prompt, images, schema, num_predict)
+            self.call_one(&one, prompt, images, schema, num_predict, repeat_penalty)
         };
         let mut order = (start..ids.len()).chain(0..start);
         let first = ask(order.next().unwrap_or(0));
@@ -929,6 +973,7 @@ impl VlmClient {
         images: &[String],
         schema: &Value,
         num_predict: i64,
+        repeat_penalty: Option<f64>,
     ) -> Result<Value, VlmError> {
         let provider = if settings.vlm_provider.is_empty() {
             "ollama".to_string()
@@ -942,7 +987,7 @@ impl VlmClient {
             // waiting out.
             let pool = self.hosts.pool_for(settings.ollama_hosts());
             let host = pool.acquire();
-            let req = ollama_request(
+            let mut req = ollama_request(
                 &host,
                 &settings.vlm_model,
                 prompt,
@@ -950,6 +995,11 @@ impl VlmClient {
                 schema,
                 num_predict,
             );
+            // Only for a retry: a penalty on the first ask costs the digits
+            // that repeat in the visible text, and the first ask rarely loops.
+            if let Some(penalty) = repeat_penalty {
+                req.json["options"]["repeat_penalty"] = json!(penalty);
+            }
             let result = self.send_once(
                 &req,
                 Duration::from_secs_f64(settings.vlm_timeout),
@@ -1064,17 +1114,19 @@ pub fn vehicle_prompt(settings: &Settings, is_bike: bool, hints: &VlmHints) -> S
         .collect::<Vec<_>>()
         .join("\n")
         .replace("{CANDIDATES}", &candidate_line(hints));
-    let preset = conrod_core::profile::ShootPreset::parse(&settings.scan_profile);
     let targets = if settings.read_numbers {
         "Read a competition number only from the subject; ignore unrelated digits."
     } else {
         "Set number to null."
     };
+    // No shoot-preset context here. A preset sentence ("capture vehicle
+    // identity, competition details, livery, and action") makes the model
+    // spend its answer on livery and drop a windscreen number it had read, and
+    // the bench reads the same crops better without it. The closing line asking
+    // for one compact object keeps the reply short enough to finish.
     format!(
-        "{}\n\nShoot context: {} Context guides attention only; never infer unseen details. {}",
-        body.trim(),
-        preset.prompt_context(),
-        targets
+        "{}\n\nContext guides attention only; never infer unseen details. {targets}\nReply with one JSON object only.",
+        body.trim()
     )
 }
 
@@ -1373,24 +1425,70 @@ pub fn describe(
     is_bike: bool,
     hints: &VlmHints,
 ) -> Result<VehicleDescription, VlmError> {
+    describe_with_reply(client, image, settings, is_bike, hints).map(|(vehicle, _, _)| vehicle)
+}
+
+/// `describe`, plus the parsed reply and how many asks it took, for the eval
+/// harness.
+///
+/// Even with a schema the reply runs long on a busy crop: a local model
+/// repeats one livery item until the token budget cuts it off mid-string, and
+/// a cut-off reply parses as nothing at all, losing the number, make and model
+/// together. Such a reply gets a second ask with a light repetition penalty,
+/// which breaks the loop; the penalty stays off the first ask because it costs
+/// digits that repeat in the visible text.
+pub fn describe_with_reply(
+    client: &VlmClient,
+    image: &Rgb,
+    settings: &Settings,
+    is_bike: bool,
+    hints: &VlmHints,
+) -> Result<(VehicleDescription, Value, u32), VlmError> {
     let payload_image = encode_for_model(image, settings.vlm_input_edge);
     let prompt = vehicle_prompt(settings, is_bike, hints);
     let with_plate = wants_plate(settings, hints);
     let reply_schema = schema(with_plate);
-    match client.call(settings, &prompt, &[payload_image], &reply_schema, 500) {
-        Ok(parsed) => Ok(map_vehicle(
-            &parsed,
+    let ask = |text: &str, penalty: Option<f64>| {
+        client.call_with(
             settings,
-            settings.read_numbers,
-            with_plate,
-        )),
-        Err(VlmError::Stopped) => Err(VlmError::Stopped),
-        Err(err) => {
-            let who = display_name(&settings.vlm_provider);
-            note_failure(&client.fatal, &who, &err)?;
-            Err(err)
+            text,
+            std::slice::from_ref(&payload_image),
+            &reply_schema,
+            600,
+            penalty,
+        )
+    };
+    let (parsed, attempts) = match ask(&prompt, None) {
+        Ok(reply) => (reply, 1),
+        Err(VlmError::BadReply(_)) => {
+            match ask(&prompt, Some(1.1)) {
+                Ok(reply) => (reply, 2),
+                Err(err) => {
+                    note_unless_fatal(client, settings, &err)?;
+                    return Err(err);
+                }
+            }
         }
+        Err(err) => {
+            note_unless_fatal(client, settings, &err)?;
+            return Err(err);
+        }
+    };
+    let vehicle = map_vehicle(&parsed, settings, settings.read_numbers, with_plate);
+    Ok((vehicle, parsed, attempts))
+}
+
+/// Count a failed ask against the run unless it was a Stop or a config refusal,
+/// which are passed on untouched so the caller can end the run.
+fn note_unless_fatal(
+    client: &VlmClient,
+    settings: &Settings,
+    err: &VlmError,
+) -> Result<(), VlmError> {
+    if matches!(err, VlmError::Stopped | VlmError::Misconfigured(_)) {
+        return Ok(());
     }
+    note_failure(&client.fatal, &display_name(&settings.vlm_provider), err)
 }
 
 /// Ask about several views of one vehicle in a single call. Port of

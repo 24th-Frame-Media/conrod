@@ -202,7 +202,8 @@ def parse_obj(text, extract):
 
 def call_ollama(model, prompt, b64, schema):
     base = {"model": model, "images": [b64], "stream": False,
-            "options": {"temperature": 0, "num_predict": 600}}
+            "keep_alive": "2m",
+            "options": {"temperature": 0, "num_predict": 600, "num_ctx": 8192}}
     if model.startswith("mimo"):
         base["think"] = False
     t0 = time.time()
@@ -299,7 +300,12 @@ def load_jsonl(path):
     return recs
 
 
+APP_RESULTS = ""
+
+
 def results_path(model, variant):
+    if variant == "app" and APP_RESULTS:
+        return RESULTS / APP_RESULTS
     return RESULTS / f"{model.replace(':', '_')}__{variant}.jsonl"
 
 
@@ -370,6 +376,17 @@ def normalise(variant, group, obj, by_num, entry_sponsors, gold_sponsors):
            "sponsors": [], "team": None, "drivers": [], "visible_text": []}
     if not isinstance(obj, dict):
         flags.append("no_json")
+        return out, flags
+    if variant == "app":
+        # Already post-processed by the app (entry list, OCR, registry): read as-is, never re-looked-up.
+        out["number"] = clean(obj.get("number"))
+        out["plate"] = clean(obj.get("plate"))
+        out["make"] = clean(obj.get("make"))
+        out["model"] = clean(obj.get("model"))
+        out["team"] = clean(obj.get("team"))
+        out["drivers"] = [s.strip() for s in (obj.get("drivers") or []) if clean(s)]
+        out["sponsors"] = [s.strip() for s in (obj.get("sponsors") or []) if clean(s)]
+        out["visible_text"] = [s.strip() for s in (obj.get("visible_text") or []) if clean(s)]
         return out, flags
     if variant == "prod":
         out["number"] = clean(obj.get("race_number"))
@@ -542,12 +559,17 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--score-only", action="store_true")
     ap.add_argument("--gold", default="", help="gold JSON path (default target/vlm/gold_v2.json if present, else gold.json)")
+    ap.add_argument("--results-name", default="", help="file under target/vlm/results/ holding variant app (from vlmeval.rs)")
     a = ap.parse_args()
+    global APP_RESULTS
+    APP_RESULTS = a.results_name
     models = [m.strip() for m in a.models.split(",") if m.strip()]
     variants = [v.strip() for v in a.variants.split(",") if v.strip()]
     for v in variants:
-        if v not in ("prod", "tight", "tight2"):
+        if v not in ("prod", "tight", "tight2", "app"):
             ap.error(f"unknown variant {v}")
+        if v == "app" and not a.score_only:
+            ap.error("variant app is produced by the Rust test vlm_production_eval; use --score-only")
 
     ensure_tight_files()
     by_num, entry_sponsors = load_entries()
