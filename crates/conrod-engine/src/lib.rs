@@ -49,6 +49,8 @@ mod blurtest;
 mod edgetest;
 #[cfg(test)]
 mod evaltest;
+#[cfg(test)]
+mod pantest;
 pub mod training;
 pub mod updating;
 pub mod watching;
@@ -417,11 +419,28 @@ pub fn cull_frame(
                 focus.score = score;
             }
         }
-        if !preset.pan_compatible() {
-            focus.panning = false;
-        }
         let edges = framing::assess(Some(det.bbox), fw as i64, fh as i64);
         let rating = focus.score * edges.factor;
+        // A held pan is a *sharp subject over a streaked background*, not a
+        // blurred subject: the camera moved with the subject, so the subject
+        // stays sharp while everything else is one set of parallel streaks.
+        // `conrod_vision::streaks` measures that on the ring around the box
+        // (pan p10 0.826, static p90 0.787 on hand-labelled frames), and the
+        // preset still says whether pans are expected for this shoot.
+        //
+        // "Sharp subject" is the album's own not-blurred verdict: a held pan
+        // routinely scores 0.65-0.82 on the subject's blur alone (the wheels
+        // and the far side still move), so requiring `sharp_at` would refuse
+        // 8 of 48 labelled pans before the background is even looked at.
+        // What the flag must never do is excuse a subject that is a blur miss,
+        // and that is `blurred_below`.
+        let subject_not_blurred =
+            sharpness::verdict_for(focus.score, settings.sharp_at, settings.blurred_below)
+                != "blurred";
+        focus.panning = preset.pan_compatible()
+            && subject_not_blurred
+            && conrod_vision::streaks::background_streaks(&grey, det.bbox)
+                .is_some_and(|s| s >= conrod_vision::streaks::PAN_COHERENCE);
         let verdict = sharpness::rating_for(rating, settings.sharp_at, settings.blurred_below);
         let stars = sharpness::stars_for(rating);
         let cull_reason = if (settings.auto_reject_below_stars as u8) > stars {

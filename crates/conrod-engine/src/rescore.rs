@@ -251,13 +251,17 @@ fn measure_frame(
             if x <= a || y <= b {
                 continue;
             }
-            sharpness::measure(
+            let mut focus = sharpness::measure(
                 &image
                     .crop(a, b, x.min(image.width), y.min(image.height))
                     .to_gray(),
                 None,
                 None,
-            )
+            );
+            // A held pan is a vehicle or person over a streaked background; a
+            // face crop has no background of its own to judge.
+            focus.panning = false;
+            focus
         } else {
             let crop_box =
                 conrod_vision::detect::expand_box(bbox, image.width, image.height, &opts);
@@ -288,9 +292,13 @@ fn measure_frame(
             {
                 focus.score = score;
             }
-            if !pan_ok {
-                focus.panning = false;
-            }
+            // As `cull_frame` decides it: the subject not a blur miss, a
+            // streaked background, and a preset that expects pans.
+            focus.panning = pan_ok
+                && sharpness::verdict_for(focus.score, cfg.sharp_at, cfg.blurred_below)
+                    != "blurred"
+                && conrod_vision::streaks::background_streaks(&grey, bbox)
+                    .is_some_and(|s| s >= conrod_vision::streaks::PAN_COHERENCE);
             focus
         };
         if focus.measured {
