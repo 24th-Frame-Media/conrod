@@ -9,6 +9,11 @@ export function StarPill({ frame }: { frame: Frame }) {
   return <span className={`focus stars ${verdictOf(stars)}${byHand ? ' by-hand' : ''}`} title={title}>{stars ? '★'.repeat(stars) : '—'}</span>;
 }
 
+/** Marks a runner-up in its burst (#2, #3); the burst's best frame carries the "Best"/"keeper" badge instead. */
+export function RankBadge({ rank }: { rank: number }) {
+  return <span className="focus rank" title={`Burst candidate #${rank}`} aria-label={`Burst candidate number ${rank}`}>#{rank}</span>;
+}
+
 /** Five stars to click; the star that is already on clears back to the measured rating. */
 export function StarControl({ value, onChange }: { value: number; onChange: (stars: number | null) => void }) {
   return (

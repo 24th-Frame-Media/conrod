@@ -1,5 +1,5 @@
 import { LoadableImage } from './Media';
-import { StarPill } from './Stars';
+import { RankBadge, StarPill } from './Stars';
 import { asset } from '../lib/api';
 import { filename } from '../lib/review';
 import type { Frame } from '../lib/types';
@@ -27,7 +27,7 @@ export function BurstFilmstrip({ frames, pickId, selectedId, culled, rankOf, onS
             <div style={{ position: 'relative' }}>
               <LoadableImage src={asset(frame.thumb_path)} alt={filename(frame.path)} />
               {isBest && <span className="focus keeper" style={{ position: 'absolute', top: 4, left: 4, zIndex: 2 }}>Best</span>}
-              {rank != null && rank > 1 && <span className="focus" title={`Burst candidate #${rank}`} style={{ position: 'absolute', top: 4, right: 4, zIndex: 2 }}>{rank}</span>}
+              {rank != null && !isBest && <RankBadge rank={rank} />}
               {isCulled && <span className="cull-tag">Culled</span>}
             </div>
             <StarPill frame={frame} />

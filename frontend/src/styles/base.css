@@ -70,7 +70,7 @@ button.small { padding: 4px 10px; font-size: 12px; }
 .tag.vlm { color: #8ab4f8; border-color: #24365a; }
 .tag.manual { color: var(--good); border-color: #1f4a38; }
 .tag.suggested { color: var(--muted, #8a8f98); border-style: dashed; }
-.det-model-suggested { opacity: .6; font-style: italic; }
+.det-model-suggested { opacity: .78; font-style: italic; }
 .fact.team { color: var(--accent); border-color: #24365a; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .fact.number { font-weight: 700; font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: .02em; border-width: 0; padding-inline: 2px; }
 .fact.plate { font-weight: 650; letter-spacing: .09em; color: var(--text); background: #0d0d11; }
