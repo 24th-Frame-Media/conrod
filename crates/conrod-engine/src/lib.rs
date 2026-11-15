@@ -7,7 +7,7 @@
 //! holds this one up.
 
 use conrod_core::framing;
-use conrod_core::profile::{GroupUnit, PresetPolicy, ScanProfile, ShootPreset};
+use conrod_core::profile::{ScanProfile, ShootPreset};
 use conrod_core::settings::Settings;
 use conrod_core::tasks::TaskHub;
 use conrod_io::raw;
@@ -328,6 +328,7 @@ pub(crate) struct Faces {
 }
 
 /// Faces and eyes found inside each person box, measured like any subject.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn face_subjects(
     image: &Rgb,
     grey: &Gray,
@@ -493,6 +494,7 @@ pub(crate) fn frame_rating(
         .unwrap_or(0.0)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn cull_frame(
     path: &Path,
     detector: &Mutex<Detector>,
