@@ -37,6 +37,7 @@ export const engine = {
   write: (jobId: number, dryRun = false) => call('write', { jobId, dryRun }),
   cancelOperation: (key: string) => call('cancel_operation', { key }),
   saveSettings: (settings: Settings) => call<Settings>('save_settings', settings),
+  workerLimits: () => call<import('./types').WorkerLimits>('worker_limits'),
   known: () => call<KnownVehicle[]>('known'),
   saveKnown: (vehicle: KnownVehicle) => call('save_known', vehicle),
   deleteKnown: (plate: string) => call('delete_known', { plate }),
