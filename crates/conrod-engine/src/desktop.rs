@@ -26,15 +26,9 @@ fn now() -> f64 {
         .as_secs_f64()
 }
 
-/// The burst gap to group with: a positive setting is honoured as-is, anything
-/// else falls back to the default. 4.0 was the old settings default and still
-/// sits in stored settings files, so it keeps meaning the default.
+/// The burst gap to group an album with: its own setting, or the one default.
 fn burst_gap(setting: f64) -> f64 {
-    if setting <= 0.0 || (setting - 4.0).abs() < f64::EPSILON {
-        conrod_core::bursts::DEFAULT_BURST_GAP_SECONDS
-    } else {
-        setting
-    }
+    conrod_core::settings::burst_gap_or_default(setting)
 }
 
 pub struct Desktop {
@@ -49,6 +43,8 @@ pub struct Desktop {
     finishing: AtomicBool,
     pub(crate) watching: Mutex<crate::watching::Watching>,
     active: Mutex<Option<(i64, Arc<Scan>)>>,
+    /// The scan in progress (or just finished), for `scan-progress` events.
+    progress: Mutex<Option<Arc<crate::progress::Progress>>>,
     pub(crate) operations:
         Mutex<std::collections::BTreeMap<String, Arc<std::sync::atomic::AtomicBool>>>,
 }
@@ -98,10 +94,23 @@ impl Desktop {
             finishing: AtomicBool::new(false),
             watching: Mutex::new(Default::default()),
             active: Mutex::new(None),
+            progress: Mutex::new(None),
             operations: Mutex::new(std::collections::BTreeMap::new()),
         });
         crate::watching::restore(&desktop);
         Ok(desktop)
+    }
+
+    /// The scan in progress (or the one that just ended), if any.
+    pub fn progress(&self) -> Option<Arc<crate::progress::Progress>> {
+        lock(&self.progress).clone()
+    }
+
+    /// The `scan-progress` payload for this tick, throttled by the caller: one
+    /// per tick while the scan runs, then one final snapshot and nothing.
+    pub fn progress_snapshot(&self) -> Option<Value> {
+        let progress = self.progress()?;
+        progress.emit_snapshot().map(|snapshot| json!(snapshot))
     }
 
     pub fn request_quit(&self) {
@@ -151,6 +160,7 @@ impl Desktop {
                 "bulk_edit",
                 "rename_job",
                 "update_job_settings",
+                "regroup",
                 "reset_all",
                 "reset_detections",
                 "reset_identifications",
@@ -230,11 +240,7 @@ impl Desktop {
             Command::Rescan(a) => crate::rescore::rescan(self, a.job_id),
             Command::PickKeepers(a) => crate::passes::pick_keepers(self, a.job_id),
             Command::Group(a) => crate::passes::group(self, a.job_id),
-            Command::Regroup(a) => {
-                let gap = lock(&self.settings).burst_gap;
-                let _ = self.regroup(a.job_id, gap);
-                crate::passes::group(self, a.job_id)
-            }
+            Command::Regroup(a) => self.regroup(a.job_id),
             Command::BulkEdit(a) => crate::edits::bulk_edit(self, &a),
             Command::RenameJob(a) => crate::library::rename_job(self, &a),
             Command::UpdateJobSettings(a) => crate::library::update_job_settings(self, &a),
@@ -264,6 +270,7 @@ impl Desktop {
             Command::SetWatch(a) => crate::watching::set(self, &a),
             Command::BenchPick {} => crate::bench::pick(self),
             Command::BenchRun(a) => crate::bench::run(self, &a),
+            Command::WorkerLimits {} => Ok(self.worker_limits()),
             Command::DescribeImage { path } => crate::bench::describe_one(self, &path),
         }
     }
@@ -351,14 +358,42 @@ impl Desktop {
         crate::setup::rows()
     }
 
+    /// The worker count of every pool, its cap and whether a change applies
+    /// live. No pool can be resized mid-scan (each is a scoped thread set), so
+    /// every `live` is false and the UI says "applies next scan".
+    pub fn worker_limits(&self) -> Value {
+        let settings = lock(&self.settings);
+        let caps = conrod_core::settings::worker_caps();
+        let pool = |current: i64, max: i64, default: i64| {
+            json!({"current": current, "min": 1, "max": max, "default": default, "live": false})
+        };
+        json!({
+            "cores": caps.cores,
+            "cull": pool(settings.cull_workers(), caps.cull, (caps.cores - 2).max(2).min(caps.cull)),
+            "detect": pool(
+                conrod_core::settings::clamp_workers(settings.detect_workers, caps.detect, 1),
+                caps.detect,
+                1,
+            ),
+            "preview": pool(
+                conrod_core::settings::clamp_workers(settings.preview_workers, caps.preview, 4),
+                caps.preview,
+                4,
+            ),
+            "identify": pool(settings.identify_worker_count(), caps.identify, 3),
+            "note": "Worker counts apply to the next scan; a running pool cannot be resized.",
+        })
+    }
+
     pub fn status(&self) -> Value {
         let tasks: Vec<_> = self.hub.snapshot().iter().map(|t| json!({"id":t.id,"label":t.label,"detail":t.detail,"state":format!("{:?}",t.state).to_lowercase(),"done":t.done,"total":t.total,"elapsed":t.elapsed.as_secs_f64(),"eta":t.eta.map(|d|d.as_secs_f64()),"error":t.error})).collect();
         let active = lock(&self.active);
         let operations: Vec<_> = lock(&self.operations).keys().cloned().collect();
-        json!({"revision":self.hub.version(),"tasks":tasks,"log":self.hub.log(),"operations":operations,"activeJob":active.as_ref().filter(|(_,s)|!s.is_finished() || self.finishing.load(Ordering::Acquire)).map(|(j,_)|*j)})
+        json!({"revision":self.hub.version(),"tasks":tasks,"log":self.hub.log(),"operations":operations,"activeJob":active.as_ref().filter(|(_,s)|!s.is_finished()).map(|(j,_)|*j)})
     }
 
     fn jobs(&self) -> Result<Vec<Value>> {
+        let fallback_gap = lock(&self.settings).burst_gap;
         let mut jobs = rows(&lock(&self.reader), "SELECT j.*, (SELECT count(*) FROM images i WHERE i.job_id=j.id) AS total, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.status='done') AS done FROM jobs j ORDER BY j.id DESC", [])?;
         for job in &mut jobs {
             if job["label"].as_str().is_none_or(|s| s.trim().is_empty()) {
@@ -367,8 +402,13 @@ impl Desktop {
                     .unwrap_or_default()
                     .to_string_lossy());
             }
+            // The album's own burst gap, or the global default when it has none.
+            job["burst_gap"] = json!(conrod_core::settings::burst_gap_or_default(fallback_gap));
             if let Some(sj) = job.get("settings_json").and_then(|v| v.as_str()) {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(sj) {
+                if let Ok(mut val) = serde_json::from_str::<Map<String, Value>>(sj) {
+                    // An album stored before per-album gaps means the old
+                    // effective default, not its ignored 4.0 sentinel.
+                    conrod_core::settings::migrate_burst_gap(&mut val);
                     if let Some(profile) = val.get("scan_profile").and_then(|p| p.as_str()) {
                         job["scan_profile"] = json!(profile);
                     }
@@ -376,6 +416,9 @@ impl Desktop {
                         .get("include_people")
                         .and_then(Value::as_bool)
                         .unwrap_or(false));
+                    if let Some(gap) = val.get("burst_gap").and_then(Value::as_f64) {
+                        job["burst_gap"] = json!(conrod_core::settings::burst_gap_or_default(gap));
+                    }
                 }
             }
         }
@@ -572,11 +615,20 @@ impl Desktop {
         task.finish();
         let desktop = self.clone();
         let eligibility = self.clone();
+        // One progress object per scan: the pools write to it and the app
+        // emits its snapshot as `scan-progress`.
+        let progress = crate::progress::for_scan(
+            job,
+            &settings,
+            ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people),
+        );
+        *lock(&self.progress) = Some(progress.clone());
         let scan = Arc::new(crate::scan_files_filtered(
             paths,
             settings.clone(),
             ScanProfile::parse(&settings.scan_profile),
             self.hub.clone(),
+            Some(progress.clone()),
             move |path| {
                 eligibility
                     .reader
@@ -591,7 +643,7 @@ impl Desktop {
             },
             move |result| match result {
                 Ok(frame) => {
-                    if let Err(e) = desktop.persist_frame(job, &frame) {
+                    if let Err(e) = desktop.persist_frame(job, &frame, &settings) {
                         desktop.hub.start("Saving scan result", 0).fail(e);
                     }
                 }
@@ -606,7 +658,9 @@ impl Desktop {
         self.finishing.store(true, Ordering::Release);
         *active = Some((job, scan.clone()));
         let desktop = self.clone();
-        let identify_after = a.stage == ScanStage::All;
+        // A one-shot scan runs every stage to the end: bursts and keepers, then
+        // identification when the album's preset reads numbers or plates.
+        let one_shot = a.stage == ScanStage::All;
         std::thread::spawn(move || {
             // ponytail: polls an AtomicBool rather than joining a handle
             // because `scan` has none to join -- its workers report through
@@ -624,9 +678,39 @@ impl Desktop {
             } else {
                 "done"
             };
+            let mut final_status = status;
             if !stopped {
-                if let Err(e) = desktop.regroup(job, settings.burst_gap) {
+                if let Some(p) = &desktop.progress() {
+                    p.phase("group");
+                }
+                if let Err(e) = desktop.regroup(job) {
                     desktop.hub.start("Grouping album", 0).fail(e);
+                    final_status = "error";
+                }
+                if let Some(p) = &desktop.progress() {
+                    p.phase("pick");
+                }
+                // Identify when this shoot's presets read numbers or plates:
+                // identification is the slow lane, so it runs last and the
+                // scan is not "done" until it is.
+                let wants_identify = one_shot
+                    && final_status == "done"
+                    && crate::operations::settings(&desktop, job).is_ok_and(|cfg| {
+                        ScanProfile::parse(&cfg.scan_profile).identifies_vehicles()
+                            && (cfg.read_plates || cfg.read_numbers)
+                    });
+                if wants_identify {
+                    if let Err(e) = crate::operations::identify(&desktop, job) {
+                        desktop.hub.start("Identification", 0).fail(e);
+                    } else {
+                        // `identify` runs as its own operation; hold the scan
+                        // open until it has finished, so Review waits for the
+                        // whole pipeline rather than opening half-identified.
+                        let key = format!("Identifying:{job}");
+                        while lock(&desktop.operations).contains_key(&key) {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
+                    }
                 }
             }
             let db = lock(&desktop.db);
@@ -637,22 +721,16 @@ impl Desktop {
                     |r| r.get(0),
                 )
                 .unwrap_or(1);
-            let final_status = if stopped {
-                "stopped"
-            } else if status == "done" && incomplete > 0 {
-                "error"
-            } else {
-                status
-            };
+            if !stopped && final_status == "done" && incomplete > 0 {
+                final_status = "error";
+            }
             let _ = db.execute(
                 "UPDATE jobs SET status=? WHERE id=?",
                 params![final_status, job],
             );
             drop(db);
-            if identify_after && final_status == "done" {
-                if let Err(e) = crate::operations::identify(&desktop, job) {
-                    desktop.hub.start("Identification", 0).fail(e);
-                }
+            if let Some(progress) = desktop.progress() {
+                progress.finish(final_status);
             }
             desktop.finishing.store(false, Ordering::Release);
             desktop.hub.note(if stopped {
@@ -664,7 +742,7 @@ impl Desktop {
         Ok(json!({"jobId":job}))
     }
 
-    fn persist_frame(&self, job: i64, f: &FrameResult) -> Result<()> {
+    fn persist_frame(&self, job: i64, f: &FrameResult, settings: &Settings) -> Result<()> {
         let image: i64 = self
             .db
             .lock()
@@ -689,14 +767,71 @@ impl Desktop {
         let rating = f.rating;
         tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,thumb_path=? WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,thumb.to_string_lossy(),image]).map_err(err)?;
         tx.commit().map_err(err)?;
+        self.report_frame(image, &thumb, f, settings);
         Ok(())
     }
 
-    pub(crate) fn regroup(&self, job: i64, gap: f64) -> Result<()> {
+    /// Tell the scan screen what this frame was: its verdict, its main subject
+    /// and the running found counts.
+    fn report_frame(&self, image: i64, thumb: &Path, f: &FrameResult, settings: &Settings) {
+        let Some(progress) = self.progress() else {
+            return;
+        };
+        let panning = f.subjects.iter().any(|subject| subject.panning);
+        let verdict = if panning {
+            "panning"
+        } else {
+            match conrod_vision::sharpness::verdict_for(
+                f.rating,
+                settings.sharp_at,
+                settings.blurred_below,
+            ) {
+                "sharp" => "sharp",
+                _ => "soft",
+            }
+        };
+        let subject = f
+            .subjects
+            .iter()
+            .max_by(|a, b| {
+                let area = |s: &crate::Subject| (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1]);
+                area(a).total_cmp(&area(b))
+            })
+            .map_or("frame", |s| s.region_type);
+        let soft = verdict == "soft";
+        let closed = f
+            .subjects
+            .iter()
+            .filter(|s| s.cull_reason == crate::EYES_CLOSED)
+            .count();
+        progress.add_found(|found| {
+            found.subjects += f.subjects.len() as u64;
+            found.soft += u64::from(soft);
+            found.closed_eyes += closed as u64;
+        });
+        progress.recent(conrod_core::progress::RecentFrame {
+            image_id: image,
+            thumb_url: thumb.to_string_lossy().into_owned(),
+            subject: subject.to_string(),
+            verdict: verdict.to_string(),
+            label: None,
+        });
+    }
+
+    /// Group the album's bursts and moments again, in place: no pixels are
+    /// read, and nothing a person decided (picked, rejected, stars) is
+    /// touched. The keeper of each pass is then chosen again by the same rule
+    /// the identify stage uses, so a regroup leaves exactly the keeper a later
+    /// pick would choose.
+    ///
+    /// Returns `{bursts, moments, keepers}`: the counts the UI shows after a
+    /// burst-gap or preset change.
+    pub(crate) fn regroup(&self, job: i64) -> Result<Value> {
         let task = self.hub.start("Grouping bursts", 0);
         // Settings before the write lock: reading them takes it too.
         let cfg = crate::operations::settings(self, job)?;
         let profile = ScanProfile::parse(&cfg.scan_profile);
+        let gap = burst_gap(cfg.burst_gap);
         let db = lock(&self.db);
         let images = rows(
             &db,
@@ -712,8 +847,7 @@ impl Desktop {
                 burst: 0,
             })
             .collect();
-        let effective_gap = burst_gap(gap);
-        conrod_core::bursts::assign_bursts(&mut frames, effective_gap);
+        conrod_core::bursts::assign_bursts(&mut frames, gap);
         // Each image's largest subject, as a box: pixels until normalised below.
         let mut main: std::collections::HashMap<i64, (f64, [f64; 4])> =
             std::collections::HashMap::new();
@@ -762,6 +896,12 @@ impl Desktop {
         {
             key[i] = moment;
         }
+        let bursts = frames
+            .iter()
+            .map(|frame| frame.burst)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        let moments = key.iter().collect::<std::collections::BTreeSet<_>>().len();
         let tx = db.unchecked_transaction().map_err(err)?;
         for (i, frame) in frames.iter().enumerate() {
             tx.execute(
@@ -773,15 +913,23 @@ impl Desktop {
         tx.commit().map_err(err)?;
         // The same rule the identify stage uses, so the keeper regroup leaves
         // is the one a later pick would choose anyway.
-        crate::passes::pick_of_pass(
+        let picks = crate::passes::pick_of_pass(
             &db,
             job,
             profile,
             cfg.include_people,
             cfg.use_quality_score,
         )?;
+        let keepers = picks["picks"].as_u64().unwrap_or_default();
+        task.detail(format!("{bursts} bursts · {moments} moments · {keepers} keepers"));
+        if let Some(progress) = self.progress() {
+            progress.add_found(|found| {
+                found.bursts = bursts as u64;
+                found.keepers = keepers;
+            });
+        }
         task.finish();
-        Ok(())
+        Ok(json!({"bursts": bursts, "moments": moments, "keepers": keepers}))
     }
 
     fn preview(&self, image: i64) -> Result<Value> {
@@ -838,20 +986,76 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_gap_setting_defaults_to_one_and_a_half_seconds_and_honours_a_value() {
+    fn the_gap_setting_honours_an_album_value_and_falls_back_to_the_one_default() {
         assert_eq!(
             burst_gap(Settings::default().burst_gap),
             conrod_core::bursts::DEFAULT_BURST_GAP_SECONDS,
-            "the stored default is the legacy 4.0, which still means the default"
+            "the stored default is the one documented default"
         );
         assert_eq!(
             burst_gap(conrod_core::bursts::DEFAULT_BURST_GAP_SECONDS),
             1.5
         );
-        for nonsense in [0.0, -2.5] {
+        for nonsense in [0.0, -2.5, f64::NAN] {
             assert_eq!(burst_gap(nonsense), 1.5, "setting {nonsense} falls back");
         }
         assert_eq!(burst_gap(2.5), 2.5, "a user's gap is honoured");
+        assert_eq!(burst_gap(4.0), 4.0, "4.0 is no longer a sentinel");
+    }
+
+    #[test]
+    fn regroup_in_place_keeps_manual_decisions_and_reports_counts() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("regroup-preserve");
+        let (picked, rejected, starred) = (
+            lib.frame("1.jpg", None),
+            lib.frame("2.jpg", None),
+            lib.frame("3.jpg", None),
+        );
+        for (taken, image) in [(0.0, picked), (0.4, rejected), (0.8, starred)] {
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                params![taken, image],
+            );
+            lib.detection(image, "vehicle", 0.6);
+        }
+        lib.run("mark", json!({"imageId": picked, "picked": true}))
+            .unwrap();
+        lib.run("mark", json!({"imageId": rejected, "rejected": true}))
+            .unwrap();
+        lib.run("mark", json!({"imageId": starred, "stars": 5}))
+            .unwrap();
+
+        let counts = lib.d().regroup(lib.job).unwrap();
+
+        assert_eq!(counts["bursts"], 1, "three frames a half second apart");
+        assert_eq!(counts["moments"], 1);
+        assert!(counts["keepers"].as_u64().unwrap() >= 1, "{counts}");
+        assert_eq!(
+            lib.one::<i64>("SELECT picked FROM images WHERE id=?", [picked]),
+            1,
+            "a manual pick survives a regroup"
+        );
+        assert_eq!(
+            lib.one::<i64>("SELECT rejected FROM images WHERE id=?", [rejected]),
+            1,
+            "a manual reject survives a regroup"
+        );
+        assert_eq!(
+            lib.one::<Option<i64>>("SELECT stars FROM images WHERE id=?", [starred]),
+            Some(5),
+            "manual stars survive a regroup"
+        );
+        assert_eq!(
+            lib.one::<Option<i64>>("SELECT burst_key FROM images WHERE id=?", [rejected]),
+            Some(1),
+            "every frame gets its moment key"
+        );
+        // The command path returns the same counts.
+        let out = lib.run("regroup", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(out["bursts"], 1);
+        assert_eq!(out["moments"], 1);
+        assert!(out["keepers"].as_u64().unwrap() >= 1);
     }
 
     #[test]
@@ -904,7 +1108,7 @@ mod tests {
         // The frame rating would favour the first; the subjects favour the second.
         lib.sql("UPDATE images SET rating=0.9 WHERE id=?", [f1]);
         lib.sql("UPDATE images SET rating=0.1 WHERE id=?", [f2]);
-        lib.d().regroup(lib.job, 1.5).unwrap();
+        lib.d().regroup(lib.job).unwrap();
         assert_eq!(
             lib.one::<i64>("SELECT id FROM detections WHERE burst_pick=1", []),
             strong,
@@ -949,7 +1153,7 @@ mod tests {
                 ],
             );
         }
-        lib.d().regroup(lib.job, 1.5).unwrap();
+        lib.d().regroup(lib.job).unwrap();
         let keys: i64 = lib.one(
             "SELECT count(DISTINCT burst_key) FROM images WHERE job_id=?",
             [lib.job],

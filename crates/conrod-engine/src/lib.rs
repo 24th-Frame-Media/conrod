@@ -37,6 +37,7 @@ pub mod housekeeping;
 pub mod library;
 pub mod operations;
 pub mod passes;
+pub mod progress;
 pub mod region_training;
 pub mod rescore;
 pub mod selftest;
@@ -368,20 +369,25 @@ pub fn cull_frame(
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
     faces: Option<&Mutex<FaceDetector>>,
     quality: Option<&Mutex<conrod_vision::quality::QualityModel>>,
+    step: impl Fn(&'static str),
 ) -> Result<FrameResult, String> {
     let preset = ShootPreset::parse(&settings.scan_profile);
+    step("read");
     let frame = raw::read(path)?;
     let image = Rgb::decode_jpeg(&frame.preview, 1)?.orient(frame.orientation);
     // Resize outside the lock: only the network itself is serial.
     let input = detect::letterbox(&image);
-    let found = detector
-        .lock()
-        .unwrap()
-        .detect_letterboxed(input, &options(settings, profile))?;
+    step("detect:wait");
+    let found = {
+        let mut detector = detector.lock().unwrap();
+        step("detect");
+        detector.detect_letterboxed(input, &options(settings, profile))?
+    };
 
     let (fw, fh) = (image.width, image.height);
     // Native-resolution luma, once: the subject's blur is measured on it.
     let grey = image.to_gray();
+    step("sharpness");
 
     let mut subjects = Vec::new();
     for det in &found {
@@ -484,12 +490,14 @@ pub fn cull_frame(
         });
     }
     if let Some(detector) = faces {
+        step("faces");
         let people = found
             .iter()
             .filter(|d| d.class_id == detect::PERSON)
             .map(|d| d.bbox);
         subjects.extend(face_subjects(&image, people, detector, settings, models)?);
     }
+    step("sharpness");
     let whole = {
         let focus = sharpness::measure(&grey, None, None);
         let measured = focus.measured.then_some(focus.score);
@@ -561,7 +569,7 @@ pub fn scan(
     let finding = hub.start("Finding photos", 0);
     let paths = files(&root);
     finding.finish();
-    scan_files(paths, settings, profile, hub, move |result| {
+    scan_files(paths, settings, profile, hub, None, move |result| {
         if let Ok(frame) = result {
             on_frame(frame);
         }
@@ -575,16 +583,20 @@ pub fn scan_files(
     settings: Settings,
     profile: ScanProfile,
     hub: TaskHub,
+    progress: Option<Arc<crate::progress::Progress>>,
     on_frame: impl Fn(ScanResult) + Send + Sync + 'static,
 ) -> Scan {
-    scan_files_filtered(paths, settings, profile, hub, |_| true, on_frame)
+    scan_files_filtered(paths, settings, profile, hub, progress, |_| true, on_frame)
 }
 
+/// The cull lane. `progress`, when given, is told which stage and step every
+/// worker is on, and gets the frame counts the status area cannot show.
 pub(crate) fn scan_files_filtered(
     paths: Vec<PathBuf>,
     settings: Settings,
     profile: ScanProfile,
     hub: TaskHub,
+    progress: Option<Arc<crate::progress::Progress>>,
     should_scan: impl Fn(&Path) -> bool + Send + Sync + 'static,
     on_frame: impl Fn(ScanResult) + Send + Sync + 'static,
 ) -> Scan {
@@ -618,18 +630,30 @@ pub(crate) fn scan_files_filtered(
             loading.fail(format!("could not install the models: {e}"));
             return;
         }
-        let detector = match Detector::load(&detector_model(), Device::Auto) {
-            Ok(d) => {
-                loading.finish();
-                Mutex::new(d)
+        let detectors: Vec<Mutex<Detector>> = {
+            let sessions = conrod_core::settings::clamp_workers(
+                settings.detect_workers,
+                conrod_core::settings::worker_caps().detect,
+                1,
+            ) as usize;
+            let mut loaded = Vec::with_capacity(sessions);
+            for _ in 0..sessions {
+                match Detector::load(&detector_model(), Device::Auto) {
+                    Ok(d) => loaded.push(Mutex::new(d)),
+                    Err(e) => {
+                        *lock(&failure) = Some(e.clone());
+                        loading.fail(format!("could not load the detector: {e}"));
+                        return;
+                    }
+                }
             }
-            Err(e) => {
-                *lock(&failure) = Some(e.clone());
-                loading.fail(format!("could not load the detector: {e}"));
-                return;
-            }
+            loading.finish();
+            loaded
         };
-        let device = lock(&detector).device;
+        let device = lock(&detectors[0]).device;
+        let detector_name = detector_model()
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         let faces =
             if ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people) {
                 let task = hub.start("Loading face detector", 0);
@@ -667,17 +691,52 @@ pub(crate) fn scan_files_filtered(
             format!("Culling ({}, {device})", profile.label()),
             paths.len() as u64,
         );
-        let next = AtomicUsize::new(0);
-        let done = AtomicUsize::new(0);
         // Most of the machine, a fifth left for the UI. Past ~16 workers the
         // hyperthreads and E-cores add little: 10.1, 12.3, 13.8 and 14.4
-        // frames/s at 8, 12, 16 and 20 workers on a 20-thread laptop.
-        let workers = std::thread::available_parallelism()
-            .map_or(4, |n| n.get() * 4 / 5)
-            .clamp(2, 16);
+        // frames/s at 8, 12, 16 and 20 workers on a 20-thread laptop. The
+        // album's `workers` setting overrides it within that cap.
+        let workers = settings.cull_workers() as usize;
+        let workers = workers.min(paths.len().max(1));
+        if let Some(p) = &progress {
+            for stage in ["read", "detect", "sharpness", "faces"] {
+                p.total(stage, paths.len() as u64);
+            }
+            p.phase("detect");
+            p.describe("detect", detector_name.clone(), device);
+            p.describe("read", "camera preview", "CPU");
+            p.describe(
+                "sharpness",
+                if models.is_empty() {
+                    "edge blur"
+                } else {
+                    "edge blur + learned ridge"
+                },
+                "CPU",
+            );
+            p.describe(
+                "faces",
+                if faces.is_some() {
+                    "YuNet 2023mar + OCEC"
+                } else {
+                    "off for this shoot"
+                },
+                "CPU",
+            );
+            p.describe("group", "burst gaps + subject framing", "CPU");
+            p.describe("pick", "keepers by pass", "CPU");
+        }
+        let next = AtomicUsize::new(0);
+        let done = AtomicUsize::new(0);
         std::thread::scope(|s| {
-            for _ in 0..workers {
-                s.spawn(|| loop {
+            for lane in 0..workers {
+                // Borrows, not moves: every worker shares the same pools. `lane`
+                // is copied so its borrow does not outlive the loop iteration.
+                let (paths, settings, detectors, models, faces, quality) =
+                    (&paths, &settings, &detectors, &models, &faces, &quality);
+                let (progress, on_frame, should_scan, task) =
+                    (&progress, &on_frame, &should_scan, &task);
+                let (pausing, flag, next, done, hub) = (&pausing, &flag, &next, &done, &hub);
+                s.spawn(move || loop {
                     let mut paused = lock(&pausing.0);
                     while *paused && !flag.load(Ordering::Relaxed) {
                         task.paused(true);
@@ -699,14 +758,32 @@ pub(crate) fn scan_files_filtered(
                         task.progress(n as u64, paths.len() as u64);
                         continue;
                     }
+                    let file = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let step = |step: &'static str| {
+                        let Some(p) = progress.as_ref() else { return };
+                        match step {
+                            "detect:wait" => {
+                                p.waiting("read", lane, "detect", "lock", step, &file);
+                            }
+                            "detect" => p.busy("read", lane, "detect", step, &file),
+                            "sharpness" => p.busy("read", lane, "sharpness", step, &file),
+                            "faces" => p.busy("read", lane, "faces", step, &file),
+                            _ => p.busy("read", lane, "read", step, &file),
+                        }
+                    };
+                    let detector = &detectors[lane % detectors.len()];
                     match cull_frame(
                         path,
-                        &detector,
-                        &settings,
+                        detector,
+                        settings,
                         profile,
-                        &models,
+                        models,
                         faces.as_ref(),
                         quality.as_ref(),
+                        step,
                     ) {
                         Ok(result) => on_frame(Ok(result)),
                         Err(e) => {
@@ -714,6 +791,12 @@ pub(crate) fn scan_files_filtered(
                             let t = hub.start(format!("Skipped {}", path.display()), 0);
                             t.fail(e);
                         }
+                    }
+                    if let Some(p) = progress.as_ref() {
+                        for stage in ["read", "detect", "sharpness", "faces"] {
+                            p.advance(stage, 1);
+                        }
+                        p.idle("read", lane);
                     }
                     let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                     task.progress(n as u64, paths.len() as u64);
