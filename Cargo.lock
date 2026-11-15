@@ -828,6 +828,7 @@ name = "conrod-vision"
 version = "1.0.0-beta.7"
 dependencies = [
  "conrod-core",
+ "conrod-io",
  "image",
  "jpeg-decoder",
  "oar-ocr",
