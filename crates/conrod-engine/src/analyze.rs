@@ -120,13 +120,9 @@ pub fn analyze(
     failures.extend(entry_warning);
 
     // 3. The semantic pass.
-    let racing = matches!(
-        conrod_core::profile::ShootPreset::parse(&s.scan_profile),
-        conrod_core::profile::ShootPreset::Motorsport
-            | conrod_core::profile::ShootPreset::MotorsportBurnouts
-            | conrod_core::profile::ShootPreset::MotorsportTrack
-            | conrod_core::profile::ShootPreset::MotorsportRally
-    );
+    let policy = conrod_core::profile::ShootPreset::parse(&s.scan_profile).policy();
+    let racing = policy.profile == conrod_core::profile::ScanProfile::Motorsport
+        && policy.vlm.numbers;
     let mut described = VehicleDescription::default();
     let mut vlm_reply = serde_json::Value::Null;
     let mut vlm_attempts = 0;
