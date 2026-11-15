@@ -129,9 +129,10 @@ pub const EAR_OPEN: f32 = 0.30;
 pub const SMILE_LIFT_LOW: f32 = 0.005;
 pub const SMILE_LIFT_HIGH: f32 = 0.05;
 /// Lower eye-open than this reads as a blink, on the blendshape eye closes:
-/// the contact sheet measured blinks at 0.03-0.26 and open eyes at 0.78-0.99,
-/// so 0.30 sits in the empty band between them.
-pub const CLOSED_EYE_BELOW: f32 = 0.30;
+/// the contact sheet measured blinks at 0.03-0.26 and open eyes at 0.78-0.99.
+/// Started at 0.30, but a delivered portrait read 0.28, so the threshold is the
+/// bottom of the open band: a partial blink no longer culls a frame alone.
+pub const CLOSED_EYE_BELOW: f32 = 0.20;
 /// A mesh that agrees with the detector's landmarks at least this well is
 /// trusted over the binary OCEC verdict.
 pub const TRUST_CONFIDENCE: f32 = 0.50;

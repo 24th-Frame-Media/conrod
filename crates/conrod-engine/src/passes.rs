@@ -42,6 +42,11 @@ pub(crate) fn region_name(kind: Subject) -> &'static str {
 /// better, so the subject's prominence decides between them.
 const RATING_BAND: f64 = 0.03;
 
+/// The smile difference that counts as a difference, not measurement noise.
+const SMILE_MARGIN: f64 = 0.10;
+/// The framing difference worth reordering two near-equal candidates.
+const FRAMING_MARGIN: f64 = 0.10;
+
 /// The same band for a face or an eye. Their score is an edge-blur estimate,
 /// not the tile ratio the band was measured on: a hundredth of it is a real
 /// difference between two portraits, and the keeper must follow it.
@@ -91,11 +96,11 @@ impl Candidate {
     /// rule culled, then the rating in the candidate's band (the wider of the
     /// two, where the kinds differ), then a clean exposure, then the rodeo
     /// buck (in that preset only), then the subject that the frame edge cuts
-    /// off least -- a cropped subject never wins on size -- then the preset's
-    /// framing score (cut sides, size band, lead room and occlusion) where it
-    /// applies, then a smile where the preset wants one, then the larger
-    /// subject, then the exact rating, then (opt-in) NIMA quality, then the
-    /// stored subject sharpness, and finally the earlier frame.
+    /// off least -- a cropped subject never wins on size -- then the larger
+    /// subject and the exact rating, then the preset's framing score, then a
+    /// smile, then (opt-in) NIMA quality, then the stored subject sharpness,
+    /// and finally the earlier frame. Framing and the smile rank late because
+    /// readiness showed them dropping pick rates when they outranked size.
     fn beats(&self, other: &Self, r: &Ranking) -> bool {
         if self.by_hand != other.by_hand {
             return self.by_hand > other.by_hand;
@@ -120,27 +125,35 @@ impl Candidate {
             }
         }
         // A cropped subject never wins on size: the contact-sheet comparison
-        // showed the delivered frame keeping the subject whole. Cut sides stay
-        // the gate, and the framing score decides between equally cut frames.
+        // showed the delivered frame keeping the subject whole.
         if self.sides != other.sides {
             return self.sides < other.sides;
         }
+        if self.area != other.area {
+            return self.area > other.area;
+        }
+        if self.score != other.score {
+            return self.score > other.score;
+        }
+        // Everything below is a tiebreak on a near-tie. Readiness set this
+        // order: framing as a pre-size key dropped three cases' pick rates
+        // (motorsport 46.7 -> 33.3, car meet 67 -> 33.3, portrait 42.9 ->
+        // 35.7), so it ranks after the rating and only on a real difference.
         if r.framing {
             if let (Some(a), Some(b)) = (self.framing, other.framing) {
-                if a != b {
+                if (a - b).abs() >= FRAMING_MARGIN {
                     return a > b;
                 }
             }
         }
         if r.smile {
+            // A smile decides between frames that differ, not a 0.02 flicker:
+            // the readiness portrait case lost picks to a tie on noise.
             if let (Some(a), Some(b)) = (self.smile, other.smile) {
-                if a != b {
+                if (a - b).abs() >= SMILE_MARGIN {
                     return a > b;
                 }
             }
-        }
-        if self.area != other.area {
-            return self.area > other.area;
         }
         if self.score != other.score {
             return self.score > other.score;
@@ -324,7 +337,10 @@ pub fn pick_of_pass(
                 culled: (!set_member && r["culled"].as_i64().unwrap_or(0) != 0)
                     || r["shut_eye"].as_i64().unwrap_or(0) != 0
                     || (!set_member && !keeps_dark && dark),
-                bright: set_member || r["exposure_verdict"].as_str().is_none_or(|v| v == "ok"),
+                // Only a truly dark frame loses here: a bright sky or a crushed
+                // shadow is a flag, not a ranking fault. The readiness motorsport
+                // case proved a clipped sky must not outrank sharpness.
+                bright: set_member || r["exposure_verdict"].as_str() != Some("dark"),
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: r["quality"].as_f64(),
@@ -367,7 +383,7 @@ pub fn pick_of_pass(
                 on_frame: true,
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
                 culled: !set_member && !keeps_dark && dark,
-                bright: set_member || r["exposure_verdict"].as_str().is_none_or(|v| v == "ok"),
+                bright: set_member || r["exposure_verdict"].as_str() != Some("dark"),
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: None,
