@@ -266,7 +266,7 @@ fn measure_box(
         let blur = conrod_vision::edgeblur::measure(grey, Some(box_region));
         if let Some(score) = sharpness::rating_from_blur(
             blur.sigma_worst_at_reference(image.width.max(image.height)),
-            sharpness::BlurStrictness::parse(&settings.blur_strictness),
+            sharpness::BlurStrictness::parse(&settings.effective_blur()),
         ) {
             focus.score = score;
         }
@@ -623,7 +623,7 @@ fn export_recall() {
                                     conrod_vision::edgeblur::at_reference(e.sigma, long),
                                     sharpness::rating_from_blur(
                                         worst,
-                                        sharpness::BlurStrictness::parse(&settings.blur_strictness),
+                                        sharpness::BlurStrictness::parse(&settings.effective_blur()),
                                     )
                                     .unwrap_or(f64::NAN),
                                     ms,

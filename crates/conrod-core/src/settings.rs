@@ -428,6 +428,20 @@ impl Settings {
         }
     }
 
+    /// The blur strictness a scan applies: the album's own choice when one was
+    /// made (the flag, or any album saved before the flag whose value is not
+    /// the old default), otherwise the shoot preset's default.
+    pub fn effective_blur(&self) -> String {
+        if self.blur_explicit || self.blur_strictness != "moderate" {
+            self.blur_strictness.clone()
+        } else {
+            crate::profile::ShootPreset::parse(&self.scan_profile)
+                .policy()
+                .default_blur
+                .to_string()
+        }
+    }
+
     /// Overlay known keys whose values have the right type.
     pub fn apply(self, updates: &Map<String, Value>) -> Settings {
         let Value::Object(mut current) = serde_json::to_value(&self).unwrap() else {
@@ -512,6 +526,18 @@ mod tests {
     fn settings_without_blur_strictness_load_as_moderate() {
         let settings: Settings = serde_json::from_str(r#"{"scan_profile":"motorsport"}"#).unwrap();
         assert_eq!(settings.blur_strictness, "moderate");
+    }
+
+    #[test]
+    fn the_preset_default_blur_applies_until_the_album_chooses() {
+        let mut s = Settings::default();
+        s.scan_profile = "portrait".into();
+        assert_eq!(s.effective_blur(), "strict", "nothing chosen: the preset's default");
+        s.blur_strictness = "lenient".into();
+        assert_eq!(s.effective_blur(), "lenient", "an album saved before the flag keeps its choice");
+        s.blur_strictness = "moderate".into();
+        s.blur_explicit = true;
+        assert_eq!(s.effective_blur(), "moderate", "an explicit moderate beats a strict preset");
     }
 
     #[test]

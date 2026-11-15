@@ -242,7 +242,7 @@ pub fn pick_of_pass(
             ShootPreset::SportRodeo | ShootPreset::SportEquestrian
         ),
     };
-    let keeps_dark = matches!(preset, ShootPreset::Astro | ShootPreset::Concert);
+    let keeps_dark = preset.policy().dark_ok;
     // Each frame's main subject: its largest person or vehicle.
     let mut boxes: HashMap<i64, Vec<(Subject, f64)>> = HashMap::new();
     for r in &found {
@@ -340,7 +340,7 @@ pub fn pick_of_pass(
                 // Only a truly dark frame loses here: a bright sky or a crushed
                 // shadow is a flag, not a ranking fault. The readiness motorsport
                 // case proved a clipped sky must not outrank sharpness.
-                bright: set_member || r["exposure_verdict"].as_str() != Some("dark"),
+                bright: set_member || keeps_dark || r["exposure_verdict"].as_str() != Some("dark"),
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: r["quality"].as_f64(),
@@ -383,7 +383,7 @@ pub fn pick_of_pass(
                 on_frame: true,
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
                 culled: !set_member && !keeps_dark && dark,
-                bright: set_member || r["exposure_verdict"].as_str() != Some("dark"),
+                bright: set_member || keeps_dark || r["exposure_verdict"].as_str() != Some("dark"),
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: None,
@@ -561,14 +561,7 @@ fn find_people(
             let raw = conrod_io::raw::read(std::path::Path::new(path))?;
             let rgb = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
             let grey = rgb.to_gray();
-            let strictness = if cfg.blur_explicit {
-                cfg.blur_strictness.clone()
-            } else {
-                ShootPreset::parse(&cfg.scan_profile)
-                    .policy()
-                    .default_blur
-                    .to_string()
-            };
+            let strictness = cfg.effective_blur();
             let found = crate::face_subjects(
                 &rgb,
                 &grey,
@@ -1558,6 +1551,41 @@ mod tests {
             vec![clean, starred],
             "a cull only wins when every candidate of its pass is culled, and a hand star still leads"
         );
+    }
+
+    #[test]
+    fn a_dark_frame_loses_the_pass_except_where_the_preset_shoots_in_the_dark() {
+        for (preset, dark_wins) in [("motorsport", false), ("concert", true)] {
+            let lib = Lib::new(&format!("dark-{preset}"));
+            lib.sql(
+                "UPDATE jobs SET settings_json=? WHERE id=?",
+                rusqlite::params![json!({"scan_profile": preset}).to_string(), lib.job],
+            );
+            let dim = lib.frame("1.jpg", Some(1));
+            let lit = lib.frame("2.jpg", Some(1));
+            let (dim_det, lit_det) = (
+                lib.detection(dim, "vehicle", 0.90),
+                lib.detection(lit, "vehicle", 0.90),
+            );
+            // Same rating and box: only the exposure tells them apart, and the
+            // dark frame is the earlier one so a full tie would keep it.
+            lib.sql(
+                "UPDATE images SET dark_frame=1, exposure_verdict='dark' WHERE id=?",
+                [dim],
+            );
+            lib.sql(
+                "UPDATE images SET dark_frame=0, exposure_verdict='ok' WHERE id=?",
+                [lit],
+            );
+            lib.sql("UPDATE detections SET sharpness=0.95 WHERE id=?", [dim_det]);
+            lib.sql("UPDATE detections SET sharpness=0.90 WHERE id=?", [lit_det]);
+            pick_keepers(lib.d(), lib.job).unwrap();
+            assert_eq!(
+                picks(&lib),
+                vec![if dark_wins { dim_det } else { lit_det }],
+                "{preset}"
+            );
+        }
     }
 
     #[test]

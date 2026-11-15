@@ -119,6 +119,9 @@ pub struct PresetPolicy {
     /// Level matters (property, interiors, landscape): measure tilt and
     /// convergence, and flag rather than cull.
     pub level: bool,
+    /// Dark frames are the subject here (night sky, a stage in blackout): a
+    /// low mean luma is neither a cull nor a ranking fault.
+    pub dark_ok: bool,
     /// Extra COCO classes asked of the detector, e.g. 4 (airplane).
     pub extra_vehicles: &'static [usize],
 }
@@ -140,6 +143,7 @@ impl PresetPolicy {
             max_subjects_floor: 0,
             deliver_most: false,
             level: false,
+            dark_ok: false,
             extra_vehicles: &[],
         }
     }
@@ -206,6 +210,11 @@ impl PresetPolicy {
 
     const fn level(mut self) -> Self {
         self.level = true;
+        self
+    }
+
+    const fn dark_ok(mut self) -> Self {
+        self.dark_ok = true;
         self
     }
 
@@ -524,6 +533,7 @@ impl ShootPreset {
                 .blur("lenient")
                 .min_box(0.5)
                 .floor(24)
+                .dark_ok()
                 .vlm(VlmTargets::NAMES),
             ShootPreset::EventParties => PresetPolicy::new(Event)
                 .min_box(0.5)
@@ -591,6 +601,7 @@ impl ShootPreset {
                 .blur("lenient")
                 .min_box(0.5)
                 .floor(24)
+                .dark_ok()
                 .vlm(VlmTargets::NAMES),
             ShootPreset::WildlifeBirds => PresetPolicy::new(Mix)
                 .no_people()
@@ -610,6 +621,7 @@ impl ShootPreset {
                 .no_animals()
                 .no_faces()
                 .blur("lenient")
+                .dark_ok()
                 .group(GroupUnit::KeepSet),
             ShootPreset::Aviation => PresetPolicy::new(Motorsport)
                 .vehicles()
@@ -949,6 +961,10 @@ mod tests {
         assert!(ShootPreset::WildlifeBirds.wants_animals());
         assert_eq!(ShootPreset::Landscape.group_unit(), KeepSet);
         assert_eq!(ShootPreset::Astro.default_blur_strictness(), "lenient");
+        for dark in [ShootPreset::Astro, ShootPreset::Concert, ShootPreset::EventShows] {
+            assert!(dark.policy().dark_ok, "{dark:?}");
+        }
+        assert!(!ShootPreset::Landscape.policy().dark_ok);
         assert_eq!(ShootPreset::Landscape.default_blur_strictness(), "strict");
         assert_eq!(ShootPreset::Landscape.min_box_fraction(0.08), 0.08);
         // Aviation asks for the airplane class and reads tail numbers as plates.

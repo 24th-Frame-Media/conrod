@@ -288,7 +288,7 @@ fn measure_frame(
             if let Some(score) =
                 sharpness::rating_from_blur(
                     blur.sigma_worst_at_reference(fw.max(fh)),
-                    sharpness::BlurStrictness::parse(&cfg.blur_strictness),
+                    sharpness::BlurStrictness::parse(&cfg.effective_blur()),
                 )
             {
                 focus.score = score;
