@@ -61,11 +61,12 @@ pub fn remeasure(s: &Stored, model: Option<&SharpModel>, cfg: &Settings) -> Outc
         .and_then(|m| sharpness::learned_score(m, s.features));
     let score = learned.unwrap_or(s.heuristic);
     let small = matches!(s.region, "face" | "eye");
-    // A face is judged on its own; a vehicle or person also by how much of it is in frame.
-    let edges = if small {
-        framing::Framing::default()
-    } else {
+    // Only vehicles take the edge penalty; faces and people/animals often touch
+    // the frame edge intentionally.
+    let edges = if s.region == "vehicle" {
         framing::assess(Some(s.bbox), s.frame.0, s.frame.1)
+    } else {
+        framing::Framing::default()
     };
     let rating = score * edges.factor;
     let verdict = sharpness::rating_for(rating, cfg.sharp_at, cfg.blurred_below);
@@ -345,6 +346,20 @@ fn write(d: &Desktop, batch: &[(i64, Outcome)]) -> Result<()> {
     tx.commit().map_err(err)
 }
 
+/// The frame's best score per region: the sharpest subject, except the eyes,
+/// where a portrait is as sharp as its softer eye (as `frame_rating` reads it).
+fn keep(best: &mut HashMap<String, f64>, region: &str, rating: f64) {
+    best.entry(region.into())
+        .and_modify(|b| {
+            *b = if region == "eye" {
+                b.min(rating)
+            } else {
+                b.max(rating)
+            }
+        })
+        .or_insert(rating);
+}
+
 pub(crate) fn run(
     d: &Desktop,
     job: i64,
@@ -392,11 +407,7 @@ pub(crate) fn run(
             None => {
                 skipped += 1;
                 if let Some(rating) = old {
-                    frame
-                        .best
-                        .entry(region.into())
-                        .and_modify(|b| *b = b.max(rating))
-                        .or_insert(rating);
+                    keep(&mut frame.best, region, rating);
                 }
             }
             Some(heuristic) => {
@@ -423,11 +434,7 @@ pub(crate) fn run(
                 if old.is_none_or(|o| (o - outcome.rating).abs() > 1e-9) {
                     changed += 1;
                 }
-                frame
-                    .best
-                    .entry(region.into())
-                    .and_modify(|b| *b = b.max(outcome.rating))
-                    .or_insert(outcome.rating);
+                keep(&mut frame.best, region, outcome.rating);
                 batch.push((row["id"].as_i64().unwrap_or_default(), outcome));
             }
         }
@@ -818,5 +825,45 @@ mod tests {
             .run("rescore", json!({"jobId": 77}))
             .unwrap_err()
             .contains("No such album"));
+    }
+
+    #[test]
+    fn a_portrait_frame_takes_its_softer_eye_and_keeps_a_shut_face_shut() {
+        let lib = Lib::new("rescore-eyes");
+        let frame = lib.frame("1.jpg", Some(1));
+        let left = lib.detection(frame, "eye", 0.95);
+        let right = lib.detection(frame, "eye", 0.90);
+        let face = lib.detection(frame, "face", 0.94);
+        for (det, score) in [(left, 0.95), (right, 0.90), (face, 0.94)] {
+            with_features(&lib, det, score, 0.1);
+            lib.sql("UPDATE detections SET cull_reason='' WHERE id=?", [det]);
+        }
+        lib.sql(
+            "UPDATE detections SET attributes=? WHERE id=?",
+            params![
+                json!({"eyes_open": [0.1, 0.2], "eyes_closed": true}).to_string(),
+                face
+            ],
+        );
+        lib.sql(
+            "UPDATE jobs SET settings_json=? WHERE id=?",
+            params![json!({"scan_profile": "portrait"}).to_string(), lib.job],
+        );
+
+        lib.run("rescore", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [frame]);
+        assert!(
+            (rating - 0.90).abs() < 1e-9,
+            "the softer eye decides the portrait: {rating}"
+        );
+        let cull: String = lib.one("SELECT cull_reason FROM detections WHERE id=?", [face]);
+        assert_eq!(
+            cull, crate::EYES_CLOSED,
+            "a re-measure must not open shut eyes"
+        );
+        let cull: String = lib.one("SELECT cull_reason FROM detections WHERE id=?", [left]);
+        assert_eq!(cull, "", "an open eye keeps its clean sheet");
     }
 }

@@ -13,7 +13,7 @@ use conrod_core::tasks::TaskHub;
 use conrod_io::raw;
 use conrod_vision::detect::{self, DetectOptions, Detector, Device};
 use conrod_vision::faces::FaceDetector;
-use conrod_vision::imageops::{Filter, Rgb};
+use conrod_vision::imageops::{Filter, Gray, Rgb};
 use conrod_vision::sharpness;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -152,6 +152,39 @@ pub struct FrameResult {
     pub rating: f64,
 }
 
+fn crop_gray(frame: &Gray, crop_box: [f64; 4]) -> Gray {
+    let [x1, y1, x2, y2] = crop_box.map(|v| v.max(0.0) as usize);
+    let (x2, y2) = (x2.min(frame.width), y2.min(frame.height));
+    let (x1, y1) = (x1.min(x2), y1.min(y2));
+    let mut data = Vec::with_capacity((x2 - x1) * (y2 - y1));
+    for y in y1..y2 {
+        data.extend_from_slice(&frame.data[y * frame.width + x1..y * frame.width + x2]);
+    }
+    Gray::new(x2 - x1, y2 - y1, data)
+}
+
+/// Crop `grey` to `crop_box`, resizing only when upscaling below `crop_min_edge`
+/// or when downscaling above `crop_max_edge` for a learned sharpness model
+/// (`sharpness::measure` shrinks larger crops straight to `WORKING_EDGE`).
+fn cut_gray(grey: &Gray, crop_box: [f64; 4], settings: &Settings, has_model: bool) -> Gray {
+    let crop = crop_gray(grey, crop_box);
+    let longest = crop.width.max(crop.height) as f64;
+    if longest <= 0.0 {
+        return crop;
+    }
+    let (lo, hi) = (settings.crop_min_edge as f64, settings.crop_max_edge as f64);
+    let scale = if longest < lo {
+        lo / longest
+    } else if has_model && longest > hi {
+        hi / longest
+    } else {
+        return crop;
+    };
+    let w = ((crop.width as f64 * scale) as usize).max(1);
+    let h = ((crop.height as f64 * scale) as usize).max(1);
+    crop.resize(w, h, Filter::Lanczos)
+}
+
 /// detect.py's `cut`: native resolution, resized only to keep the longest
 /// edge within the crop limits.
 fn cut(frame: &Rgb, crop_box: [f64; 4], settings: &Settings) -> Rgb {
@@ -233,6 +266,7 @@ pub(crate) fn eyes_closed(open: [Option<f32>; 2]) -> bool {
 /// Faces and eyes found inside each person box, measured like any subject.
 pub(crate) fn face_subjects(
     image: &Rgb,
+    grey: &Gray,
     people: impl IntoIterator<Item = [f64; 4]>,
     detector: &Mutex<FaceDetector>,
     settings: &Settings,
@@ -280,10 +314,19 @@ pub(crate) fn face_subjects(
                 if c <= a + 24 || d <= b + 24 {
                     continue;
                 }
-                let focus =
-                    sharpness::measure(&image.crop(a, b, c, d).to_gray(), None, models.get(kind));
+                let patch = crop_gray(grey, [a as f64, b as f64, c as f64, d as f64]);
+                let mut focus = sharpness::measure(&patch, None, models.get(kind));
                 if !focus.measured {
                     continue;
+                }
+                if !focus.learned {
+                    let blur = conrod_vision::edgeblur::measure(grey, Some([a, b, c, d]));
+                    if let Some(score) = sharpness::rating_from_blur(
+                        blur.sigma_worst_at_reference(fw.max(fh)),
+                        sharpness::BlurStrictness::parse(&settings.blur_strictness),
+                    ) {
+                        focus.score = score;
+                    }
                 }
                 let stars = sharpness::stars_for(focus.score);
                 let reason = if stars < (settings.auto_reject_below_stars as u8)
@@ -351,11 +394,14 @@ pub(crate) fn frame_rating(
                 return whole;
             }
             let name = crate::passes::region_name(*kind);
-            subjects
-                .iter()
-                .filter(|s| s.0 == name)
-                .map(|s| s.2)
-                .max_by(f64::total_cmp)
+            let scores = subjects.iter().filter(|s| s.0 == name).map(|s| s.2);
+            // A portrait is as sharp as its softer eye: one eye out of focus
+            // is a miss the sharper one must not hide.
+            if *kind == Kind::Eye {
+                scores.min_by(f64::total_cmp)
+            } else {
+                scores.max_by(f64::total_cmp)
+            }
         })
         .unwrap_or(0.0)
 }
@@ -385,8 +431,13 @@ pub fn cull_frame(
 
     let mut subjects = Vec::new();
     for det in &found {
-        let crop = cut(&image, det.crop_box, settings);
-        let scale = crop.width as f64 / (det.crop_box[2] - det.crop_box[0]);
+        let kind = if det.class_id == detect::PERSON || detect::ANIMALS.contains(&det.class_id) {
+            "person"
+        } else {
+            "vehicle"
+        };
+        let crop_grey = cut_gray(&grey, det.crop_box, settings, models.contains_key(kind));
+        let scale = crop_grey.width as f64 / (det.crop_box[2] - det.crop_box[0]);
         let [cx, cy] = [det.crop_box[0], det.crop_box[1]];
         let inner = [
             (det.bbox[0] - cx) * scale,
@@ -394,12 +445,7 @@ pub fn cull_frame(
             (det.bbox[2] - cx) * scale,
             (det.bbox[3] - cy) * scale,
         ];
-        let kind = if det.class_id == detect::PERSON || detect::ANIMALS.contains(&det.class_id) {
-            "person"
-        } else {
-            "vehicle"
-        };
-        let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), models.get(kind));
+        let mut focus = sharpness::measure(&crop_grey, Some(inner), models.get(kind));
         // The subject's score is the edge-blur estimate inside the detector box
         // on native pixels; the tile measure above still supplies background,
         // bands, features and the held-pan flag. A loaded learned model keeps
@@ -422,7 +468,10 @@ pub fn cull_frame(
             }
         }
         let edges = framing::assess(Some(det.bbox), fw as i64, fh as i64);
-        let rating = focus.score * edges.factor;
+        // Portraits and wildlife close-ups routinely touch the frame edge
+        // without being miscropped; only vehicles take the edge penalty.
+        let factor = if kind == "vehicle" { edges.factor } else { 1.0 };
+        let rating = focus.score * factor;
         // A held pan is a *sharp subject over a streaked background*, not a
         // blurred subject: the camera moved with the subject, so the subject
         // stays sharp while everything else is one set of parallel streaks.
@@ -448,7 +497,7 @@ pub fn cull_frame(
         let cull_reason = if (settings.auto_reject_below_stars as u8) > stars {
             format!("{stars} star{}", if stars == 1 { "" } else { "s" })
         } else if settings.cull_blurred && sharpness::cullable(&focus, verdict) {
-            if edges.cut_off() {
+            if kind == "vehicle" && edges.cut_off() {
                 framing::describe(&edges)
             } else {
                 "too blurred".into()
@@ -457,7 +506,10 @@ pub fn cull_frame(
             String::new()
         };
         // A failed read costs only the tiebreak, never the cull.
-        let quality_score = quality.and_then(|q| lock(q).score(&crop).ok());
+        let quality_score = quality.and_then(|q| {
+            let crop = cut(&image, det.crop_box, settings);
+            lock(q).score(&crop).ok()
+        });
         subjects.push(Subject {
             class: detect::class_name(det.class_id),
             conf: det.conf,
@@ -469,11 +521,7 @@ pub fn cull_frame(
             stars,
             cull_reason,
             features: focus.features,
-            region_type: if det.class_id == detect::PERSON || detect::ANIMALS.contains(&det.class_id) {
-                "person"
-            } else {
-                "vehicle"
-            },
+            region_type: kind,
             heuristic: if focus.learned {
                 focus.heuristic
             } else {
@@ -488,7 +536,7 @@ pub fn cull_frame(
             .iter()
             .filter(|d| d.class_id == detect::PERSON)
             .map(|d| d.bbox);
-        subjects.extend(face_subjects(&image, people, detector, settings, models)?);
+        subjects.extend(face_subjects(&image, &grey, people, detector, settings, models)?);
     }
     let whole = {
         let focus = sharpness::measure(&grey, None, None);
@@ -496,10 +544,25 @@ pub fn cull_frame(
         if subjects.is_empty() {
             // Nothing to judge: rate the frame on its in-focus area, so a sharp
             // detail against a deliberately blurred background is not "blurred".
-            match (measured, sharpness::focal_score(&grey)) {
-                (Some(whole), Some(focal)) => Some(whole.max(focal)),
-                (whole, focal) => whole.or(focal),
+            //
+            // Flat subject matter -- an empty wall, a worktop, a ceiling -- has
+            // too little texture for either tile ratio, and a sharp interior
+            // frame reads as soft. The edge blur of the frame's sharpest
+            // direction asks only whether any edge is sharp, which is the same
+            // question `focal_score` asks of the tiles.
+            let edges = conrod_vision::edgeblur::measure(&grey, None);
+            let edge = sharpness::rating_from_blur(
+                conrod_vision::edgeblur::at_reference(edges.sigma_best, fw.max(fh)),
+                sharpness::BlurStrictness::parse(&settings.blur_strictness),
+            );
+            let mut score = f64::NEG_INFINITY;
+            for v in [measured, sharpness::focal_score(&grey), edge]
+                .into_iter()
+                .flatten()
+            {
+                score = score.max(v);
             }
+            (score > f64::NEG_INFINITY).then_some(score)
         } else {
             measured
         }
@@ -780,5 +843,29 @@ mod tests {
             .collect();
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(found, ["a.jpg", "b/deep/n.JPEG", "b/m.cr2", "z.CR3"]);
+    }
+
+    #[test]
+    fn a_portrait_is_as_sharp_as_its_softer_eye() {
+        let portrait = [
+            ("face", [0.0, 0.0, 10.0, 10.0], 0.99),
+            ("eye", [1.0, 1.0, 3.0, 3.0], 0.99),
+            ("eye", [5.0, 1.0, 7.0, 3.0], 0.91),
+            ("person", [0.0, 0.0, 100.0, 100.0], 0.88),
+        ];
+        assert_eq!(
+            frame_rating(ScanProfile::Portrait, false, &portrait, Some(0.5)),
+            0.91,
+            "one soft eye is a miss the sharp one must not hide"
+        );
+        // Every other kind still takes its sharpest subject.
+        let people = [
+            ("person", [0.0, 0.0, 10.0, 10.0], 0.91),
+            ("person", [0.0, 0.0, 50.0, 50.0], 0.99),
+        ];
+        assert_eq!(
+            frame_rating(ScanProfile::Portrait, false, &people, None),
+            0.99
+        );
     }
 }

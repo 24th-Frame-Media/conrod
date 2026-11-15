@@ -206,32 +206,41 @@ fn raw_text(found: &[(usize, f32, [f64; 4])], image: &Rgb) -> String {
 /// it (the app's previous subject score).
 fn measure_box(
     image: &Rgb,
+    grey: &Gray,
     bbox: [f64; 4],
     region: &str,
     settings: &Settings,
     profile: ScanProfile,
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
 ) -> Option<(sharpness::Sharpness, f64)> {
-    if region != "person" && region != "vehicle" {
+    let (mut focus, tile) = if region == "person" || region == "vehicle" {
+        let opts = options(settings, profile);
+        let crop_box = detect::expand_box(bbox, image.width, image.height, &opts);
+        if crop_box[2] <= crop_box[0] || crop_box[3] <= crop_box[1] {
+            return None;
+        }
+        let crop = cut_gray(grey, crop_box, settings, models.contains_key(region));
+        let scale = crop.width as f64 / (crop_box[2] - crop_box[0]);
+        let inner = [
+            (bbox[0] - crop_box[0]) * scale,
+            (bbox[1] - crop_box[1]) * scale,
+            (bbox[2] - crop_box[0]) * scale,
+            (bbox[3] - crop_box[1]) * scale,
+        ];
+        let focus = sharpness::measure(&crop, Some(inner), models.get(region));
+        let tile = focus.score;
+        (focus, tile)
+    } else if region == "face" || region == "eye" {
+        let patch = crop_gray(grey, bbox);
+        let focus = sharpness::measure(&patch, None, models.get(region));
+        let tile = focus.score;
+        (focus, tile)
+    } else {
         return None;
-    }
-    let opts = options(settings, profile);
-    let crop_box = detect::expand_box(bbox, image.width, image.height, &opts);
-    if crop_box[2] <= crop_box[0] || crop_box[3] <= crop_box[1] {
-        return None;
-    }
-    let crop = cut(image, crop_box, settings);
-    let scale = crop.width as f64 / (crop_box[2] - crop_box[0]);
-    let inner = [
-        (bbox[0] - crop_box[0]) * scale,
-        (bbox[1] - crop_box[1]) * scale,
-        (bbox[2] - crop_box[0]) * scale,
-        (bbox[3] - crop_box[1]) * scale,
-    ];
-    let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), models.get(region));
-    let tile = focus.score;
-    // As `cull_frame` scores a subject: edge blur inside the box on native
-    // pixels, the tile score kept as the fallback and for everything else.
+    };
+    // As `cull_frame` / `face_subjects` scores a subject: edge blur inside the
+    // box on native pixels, the tile score kept as the fallback and for
+    // everything else.
     if !focus.learned {
         let box_region = [
             (bbox[0].max(0.0) as usize).min(image.width),
@@ -239,7 +248,7 @@ fn measure_box(
             (bbox[2].max(0.0) as usize).min(image.width),
             (bbox[3].max(0.0) as usize).min(image.height),
         ];
-        let blur = conrod_vision::edgeblur::measure(&image.to_gray(), Some(box_region));
+        let blur = conrod_vision::edgeblur::measure(grey, Some(box_region));
         if let Some(score) = sharpness::rating_from_blur(
             blur.sigma_worst_at_reference(image.width.max(image.height)),
             sharpness::BlurStrictness::parse(&settings.blur_strictness),
@@ -255,6 +264,7 @@ fn measure_box(
 
 fn remeasure(
     image: &Rgb,
+    grey: &Gray,
     subjects: &[Subject],
     settings: &Settings,
     profile: ScanProfile,
@@ -262,7 +272,7 @@ fn remeasure(
 ) -> Vec<Option<(sharpness::Sharpness, f64)>> {
     subjects
         .iter()
-        .map(|s| measure_box(image, s.bbox, s.region_type, settings, profile, models))
+        .map(|s| measure_box(image, grey, s.bbox, s.region_type, settings, profile, models))
         .collect()
 }
 
@@ -414,7 +424,12 @@ fn export_recall() {
     let _ = std::fs::remove_dir_all(&out_dir);
     let desktop = Desktop::open(out_dir.clone()).expect("open the evaluation library");
 
-    let settings = Settings::default();
+    let mut settings = Settings::default();
+    if let Ok(profile_name) = std::env::var("CONROD_EVAL_PROFILE") {
+        if !profile_name.trim().is_empty() {
+            settings.scan_profile = ShootPreset::parse(&profile_name).name().into();
+        }
+    }
     let profile = ScanProfile::parse(&settings.scan_profile);
     let job = {
         let db = lock(&desktop.db);
@@ -517,13 +532,17 @@ fn export_recall() {
                     Some(image) => raw_text(&raw_found, image),
                     None => String::new(),
                 };
-                let focus = image
-                    .as_ref()
-                    .map(|image| remeasure(image, &f.subjects, &settings, profile, &models));
+                let grey = image.as_ref().map(|i| i.to_gray());
+                let focus = match (image.as_ref(), grey.as_ref()) {
+                    (Some(image), Some(grey)) => {
+                        Some(remeasure(image, grey, &f.subjects, &settings, profile, &models))
+                    }
+                    _ => None,
+                };
                 // No subject to judge: what the fallback would have said had the
                 // network's best box been allowed through the profile filter.
-                let top_raw = match (&image, f.subjects.is_empty()) {
-                    (Some(image), true) => raw_found
+                let top_raw = match (image.as_ref(), grey.as_ref(), f.subjects.is_empty()) {
+                    (Some(image), Some(grey), true) => raw_found
                         .iter()
                         .max_by(|a, b| a.1.total_cmp(&b.1))
                         .and_then(|(class, conf, bbox)| {
@@ -534,7 +553,7 @@ fn export_recall() {
                             } else {
                                 "vehicle"
                             };
-                            measure_box(image, *bbox, region, &settings, profile, &models)
+                            measure_box(image, grey, *bbox, region, &settings, profile, &models)
                                 .map(|(m, _)| format!("{}#{class}:{conf:.3}={:.4}", detect::class_name(*class), m.score))
                         }),
                     _ => None,
@@ -559,8 +578,6 @@ fn export_recall() {
                         );
                     }
                 }
-                // One native-resolution grey per frame for the new measure.
-                let grey = image.as_ref().map(|i| i.to_gray());
                 for (i, s) in f.subjects.iter().enumerate() {
                     let edges = framing::assess(
                         Some(s.bbox),
@@ -571,7 +588,7 @@ fn export_recall() {
                     // the scan now uses (one grey per frame, not one per subject).
                     let (blur_worst, blur_pooled, blur_score, blur_ms) =
                         match (&grey, s.region_type) {
-                            (Some(g), "person" | "vehicle") => {
+                            (Some(g), "person" | "vehicle" | "face" | "eye") => {
                                 let region = [
                                     (s.bbox[0].max(0.0) as usize).min(f.size.0),
                                     (s.bbox[1].max(0.0) as usize).min(f.size.1),

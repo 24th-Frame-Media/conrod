@@ -30,7 +30,7 @@ SUITE = [
     {"name": "Car meet + detail shots", "shoot": "Ford Falcon Tribute", "max": 18, "neighbours": 6},
     {"name": "Cruise", "shoot": "SAU Cruise", "max": 12, "neighbours": 6},
     {"name": "Interiors / property", "shoot": "Keightley-Ave-Windradyne-Condition-Report", "max": 20, "neighbours": 2},
-    {"name": "Portrait", "shoot": "Jasmeen Kaur", "max": 15, "neighbours": 4},
+    {"name": "Portrait", "shoot": "Jasmeen Kaur", "max": 15, "neighbours": 4, "profile": "portrait"},
 ]
 
 
@@ -232,9 +232,15 @@ def main():
             mx = args.max or (max(1, case["max"] // 2) if args.quick else case["max"])
             nb = 3 if args.quick else case["neighbours"]
             print(f"[{i}/{len(cases)}] {case['name']}: running (max {mx}, neighbours {nb})...", flush=True)
-            env = {k: v for k, v in os.environ.items() if k != "CONROD_EVAL_ONLY"}
+            env = {
+                k: v
+                for k, v in os.environ.items()
+                if k not in ("CONROD_EVAL_ONLY", "CONROD_EVAL_PROFILE")
+            }
             env.update(CONROD_EVAL_SHOOT=case["shoot"], CONROD_EVAL_MAX=str(mx),
                        CONROD_EVAL_NEIGHBOURS=str(nb))
+            if case.get("profile"):
+                env["CONROD_EVAL_PROFILE"] = case["profile"]
             since = time.time() - 1
             t0 = time.time()
             code = None

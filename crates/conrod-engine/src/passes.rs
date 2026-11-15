@@ -42,6 +42,11 @@ pub(crate) fn region_name(kind: Subject) -> &'static str {
 /// better, so the subject's prominence decides between them.
 const RATING_BAND: f64 = 0.03;
 
+/// The same band for a face or an eye. Their score is an edge-blur estimate,
+/// not the tile ratio the band was measured on: a hundredth of it is a real
+/// difference between two portraits, and the keeper must follow it.
+const FACE_BAND: f64 = 0.005;
+
 /// One candidate for the keeper of a unit: a subject, or a frame with no
 /// subject the profile rates.
 struct Candidate {
@@ -60,14 +65,17 @@ struct Candidate {
     sides: u32,
     /// The subject's box as a share of the frame; 0 for a frame with no subject.
     area: f64,
+    /// The rating distance that counts as the same score, per subject kind.
+    band: f64,
 }
 
 impl Candidate {
     /// In the order the keeper is decided: a hand star first, then a frame no
-    /// rule culled, then the rating in `RATING_BAND`s, then the subject that
-    /// the frame edge cuts off least, then the larger subject, then the exact
-    /// rating, then (opt-in) NIMA quality, then the stored subject sharpness,
-    /// and finally the earlier frame.
+    /// rule culled, then the rating in the candidate's band (the wider of the
+    /// two, where the kinds differ), then the subject that the frame edge cuts
+    /// off least, then the larger subject, then the exact rating, then
+    /// (opt-in) NIMA quality, then the stored subject sharpness, and finally
+    /// the earlier frame.
     fn beats(&self, other: &Self, use_quality_score: bool) -> bool {
         if self.by_hand != other.by_hand {
             return self.by_hand > other.by_hand;
@@ -75,8 +83,9 @@ impl Candidate {
         if self.culled != other.culled {
             return !self.culled;
         }
-        let band = (self.score / RATING_BAND).floor();
-        let other_band = (other.score / RATING_BAND).floor();
+        let band_width = self.band.max(other.band);
+        let band = (self.score / band_width).floor();
+        let other_band = (other.score / band_width).floor();
         if band != other_band {
             return band > other_band;
         }
@@ -117,7 +126,9 @@ impl Candidate {
 /// that competes is picked on the frame's own rating instead, so a pass of
 /// frames the detector found nothing in still gets a keeper. A subject or
 /// frame some rule culled (a stored cull reason) only wins when every
-/// candidate of its unit is culled.
+/// candidate of its unit is culled. A face or an eye competes on the frame's
+/// own rating -- the softer eye of a portrait -- and on the tighter face band,
+/// because one eye of the pair says nothing about the portrait.
 pub fn pick_of_pass(
     conn: &Connection,
     job: i64,
@@ -134,8 +145,8 @@ pub fn pick_of_pass(
     };
     let found = rows(
         conn,
-        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
-        [job],
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
+        params![job, crate::EYES_CLOSED],
     )?;
     // Each frame's main subject: its largest person or vehicle.
     let mut boxes: HashMap<i64, Vec<(Subject, f64)>> = HashMap::new();
@@ -179,7 +190,16 @@ pub fn pick_of_pass(
         if primary[&image] != region_of(r) {
             continue;
         }
-        let Some(score) = r["rating"].as_f64().or_else(|| r["sharpness"].as_f64()) else {
+        let region = r["region"].as_str().unwrap_or("vehicle");
+        // A face or an eye competes on the frame's own rating: the portrait's
+        // softer eye, which is what `frame_rating` stores and what the album
+        // shows. Its own detection rating is one eye of the pair.
+        let score = if matches!(region, "eye" | "face") {
+            r["frame_rating"].as_f64().or_else(|| r["rating"].as_f64())
+        } else {
+            r["rating"].as_f64()
+        };
+        let Some(score) = score.or_else(|| r["sharpness"].as_f64()) else {
             continue;
         };
         let unit = (
@@ -212,12 +232,20 @@ pub fn pick_of_pass(
                 row: r["id"].as_i64().unwrap_or_default(),
                 on_frame: false,
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
-                culled: r["culled"].as_i64().unwrap_or(0) != 0,
+                // An eye inside a face whose eyes are shut is not an open eye,
+                // so it never wins a pass while an open-eyed frame competes.
+                culled: r["culled"].as_i64().unwrap_or(0) != 0
+                    || r["shut_eye"].as_i64().unwrap_or(0) != 0,
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: r["quality"].as_f64(),
                 sides: framing::assess(bbox, width, height).sides,
                 area,
+                band: if matches!(region, "eye" | "face") {
+                    FACE_BAND
+                } else {
+                    RATING_BAND
+                },
             },
         ));
         marked.insert(image);
@@ -250,6 +278,7 @@ pub fn pick_of_pass(
                 quality: None,
                 sides: 0,
                 area: 0.0,
+                band: RATING_BAND,
             },
         ));
     }
@@ -416,8 +445,15 @@ fn find_people(
             task.detail(format!("Looking for faces · {path}"));
             let raw = conrod_io::raw::read(std::path::Path::new(path))?;
             let rgb = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
-            let found =
-                crate::face_subjects(&rgb, boxes.iter().copied(), &detector, cfg, &region_models)?;
+            let grey = rgb.to_gray();
+            let found = crate::face_subjects(
+                &rgb,
+                &grey,
+                boxes.iter().copied(),
+                &detector,
+                cfg,
+                &region_models,
+            )?;
             let db = lock(&d.db);
             let tx = db.unchecked_transaction().map_err(err)?;
             for s in &found {
@@ -1396,6 +1432,48 @@ mod tests {
             picks(&lib),
             vec![clean, starred],
             "a cull only wins when every candidate of its pass is culled, and a hand star still leads"
+        );
+    }
+
+    #[test]
+    fn a_portrait_keeps_the_frame_whose_eyes_are_open_and_sharper() {
+        let lib = Lib::new("pick-eyes");
+        let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
+        let blink = lib.detection(f1, "eye", 0.98);
+        let shut = lib.detection(f1, "face", 0.90);
+        let open = lib.detection(f2, "eye", 0.94);
+        lib.sql(
+            "UPDATE detections SET cull_reason='eyes closed', x1=800, y1=800, x2=3200, y2=2400 WHERE id=?",
+            [shut],
+        );
+        // The frames' own ratings, as a portrait scan stores them (the softer
+        // eye of the face).
+        lib.sql("UPDATE images SET rating=0.98 WHERE id=?", [f1]);
+        lib.sql("UPDATE images SET rating=0.94 WHERE id=?", [f2]);
+        lib.sql(
+            "UPDATE jobs SET settings_json=? WHERE id=?",
+            params![json!({"scan_profile": "portrait"}).to_string(), lib.job],
+        );
+        lib.run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![open],
+            "a shut eye never wins a pass, however sharp its lid"
+        );
+        // Both open: the sharper portrait wins although the other's box is
+        // larger and the two sit inside the coarse vehicle band.
+        lib.sql("UPDATE detections SET cull_reason='' WHERE id=?", [shut]);
+        lib.sql(
+            "UPDATE detections SET x2=5000, y2=4000 WHERE id=?",
+            [open],
+        );
+        lib.run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![blink],
+            "a rating gap the vehicle band would swallow still decides a face"
         );
     }
 
