@@ -52,6 +52,10 @@ export const PROFILE_GROUPS: readonly ProfileGroup[] = [
       { id: 'motorsport-track', title: 'Track days' },
       { id: 'motorsport-rally', title: 'Rallies' },
       { id: 'motorsport-meet', title: 'Car meets' },
+      { id: 'sport-cycling', title: 'Cycling' },
+      { id: 'sport-action', title: 'Action sports' },
+      { id: 'auto-dealer', title: 'Dealership stock' },
+      { id: 'aviation', title: 'Aviation' },
     ],
   },
   {
@@ -65,6 +69,21 @@ export const PROFILE_GROUPS: readonly ProfileGroup[] = [
     id: 'event', title: 'Events', hint: 'Every part of the occasion', children: [
       { id: 'event-shows', title: 'Shows' },
       { id: 'event-parties', title: 'Parties' },
+      { id: 'sport-field', title: 'Field sports' },
+      { id: 'sport-court', title: 'Court sports' },
+      { id: 'sport-rodeo', title: 'Rodeo' },
+      { id: 'sport-equestrian', title: 'Equestrian' },
+      { id: 'wedding', title: 'Weddings' },
+      { id: 'concert', title: 'Concerts' },
+    ],
+  },
+  {
+    id: 'mix', title: 'Mixed', hint: 'Nature, property & no dominant subject', children: [
+      { id: 'property-listing', title: 'Property listing' },
+      { id: 'property-report', title: 'Condition report' },
+      { id: 'wildlife-birds', title: 'Birds' },
+      { id: 'landscape', title: 'Landscape' },
+      { id: 'astro', title: 'Astro' },
     ],
   },
 ];

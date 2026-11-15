@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Icon } from './basics';
-import { PROFILE_GROUPS, MIXED_PROFILE, type Settings } from '../lib/types';
+import { PROFILE_GROUPS, type Settings } from '../lib/types';
 
 type Props = {
   jobId: number;
@@ -91,9 +91,6 @@ export function ShootSettingsModal({
                   ))}
                 </optgroup>
               ))}
-              <optgroup label="Other">
-                <option value={MIXED_PROFILE.id}>{MIXED_PROFILE.title} (Unspecialised)</option>
-              </optgroup>
             </select>
           </div>
 

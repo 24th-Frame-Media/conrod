@@ -232,6 +232,9 @@ fn options(settings: &Settings, _profile: ScanProfile) -> DetectOptions {
     if preset.wants_animals() {
         classes.extend(detect::ANIMALS);
     }
+    // Aviation asks for the airplane class (COCO 4) through its policy; the
+    // detector reports it as a vehicle region, which is what an aircraft is.
+    classes.extend(preset.extra_vehicle_classes().iter().copied());
     DetectOptions {
         conf: settings.detect_conf as f32,
         classes,

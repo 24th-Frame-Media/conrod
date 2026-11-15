@@ -3,7 +3,7 @@ import { useRun } from '../state/hooks';
 import { FilePick, Icon } from '../components/basics';
 import { call, chooseFolder } from '../lib/api';
 import { filename } from '../lib/review';
-import { MIXED_PROFILE, PROFILE_GROUPS, profileParent, type ModelInfo, type ScanArgs, type Settings, type Status } from '../lib/types';
+import { PROFILE_GROUPS, profileParent, type ModelInfo, type ScanArgs, type Settings, type Status } from '../lib/types';
 import type { StatusActions } from '../components/TitleBar';
 
 export type ScanDraft = { root: string; label: string };
@@ -80,9 +80,6 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, models, set
                 </button>
               );
             })}
-            <button role="radio" aria-checked={profile === MIXED_PROFILE.id} className={`profile${profile === MIXED_PROFILE.id ? ' selected' : ''}`} onClick={() => setProfile(MIXED_PROFILE.id)}>
-              <span className="radio" /><span className="profile-text"><b>{MIXED_PROFILE.title}</b><small>{MIXED_PROFILE.hint}</small></span>
-            </button>
             {selectedGroup && (
                 <label className="preset-select"><span>{selectedGroup.title} preset</span>
                   <select aria-label={`${selectedGroup.title} preset`} value={profile} onChange={(event) => setProfile(event.target.value)}>
