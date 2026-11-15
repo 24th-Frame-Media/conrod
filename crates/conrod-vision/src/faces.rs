@@ -31,6 +31,11 @@ pub struct Face {
 
 /// DirectML if it loads, else the CPU.
 fn session(model: &Path) -> Result<Session, String> {
+    session_with(model, true)
+}
+
+/// The same, with the provider chosen: DirectML when `gpu`, else the CPU.
+pub(crate) fn session_with(model: &Path, gpu: bool) -> Result<Session, String> {
     let build = |gpu: bool| -> Result<Session, String> {
         let b = Session::builder().map_err(|e| e.to_string())?;
         let b = if gpu {
@@ -42,7 +47,11 @@ fn session(model: &Path) -> Result<Session, String> {
             .commit_from_file(model)
             .map_err(|e| e.to_string())
     };
-    build(true).or_else(|_| build(false))
+    if gpu {
+        build(true).or_else(|_| build(false))
+    } else {
+        build(false)
+    }
 }
 
 pub struct FaceDetector {
