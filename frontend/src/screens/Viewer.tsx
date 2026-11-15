@@ -2,7 +2,9 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { Modal } from '../components/basics';
 import { StarControl } from '../components/Stars';
 import { asset } from '../lib/api';
-import { burstGroups, burstPickOf, filename, frameStars, frameExcluded } from '../lib/review';
+import { filename, frameStars, frameExcluded } from '../lib/review';
+import type { Stack } from '../lib/stacks.mjs';
+import type { Frame } from '../lib/types';
 import type { ReviewModel } from '../state/useReview';
 import { usePreview, type Runner } from '../state/hooks';
 import { ZoomImage, type ZoomImageHandle } from '../components/ZoomImage';
@@ -15,20 +17,21 @@ type Props = {
   showBoxes: boolean;
   onToggleBoxes: () => void;
   onClose: () => void;
+  /** The current burst, the album's keepers, a step along the navigation Review owns, and where the frame sits in it. */
+  stack: Stack<Frame> | null;
+  keeperIds: ReadonlySet<number>;
+  onStep: (delta: number) => void;
+  position: string;
 };
 
 /** The full frame, with interactive detections table and color-coded outline overlay. */
-export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
-  const { frame, frames, facts, step, mark } = rv;
+export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keeperIds, onStep, position }: Props) {
+  const { frame, facts, mark } = rv;
   const preview = usePreview(frame?.id ?? null, run);
   const zoomImgRef = useRef<ZoomImageHandle>(null);
   const [selectedDetId, setSelectedDetId] = useState<number | null>(null);
   const [hoveredDetId, setHoveredDetId] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
-  // 1.4: the current burst's frames, for the filmstrip; up/down (stepBurst) and left/right (stepFrame) hotkeys
-  // walk the same groups from Review.tsx's `verbs`.
-  const burstFrames = useMemo(() => (frame ? burstGroups(frames).find((g) => g.some((f) => f.id === frame.id)) ?? [frame] : []), [frames, frame]);
-  const burstPick = useMemo(() => (frame ? burstPickOf(burstFrames, facts) : null), [burstFrames, frame, facts]);
 
   // Keyboard shortcuts: L toggles box labels, Space/Z toggles 1:1 zoom, +/- steps zoom, F zooms to the detected box.
   useEffect(() => {
@@ -58,7 +61,6 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
 
   if (!frame) return null;
   const dets = facts.get(frame.id)?.dets ?? [];
-  const index = frames.findIndex((f) => f.id === frame.id);
   const stars = frameStars(frame);
 
   return (
@@ -82,12 +84,11 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
 
           <div className="frame-nav previous" role="group" aria-label="Previous photos">
             <button
-              title="First frame"
+              title="First frame of the burst"
               aria-label="First frame"
-              disabled={index <= 0}
               onClick={() => {
                 setSelectedDetId(null);
-                step(Number.NEGATIVE_INFINITY);
+                onStep(Number.NEGATIVE_INFINITY);
               }}
             >
               First
@@ -96,10 +97,9 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
               className="frame-step"
               title="Previous frame (←)"
               aria-label="Previous frame"
-              disabled={index <= 0}
               onClick={() => {
                 setSelectedDetId(null);
-                step(-1);
+                onStep(-1);
               }}
             >
               ‹
@@ -110,21 +110,19 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
               className="frame-step"
               title="Next frame (→)"
               aria-label="Next frame"
-              disabled={index < 0 || index >= frames.length - 1}
               onClick={() => {
                 setSelectedDetId(null);
-                step(1);
+                onStep(1);
               }}
             >
               ›
             </button>
             <button
-              title="Last frame"
+              title="Last frame of the burst"
               aria-label="Last frame"
-              disabled={index < 0 || index >= frames.length - 1}
               onClick={() => {
                 setSelectedDetId(null);
-                step(Number.POSITIVE_INFINITY);
+                onStep(Number.POSITIVE_INFINITY);
               }}
             >
               Last
@@ -147,10 +145,10 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
             </button>
           </div>
 
-          {burstFrames.length > 1 && burstPick && (
+          {stack && stack.frames.length > 1 && (
             <BurstFilmstrip
-              frames={burstFrames}
-              pickId={burstPick.id}
+              frames={stack.frames}
+              keeperIds={keeperIds}
               selectedId={frame.id}
               culled={(f) => frameExcluded(f, facts.get(f.id)?.dets ?? [])}
               onSelect={(id) => rv.setSelected(id)}
@@ -182,6 +180,14 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
             </button>
             <div className="spacer" />
             <button
+              className={`ghost small${frame.picked ? ' on' : ''}`}
+              aria-pressed={Boolean(frame.picked)}
+              title="Keeper (P)"
+              onClick={() => void mark(frame.picked ? { picked: false } : { picked: true, rejected: false })}
+            >
+              {frame.picked ? 'Keeper ✓' : 'Keeper'}
+            </button>
+            <button
               className={`ghost danger cut${frameExcluded(frame, dets) ? ' on' : ''}`}
               onClick={() => void mark({ rejected: !frameExcluded(frame, dets) })}
             >
@@ -195,7 +201,7 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
               Show outlines <kbd>B</kbd>
             </label>
             <p className="muted frame-pos">
-              {index >= 0 ? `${(index + 1).toLocaleString()} / ${frames.length.toLocaleString()}` : ''}
+              {position}
             </p>
           </div>
         </aside>

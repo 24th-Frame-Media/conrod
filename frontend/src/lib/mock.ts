@@ -38,13 +38,14 @@ let cache: Db | undefined;
 
 function makeDb(): Db {
   const frames: Frame[] = [], dets: Detection[] = [];
-  for (let i = 0; i < 64; i += 1) {
+  const count = Math.max(8, Number(params().get('frames')) || 64);
+  for (let i = 0; i < count; i += 1) {
     const [make, model, colour, team, no, plate, hue] = CARS[i % CARS.length];
     const id = 1000 + i, rating = 0.5 + ((i * 37) % 48) / 100;
     const cx = 0.38 + ((i * 13) % 25) / 100, s = 0.5 + ((i * 7) % 20) / 100;
     const read = i % 4 !== 3;
     frames.push({
-      id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > 60 ? 'pending' : 'done',
+      id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > count - 4 ? 'pending' : 'done',
       thumb_path: scene(hue, cx, s, colour, 420, 280), preview_path: null, width: W, height: H, rating,
       manual_stars: i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, picked: i % 17 === 5 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
     });
@@ -121,6 +122,15 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       return out({ jobs: db.jobs, settings: db.settings, status: status(db), models: [{ name: 'Vehicle detector', file: 'yolo.onnx', ready: true }, { name: 'Plate reader', file: 'plates.onnx', ready: true }, { name: 'Vision model', file: 'qwen', ready: false }] } satisfies Bootstrap);
     case 'status': return out(status(db));
     case 'jobs': return out(db.jobs);
+    case 'update_job_settings': {
+      const job = db.jobs.find((j) => j.id === a.jobId);
+      if (job) {
+        const patch = (a.patch ?? {}) as Record<string, unknown>;
+        job.settings_json = JSON.stringify({ ...JSON.parse(job.settings_json || '{}'), ...patch });
+        if (typeof patch.scan_profile === 'string') job.scan_profile = patch.scan_profile;
+      }
+      return out({ ok: true, jobId: a.jobId });
+    }
     case 'review': return out({ frames: db.frames, detections: db.dets });
     case 'scan': {
       const jobId = (a.jobId as number | undefined) ?? 3;

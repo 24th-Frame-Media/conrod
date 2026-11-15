@@ -90,15 +90,19 @@ export function Modal({ label, className, onClose, children }: { label: string; 
 }
 
 const KEYS: [string, string][] = [
-  ['J  /  →  /  ↓', 'next photo'],
-  ['K  /  ←  /  ↑', 'previous photo'],
+  ['←  /  →', 'previous / next photo in the burst (flat view: previous / next photo)'],
+  ['↑  /  ↓', 'previous / next burst (flat view: one row up / down)'],
+  ['Tab  /  Shift+Tab', 'done with this burst: next / previous burst'],
+  ['N', 'next undecided burst or photo'],
+  ['Enter', 'open the burst in place; Enter again opens the full frame'],
+  ['Esc', 'close the full frame, then collapse the burst'],
+  ['P', 'keeper: flag this photo as the burst’s pick'],
+  ['X  /  Del', 'reject, or put a rejected one back'],
+  ['U', 'clear stars, reject and keeper on this photo'],
   ['1 – 5', 'give it that many stars'],
   ['0', 'clear the stars, back to the measured rating'],
-  ['X  /  Del', 'reject, or put a rejected one back'],
-  ['U', 'undo your marks on this photo'],
-  ['Enter', 'open the full frame'],
+  ['G  /  E  /  C', 'grid, full frame, compare the burst side by side'],
   ['B', 'show or hide detection outlines'],
-  ['Esc', 'close the full frame'],
   ['?', 'this list'],
 ];
 
@@ -111,7 +115,7 @@ export function KeysDialog({ onClose }: { onClose: () => void }) {
           <div key={k}><dt>{k.split(/\s{2}\/\s{2}/).map((part) => <kbd key={part}>{part}</kbd>)}</dt><dd>{what}</dd></div>
         ))}
       </dl>
-      <p className="muted small-print">On Train: <kbd>1</kbd>-<kbd>5</kbd> rate, <kbd>X</kbd> can&apos;t tell, <kbd>P</kbd> pan, <kbd>U</kbd> undo, <kbd>Z</kbd> 200%.</p>
+      <p className="muted small-print">With auto-advance on (Manage shoot), P and X move on to the next burst or frame. On Train: <kbd>1</kbd>-<kbd>5</kbd> rate, <kbd>X</kbd> can&apos;t tell, <kbd>P</kbd> pan, <kbd>U</kbd> undo, <kbd>Z</kbd> 200%.</p>
     </Modal>
   );
 }
