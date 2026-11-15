@@ -16,25 +16,53 @@ pub const SUB_SEC_TIME_ORIGINAL: u16 = 0x9291;
 pub const SUB_SEC_TIME_DIGITIZED: u16 = 0x9292;
 pub const BODY_SERIAL_NUMBER: u16 = 0xA431;
 pub const LENS_MODEL: u16 = 0xA434;
+pub const EXPOSURE_TIME: u16 = 0x829A;
+pub const FNUMBER: u16 = 0x829D;
+pub const ISO: u16 = 0x8827;
+pub const EXPOSURE_BIAS: u16 = 0x9204;
+pub const FOCAL_LENGTH: u16 = 0x920A;
+/// EXIF "SubjectDistance", in metres. Canon bodies leave it unset and put the
+/// focus distance in their own makernote arrays instead.
+pub const SUBJECT_DISTANCE: u16 = 0x9206;
+
+/// One RATIONAL as numerator over denominator. TIFF rationals are unsigned;
+/// the signed variant is folded in here because only its value is wanted.
+pub type Ratio = (i32, i32);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Text(String),
     Numbers(Vec<u64>),
+    Ratios(Vec<Ratio>),
 }
 
 impl Value {
     pub fn text(&self) -> Option<&str> {
         match self {
             Value::Text(s) => Some(s),
-            Value::Numbers(_) => None,
+            _ => None,
         }
     }
 
     pub fn first(&self) -> Option<u64> {
         match self {
             Value::Numbers(n) => n.first().copied(),
-            Value::Text(_) => None,
+            _ => None,
+        }
+    }
+
+    /// The first RATIONAL as a float, or `None` when it is absent or its
+    /// denominator is zero (some bodies write 0/0 for "unknown").
+    pub fn ratio(&self) -> Option<f64> {
+        match self {
+            Value::Ratios(r) => r.first().and_then(|&(n, d)| {
+                if d == 0 {
+                    None
+                } else {
+                    Some(f64::from(n) / f64::from(d))
+                }
+            }),
+            _ => None,
         }
     }
 }
@@ -99,6 +127,7 @@ impl<'a> Tiff<'a> {
                 1 | 2 | 7 => 1,
                 3 => 2,
                 4 => 4,
+                5 | 10 => 8,
                 _ => continue,
             };
             let at = if n * width <= 4 {
@@ -127,6 +156,27 @@ impl<'a> Tiff<'a> {
                     (0..n)
                         .filter_map(|k| self.u32_at(at + k * 4))
                         .map(u64::from)
+                        .collect(),
+                ),
+                // RATIONAL: two u32 per value, numerator first.
+                5 => Value::Ratios(
+                    (0..n)
+                        .filter_map(|k| {
+                            let (num, den) =
+                                (self.u32_at(at + k * 8)?, self.u32_at(at + k * 8 + 4)?);
+                            Some((num as i32, den as i32))
+                        })
+                        .collect(),
+                ),
+                // SRATIONAL: the same, signed, which is how exposure bias is
+                // written (negative for underexposure).
+                10 => Value::Ratios(
+                    (0..n)
+                        .filter_map(|k| {
+                            let (num, den) =
+                                (self.u32_at(at + k * 8)?, self.u32_at(at + k * 8 + 4)?);
+                            Some((num as i32, den as i32))
+                        })
                         .collect(),
                 ),
                 _ => Value::Numbers(

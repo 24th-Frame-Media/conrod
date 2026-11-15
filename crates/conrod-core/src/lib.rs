@@ -18,6 +18,7 @@ pub mod normalise;
 pub mod profile;
 pub mod registry;
 pub mod ridge;
+pub mod sets;
 pub mod settings;
 pub mod tasks;
 pub mod text;
