@@ -363,7 +363,14 @@ pub(crate) fn face_subjects(
                             .map_or(read.eye_open_min(), |m: f32| m.min(read.eye_open_min())),
                     );
                     out.smile_max = Some(out.smile_max.map_or(read.smile, |m: f32| m.max(read.smile)));
+                    // The mesh confirms or rescues the OCEC verdict, never
+                    // invents a cull: on a turned head it reads a shut eye in
+                    // a frame the photographer delivered, while OCEC said
+                    // open. A face OCEC did not judge takes the mesh's word.
+                    let ocec_closed = eyes_closed(open);
+                    let ocec_judged = open.iter().any(Option::is_some);
                     read.eye_open_min() < expression::CLOSED_EYE_BELOW
+                        && (!ocec_judged || ocec_closed)
                 }
                 _ => eyes_closed(open),
             };
