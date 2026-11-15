@@ -17,7 +17,7 @@ use conrod_vision::{
     ocr, plates, sharpness, similarity,
 };
 use rusqlite::params;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -50,8 +50,13 @@ pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
         .map_err(err)?;
     let current = lock(&d.settings).clone();
     let mut s = raw
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .map(|map| current.clone().apply(&map))
+        .and_then(|s| serde_json::from_str::<Map<String, Value>>(&s).ok())
+        .map(|mut map| {
+            // An album stored before per-album gaps keeps grouping at the old
+            // effective default, not at its stored 4.0 sentinel.
+            conrod_core::settings::migrate_burst_gap(&mut map);
+            current.clone().apply(&map)
+        })
         .unwrap_or(current.clone());
     // Credentials and host availability are current; analysis choices belong to the job.
     s.vlm_api_key = current.vlm_api_key;
@@ -126,9 +131,32 @@ fn required(name: &str) -> Result<PathBuf> {
 
 /// How many frames are identified at once. Each worker owns its plate models and
 /// embedder; the OCR engine is shared. The sessions run on the CPU, so this is
-/// about a fifth of the cores.
-fn identify_workers() -> usize {
-    (std::thread::available_parallelism().map_or(4, |n| n.get()) / 5).clamp(1, 4)
+/// about a fifth of the cores; the album's `analysis_workers` setting moves it
+/// within Ollama's own parallelism.
+fn identify_workers(settings: &Settings) -> usize {
+    settings.identify_worker_count() as usize
+}
+
+/// What the identify stage runs on, for the pipeline view.
+fn identify_models(settings: &Settings) -> (String, &'static str) {
+    let mut parts: Vec<String> = Vec::new();
+    if settings.read_plates {
+        parts.push(format!("plate {}", models::PLATE_DETECTOR));
+    }
+    if settings.read_numbers || settings.read_text {
+        parts.push("PP-OCRv4".into());
+    }
+    if settings.use_vlm {
+        parts.push(format!(
+            "{} via {}",
+            settings.vlm_model, settings.vlm_provider
+        ));
+    }
+    if parts.is_empty() {
+        parts.push("embeddings only".into());
+    }
+    let device = if settings.use_vlm { "ollama" } else { "CPU" };
+    (parts.join(" + "), device)
 }
 
 /// What every worker of one identify run shares.
@@ -142,12 +170,23 @@ struct Run<'a> {
     done: &'a AtomicUsize,
     total: usize,
     reported: &'a Mutex<HashSet<String>>,
+    progress: Option<&'a crate::progress::Progress>,
 }
 
 impl Run<'_> {
     fn advance(&self, by: usize) {
         let n = self.done.fetch_add(by, Ordering::Relaxed) + by;
         self.task.progress(n as u64, self.total as u64);
+        if let Some(p) = self.progress {
+            p.advance("identify", by as u64);
+        }
+    }
+
+    /// Say which file this worker is on.
+    fn busy(&self, lane: usize, file: &str, step: &'static str) {
+        if let Some(p) = self.progress {
+            p.busy("identify", lane, "identify", step, file);
+        }
     }
 
     /// Say a failure once: a vision model that is down would otherwise put one
@@ -167,6 +206,7 @@ impl Run<'_> {
         rows: &[Value],
         readers: &mut Readers,
         embedder: &mut Option<similarity::Embedder>,
+        lane: usize,
     ) -> Result<()> {
         let s = self.settings;
         let mut wanted = Vec::new();
@@ -183,7 +223,9 @@ impl Run<'_> {
         let filename = Path::new(path)
             .file_name()
             .unwrap_or_default()
-            .to_string_lossy();
+            .to_string_lossy()
+            .into_owned();
+        self.busy(lane, &filename, "read");
         let raw = conrod_io::raw::read(Path::new(path))?;
         let image = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
         for row in wanted {
@@ -216,6 +258,7 @@ impl Run<'_> {
             let native = (s.plate_native_search && s.read_plates).then_some(&tight);
             let kind = row["cls"].as_str().unwrap_or("car");
             self.task.detail(format!("{filename} · {kind}"));
+            self.busy(lane, &filename, "identify");
             let outcome = analyze::analyze(
                 &crop,
                 native,
@@ -232,6 +275,17 @@ impl Run<'_> {
                 self.report(failure);
             }
             let mut analysis = outcome.analysis;
+            // What the frame reads as, for the live strip on the scan screen.
+            if let Some(label) = analysis
+                .race_number
+                .clone()
+                .or_else(|| analysis.plate.clone())
+                .filter(|label| !label.is_empty())
+            {
+                if let Some(p) = self.progress {
+                    p.label(row["image_id"].as_i64().unwrap_or_default(), label);
+                }
+            }
             // `plate_bbox` (when set) is in the native tight-crop's own pixels; `bbox` is that
             // crop's origin in the full frame, so offsetting gives full-frame pixels directly -
             // the same coordinate space the frontend already reads vehicle boxes in.
@@ -359,6 +413,15 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         let (next, done) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let failure: Mutex<Option<String>> = Mutex::new(None);
         let reported = Mutex::new(HashSet::new());
+        // The scan screen shows this lane when the one-shot scan gets here.
+        let progress = d.progress();
+        if let Some(p) = &progress {
+            let (model, device) = identify_models(&settings);
+            p.describe("identify", model, device);
+            p.total("identify", pending.len() as u64);
+            p.phase("identify");
+        }
+        let workers = identify_workers(&settings).min(frames.len().max(1));
         let run = Run {
             d,
             settings: &settings,
@@ -369,20 +432,32 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             done: &done,
             total: pending.len(),
             reported: &reported,
+            progress: progress.as_deref(),
         };
         let fail = |e: String| {
             lock(&failure).get_or_insert(e);
         };
         std::thread::scope(|scope| {
-            for _ in 0..identify_workers().min(frames.len().max(1)) {
-                scope.spawn(|| {
-                    let mut readers = match load_readers(&settings, &ocr_engine) {
+            for lane in 0..workers {
+                let (settings, ocr_engine, stop, next, failure, frames, pending, run) = (
+                    &settings,
+                    &ocr_engine,
+                    &stop,
+                    &next,
+                    &failure,
+                    &frames,
+                    &pending,
+                    &run,
+                );
+                let (progress, fail) = (&progress, &fail);
+                scope.spawn(move || {
+                    let mut readers = match load_readers(settings, ocr_engine) {
                         Ok(r) => r,
                         Err(e) => return fail(e),
                     };
                     let mut embedder = match settings.group_vehicles.then(|| {
                         similarity::Embedder::load(
-                            &models::expected(models::SIMILARITY),
+                            &conrod_core::models::expected(conrod_core::models::SIMILARITY),
                             Device::Cpu,
                         )
                     }) {
@@ -390,15 +465,18 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
                         Some(Ok(e)) => Some(e),
                         None => None,
                     };
-                    while !stop.load(Ordering::Relaxed) && lock(&failure).is_none() {
+                    while !stop.load(Ordering::Relaxed) && lock(failure).is_none() {
                         let Some(frame) = frames.get(next.fetch_add(1, Ordering::Relaxed)) else {
                             break;
                         };
                         if let Err(e) =
-                            run.frame(&pending[frame.clone()], &mut readers, &mut embedder)
+                            run.frame(&pending[frame.clone()], &mut readers, &mut embedder, lane)
                         {
                             return fail(e);
                         }
+                    }
+                    if let Some(p) = progress.as_ref() {
+                        p.idle("identify", lane);
                     }
                 });
             }
@@ -413,6 +491,13 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             task.detail("Finding re-shot frames");
             crate::passes::near_duplicates(d, job, stop)?;
             crate::catalog::seed(d, Some(job))?;
+            // Groups are now known, so the keeper of each pass can be chosen
+            // properly: the one-shot scan ends on this stage.
+            if let Some(p) = &progress {
+                p.phase("pick");
+            }
+            task.detail("Picking keepers");
+            crate::passes::pick_keepers(d, job)?;
         }
         Ok(())
     })

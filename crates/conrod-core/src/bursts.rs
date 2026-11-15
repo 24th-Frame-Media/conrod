@@ -1,21 +1,17 @@
 //! Which camera took it, and which burst it belongs to.
 //!
 //! Two shooters at one event interleave into one folder, so a burst is
-//! consecutive frames *from one body* with no gap longer than
-//! [`BURST_GAP_SECONDS`]. The camera is its serial number where the file has
-//! one, since that is the only thing separating two identical bodies.
+//! consecutive frames *from one body* with no gap longer than the album's
+//! `burst_gap` setting (see [`DEFAULT_BURST_GAP_SECONDS`]).
 
 use crate::text::value_to_string;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
 
-/// Longer than this between two frames of one camera starts a new burst. The
-/// gap being detected is the one between two cars, not between two frames.
-pub const BURST_GAP_SECONDS: f64 = 4.0;
-
-/// The gap the engine groups with when a job carries no setting: tight enough
-/// that a lull at the corner does not split a burst, loose enough to keep the
-/// next car out of it.
+/// The gap the engine groups with for an album that carries no setting: tight
+/// enough that a lull at the corner does not split a burst, loose enough to
+/// keep the next car out of it. This is the one default; an album can override
+/// it in its settings (`burst_gap`).
 pub const DEFAULT_BURST_GAP_SECONDS: f64 = 1.5;
 
 /// The tags that identify a body and a moment.

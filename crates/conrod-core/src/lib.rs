@@ -16,6 +16,7 @@ pub mod marques;
 pub mod models;
 pub mod normalise;
 pub mod profile;
+pub mod progress;
 pub mod registry;
 pub mod ridge;
 pub mod sets;

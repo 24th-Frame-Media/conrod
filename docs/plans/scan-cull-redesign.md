@@ -96,6 +96,37 @@ Auto-advance, Tab, N, undo/redo log, survey/compare of a whole burst with synced
 Export sheet: summary counts, destination (XMP sidecars [default] / copy keepers to a folder), dry run
 first, progress, result. No silent "Accept all"; identifications get a preview before bulk accept.
 
+## Engine contract (landed)
+
+The engine side of F1–F3 is in. Field names are the wire format; the matching
+TypeScript is in `frontend/src/lib/types.ts` (`ScanProgress`, `PipelineStage`,
+`PipelineWorker`, `ScanRecentFrame`, `ScanFound`, `RegroupCounts`,
+`WorkerLimits`).
+
+- **`scan-progress`** (Tauri event, ~4/s while a scan runs, then one final
+  snapshot): `{job_id, state: running|done|stopped|error, stage, stage_index,
+  stage_count, done, total, rate_per_s, eta_s, recent: [{image_id, thumb_url,
+  subject, verdict: sharp|soft|panning, label}], found: {subjects, soft,
+  closed_eyes, numbers, plates, bursts, keepers}, pipeline: {stages: [{id,
+  label, model, device, workers_total, workers_busy, queue_len, done, total,
+  rate_per_s, eta_s}], workers: [{stage, worker_index, state: idle|busy|waiting,
+  waiting_for: gpu|lock|ollama|paused|null, file, step, ms_in_step}]}}`.
+  `recent[0]` is the newest frame; `thumb_url` is the same path as
+  `frames[].thumb_path` (pass it through `asset()`).
+- **`regroup`** `{jobId}`: in-place, no pixels, keeps manual picked / rejected /
+  stars; returns `{bursts, moments, keepers}`. `update_job_settings` with a
+  `burst_gap` or `scan_profile` patch regroups automatically and adds
+  `regroup` to its reply (null when the patch needs no regroup).
+- **`scan`** `{stage: "all"}` runs read → detect → sharpness → faces → group →
+  pick, and identify when the preset identifies vehicles and the album reads
+  numbers or plates. Keeper picking runs after grouping.
+- **`worker_limits`**: `{cores, cull, detect, preview, identify, note}` where
+  each pool is `{current, min, max, default, live}`; `live` is false everywhere
+  (pools are sized at scan start), so say "applies next scan".
+- Burst gap is per album (`jobs[].burst_gap`, `update_job_settings
+  {patch: {burst_gap}}`); the one default is 1.5 s, and files/albums from before
+  per-album gaps migrate 4.0 → 1.5 once.
+
 ## Order and owners
 1. F1 frontend (Sonnet) ∥ F1 engine + F3 events + one-shot scan (DeepSeek worktree).
 2. F2 + F3 frontend (Sonnet) once the engine contract lands.
