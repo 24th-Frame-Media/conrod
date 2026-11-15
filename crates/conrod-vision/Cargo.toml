@@ -19,4 +19,7 @@ ort = { version = "=2.0.0-rc.13", features = ["directml"] }
 rustfft = "6.4"
 
 [dev-dependencies]
+# The real-data check reads RAW previews; a dev-dependency cycle is fine and
+# keeps that check next to the measure it verifies.
+conrod-io = { path = "../conrod-io" }
 serde_json = { version = "1", features = ["float_roundtrip"] }

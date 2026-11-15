@@ -5,6 +5,7 @@
 pub mod colour;
 pub mod detect;
 pub mod edgeblur;
+pub mod exposure;
 pub mod faces;
 pub mod imageops;
 pub mod ocr;
