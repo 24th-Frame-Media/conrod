@@ -53,6 +53,8 @@ mod evaltest;
 mod vlmeval;
 #[cfg(test)]
 mod pantest;
+#[cfg(test)]
+mod sporttest;
 pub mod training;
 pub mod updating;
 pub mod watching;
