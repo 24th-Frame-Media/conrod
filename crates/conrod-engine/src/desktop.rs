@@ -369,7 +369,12 @@ impl Desktop {
 
     fn save_settings(&self, updates: &Map<String, Value>) -> Result<Value> {
         let mut stored = lock(&self.settings);
-        let next = stored.clone().apply(updates);
+        let mut next = stored.clone().apply(updates);
+        // The Settings screen saves the whole object, so only a changed value
+        // is a choice.
+        if next.blur_strictness != stored.blur_strictness {
+            next.blur_explicit = true;
+        }
         if !(0.0..=1.0).contains(&next.detect_conf)
             || next.crop_min_edge < 1
             || next.crop_max_edge < next.crop_min_edge
@@ -673,6 +678,7 @@ impl Desktop {
                     return Err("Strictness must be strict, moderate or lenient".into());
                 }
                 settings.blur_strictness = strictness.to_string();
+                settings.blur_explicit = true;
             }
             if let Some(gap) = a.burst_gap {
                 if !(gap.is_finite() && gap > 0.0) {
@@ -1277,6 +1283,7 @@ mod tests {
             "{map:?}"
         );
         assert_eq!(map["blur_strictness"], "lenient");
+        assert_eq!(map["blur_explicit"], true, "a sheet choice must beat the preset's default");
         assert_eq!(map["burst_gap"], 2.5);
 
         let after = lock(&desktop.settings).clone();

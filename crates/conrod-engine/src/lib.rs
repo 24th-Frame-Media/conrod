@@ -501,6 +501,17 @@ pub(crate) fn frame_rating(
         .unwrap_or(0.0)
 }
 
+/// A condition report keeps nearly everything: only a subject that is clearly
+/// out of focus goes, and never one that is merely soft or a held pan.
+/// `rating_word` is `rating_for`'s ("poor" is blurred), as `cullable` reads it.
+fn deliver_most_reason(cull_blurred: bool, focus: &sharpness::Sharpness, rating_word: &str) -> String {
+    if cull_blurred && sharpness::cullable(focus, rating_word) {
+        "too blurred".into()
+    } else {
+        String::new()
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn cull_frame(
     path: &Path,
@@ -535,11 +546,7 @@ pub fn cull_frame(
     // The preset's own strictness applies until someone chooses one for the
     // album; this is the difference between a burnouts shoot and a portrait.
     let policy = preset.policy();
-    let strictness = if settings.blur_explicit {
-        settings.blur_strictness.clone()
-    } else {
-        policy.default_blur.to_string()
-    };
+    let strictness = settings.effective_blur();
     // Level only where a crooked frame is worth flagging, and framing only
     // where the preset says composition decides between frames.
     let level = policy.level.then(|| level::measure(&grey));
@@ -629,13 +636,7 @@ pub fn cull_frame(
         let verdict = sharpness::rating_for(rating, settings.sharp_at, settings.blurred_below);
         let stars = sharpness::stars_for(rating);
         let cull_reason = if policy.deliver_most {
-            // A condition report keeps nearly everything: only a subject that
-            // is clearly out of focus goes, and never one that is merely soft.
-            if settings.cull_blurred && verdict == "blurred" {
-                "too blurred".into()
-            } else {
-                String::new()
-            }
+            deliver_most_reason(settings.cull_blurred, &focus, verdict)
         } else if (settings.auto_reject_below_stars as u8) > stars {
             format!("{stars} star{}", if stars == 1 { "" } else { "s" })
         } else if settings.cull_blurred && sharpness::cullable(&focus, verdict) {
@@ -1158,6 +1159,17 @@ pub fn load_region_model(region: &str) -> Option<conrod_core::ridge::SharpModel>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_condition_report_culls_only_clearly_blurred_subjects() {
+        let focus = sharpness::Sharpness::default();
+        assert_eq!(deliver_most_reason(true, &focus, "poor"), "too blurred");
+        assert_eq!(deliver_most_reason(true, &focus, "fair"), "", "soft is kept");
+        assert_eq!(deliver_most_reason(true, &focus, "good"), "");
+        assert_eq!(deliver_most_reason(false, &focus, "poor"), "", "culling off");
+        let held = sharpness::Sharpness { panning: true, ..focus };
+        assert_eq!(deliver_most_reason(true, &held, "poor"), "", "a held pan stays");
+    }
 
     #[test]
     fn files_finds_frames_in_subfolders_only_by_extension_sorted() {

@@ -9,7 +9,7 @@ import { profileParent, type ScanArgs, type Settings, type Status } from '../lib
 
 export type ScanDraft = { root: string; label: string };
 /** What the sheet remembers for next time (and what the new album copies): shoot type, strictness, burst gap. */
-export type ImportDefaults = { scan_profile: string; blur_strictness: string; burst_gap: number };
+export type ImportDefaults = { scan_profile: string; blur_strictness?: string; burst_gap: number };
 type Props = {
   draft: ScanDraft; setDraft: (d: ScanDraft) => void; profile: string; setProfile: (p: string) => void;
   settings: Settings; status: Status; busy: boolean;
@@ -24,6 +24,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const run = useRun();
   const [recursive, setRecursive] = useState(true);
   const [strictness, setStrictness] = useState('moderate');
+  const [strictnessTouched, setStrictnessTouched] = useState(false);
   const [burstGap, setBurstGap] = useState(String(DEFAULT_GAP));
   const [readPlates, setReadPlates] = useState(true);
   const [readNumbers, setReadNumbers] = useState(true);
@@ -32,6 +33,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   useEffect(() => {
     if (!visible) return;
     setStrictness(typeof settings.blur_strictness === 'string' ? settings.blur_strictness : 'moderate');
+    setStrictnessTouched(false);
     setBurstGap(String(Number(settings.burst_gap) > 0 ? settings.burst_gap : DEFAULT_GAP));
     setReadPlates(settings.read_plates !== false);
     setReadNumbers(settings.read_numbers !== false);
@@ -53,7 +55,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const start = () => {
     onStart(
       { root: draft.root.trim(), label: draft.label.trim() || filename(draft.root), profile, recursive, stage: 'all', readPlates: vehicles && readPlates, readNumbers: vehicles && readNumbers, includePeople: parent === 'motorsport' && includePeople },
-      { scan_profile: profile, blur_strictness: strictness, burst_gap: gapOk ? gap : DEFAULT_GAP },
+      { scan_profile: profile, blur_strictness: strictnessTouched ? strictness : undefined, burst_gap: gapOk ? gap : DEFAULT_GAP },
     );
     onClose();
   };
@@ -83,7 +85,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
         </div>
         <div className="import-field">
           <label>Strictness</label>
-          <StrictnessSlider value={strictness} onChange={setStrictness} />
+          <StrictnessSlider value={strictness} onChange={(v) => { setStrictness(v); setStrictnessTouched(true); }} />
         </div>
 
         <details className="import-advanced">

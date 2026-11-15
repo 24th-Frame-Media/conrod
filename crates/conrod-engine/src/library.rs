@@ -66,6 +66,9 @@ pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Val
             }
             map.insert(k.clone(), v.clone());
         }
+        if a.patch.contains_key("blur_strictness") {
+            map.insert("blur_explicit".into(), Value::Bool(true));
+        }
 
         let updated_json = serde_json::to_string(&map).map_err(err)?;
         db.execute(
