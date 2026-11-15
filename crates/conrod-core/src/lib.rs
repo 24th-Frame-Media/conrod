@@ -20,5 +20,6 @@ pub mod registry;
 pub mod ridge;
 pub mod sets;
 pub mod settings;
+pub mod sport;
 pub mod tasks;
 pub mod text;
