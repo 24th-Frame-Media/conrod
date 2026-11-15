@@ -225,7 +225,8 @@ fn area_avg(g: &Gray, [x0, y0, x1, y1]: [usize; 4], k: usize) -> (Vec<f32>, usiz
 }
 
 /// Separable `[0.25, 0.5, 0.25]`: one pixel of Gaussian before the Sobel.
-fn smooth_1px(src: &[f32], w: usize, h: usize) -> Vec<f32> {
+/// Shared with `level`, which measures edge angles on the same smoothed plane.
+pub(crate) fn smooth_1px(src: &[f32], w: usize, h: usize) -> Vec<f32> {
     let mut tmp = vec![0f32; w * h];
     for y in 0..h {
         for x in 0..w {
