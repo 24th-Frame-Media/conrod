@@ -4,7 +4,7 @@ use crate::commands::{Command, KnownArgs, MarkArgs, ScanArgs};
 use crate::lock;
 use crate::{FrameResult, Scan};
 use conrod_core::{
-    profile::{GroupUnit, ScanProfile, ShootPreset},
+    profile::{ScanProfile, ShootPreset},
     settings::Settings,
     tasks::TaskHub,
 };
@@ -1002,15 +1002,11 @@ impl Desktop {
         {
             key[i] = moment;
         }
-        // Keep-set presets group a whole bracket, focus stack or interval as one
-        // unit; the frames themselves keep their moment key in `burst_key`
-        // order terms but stack together under the set's own key.
-        let policy = ShootPreset::parse(&cfg.scan_profile).policy();
-        if policy.group == GroupUnit::KeepSet {
-            for (i, set) in sets.iter().enumerate() {
-                if let Some((first, _)) = set {
-                    key[i] = SET_KEY_BASE + first;
-                }
+        // A bracket, focus stack or interval is one stack in every preset: the
+        // frames were shot to be judged together, whatever the shoot type.
+        for (i, set) in sets.iter().enumerate() {
+            if let Some((first, _)) = set {
+                key[i] = SET_KEY_BASE + first;
             }
         }
         let bursts = frames
