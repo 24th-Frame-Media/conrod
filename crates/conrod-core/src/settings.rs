@@ -223,6 +223,9 @@ pub struct Settings {
     /// How hard blur culls: "strict", "moderate" or "lenient". Unknown text
     /// reads as "moderate".
     pub blur_strictness: String,
+    /// Whether `blur_strictness` was chosen for this album. Until it is, the
+    /// shoot preset's own `default_blur` applies.
+    pub blur_explicit: bool,
     /// Path to a race entry list (CSV or JSON). Empty means none.
     pub entry_list: String,
 }
@@ -320,6 +323,7 @@ impl Default for Settings {
             include_people: false,
             use_quality_score: false,
             blur_strictness: "moderate".into(),
+            blur_explicit: false,
             entry_list: String::new(),
         }
     }

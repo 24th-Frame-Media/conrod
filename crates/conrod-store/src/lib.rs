@@ -199,6 +199,35 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("detections", "region_type", "TEXT DEFAULT 'vehicle'"),
     // NIMA technical quality, 0..1. NULL when the model is off or absent.
     ("detections", "quality", "REAL"),
+    // Keep-together sets found in the EXIF (brackets, focus stacks, intervals).
+    ("images", "set_id", "INTEGER"),
+    ("images", "set_kind", "TEXT"),
+    // The exposure settings themselves, so a regroup can find sets again
+    // without opening a file.
+    ("images", "exposure_time", "REAL"),
+    ("images", "exposure_bias", "REAL"),
+    ("images", "f_number", "REAL"),
+    ("images", "focal_length", "REAL"),
+    ("images", "focus_distance", "REAL"),
+    // Measured exposure: a flag, and the only exposure cull (`dark_frame`).
+    ("images", "exposure_verdict", "TEXT"),
+    ("images", "highlight_clip", "REAL"),
+    ("images", "shadow_clip", "REAL"),
+    ("images", "dark_frame", "INTEGER"),
+    // Level: property, interiors, landscape. Flag only.
+    ("images", "tilt_deg", "REAL"),
+    ("images", "converge_deg", "REAL"),
+    ("images", "level_verdict", "TEXT"),
+    // Continuous expression for the people presets; NULL without the models.
+    ("images", "eye_open_min", "REAL"),
+    ("images", "smile_max", "REAL"),
+    // Framing, measured from the chosen subject box.
+    ("detections", "cut_sides", "INTEGER"),
+    ("detections", "subject_frac", "REAL"),
+    ("detections", "lead_room", "REAL"),
+    ("detections", "framing_score", "REAL"),
+    // Rodeo/equestrian only: how much the animal is rearing under its rider.
+    ("images", "buck_score", "REAL"),
 ];
 
 fn now_unix() -> f64 {

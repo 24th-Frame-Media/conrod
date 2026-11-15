@@ -7,14 +7,14 @@
 //! holds this one up.
 
 use conrod_core::framing;
-use conrod_core::profile::{ScanProfile, ShootPreset};
+use conrod_core::profile::{GroupUnit, PresetPolicy, ScanProfile, ShootPreset};
 use conrod_core::settings::Settings;
 use conrod_core::tasks::TaskHub;
 use conrod_io::raw;
 use conrod_vision::detect::{self, DetectOptions, Detector, Device};
 use conrod_vision::faces::FaceDetector;
 use conrod_vision::imageops::{Filter, Gray, Rgb};
-use conrod_vision::sharpness;
+use conrod_vision::{expression, exposure, framing as vis_framing, level, sharpness};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Condvar;
@@ -138,6 +138,15 @@ pub struct Subject {
     pub quality: Option<f64>,
     /// A face's OCEC `prob_open`, right eye then left; `None` where not judged.
     pub eyes_open: [Option<f32>; 2],
+    /// Frame edges this subject's box runs off (0..=4). See `framing`.
+    pub cut_sides: u8,
+    /// The subject's box as a share of the frame.
+    pub subject_frac: f32,
+    /// Room ahead minus behind along the motion direction; `None` without it.
+    pub lead_room: Option<f32>,
+    /// The preset's framing score for this subject, 0..1. `None` when the
+    /// preset has no framing policy.
+    pub framing_score: Option<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -153,6 +162,18 @@ pub struct FrameResult {
     pub stars: u8,
     pub thumb: Rgb,
     pub rating: f64,
+    /// Measured exposure: the verdict is a flag, `dark_frame` the only cull.
+    pub exposure: Option<exposure::Exposure>,
+    /// EXIF exposure settings, so a regroup can find keep-together sets.
+    pub exif: raw::Exposure,
+    /// Tilt/convergence, for the presets where a crooked frame is worth
+    /// flagging. `None` elsewhere.
+    pub level: Option<level::Level>,
+    /// Lowest eye-open and highest smile among the frame's faces.
+    pub eye_open_min: Option<f32>,
+    pub smile_max: Option<f32>,
+    /// Rodeo/equestrian only: how much the animal is rearing under its rider.
+    pub buck: Option<f64>,
 }
 
 fn crop_gray(frame: &Gray, crop_box: [f64; 4]) -> Gray {
@@ -221,6 +242,21 @@ fn thumbnail(frame: &Rgb) -> Rgb {
         .resize(w, h, Filter::Bilinear)
 }
 
+/// Which framing terms the preset cares about, if any. Composition decides
+/// between frames in sport (lead room) and in portraits and events (size and
+/// centring); elsewhere the score is measured but does not rank.
+pub(crate) fn framing_policy(preset: ShootPreset) -> Option<vis_framing::FramingPolicy> {
+    use ShootPreset::*;
+    match preset {
+        Motorsport | MotorsportBurnouts | MotorsportTrack | MotorsportRally | MotorsportMeet
+        | SportField | SportCourt | SportRodeo | SportEquestrian | SportCycling | SportAction
+        | WildlifeBirds | Aviation | AutoDealer => Some(vis_framing::FramingPolicy::sport()),
+        Portrait | PortraitGroup | PortraitCouple | PortraitPets | Wedding | Event | EventShows
+        | EventParties => Some(vis_framing::FramingPolicy::portrait()),
+        _ => None,
+    }
+}
+
 fn options(settings: &Settings, _profile: ScanProfile) -> DetectOptions {
     let preset = ShootPreset::parse(&settings.scan_profile);
     let mut classes = Vec::new();
@@ -257,6 +293,19 @@ pub(crate) fn load_faces() -> Result<FaceDetector, String> {
     Ok(detector)
 }
 
+/// The blendshape expression model, when its two ONNX files are installed.
+/// Optional by design: a shoot with no expression models is scanned exactly as
+/// before, on the binary OCEC eye verdict.
+pub(crate) fn load_expression() -> Option<Mutex<expression::ExpressionModel>> {
+    use conrod_core::models;
+    let landmarks = models::find(expression::LANDMARKS)?;
+    let mut model = expression::ExpressionModel::load(&landmarks).ok()?;
+    if let Some(blendshapes) = models::find(expression::BLENDSHAPES) {
+        let _ = model.load_blendshapes(&blendshapes);
+    }
+    Some(Mutex::new(model))
+}
+
 /// The cull reason of a face whose eyes are shut.
 pub const EYES_CLOSED: &str = "eyes closed";
 
@@ -269,17 +318,28 @@ pub(crate) fn eyes_closed(open: [Option<f32>; 2]) -> bool {
             .all(|p| *p < conrod_vision::faces::EYES_CLOSED_BELOW)
 }
 
+/// The faces and eyes of one frame, and the expression extremes across them.
+#[derive(Debug, Default)]
+pub(crate) struct Faces {
+    pub subjects: Vec<Subject>,
+    /// The lowest eye-open of any face: a portrait is as good as its blink.
+    pub eye_open_min: Option<f32>,
+    pub smile_max: Option<f32>,
+}
+
 /// Faces and eyes found inside each person box, measured like any subject.
 pub(crate) fn face_subjects(
     image: &Rgb,
     grey: &Gray,
     people: impl IntoIterator<Item = [f64; 4]>,
     detector: &Mutex<FaceDetector>,
+    expression: Option<&Mutex<expression::ExpressionModel>>,
     settings: &Settings,
+    strictness: &str,
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
-) -> Result<Vec<Subject>, String> {
+) -> Result<Faces, String> {
     let (fw, fh) = (image.width, image.height);
-    let mut out = Vec::new();
+    let mut out = Faces::default();
     for bbox in people {
         let [x0, y0, x1, y1] = bbox.map(|v| v.max(0.0) as usize);
         if x1 <= x0 || y1 <= y0 {
@@ -289,6 +349,23 @@ pub(crate) fn face_subjects(
         let found = lock(detector).detect(&crop)?;
         for face in found {
             let open = lock(detector).eyes_open(&crop, &face);
+            // When the blendshape mesh agrees with the detector, its continuous
+            // eye-open replaces the binary OCEC verdict.
+            let judged = expression.and_then(|model| {
+                let mut model = lock(model);
+                model.read(&crop, &face).ok()
+            });
+            let closed = match judged {
+                Some(ref read) if read.confidence >= expression::TRUST_CONFIDENCE => {
+                    out.eye_open_min = Some(
+                        out.eye_open_min
+                            .map_or(read.eye_open_min(), |m: f32| m.min(read.eye_open_min())),
+                    );
+                    out.smile_max = Some(out.smile_max.map_or(read.smile, |m: f32| m.max(read.smile)));
+                    read.eye_open_min() < expression::CLOSED_EYE_BELOW
+                }
+                _ => eyes_closed(open),
+            };
             let face_box = [
                 face.bbox[0] + x0 as f64,
                 face.bbox[1] + y0 as f64,
@@ -326,10 +403,10 @@ pub(crate) fn face_subjects(
                     continue;
                 }
                 if !focus.learned {
-                    let blur = conrod_vision::edgeblur::measure(grey, Some([a, b, c, d]));
+                    let edges = conrod_vision::edgeblur::measure(grey, Some([a, b, c, d]));
                     if let Some(score) = sharpness::rating_from_blur(
-                        blur.sigma_worst_at_reference(fw.max(fh)),
-                        sharpness::BlurStrictness::parse(&settings.blur_strictness),
+                        edges.sigma_worst_at_reference(fw.max(fh)),
+                        sharpness::BlurStrictness::parse(strictness),
                     ) {
                         focus.score = score;
                     }
@@ -342,12 +419,12 @@ pub(crate) fn face_subjects(
                 } else {
                     String::new()
                 };
-                let reason = if kind == "face" && eyes_closed(open) {
+                let reason = if kind == "face" && closed {
                     EYES_CLOSED.to_string()
                 } else {
                     reason
                 };
-                out.push(Subject {
+                out.subjects.push(Subject {
                     class: kind,
                     conf: face.score,
                     bbox: [a as f64, b as f64, c as f64, d as f64],
@@ -368,6 +445,10 @@ pub(crate) fn face_subjects(
                     // subjects (see `cull_frame`), not each face/eye crop.
                     quality: None,
                     eyes_open: if kind == "face" { open } else { [None, None] },
+                    cut_sides: 0,
+                    subject_frac: 0.0,
+                    lead_room: None,
+                    framing_score: None,
                 });
             }
         }
@@ -419,6 +500,8 @@ pub fn cull_frame(
     profile: ScanProfile,
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
     faces: Option<&Mutex<FaceDetector>>,
+    // The blendshape expression model; `None` when its files are absent.
+    expression: Option<&Mutex<expression::ExpressionModel>>,
     quality: Option<&Mutex<conrod_vision::quality::QualityModel>>,
     step: impl Fn(&'static str),
 ) -> Result<FrameResult, String> {
@@ -440,6 +523,23 @@ pub fn cull_frame(
     let grey = image.to_gray();
     step("sharpness");
 
+    // The preset's own strictness applies until someone chooses one for the
+    // album; this is the difference between a burnouts shoot and a portrait.
+    let policy = preset.policy();
+    let strictness = if settings.blur_explicit {
+        settings.blur_strictness.clone()
+    } else {
+        policy.default_blur.to_string()
+    };
+    // Level only where a crooked frame is worth flagging, and framing only
+    // where the preset says composition decides between frames.
+    let level = policy.level.then(|| level::measure(&grey));
+    let tilt = level
+        .as_ref()
+        .and_then(|l| l.tilt_deg.map(|t| t as f32));
+    let framing_policy = framing_policy(preset);
+    let boxes: Vec<[f64; 4]> = found.iter().map(|det| det.bbox).collect();
+
     let mut subjects = Vec::new();
     for det in &found {
         let kind = if det.class_id == detect::PERSON || detect::ANIMALS.contains(&det.class_id) {
@@ -447,6 +547,20 @@ pub fn cull_frame(
         } else {
             "vehicle"
         };
+        let others: Vec<[f64; 4]> = boxes
+            .iter()
+            .copied()
+            .filter(|b| *b != det.bbox)
+            .collect();
+        let measured = vis_framing::framing(
+            [fw as f64, fh as f64],
+            det.bbox,
+            &others,
+            None,
+            tilt,
+        );
+        let framing_score =
+            framing_policy.map(|policy| vis_framing::framing_score(&measured, &policy));
         let crop_grey = cut_gray(&grey, det.crop_box, settings, models.contains_key(kind));
         let scale = crop_grey.width as f64 / (det.crop_box[2] - det.crop_box[0]);
         let [cx, cy] = [det.crop_box[0], det.crop_box[1]];
@@ -472,7 +586,7 @@ pub fn cull_frame(
             if let Some(score) =
                 sharpness::rating_from_blur(
                     blur.sigma_worst_at_reference(fw.max(fh)),
-                    sharpness::BlurStrictness::parse(&settings.blur_strictness),
+                    sharpness::BlurStrictness::parse(&strictness),
                 )
             {
                 focus.score = score;
@@ -505,7 +619,15 @@ pub fn cull_frame(
                 .is_some_and(|s| s >= conrod_vision::streaks::PAN_COHERENCE);
         let verdict = sharpness::rating_for(rating, settings.sharp_at, settings.blurred_below);
         let stars = sharpness::stars_for(rating);
-        let cull_reason = if (settings.auto_reject_below_stars as u8) > stars {
+        let cull_reason = if policy.deliver_most {
+            // A condition report keeps nearly everything: only a subject that
+            // is clearly out of focus goes, and never one that is merely soft.
+            if settings.cull_blurred && verdict == "blurred" {
+                "too blurred".into()
+            } else {
+                String::new()
+            }
+        } else if (settings.auto_reject_below_stars as u8) > stars {
             format!("{stars} star{}", if stars == 1 { "" } else { "s" })
         } else if settings.cull_blurred && sharpness::cullable(&focus, verdict) {
             if kind == "vehicle" && edges.cut_off() {
@@ -540,15 +662,106 @@ pub fn cull_frame(
             },
             quality: quality_score,
             eyes_open: [None, None],
+            cut_sides: measured.cut_sides,
+            subject_frac: measured.subject_frac,
+            lead_room: measured.lead_room,
+            framing_score,
         });
     }
+    let mut eye_open_min = None;
+    let mut smile_max = None;
     if let Some(detector) = faces {
         step("faces");
         let people = found
             .iter()
             .filter(|d| d.class_id == detect::PERSON)
             .map(|d| d.bbox);
-        subjects.extend(face_subjects(&image, &grey, people, detector, settings, models)?);
+        let read = face_subjects(
+            &image,
+            &grey,
+            people,
+            detector,
+            expression,
+            settings,
+            &strictness,
+            models,
+        )?;
+        subjects.extend(read.subjects);
+        eye_open_min = read.eye_open_min;
+        smile_max = read.smile_max;
+    }
+    // Rodeo and equestrian: the rider and the animal are one subject, and how
+    // much the animal is rearing ranks the frames of a ride.
+    let mut buck = None;
+    if matches!(
+        preset,
+        ShootPreset::SportRodeo | ShootPreset::SportEquestrian
+    ) {
+        step("sharpness");
+        let people: Vec<conrod_core::sport::Det> = found
+            .iter()
+            .filter(|d| d.class_id == detect::PERSON)
+            .map(|d| (d.class_id, d.conf, d.bbox))
+            .collect();
+        let animals: Vec<conrod_core::sport::Det> = found
+            .iter()
+            .filter(|d| conrod_core::sport::ANIMALS.contains(&d.class_id))
+            .map(|d| (d.class_id, d.conf, d.bbox))
+            .collect();
+        if let Some(rider) = conrod_core::sport::rider_on_animal(&people, &animals) {
+            buck = Some(conrod_core::sport::buck_score(
+                &rider,
+                animals[rider.animal].2,
+                people[rider.person].2,
+            ));
+        }
+        if let Some(subject) = conrod_core::sport::rodeo_subject(&people, &animals) {
+            let bbox = subject.bbox();
+            let region = [
+                (bbox[0].max(0.0) as usize).min(fw),
+                (bbox[1].max(0.0) as usize).min(fh),
+                (bbox[2].max(0.0) as usize).min(fw),
+                (bbox[3].max(0.0) as usize).min(fh),
+            ];
+            if region[2] > region[0] + 8 && region[3] > region[1] + 8 {
+                let blur = conrod_vision::edgeblur::measure(&grey, Some(region));
+                let score = sharpness::rating_from_blur(
+                    blur.sigma_worst_at_reference(fw.max(fh)),
+                    sharpness::BlurStrictness::parse(&strictness),
+                )
+                .unwrap_or(0.0);
+                let stars = sharpness::stars_for(score);
+                let reason = if (settings.auto_reject_below_stars as u8) > stars {
+                    format!("{stars} stars")
+                } else {
+                    String::new()
+                };
+                subjects.push(Subject {
+                    class: match subject {
+                        conrod_core::sport::RodeoSubject::Rider { .. } => "rider",
+                        conrod_core::sport::RodeoSubject::Animal { .. } => "animal",
+                        conrod_core::sport::RodeoSubject::Person { .. } => "person",
+                    },
+                    conf: 1.0,
+                    bbox,
+                    sharpness: score,
+                    panning: false,
+                    sharp_end: "subject",
+                    rating: score,
+                    stars,
+                    cull_reason: reason,
+                    features: Vec::new(),
+                    heuristic: score,
+                    region_type: "person",
+                    quality: None,
+                    eyes_open: [None, None],
+                    cut_sides: 0,
+                    subject_frac: 0.0,
+                    lead_room: None,
+                    framing_score: None,
+                });
+            }
+        }
     }
     step("sharpness");
     let whole = {
@@ -566,7 +779,7 @@ pub fn cull_frame(
             let edges = conrod_vision::edgeblur::measure(&grey, None);
             let edge = sharpness::rating_from_blur(
                 conrod_vision::edgeblur::at_reference(edges.sigma_best, fw.max(fh)),
-                sharpness::BlurStrictness::parse(&settings.blur_strictness),
+                sharpness::BlurStrictness::parse(&strictness),
             );
             let mut score = f64::NEG_INFINITY;
             for v in [measured, sharpness::focal_score(&grey), edge]
@@ -586,6 +799,24 @@ pub fn cull_frame(
         .collect();
     let rating = frame_rating(preset.profile(), settings.include_people, &rated, whole);
     let stars = sharpness::stars_for(rating);
+    // Exposure on the main subject, so a backlit rider's clipped whites are
+    // told from a blown sky.
+    let subject_box = subjects
+        .iter()
+        .filter(|s| s.region_type != "face" && s.region_type != "eye")
+        .max_by(|a, b| {
+            let area = |s: &Subject| (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1]);
+            area(a).total_cmp(&area(b))
+        })
+        .map(|s| {
+            [
+                s.bbox[0].max(0.0) / fw as f64,
+                s.bbox[1].max(0.0) / fh as f64,
+                (s.bbox[2].min(fw as f64)) / fw as f64,
+                (s.bbox[3].min(fh as f64)) / fh as f64,
+            ]
+        });
+    let exposure = Some(exposure::measure(&image, subject_box));
     Ok(FrameResult {
         path: path.to_path_buf(),
         camera: frame.camera("camera"),
@@ -596,6 +827,12 @@ pub fn cull_frame(
         stars,
         thumb: thumbnail(&image),
         rating,
+        exposure,
+        exif: frame.exposure.clone(),
+        level,
+        eye_open_min,
+        smile_max,
+        buck,
     })
 }
 
@@ -739,6 +976,13 @@ pub(crate) fn scan_files_filtered(
             } else {
                 None
             };
+        // Expression is optional: without the landmarker and blendshape files
+        // the scan silently keeps the binary OCEC eye verdict.
+        let expression = if faces.is_some() {
+            load_expression()
+        } else {
+            None
+        };
         let models: std::collections::HashMap<_, _> = ["vehicle", "person", "face", "eye"]
             .into_iter()
             .filter_map(|region| load_region_model(region).map(|m| (region.to_string(), m)))
@@ -799,8 +1043,8 @@ pub(crate) fn scan_files_filtered(
             for lane in 0..workers {
                 // Borrows, not moves: every worker shares the same pools. `lane`
                 // is copied so its borrow does not outlive the loop iteration.
-                let (paths, settings, detectors, models, faces, quality) =
-                    (&paths, &settings, &detectors, &models, &faces, &quality);
+                let (paths, settings, detectors, models, faces, expression, quality) =
+                    (&paths, &settings, &detectors, &models, &faces, &expression, &quality);
                 let (progress, on_frame, should_scan, task) =
                     (&progress, &on_frame, &should_scan, &task);
                 let (pausing, flag, next, done, hub) = (&pausing, &flag, &next, &done, &hub);
@@ -850,6 +1094,7 @@ pub(crate) fn scan_files_filtered(
                         profile,
                         models,
                         faces.as_ref(),
+                        expression.as_ref(),
                         quality.as_ref(),
                         step,
                     ) {

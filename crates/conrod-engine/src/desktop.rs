@@ -4,7 +4,7 @@ use crate::commands::{Command, KnownArgs, MarkArgs, ScanArgs};
 use crate::lock;
 use crate::{FrameResult, Scan};
 use conrod_core::{
-    profile::{ScanProfile, ShootPreset},
+    profile::{GroupUnit, ScanProfile, ShootPreset},
     settings::Settings,
     tasks::TaskHub,
 };
@@ -29,6 +29,87 @@ fn now() -> f64 {
 /// The burst gap to group an album with: its own setting, or the one default.
 fn burst_gap(setting: f64) -> f64 {
     conrod_core::settings::burst_gap_or_default(setting)
+}
+
+/// Burst keys stay small and positive; a keep-set's key is offset past them so
+/// a bracket never collides with a burst number.
+const SET_KEY_BASE: i64 = 1_000_000;
+
+fn set_kind_name(kind: conrod_core::sets::SetKind) -> &'static str {
+    use conrod_core::sets::SetKind;
+    match kind {
+        SetKind::Bracket => "bracket",
+        SetKind::FocusStack => "focus",
+        SetKind::Interval => "interval",
+    }
+}
+
+/// Which keep-together set each image belongs to, from the EXIF the scan
+/// stored. An album scanned before those columns existed reads the headers
+/// once; that is the only slow path in a regroup, and only for old albums.
+fn keep_sets(
+    images: &[Value],
+) -> Vec<Option<(i64, conrod_core::sets::SetKind)>> {
+    use conrod_core::sets::{find_sets, SetFrame};
+    let mut out = vec![None; images.len()];
+    if images.is_empty() {
+        return out;
+    }
+    let stored = images
+        .iter()
+        .any(|v| v["exposure_time"].as_f64().is_some() || v["exposure_bias"].as_f64().is_some());
+    let mut order: Vec<usize> = (0..images.len()).collect();
+    order.sort_by(|&a, &c| {
+        images[a]["taken_at"]
+            .as_f64()
+            .unwrap_or_default()
+            .total_cmp(&images[c]["taken_at"].as_f64().unwrap_or_default())
+            .then_with(|| {
+                images[a]["path"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .cmp(images[c]["path"].as_str().unwrap_or_default())
+            })
+    });
+    let mut frames = Vec::with_capacity(images.len());
+    for &i in &order {
+        let v = &images[i];
+        let path = v["path"].as_str().unwrap_or_default();
+        let read = if stored {
+            None
+        } else {
+            conrod_io::raw::exposure_meta(std::path::Path::new(path)).ok()
+        };
+        let number = |key: &str, from: Option<f64>| {
+            if stored {
+                v[key].as_f64()
+            } else {
+                from
+            }
+        };
+        frames.push(SetFrame {
+            taken: v["taken_at"].as_f64(),
+            camera: v["camera"].as_str().unwrap_or_default().to_string(),
+            exposure_bias: number("exposure_bias", read.as_ref().and_then(|e| e.exposure_bias)),
+            exposure_time: number("exposure_time", read.as_ref().and_then(|e| e.exposure_time)),
+            f_number: number("f_number", read.as_ref().and_then(|e| e.f_number)),
+            focal_length: number("focal_length", read.as_ref().and_then(|e| e.focal_length)),
+            focus_distance: number(
+                "focus_distance",
+                read.as_ref().and_then(|e| e.focus_distance),
+            ),
+            width: v["width"].as_u64().unwrap_or_default() as u32,
+            height: v["height"].as_u64().unwrap_or_default() as u32,
+        });
+    }
+    let found = find_sets(&frames);
+    for (n, set) in found.into_iter().enumerate() {
+        out[order[n]] = set.map(|(first, kind)| {
+            let key = images[order[first as usize]]["id"].as_i64().unwrap_or_default();
+            (key, kind)
+        });
+    }
+    out
 }
 
 pub struct Desktop {
@@ -432,8 +513,8 @@ impl Desktop {
         let db = lock(&self.reader);
         // Only what the UI reads: `SELECT *` was 17 MB and 0.8 s for 4,808
         // frames, 3.6 MB of it the raw sharpness `features`.
-        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick FROM images i WHERE job_id=? ORDER BY path",[job])?;
-        let mut detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
+        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score FROM images i WHERE job_id=? ORDER BY path",[job])?;
+        let mut detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
         let known: Vec<(Value, Vec<f32>)> = rows(&db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
             .into_iter()
             .filter_map(|row| similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector)))
@@ -786,7 +867,7 @@ impl Desktop {
             insert_subject(&tx, image, s)?;
         }
         let rating = f.rating;
-        tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,thumb_path=? WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,thumb.to_string_lossy(),image]).map_err(err)?;
+        tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=? WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,image]).map_err(err)?;
         tx.commit().map_err(err)?;
         self.report_frame(image, &thumb, f, settings);
         Ok(())
@@ -856,9 +937,13 @@ impl Desktop {
         let db = lock(&self.db);
         let images = rows(
             &db,
-            "SELECT id,path,camera,taken_at,rating,width,height FROM images WHERE job_id=? AND status='done'",
+            "SELECT id,path,camera,taken_at,rating,width,height,exposure_time,exposure_bias,f_number,focal_length,focus_distance FROM images WHERE job_id=? AND status='done' ORDER BY path",
             [job],
         )?;
+        // Keep-together sets from the EXIF: a bracket is meant to hold a dark
+        // and a bright frame, so its frames are one unit and are never culled
+        // for exposure or blur individually.
+        let sets = keep_sets(&images);
         let mut frames: Vec<_> = images
             .iter()
             .map(|v| conrod_core::bursts::Frame {
@@ -917,6 +1002,17 @@ impl Desktop {
         {
             key[i] = moment;
         }
+        // Keep-set presets group a whole bracket, focus stack or interval as one
+        // unit; the frames themselves keep their moment key in `burst_key`
+        // order terms but stack together under the set's own key.
+        let policy = ShootPreset::parse(&cfg.scan_profile).policy();
+        if policy.group == GroupUnit::KeepSet {
+            for (i, set) in sets.iter().enumerate() {
+                if let Some((first, _)) = set {
+                    key[i] = SET_KEY_BASE + first;
+                }
+            }
+        }
         let bursts = frames
             .iter()
             .map(|frame| frame.burst)
@@ -925,9 +1021,16 @@ impl Desktop {
         let moments = key.iter().collect::<std::collections::BTreeSet<_>>().len();
         let tx = db.unchecked_transaction().map_err(err)?;
         for (i, frame) in frames.iter().enumerate() {
+            let set = sets[i];
             tx.execute(
-                "UPDATE images SET burst_key=? WHERE job_id=? AND path=?",
-                params![key[i], job, frame.path],
+                "UPDATE images SET burst_key=?,set_id=?,set_kind=? WHERE job_id=? AND path=?",
+                params![
+                    key[i],
+                    set.map(|(id, _)| id),
+                    set.map(|(_, kind)| set_kind_name(kind)),
+                    job,
+                    frame.path
+                ],
             )
             .map_err(err)?;
         }
@@ -986,7 +1089,7 @@ pub(crate) fn insert_subject(
     image: i64,
     s: &crate::Subject,
 ) -> Result<()> {
-    db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,rating_verdict,panning,sharp_end,cull_reason,features,heuristic,region_type,quality,attributes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![image,s.bbox[0],s.bbox[1],s.bbox[2],s.bbox[3],s.class,s.conf,s.sharpness,s.rating,conrod_vision::sharpness::rating_for(s.rating,0.825,0.606),s.panning,s.sharp_end,s.cull_reason,serde_json::to_string(&s.features).map_err(err)?,s.heuristic,s.region_type,s.quality,eyes_json(s.eyes_open)]).map_err(err)?;
+    db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,rating_verdict,panning,sharp_end,cull_reason,features,heuristic,region_type,quality,attributes,cut_sides,subject_frac,lead_room,framing_score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![image,s.bbox[0],s.bbox[1],s.bbox[2],s.bbox[3],s.class,s.conf,s.sharpness,s.rating,conrod_vision::sharpness::rating_for(s.rating,0.825,0.606),s.panning,s.sharp_end,s.cull_reason,serde_json::to_string(&s.features).map_err(err)?,s.heuristic,s.region_type,s.quality,eyes_json(s.eyes_open),s.cut_sides,s.subject_frac,s.lead_room,s.framing_score]).map_err(err)?;
     Ok(())
 }
 
@@ -1022,6 +1125,71 @@ mod tests {
         }
         assert_eq!(burst_gap(2.5), 2.5, "a user's gap is honoured");
         assert_eq!(burst_gap(4.0), 4.0, "4.0 is no longer a sentinel");
+    }
+
+    #[test]
+    fn an_exposure_bracket_becomes_one_keep_set_and_is_never_culled_alone() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("bracket-set");
+        // A landscape album: keep-sets, deliver-most, level.
+        lib.run(
+            "update_job_settings",
+            json!({"jobId": lib.job, "patch": {"scan_profile": "landscape"}}),
+        )
+        .unwrap();
+        // Four frames on one body, half a second apart, two stops apart: a
+        // bracket, not a burst.
+        let mut images = Vec::new();
+        for (i, shutter) in [1.0 / 100.0, 1.0 / 50.0, 1.0 / 25.0, 1.0 / 12.5]
+            .into_iter()
+            .enumerate()
+        {
+            let image = lib.frame(&format!("{i}.jpg"), None);
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=?,exposure_time=?,f_number=8.0,focal_length=24.0 WHERE id=?",
+                rusqlite::params![f64::from(i as u32) * 0.5, shutter, image],
+            );
+            lib.detection(image, "vehicle", 0.5);
+            images.push(image);
+        }
+        let counts = lib.d().regroup(lib.job).unwrap();
+        assert_eq!(counts["bursts"], 1);
+        assert_eq!(counts["moments"], 1, "the bracket is one stack");
+        let kind: String = lib.one(
+            "SELECT set_kind FROM images WHERE id=?",
+            [images[0]],
+        );
+        assert_eq!(kind, "bracket");
+        let set_ids: i64 = lib.one(
+            "SELECT count(DISTINCT set_id) FROM images WHERE job_id=? AND set_id IS NOT NULL",
+            [lib.job],
+        );
+        assert_eq!(set_ids, 1);
+        let keys: i64 = lib.one(
+            "SELECT count(DISTINCT burst_key) FROM images WHERE job_id=?",
+            [lib.job],
+        );
+        assert_eq!(keys, 1, "one key for the whole bracket");
+
+        // A culled (say, darker) bracket frame still competes: the bracket is
+        // meant to hold one frame that looks wrong on its own.
+        lib.sql(
+            "UPDATE detections SET rating=0.9, sharpness=0.9, cull_reason='too blurred' WHERE image_id=?",
+            [images[0]],
+        );
+        lib.sql(
+            "UPDATE detections SET rating=0.2, sharpness=0.2, cull_reason='' WHERE image_id=?",
+            [images[1]],
+        );
+        crate::passes::pick_keepers(lib.d(), lib.job).unwrap();
+        assert_eq!(
+            lib.one::<i64>(
+                "SELECT image_id FROM detections WHERE burst_pick=1 AND image_id=?",
+                [images[0]]
+            ),
+            1,
+            "the cull exemption lets the bracket's best frame win"
+        );
     }
 
     #[test]

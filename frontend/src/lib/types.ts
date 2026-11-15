@@ -3,6 +3,23 @@ export type Frame = {
   id: number; path: string; status: string; thumb_path: string | null; preview_path: string | null;
   width: number; height: number; rating: number | null; manual_stars: number | null; rejected: number; picked: number;
   burst_key: number | null; dupe_key?: number | null; burst_pick?: number | null; error: string | null;
+  /** Keep-together set (bracket / focus / interval): one stack, never culled alone. */
+  set_id?: number | null;
+  set_kind?: 'bracket' | 'focus' | 'interval' | null;
+  /** Measured exposure: a flag, and `dark_frame` is the only exposure cull. */
+  exposure_verdict?: 'ok' | 'highlights' | 'shadows' | 'dark' | null;
+  highlight_clip?: number | null;
+  shadow_clip?: number | null;
+  dark_frame?: number | null;
+  /** Level, only where the preset asks: property, interiors, landscape. */
+  tilt_deg?: number | null;
+  converge_deg?: number | null;
+  level_verdict?: 'level' | 'tilted' | 'keystone' | 'unknown' | null;
+  /** Expression across the frame's faces, 0..1; null without the models. */
+  eye_open_min?: number | null;
+  smile_max?: number | null;
+  /** Rodeo/equestrian only: how much the animal is rearing under its rider. */
+  buck_score?: number | null;
 };
 export type Detection = {
   rejected?: number; bystander?: number; stars?: number | null;
@@ -13,6 +30,11 @@ export type Detection = {
   cull_reason: string | null; attributes: string | null; burst_pick: number; region_type: string | null;
   /** NIMA technical quality, 0..1; null when the model is off or absent. */
   quality?: number | null;
+  /** Framing of this subject's box; `framing_score` ranks the keeper where the preset applies. */
+  cut_sides?: number | null;
+  subject_frac?: number | null;
+  lead_room?: number | null;
+  framing_score?: number | null;
   reviewed?: number; group_key?: number | null; group_size?: number | null; group_agreement?: number | null;
   known_match?: KnownVehicle & { similarity?: number };
   known_person_match?: { name: string; country?: string; similarity?: number };
