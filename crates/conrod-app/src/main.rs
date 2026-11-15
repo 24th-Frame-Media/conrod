@@ -232,6 +232,12 @@ fn main() {
                         return;
                     }
                     let version = worker.hub.version();
+                    // One `scan-progress` event per tick (4/s) while a scan is
+                    // running, then one final snapshot. Throttling is this
+                    // thread; the pools themselves never emit.
+                    if let Some(progress) = worker.progress_snapshot() {
+                        let _ = handle.emit("scan-progress", progress);
+                    }
                     if version == seen {
                         continue;
                     }

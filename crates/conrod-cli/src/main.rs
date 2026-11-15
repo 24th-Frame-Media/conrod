@@ -137,7 +137,13 @@ fn main() {
     let started = Instant::now();
     let mut paths = conrod_engine::files(&PathBuf::from(&args[1]));
     paths.truncate(limit.unwrap_or(usize::MAX));
-    let scan = conrod_engine::scan_files(paths, settings, profile, hub.clone(), move |result| {
+    let scan = conrod_engine::scan_files(
+        paths,
+        settings,
+        profile,
+        hub.clone(),
+        None,
+        move |result| {
         let Ok(f) = result else { return };
         let subjects: Vec<_> = f
             .subjects
