@@ -173,7 +173,7 @@
 .grid-inner { position: relative; }
 .card { position: absolute; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius); overflow: hidden; cursor: pointer; transition: border-color .14s var(--ease), opacity .14s var(--ease); }
 .card:hover { border-color: var(--line-hover); }
-.card.selected { border-color: var(--accent); }
+.card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .card.rejected { opacity: .4; }
 .card.picked { border-left: 3px solid var(--good); }
 .card.rated-good { border-left: 3px solid var(--good); }
@@ -873,21 +873,23 @@ dialog.viewer {
 .album-toolbar input[type="search"] { width: min(300px, 22vw); }
 .album-actions { display: flex; align-items: center; gap: 8px; padding: 8px 18px; border-bottom: 1px solid var(--line-soft); }
 .album-actions details { margin-left: auto; }
-.burst-grid { flex: 1; min-height: 0; overflow: auto; padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); align-content: start; gap: 18px; }
-.burst-stack { min-width: 0; padding: 0; overflow: visible; text-align: left; background: transparent; border: 0; cursor: pointer; }
+.burst-grid { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.burst-grid-inner { position: relative; margin: 0 20px; }
+.burst-stack { position: absolute; min-width: 0; padding: 0; overflow: visible; text-align: left; background: transparent; border: 0; cursor: pointer; }
 .burst-layers { position: relative; aspect-ratio: 3 / 2; margin: 0 8px 9px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: 3px 3px 0 var(--surface-2), 6px 6px 0 var(--surface-3), 9px 9px 0 var(--surface); overflow: hidden; }
 .burst-stack:hover .burst-layers, .burst-stack.open .burst-layers { border-color: var(--line-hover); }
-.burst-stack.selected .burst-layers { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 3px 3px 0 var(--surface-2), 6px 6px 0 var(--surface-3), 9px 9px 0 var(--surface); }
+.burst-stack.selected .burst-layers { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), 3px 3px 0 var(--surface-2), 6px 6px 0 var(--surface-3), 9px 9px 0 var(--surface); }
+.burst-stack.selected .burst-caption b { color: var(--accent); }
 .burst-layers .image-load, .burst-layers img { width: 100%; height: 100%; object-fit: cover; }
 
 .burst-caption { display: grid; gap: 2px; padding: 0 4px; }
 .burst-caption b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .burst-caption span { min-height: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-mute); font-size: 11px; }
-.burst-expanded { grid-column: 1 / -1; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.burst-expanded { position: absolute; left: 0; right: 0; box-sizing: border-box; overflow: hidden; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
 .burst-expanded-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
 .burst-strip { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; }
 .burst-strip > button { position: relative; flex: 0 0 190px; padding: 0; overflow: hidden; text-align: left; background: var(--surface); }
-.burst-strip > button.selected { border-color: var(--accent); }
+.burst-strip > button.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .burst-strip .image-load { width: 100%; aspect-ratio: 3 / 2; }
 .burst-strip img { width: 100%; height: 100%; object-fit: cover; }
 .burst-strip input { position: absolute; z-index: 4; top: 8px; left: 8px; }

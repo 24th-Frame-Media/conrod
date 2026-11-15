@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, type Ref } from 'react';
 import { Modal } from '../components/basics';
 import { StarControl } from '../components/Stars';
 import { asset } from '../lib/api';
-import { burstGroups, burstPickOf, filename, frameStars, frameExcluded } from '../lib/review';
+import { filename, frameStars, frameExcluded } from '../lib/review';
+import type { Stack } from '../lib/stacks.mjs';
 import type { ReviewModel } from '../state/useReview';
 import { usePreview, type Runner } from '../state/hooks';
 import { ZoomImage, type ZoomImageHandle } from '../components/ZoomImage';
@@ -15,6 +16,9 @@ type Props = {
   /** Filmstrip click: sets the right pane, matching what the stepFrame/stepBurst hotkeys move (see Review.tsx). */
   onPickFilmstrip: (id: number) => void;
   onClose: () => void;
+  /** The burst being compared and the album's keepers. */
+  stack: Stack<Frame> | null;
+  keeperIds: ReadonlySet<number>;
 };
 
 function Pane({ frame, run, rv, showBoxes, onToggleBoxes, active, onActivate, zoomRef }: {
@@ -47,7 +51,7 @@ function Pane({ frame, run, rv, showBoxes, onToggleBoxes, active, onActivate, zo
 }
 
 /** 1.3: the selected frame vs. the next frame or its burst pick, side by side. */
-export function Compare({ rv, run, showBoxes, onToggleBoxes, right, activePane, onSetActivePane, onPickFilmstrip, onClose }: Props) {
+export function Compare({ rv, run, showBoxes, onToggleBoxes, right, activePane, onSetActivePane, onPickFilmstrip, onClose, stack, keeperIds }: Props) {
   const left = rv.frame ?? null;
   const leftZoom = useRef<ZoomImageHandle>(null);
   const rightZoom = useRef<ZoomImageHandle>(null);
@@ -55,11 +59,7 @@ export function Compare({ rv, run, showBoxes, onToggleBoxes, right, activePane, 
   // 1.4: the filmstrip tracks whichever frame the stepFrame/stepBurst hotkeys move — that's always the right
   // pane (see Review.tsx's `verbs.current`), falling back to the left frame when there's no right pane yet.
   const filmBase = right ?? left;
-  const burstFrames = useMemo(
-    () => (filmBase ? burstGroups(rv.frames).find((g) => g.some((f) => f.id === filmBase.id)) ?? [filmBase] : []),
-    [rv.frames, filmBase],
-  );
-  const burstPick = useMemo(() => (filmBase ? burstPickOf(burstFrames, rv.facts) : null), [burstFrames, filmBase, rv.facts]);
+
 
   // Zoom, labels and box-focus are replayed on both panes so they stay in sync; arrows/stars/reject
   // route through Review's `verbs.step`/`verbs.mark`, which already know this is the compare view.
@@ -85,10 +85,10 @@ export function Compare({ rv, run, showBoxes, onToggleBoxes, right, activePane, 
         <Pane frame={left} run={run} rv={rv} showBoxes={showBoxes} onToggleBoxes={onToggleBoxes} active={activePane === 'left'} onActivate={() => onSetActivePane('left')} zoomRef={leftZoom} />
         <Pane frame={right} run={run} rv={rv} showBoxes={showBoxes} onToggleBoxes={onToggleBoxes} active={activePane === 'right'} onActivate={() => onSetActivePane('right')} zoomRef={rightZoom} />
       </div>
-      {burstFrames.length > 1 && burstPick && (
+      {stack && stack.frames.length > 1 && (
         <BurstFilmstrip
-          frames={burstFrames}
-          pickId={burstPick.id}
+          frames={stack.frames}
+          keeperIds={keeperIds}
           selectedId={filmBase?.id ?? null}
           culled={(f) => frameExcluded(f, rv.facts.get(f.id)?.dets ?? [])}
           onSelect={onPickFilmstrip}

@@ -10,12 +10,12 @@ const GAP = 10, MIN_W = 190, BODY_H = 64, PAD = 18;
 
 type CardProps = {
   checked?: boolean; onToggle?: (id: number) => void;
-  frame: Frame; facts: FrameFacts | undefined; rank?: number; selected: boolean;
+  frame: Frame; facts: FrameFacts | undefined; rank?: number; selected: boolean; keeper: boolean;
   left: number; top: number; width: number; height: number;
   onSelect: (id: number) => void; onOpen: () => void; onReject: (id: number, rejected: boolean) => void;
 };
 
-const Card = memo(function Card({ frame, facts, rank, selected, left, top, width, height, onSelect, onOpen, onReject, checked, onToggle }: CardProps) {
+const Card = memo(function Card({ frame, facts, rank, selected, keeper, left, top, width, height, onSelect, onOpen, onReject, checked, onToggle }: CardProps) {
   const verdict = verdictOf(frameStars(frame));
   const cls = ['card', selected && 'selected current', frame.rejected && 'rejected', frame.picked && 'picked', facts?.cull && 'culled', verdict !== 'none' && `rated-${verdict}`]
     .filter(Boolean).join(' ');
@@ -28,8 +28,8 @@ const Card = memo(function Card({ frame, facts, rank, selected, left, top, width
         <LoadableImage className="thumb" loading="lazy" decoding="async" draggable={false} src={asset(frame.thumb_path)} alt={filename(frame.path)} />
         <StarPill frame={frame} />
         {facts?.panned && <span className="focus panning" title="Subject sharp against a blurred background. Kept, never auto-culled">panned</span>}
-        {facts?.pick && <KeeperMark label="Best of the burst, the sharpest frame of this pass" />}
-        {rank != null && !facts?.pick && <RankBadge rank={rank} />}
+        {keeper && <KeeperMark label={frame.picked ? 'Keeper, picked by you' : 'Keeper, the engine\u2019s best of the burst'} />}
+        {rank != null && !keeper && <RankBadge rank={rank} />}
         {Boolean(frame.picked) && <span className="focus picked" title="Picked (P)">picked</span>}
         <button className="icon-btn" aria-label={facts?.cull ? 'Restore for ML' : 'Reject'} title={facts?.cull ? 'Restore for ML (U)' : 'Reject (X)'}
           onClick={(e) => { e.stopPropagation(); onReject(frame.id, !facts?.cull); }}><Icon name={facts?.cull ? 'undo' : 'x'} size={14} /></button>
@@ -52,12 +52,14 @@ const Card = memo(function Card({ frame, facts, rank, selected, left, top, width
 
 type Props = {
   checked?: Set<number>; onToggle?: (id: number) => void;
-  frames: Frame[]; facts: Map<number, FrameFacts>; ranks?: Map<number, number>; selected: number | null; empty: ReactNode;
+  frames: Frame[]; facts: Map<number, FrameFacts>; ranks?: Map<number, number>; keepers?: Set<number>; selected: number | null; empty: ReactNode;
   onSelect: (id: number) => void; onOpen: () => void; onReject: (id: number, rejected: boolean) => void;
+  /** Cards per row, so up/down can move one row. */
+  onCols?: (cols: number) => void;
 };
 
 /** Windowed grid: only the rows in view are mounted, so a 5 000-frame album scrolls like a 50-frame one. */
-export function PhotoGrid({ frames, facts, ranks, selected, empty, onSelect, onOpen, onReject, checked, onToggle }: Props) {
+export function PhotoGrid({ frames, facts, ranks, keepers, selected, empty, onSelect, onOpen, onReject, checked, onToggle, onCols }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 900, h: 600 });
@@ -72,6 +74,7 @@ export function PhotoGrid({ frames, facts, ranks, selected, empty, onSelect, onO
   }, []);
 
   const cols = Math.max(1, Math.floor((size.w + GAP) / (MIN_W + GAP)));
+  useEffect(() => { onCols?.(cols); }, [cols, onCols]);
   const width = (size.w - GAP * (cols - 1)) / cols;
   const height = Math.round((width * 2) / 3) + BODY_H + 2;
   const rowH = height + GAP;
@@ -99,7 +102,7 @@ export function PhotoGrid({ frames, facts, ranks, selected, empty, onSelect, onO
         {frames.slice(first * cols, last * cols).map((f, n) => {
           const i = first * cols + n;
           return (
-            <Card checked={checked?.has(f.id)} onToggle={onToggle} key={f.id} frame={f} facts={facts.get(f.id)} rank={ranks?.get(f.id)} selected={selected === f.id}
+            <Card checked={checked?.has(f.id)} onToggle={onToggle} key={f.id} frame={f} facts={facts.get(f.id)} rank={ranks?.get(f.id)} keeper={Boolean(keepers?.has(f.id))} selected={selected === f.id}
               left={(i % cols) * (width + GAP)} top={Math.floor(i / cols) * rowH} width={width} height={height}
               onSelect={onSelect} onOpen={onOpen} onReject={onReject} />
           );

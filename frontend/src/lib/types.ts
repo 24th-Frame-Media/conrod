@@ -1,4 +1,4 @@
-export type Job = { id: number; label: string; root: string; status: string; total: number; done: number; created_at: number; scan_profile?: string; include_people?: boolean };
+export type Job = { id: number; label: string; root: string; status: string; total: number; done: number; created_at: number; scan_profile?: string; include_people?: boolean; settings_json?: string | null };
 export type Frame = {
   id: number; path: string; status: string; thumb_path: string | null; preview_path: string | null;
   width: number; height: number; rating: number | null; manual_stars: number | null; rejected: number; picked: number;
@@ -35,7 +35,7 @@ export type Training = { labels: number; active?: boolean; validation?: unknown 
 export const REGIONS = ['vehicle', 'person', 'face', 'eye'] as const;
 export type Region = (typeof REGIONS)[number];
 export type Page = 'Library' | 'Scan' | 'Review' | 'Train' | 'Known vehicles' | 'Settings';
-export type View = 'review' | 'all' | 'picks' | 'top3' | 'rejected' | 'kept' | 'stacks' | 'vehicles' | 'needsLook';
+export type View = 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook';
 export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick';
 export type Facet = { kind: import('./facets.mjs').FacetKind; value: string };
 export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean } | { jobId: number };

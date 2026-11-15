@@ -98,12 +98,19 @@ export function App() {
   };
 
   useHotkeys({
-    page, viewerOpen: viewer, rejected: reviewVerbs.current.rejected, picked: Boolean(rv.frame?.picked),
+    page, viewerOpen: viewer, rejected: () => reviewVerbs.current.rejected(), picked: () => reviewVerbs.current.picked(),
     stepFrame: (d) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepFrame(d)),
     stepBurst: (d) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepBurst(d)),
+    nextBurst: (d) => reviewVerbs.current.nextBurst(d),
+    nextUndecided: () => reviewVerbs.current.nextUndecided(),
+    enter: () => reviewVerbs.current.enter(),
     mark: (values) => reviewVerbs.current.mark(values),
     openViewer: () => { if (rv.frame) { setViewer(true); reviewVerbs.current.setView('loupe'); } },
-    closeOverlays: () => { setViewer(false); reviewVerbs.current.setView('grid'); setHelp(false); setShowImport(false); },
+    closeOverlays: () => {
+      if (help || showImport) { setHelp(false); setShowImport(false); return; }
+      setViewer(false);
+      reviewVerbs.current.escape();
+    },
     toggleHelp: () => setHelp((v) => !v),
     toggleBoxes: () => setShowBoxes((v) => !v),
     setView: (v) => { setViewer(v === 'loupe'); reviewVerbs.current.setView(v); },
@@ -132,7 +139,7 @@ export function App() {
         {page === 'Review' && (
           <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} status={status} settings={eng.settings}
             showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} verbs={reviewVerbs}
-            onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={() => jobId != null && identify(jobId)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
+            onJobsChanged={eng.refreshJobs} onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={() => jobId != null && identify(jobId)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
               onLibrary={() => setPage('Library')}
               onAcceptAll={() => void run(async () => {
                 const ids = rv.review.detections.filter((d) => !d.reviewed && rv.review.frames.some((f) => f.id === d.image_id && !subjectExcluded(f, d))).map((d) => d.id);

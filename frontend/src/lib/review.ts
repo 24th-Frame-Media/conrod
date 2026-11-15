@@ -1,7 +1,8 @@
 import { burstTopRanks, filename, filterFrames, frameStars, frameExcluded } from '../review.mjs';
+import { decisionOf, groupKeyOf, keeperIds } from './stacks.mjs';
 import type { AttributeKey, Attributes, Detection, Facet, Frame, Review, Sort, View } from './types';
 
-export { filename, frameStars, frameExcluded };
+export { filename, frameStars, frameExcluded, decisionOf, keeperIds };
 
 /** What a card, facet list and search need to know about one frame, read once per review load. */
 export type FrameFacts = {
@@ -126,36 +127,40 @@ function facetValues(x: FrameFacts | undefined, kind: Facet['kind']): string[] |
   return { number: x.numbers, plate: x.plates, make: x.makes, team: x.teams, person: x.people, subject: x.subjects }[kind];
 }
 
-/** Frames that survive the toolbar. */
-export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f: Filters): Frame[] {
+/**
+ * Frames that survive the toolbar, in display order. This is the one filtered model: stacks, the filmstrip,
+ * counts and keyboard steps are all built from this list, so none of them can show a frame the filter hides.
+ * Keepers are worked out on the whole album first (a filter must not change which frame is a burst's keeper).
+ * Rejected frames keep their place, so marking never reshuffles the list under the selection.
+ */
+export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f: Filters, keepers: Set<number> = keeperIds(frames, facts)): Frame[] {
   const needle = f.search.trim().toLowerCase();
-  const top3 = f.view === 'top3' ? burstRankMap(frames, facts) : null;
+  const top3 = f.view === 'top3' ? burstRankMap(frames, keepers) : null;
   const keep = (frame: Frame) => {
     const x = facts.get(frame.id);
     if (needle && !x?.text.includes(needle)) return false;
     if (f.facet && !facetValues(x, f.facet.kind)?.includes(f.facet.value)) return false;
-    if (f.view === 'rejected') return Boolean(x?.cull);
-    if (f.view === 'kept') return !x?.cull;
+    if (f.view === 'rejected') return decisionOf(frame, x) === 'rejected';
+    if (f.view === 'undecided') return decisionOf(frame, x) === 'undecided';
+    if (f.view === 'keepers') return keepers.has(frame.id);
     if (f.view === 'review') return !x?.cull && !x?.reviewed;
-    if (f.view === 'picks') return !x?.cull && Boolean(x?.pick);
     if (f.view === 'top3') return Boolean(top3?.has(frame.id));
     if (f.view === 'needsLook') return !x?.cull && needsLook(x);
     return true;
   };
   const shown = filterFrames(frames, '', f.minStars, 'all').filter(keep);
-  const ordered = f.sort === 'frame' ? shown : sortFrames(shown, f.sort, facts);
-  return ordered.sort((a, b) => Number(Boolean(facts.get(a.id)?.cull)) - Number(Boolean(facts.get(b.id)?.cull)));
+  return f.sort === 'frame' ? shown.sort(byName) : sortFrames(shown, f.sort, keepers);
 }
 
 const uncertainty = (f: Frame) => (f.manual_stars != null ? 10 : Math.abs(frameStars(f) - 3));
-const byName = (a: Frame, b: Frame) => filename(a.path).localeCompare(filename(b.path), undefined, { numeric: true });
+const byName = (a: Frame, b: Frame) => filename(a.path).localeCompare(filename(b.path), undefined, { numeric: true }) || a.id - b.id;
 
-export function sortFrames(frames: Frame[], sort: Sort, facts: Map<number, FrameFacts>): Frame[] {
+export function sortFrames(frames: Frame[], sort: Sort, keepers: Set<number>): Frame[] {
   const list = [...frames];
   if (sort === 'review') return list.sort((a, b) => uncertainty(a) - uncertainty(b));
-  if (sort === 'best') return list.sort((a, b) => frameStars(b) - frameStars(a));
-  if (sort === 'worst') return list.sort((a, b) => frameStars(a) - frameStars(b));
-  if (sort === 'pick') return list.sort((a, b) => Number(facts.get(b.id)?.pick) - Number(facts.get(a.id)?.pick) || frameStars(b) - frameStars(a));
+  if (sort === 'best') return list.sort((a, b) => frameStars(b) - frameStars(a) || byName(a, b));
+  if (sort === 'worst') return list.sort((a, b) => frameStars(a) - frameStars(b) || byName(a, b));
+  if (sort === 'pick') return list.sort((a, b) => Number(keepers.has(b.id)) - Number(keepers.has(a.id)) || frameStars(b) - frameStars(a) || byName(a, b));
   return list.sort(byName);
 }
 
@@ -183,32 +188,52 @@ export function plateBoxOf(d: Detection, frame: Pick<Frame, 'width' | 'height'>)
   }
 }
 
-/** `frames`, split into consecutive burst groups (a frame with no `burst_key` is its own single-frame group). Order follows `frames`. */
-export function burstGroups(frames: Frame[]): Frame[][] {
-  const order: string[] = [];
-  const map = new Map<string, Frame[]>();
-  for (const f of frames) {
-    const key = f.burst_key == null ? `frame-${f.id}` : `burst-${f.burst_key}`;
-    const list = map.get(key);
-    if (list) list.push(f); else { map.set(key, [f]); order.push(key); }
+/** Vehicles as groups of frames (identity, visual group or burst while still identifying), each limited to `visible` frames. */
+export function vehicleGroups(review: Review, visible: Set<number>, identifying: boolean): { key: string; frames: Frame[]; total: number; title: string; subtitle: string }[] {
+  const byId = new Map(review.frames.map((f) => [f.id, f]));
+  const groups = new Map<string, Detection[]>();
+  for (const detection of review.detections) {
+    if ((detection.region_type ?? 'vehicle') !== 'vehicle') continue;
+    const attrs = parseAttributes(detection);
+    const identity = attrs.plate || (attrs.race_number && `${attrs.race_number}-${attrs.make ?? ''}-${attrs.model ?? ''}`);
+    const frame = byId.get(detection.image_id);
+    const key = detection.group_key != null ? `group-${detection.group_key}`
+      : identity ? `identity-${identity}`
+      : identifying && frame?.burst_key != null ? `processing-burst-${frame.burst_key}`
+      : `single-${detection.id}`;
+    const list = groups.get(key); if (list) list.push(detection); else groups.set(key, [detection]);
   }
-  return order.map((key) => map.get(key)!);
+  const out: { key: string; frames: Frame[]; total: number; title: string; subtitle: string }[] = [];
+  for (const [key, detections] of groups) {
+    const all = [...new Set(detections.map((d) => d.image_id))].map((id) => byId.get(id)).filter((f): f is Frame => Boolean(f));
+    const frames = all.filter((f) => visible.has(f.id));
+    if (!frames.length) continue;
+    const attrs = parseAttributes(detections[0]);
+    const processing = identifying && key.startsWith('processing-');
+    const title = processing ? 'Being identified' : [attrs.make, attrs.model].filter(Boolean).join(' ') || (attrs.plate || (attrs.race_number && `#${attrs.race_number}`) || 'Unidentified vehicle');
+    const subtitle = processing
+      ? `Analysing ${all.length} photos`
+      : `${all.length} shot${all.length === 1 ? '' : 's'}${attrs.plate ? ` · ${attrs.plate}` : ''}${attrs.race_number ? ` · #${attrs.race_number}` : ''}${attrs.team ? ` · ${attrs.team}` : ''}`;
+    out.push({ key, frames, total: all.length, title, subtitle });
+  }
+  return out;
 }
 
-/** The burst's keeper: the flagged pick, or its first frame. */
-export function burstPickOf(group: Frame[], facts: Map<number, FrameFacts>): Frame {
-  return group.find((f) => facts.get(f.id)?.pick) ?? group[0];
-}
-
-/** Candidate rank 1..3 per frame id for one burst; the flagged pick is always rank 1. Frames beyond 3 are absent. */
-export function burstRanksOf(group: Frame[], facts: Map<number, FrameFacts>): Map<number, number> {
-  return burstTopRanks(group, (f: Frame) => Boolean(facts.get(f.id)?.pick));
+/** Candidate rank 1..3 per frame id for one burst; the keeper is always rank 1. Frames beyond 3 are absent. */
+export function burstRanksOf(group: Frame[], keepers: Set<number>): Map<number, number> {
+  return burstTopRanks(group, (f: Frame) => keepers.has(f.id));
 }
 
 /** Candidate ranks for every burst in `frames`, keyed by frame id. */
-export function burstRankMap(frames: Frame[], facts: Map<number, FrameFacts>): Map<number, number> {
+export function burstRankMap(frames: Frame[], keepers: Set<number>): Map<number, number> {
+  const groups = new Map<string, Frame[]>();
+  for (const f of frames) {
+    const key = groupKeyOf(f);
+    const list = groups.get(key);
+    if (list) list.push(f); else groups.set(key, [f]);
+  }
   const ranks = new Map<number, number>();
-  for (const group of burstGroups(frames)) for (const [id, rank] of burstRanksOf(group, facts)) ranks.set(id, rank);
+  for (const group of groups.values()) for (const [id, rank] of burstRanksOf(group, keepers)) ranks.set(id, rank);
   return ranks;
 }
 
