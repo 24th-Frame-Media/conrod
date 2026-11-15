@@ -38,7 +38,7 @@ export type Page = 'Library' | 'Scan' | 'Review' | 'Train' | 'Known vehicles' | 
 export type View = 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook';
 export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick';
 export type Facet = { kind: import('./facets.mjs').FacetKind; value: string };
-export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean } | { jobId: number };
+export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean; scanProfile?: string; blurStrictness?: string; burstGap?: number } | { jobId: number };
 export type MarkValues = { stars?: number | null; rejected?: boolean; picked?: boolean };
 export type Toaster = (message: string, options?: { tone?: 'error' | 'ok'; ms?: number }) => void;
 
@@ -157,6 +157,18 @@ export type ScanFound = {
 };
 
 /** The payload of the `scan-progress` event, ~4 per second while a scan runs. */
+/** The whole scan in weighted work units: the header's bar and time left. */
+export type ScanOverall = {
+  done: number;
+  total: number;
+  /** 0..1 across every stage, weighted by each stage's cost per item. */
+  fraction: number;
+  rate_per_s: number;
+  eta_s: number | null;
+  /** False until every stage with real throughput is at least 20 items in. */
+  eta_confident: boolean;
+};
+
 export type ScanProgress = {
   job_id: number;
   state: 'running' | 'done' | 'stopped' | 'error';
@@ -171,6 +183,8 @@ export type ScanProgress = {
   recent: ScanRecentFrame[];
   found: ScanFound;
   pipeline: { stages: PipelineStage[]; workers: PipelineWorker[] };
+  /** The whole scan, weighted across stages; prefer it over deriving one. */
+  overall: ScanOverall;
 };
 
 /** What `regroup` (and an `update_job_settings` gap/preset patch) returns. */

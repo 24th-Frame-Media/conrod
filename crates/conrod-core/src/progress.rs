@@ -120,7 +120,9 @@ pub struct StageNode {
     pub workers_total: u32,
     /// How many are inside it right now.
     pub workers_busy: u32,
-    /// Items waiting behind this stage.
+    /// Frames the upstream stage has finished that this stage has not taken
+    /// yet (upstream.done - done); 0 for the first stage and 0 when the lanes
+    /// run in lockstep, as read/detect/sharpness/faces do in the cull pool.
     pub queue_len: u64,
     pub done: u64,
     pub total: u64,
@@ -151,6 +153,24 @@ pub struct Pipeline {
     pub workers: Vec<WorkerLane>,
 }
 
+/// Progress across every stage at once, in weighted frame/work units: each
+/// stage's items are weighted by its measured cost per item, so a bar does not
+/// jump because one stage has more items than another. `eta_confident` is false
+/// until every stage with real throughput is at least 20 items in, because an
+/// ETA from one or two items is a guess.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Overall {
+    pub done: f64,
+    pub total: f64,
+    /// 0..1, the weighted work finished.
+    pub fraction: f64,
+    /// Weighted work units per second, from the lanes running now; a stage that
+    /// has not started contributes its configured estimate.
+    pub rate_per_s: f64,
+    pub eta_s: Option<f64>,
+    pub eta_confident: bool,
+}
+
 /// One progress event. `state` is `running`, `done`, `stopped` or `error`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScanProgress {
@@ -167,6 +187,8 @@ pub struct ScanProgress {
     pub recent: Vec<RecentFrame>,
     pub found: Found,
     pub pipeline: Pipeline,
+    /// The whole scan: the header's bar and time left.
+    pub overall: Overall,
 }
 
 impl ScanProgress {
@@ -274,6 +296,14 @@ mod tests {
                     ms_in_step: 12.5,
                 }],
             },
+            overall: Overall {
+                done: 40.0,
+                total: 140.0,
+                fraction: 0.2857,
+                rate_per_s: 20.0,
+                eta_s: Some(5.0),
+                eta_confident: false,
+            },
         };
         let value = serde_json::to_value(&progress).unwrap();
         for key in [
@@ -289,9 +319,22 @@ mod tests {
             "recent",
             "found",
             "pipeline",
+            "overall",
         ] {
             assert!(value.get(key).is_some(), "missing {key}: {value}");
         }
+        let overall = &value["overall"];
+        for key in [
+            "done",
+            "total",
+            "fraction",
+            "rate_per_s",
+            "eta_s",
+            "eta_confident",
+        ] {
+            assert!(overall.get(key).is_some(), "missing overall.{key}: {overall}");
+        }
+        assert_eq!(overall["eta_confident"], false);
         let stage = &value["pipeline"]["stages"][0];
         for key in [
             "id",

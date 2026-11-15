@@ -188,9 +188,11 @@ function tickSim(db: Db): void {
     subjects: Math.floor(s.done[1] * 1.15), soft: Math.floor(s.done[2] * 0.21), closed_eyes: Math.floor(s.done[3] * 0.01),
     numbers: Math.floor(s.done[4] * 0.8), plates: Math.floor(s.done[4] * 0.6), bursts: s.bursts, keepers: s.keepers,
   };
+  const overallEta = finished ? null : (s.overallRate > 0 ? Math.max(0, s.total - s.overall) / s.overallRate : null);
   lastProgress = {
     job_id: s.jobId, state: finished ? 'done' : 'running', stage: head.id, stage_index: activeIndex, stage_count: stages.length,
     done: head.done, total: head.total, rate_per_s: head.rate_per_s, eta_s: finished ? null : head.eta_s, recent: s.recent, found, pipeline: { stages, workers: lanes },
+    overall: { done: s.overall, total: s.total, fraction: finished ? 1 : frac, rate_per_s: s.overallRate, eta_s: overallEta, eta_confident: finished || s.done[1] >= 20 },
   };
   const job = db.jobs.find((j) => j.id === s.jobId);
   if (job) { job.done = overall; if (finished) job.status = 'done'; }
