@@ -1223,6 +1223,9 @@ fn settings_match_snapshot() {
         // Python app's ignored 4.0 to 1.5 s, and added the migration marker.
         m.remove("burst_gap");
         m.remove("burst_gap_scale");
+        // Rust-only: the preset's default strictness applies until an album
+        // chooses one.
+        m.remove("blur_explicit");
         v
     };
     let as_map = |s: &Settings| prune(serde_json::to_value(s).unwrap());

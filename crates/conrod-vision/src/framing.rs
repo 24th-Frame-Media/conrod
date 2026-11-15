@@ -131,6 +131,10 @@ pub struct Framing {
     pub centred: bool,
     /// Area-weighted horizontal mass of all boxes, -1 (left) ..= 1 (right).
     pub balance: f32,
+    /// The largest share of the subject's box another detection covers,
+    /// 0..=1. A burst miss is often the frame where something walked in front
+    /// of the subject.
+    pub occlusion: f32,
     /// Tilt passed in from the level detector; not measured here.
     pub tilt_deg: Option<f32>,
 }
@@ -152,6 +156,7 @@ impl Default for Framing {
             phi_dist: PHI_MAX_DIST as f32,
             centred: false,
             balance: 0.0,
+            occlusion: 0.0,
             tilt_deg: None,
         }
     }
@@ -176,6 +181,9 @@ pub struct FramingPolicy {
     pub mode_weight: f32,
     /// Horizontal balance, skipped when the subject is centred (research 4.3).
     pub balance_weight: f32,
+    /// Occlusion: another subject's box over this one. The burst-contact-sheet
+    /// comparison put the delivered frame on the least crowded composition.
+    pub occlusion_weight: f32,
     /// Level horizon/vertical, only when a tilt was measured.
     pub tilt_weight: f32,
 }
@@ -189,6 +197,7 @@ impl Default for FramingPolicy {
             size_weight: 0.20,
             mode_weight: 0.15,
             balance_weight: 0.10,
+            occlusion_weight: 0.10,
             tilt_weight: 0.10,
         }
     }
@@ -204,6 +213,7 @@ impl FramingPolicy {
             size_weight: 0.20,
             mode_weight: 0.10,
             balance_weight: 0.05,
+            occlusion_weight: 0.10,
             tilt_weight: 0.05,
         }
     }
@@ -218,6 +228,7 @@ impl FramingPolicy {
             size_weight: 0.25,
             mode_weight: 0.20,
             balance_weight: 0.10,
+            occlusion_weight: 0.10,
             tilt_weight: 0.05,
         }
     }
@@ -289,8 +300,26 @@ pub fn framing(
         phi_dist: grid_dist(nx, ny, PHI_POINTS) as f32,
         centred: centre_dist <= CENTRE_RADIUS,
         balance: balance(subject, others, w, h),
+        occlusion: occlusion(b, others),
         tilt_deg,
     }
+}
+
+/// The largest share of `subject` another box covers, 0..=1. Cheap: no pixels,
+/// just the boxes the detector already returned.
+fn occlusion(subject: [f64; 4], others: &[[f64; 4]]) -> f32 {
+    let area = box_area(subject);
+    if area <= 0.0 {
+        return 0.0;
+    }
+    let mut worst = 0.0f64;
+    for other in others {
+        let covered = intersection(subject, *other) / area;
+        if covered > worst {
+            worst = covered;
+        }
+    }
+    worst.clamp(0.0, 1.0) as f32
 }
 
 /// Combined framing quality in 0..=1, as the weighted mean of the terms the
@@ -309,6 +338,8 @@ pub fn framing_score(f: &Framing, policy: &FramingPolicy) -> f32 {
     add(1.0 - f.cut_sides as f32 / 4.0, policy.cut_weight);
     add(1.0 - size_penalty(f), policy.size_weight);
     add(mode_score(f), policy.mode_weight);
+    // The least occluded composition is the one that was delivered.
+    add(1.0 - f.occlusion, policy.occlusion_weight);
 
     // Research 4.3: a lopsided frame is fine when the subject is centred.
     if !f.centred {
@@ -444,6 +475,15 @@ fn clamp_box(b: [f64; 4], w: f64, h: f64) -> [f64; 4] {
 
 fn box_area(b: [f64; 4]) -> f64 {
     (b[2] - b[0]).max(0.0) * (b[3] - b[1]).max(0.0)
+}
+
+/// The area two boxes share; 0 when they do not touch.
+fn intersection(a: [f64; 4], b: [f64; 4]) -> f64 {
+    let (w, h) = (
+        (a[2].min(b[2]) - a[0].max(b[0])).max(0.0),
+        (a[3].min(b[3]) - a[1].max(b[1])).max(0.0),
+    );
+    w * h
 }
 
 fn centroid(b: [f64; 4]) -> (f64, f64) {
@@ -686,6 +726,7 @@ mod tests {
             size_weight: 0.0,
             mode_weight: 0.0,
             balance_weight: 0.0,
+            occlusion_weight: 0.0,
             tilt_weight: 0.0,
         };
         assert_eq!(framing_score(&f, &empty), 0.5);

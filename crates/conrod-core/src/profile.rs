@@ -116,6 +116,9 @@ pub struct PresetPolicy {
     pub max_subjects_floor: usize,
     /// Condition reports: only true duplicates and blurred frames go.
     pub deliver_most: bool,
+    /// Level matters (property, interiors, landscape): measure tilt and
+    /// convergence, and flag rather than cull.
+    pub level: bool,
     /// Extra COCO classes asked of the detector, e.g. 4 (airplane).
     pub extra_vehicles: &'static [usize],
 }
@@ -136,6 +139,7 @@ impl PresetPolicy {
             min_box_factor: 1.0,
             max_subjects_floor: 0,
             deliver_most: false,
+            level: false,
             extra_vehicles: &[],
         }
     }
@@ -197,6 +201,11 @@ impl PresetPolicy {
 
     const fn deliver_most(mut self) -> Self {
         self.deliver_most = true;
+        self
+    }
+
+    const fn level(mut self) -> Self {
+        self.level = true;
         self
     }
 
@@ -556,14 +565,16 @@ impl ShootPreset {
                 .no_animals()
                 .no_faces()
                 .blur("strict")
-                .group(GroupUnit::KeepSet),
+                .group(GroupUnit::KeepSet)
+                .level(),
             ShootPreset::PropertyReport => PresetPolicy::new(Mix)
                 .no_people()
                 .no_animals()
                 .no_faces()
                 .blur("strict")
                 .group(GroupUnit::KeepSet)
-                .deliver_most(),
+                .deliver_most()
+                .level(),
             ShootPreset::AutoDealer => PresetPolicy::new(Motorsport)
                 .vehicles()
                 .no_people()
@@ -591,7 +602,9 @@ impl ShootPreset {
                 .no_animals()
                 .no_faces()
                 .blur("strict")
-                .group(GroupUnit::KeepSet),
+                .group(GroupUnit::KeepSet)
+                .deliver_most()
+                .level(),
             ShootPreset::Astro => PresetPolicy::new(Mix)
                 .no_people()
                 .no_animals()

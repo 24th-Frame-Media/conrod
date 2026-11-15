@@ -461,6 +461,7 @@ fn export_recall() {
     let faces = preset
         .wants_faces(settings.include_people)
         .then(|| Mutex::new(load_faces().expect("load the face detector")));
+    let expression = faces.is_some().then(crate::load_expression).flatten();
     let models: std::collections::HashMap<String, conrod_core::ridge::SharpModel> =
         ["vehicle", "person", "face", "eye"]
             .into_iter()
@@ -502,6 +503,7 @@ fn export_recall() {
             profile,
             &models,
             faces.as_ref(),
+            expression.as_ref(),
             quality.as_ref(),
             |_| {},
         );

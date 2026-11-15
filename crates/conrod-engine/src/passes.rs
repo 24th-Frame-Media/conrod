@@ -67,16 +67,36 @@ struct Candidate {
     area: f64,
     /// The rating distance that counts as the same score, per subject kind.
     band: f64,
+    /// Exposure is a flag, not a cull: a clipped frame loses only to a clean one.
+    bright: bool,
+    /// The preset's framing score for this subject, 0..1.
+    framing: Option<f64>,
+    /// The highest smile among the frame's faces, 0..1.
+    smile: Option<f64>,
+    /// Rodeo: how much the animal is rearing under its rider, 0..1.
+    buck: Option<f64>,
+}
+
+/// Which of the optional keys this preset ranks on.
+#[derive(Debug, Clone, Copy)]
+struct Ranking {
+    quality: bool,
+    framing: bool,
+    smile: bool,
+    buck: bool,
 }
 
 impl Candidate {
     /// In the order the keeper is decided: a hand star first, then a frame no
     /// rule culled, then the rating in the candidate's band (the wider of the
-    /// two, where the kinds differ), then the subject that the frame edge cuts
-    /// off least, then the larger subject, then the exact rating, then
-    /// (opt-in) NIMA quality, then the stored subject sharpness, and finally
-    /// the earlier frame.
-    fn beats(&self, other: &Self, use_quality_score: bool) -> bool {
+    /// two, where the kinds differ), then a clean exposure, then the rodeo
+    /// buck (in that preset only), then the subject that the frame edge cuts
+    /// off least -- a cropped subject never wins on size -- then the preset's
+    /// framing score (cut sides, size band, lead room and occlusion) where it
+    /// applies, then a smile where the preset wants one, then the larger
+    /// subject, then the exact rating, then (opt-in) NIMA quality, then the
+    /// stored subject sharpness, and finally the earlier frame.
+    fn beats(&self, other: &Self, r: &Ranking) -> bool {
         if self.by_hand != other.by_hand {
             return self.by_hand > other.by_hand;
         }
@@ -89,8 +109,35 @@ impl Candidate {
         if band != other_band {
             return band > other_band;
         }
+        if self.bright != other.bright {
+            return self.bright;
+        }
+        if r.buck {
+            if let (Some(a), Some(b)) = (self.buck, other.buck) {
+                if a != b {
+                    return a > b;
+                }
+            }
+        }
+        // A cropped subject never wins on size: the contact-sheet comparison
+        // showed the delivered frame keeping the subject whole. Cut sides stay
+        // the gate, and the framing score decides between equally cut frames.
         if self.sides != other.sides {
             return self.sides < other.sides;
+        }
+        if r.framing {
+            if let (Some(a), Some(b)) = (self.framing, other.framing) {
+                if a != b {
+                    return a > b;
+                }
+            }
+        }
+        if r.smile {
+            if let (Some(a), Some(b)) = (self.smile, other.smile) {
+                if a != b {
+                    return a > b;
+                }
+            }
         }
         if self.area != other.area {
             return self.area > other.area;
@@ -98,7 +145,7 @@ impl Candidate {
         if self.score != other.score {
             return self.score > other.score;
         }
-        if use_quality_score {
+        if r.quality {
             if let (Some(a), Some(b)) = (self.quality, other.quality) {
                 if a != b {
                     return a > b;
@@ -145,9 +192,44 @@ pub fn pick_of_pass(
     };
     let found = rows(
         conn,
-        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.set_id, i.dark_frame, i.exposure_verdict, i.smile_max, i.buck_score, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
         params![job, crate::EYES_CLOSED],
     )?;
+    // Which optional keys rank is the preset's decision; read it from the album
+    // so every caller (scan end, regroup, re-pick) gets the same order.
+    let preset = {
+        let stored: Option<String> = conn
+            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| r.get(0))
+            .ok();
+        stored
+            .and_then(|json| serde_json::from_str::<Map<String, Value>>(&json).ok())
+            .and_then(|map| {
+                map.get("scan_profile")
+                    .and_then(Value::as_str)
+                    .map(ShootPreset::parse)
+            })
+            .unwrap_or(ShootPreset::Mix)
+    };
+    let ranking = Ranking {
+        quality: use_quality_score,
+        framing: crate::framing_policy(preset).is_some(),
+        // A smile decides between otherwise equal people frames.
+        smile: matches!(
+            preset,
+            ShootPreset::Portrait
+                | ShootPreset::PortraitGroup
+                | ShootPreset::PortraitCouple
+                | ShootPreset::Wedding
+                | ShootPreset::Event
+                | ShootPreset::EventShows
+                | ShootPreset::EventParties
+        ),
+        buck: matches!(
+            preset,
+            ShootPreset::SportRodeo | ShootPreset::SportEquestrian
+        ),
+    };
+    let keeps_dark = matches!(preset, ShootPreset::Astro | ShootPreset::Concert);
     // Each frame's main subject: its largest person or vehicle.
     let mut boxes: HashMap<i64, Vec<(Subject, f64)>> = HashMap::new();
     for r in &found {
@@ -225,6 +307,11 @@ pub fn pick_of_pass(
             }
             _ => 0.0,
         };
+        let set_member = r["set_id"].as_i64().is_some();
+        // A bracket, focus stack or interval is meant to hold frames that look
+        // wrong one by one: membership exempts it from the exposure and blur
+        // cull, and from the exposure flag.
+        let dark = r["dark_frame"].as_i64().unwrap_or(0) != 0;
         units.push((
             unit,
             Candidate {
@@ -234,13 +321,18 @@ pub fn pick_of_pass(
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
                 // An eye inside a face whose eyes are shut is not an open eye,
                 // so it never wins a pass while an open-eyed frame competes.
-                culled: r["culled"].as_i64().unwrap_or(0) != 0
-                    || r["shut_eye"].as_i64().unwrap_or(0) != 0,
+                culled: (!set_member && r["culled"].as_i64().unwrap_or(0) != 0)
+                    || r["shut_eye"].as_i64().unwrap_or(0) != 0
+                    || (!set_member && !keeps_dark && dark),
+                bright: set_member || r["exposure_verdict"].as_str().is_none_or(|v| v == "ok"),
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: r["quality"].as_f64(),
                 sides: framing::assess(bbox, width, height).sides,
                 area,
+                framing: r["framing_score"].as_f64(),
+                smile: r["smile_max"].as_f64(),
+                buck: r["buck_score"].as_f64(),
                 band: if matches!(region, "eye" | "face") {
                     FACE_BAND
                 } else {
@@ -254,7 +346,7 @@ pub fn pick_of_pass(
     // burst's ungrouped unit, rated by the frame.
     let spare = rows(
         conn,
-        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 ORDER BY id",
+        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness,set_id,dark_frame,exposure_verdict,smile_max,buck_score FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 ORDER BY id",
         [job],
     )?;
     for r in &spare {
@@ -265,6 +357,8 @@ pub fn pick_of_pass(
         let Some(score) = r["rating"].as_f64().or_else(|| r["sharpness"].as_f64()) else {
             continue;
         };
+        let set_member = r["set_id"].as_i64().is_some();
+        let dark = r["dark_frame"].as_i64().unwrap_or(0) != 0;
         units.push((
             (r["burst_key"].as_i64().unwrap_or_default(), None),
             Candidate {
@@ -272,12 +366,16 @@ pub fn pick_of_pass(
                 row: image,
                 on_frame: true,
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
-                culled: false,
+                culled: !set_member && !keeps_dark && dark,
+                bright: set_member || r["exposure_verdict"].as_str().is_none_or(|v| v == "ok"),
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: None,
                 sides: 0,
                 area: 0.0,
+                framing: None,
+                smile: r["smile_max"].as_f64(),
+                buck: r["buck_score"].as_f64(),
                 band: RATING_BAND,
             },
         ));
@@ -288,7 +386,7 @@ pub fn pick_of_pass(
     for (unit, candidate) in units {
         if best
             .get(&unit)
-            .is_none_or(|held| candidate.beats(held, use_quality_score))
+            .is_none_or(|held| candidate.beats(held, &ranking))
         {
             best.insert(unit, candidate);
         }
@@ -433,6 +531,7 @@ fn find_people(
     if !frames.is_empty() {
         crate::setup::ensure(&d.hub, stop, crate::setup::FACES)?;
         let detector = std::sync::Mutex::new(crate::load_faces()?);
+        let expression = crate::load_expression();
         let region_models: HashMap<String, _> = ["face", "eye"]
             .into_iter()
             .filter_map(|r| crate::load_region_model(r).map(|m| (r.to_string(), m)))
@@ -446,17 +545,27 @@ fn find_people(
             let raw = conrod_io::raw::read(std::path::Path::new(path))?;
             let rgb = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
             let grey = rgb.to_gray();
+            let strictness = if cfg.blur_explicit {
+                cfg.blur_strictness.clone()
+            } else {
+                ShootPreset::parse(&cfg.scan_profile)
+                    .policy()
+                    .default_blur
+                    .to_string()
+            };
             let found = crate::face_subjects(
                 &rgb,
                 &grey,
                 boxes.iter().copied(),
                 &detector,
+                expression.as_ref(),
                 cfg,
+                &strictness,
                 &region_models,
             )?;
             let db = lock(&d.db);
             let tx = db.unchecked_transaction().map_err(err)?;
-            for s in &found {
+            for s in &found.subjects {
                 crate::desktop::insert_subject(&tx, *image, s)?;
             }
             tx.commit().map_err(err)?;
