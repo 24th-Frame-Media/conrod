@@ -488,6 +488,7 @@ fn export_recall() {
             &models,
             faces.as_ref(),
             quality.as_ref(),
+            |_| {},
         );
         let secs = started.elapsed().as_secs_f64();
         total += started.elapsed();
@@ -665,7 +666,7 @@ fn export_recall() {
     // The app's own post-scan grouping and keeper pick (`desktop::regroup`,
     // which calls `passes::pick_of_pass`).
     desktop
-        .regroup(job, settings.burst_gap)
+        .regroup(job)
         .expect("group the bursts and pick the keepers");
 
     // The frame's pick the way the review query reads it (`desktop.rs:389`).

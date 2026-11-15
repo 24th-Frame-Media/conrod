@@ -391,6 +391,9 @@ pub enum Command {
     SetWatch(WatchArgs),
     BenchPick {},
     BenchRun(BenchRunArgs),
+    /// Per-stage worker counts, their documented caps and whether a change
+    /// applies live (none do: every pool is sized when the scan starts).
+    WorkerLimits {},
     DescribeImage {
         path: String,
     },
