@@ -1,4 +1,4 @@
-export type Job = { id: number; label: string; root: string; status: string; total: number; done: number; created_at: number; scan_profile?: string; include_people?: boolean };
+export type Job = { id: number; label: string; root: string; status: string; total: number; done: number; created_at: number; scan_profile?: string; include_people?: boolean; burst_gap?: number };
 export type Frame = {
   id: number; path: string; status: string; thumb_path: string | null; preview_path: string | null;
   width: number; height: number; rating: number | null; manual_stars: number | null; rejected: number; picked: number;
@@ -84,6 +84,91 @@ export function profileLabel(id: string): string {
   }
   return id;
 }
+
+/** One stage node of the scan pipeline (the flowchart on the scan screen). */
+export type PipelineStage = {
+  /** `read` | `detect` | `sharpness` | `faces` | `identify` | `group` | `pick`. */
+  id: string;
+  label: string;
+  /** The model actually loaded: e.g. `yolo11s-960.onnx`, `qwen2.5vl:7b via ollama`. */
+  model: string;
+  /** Where it runs: `DirectML`, `CPU`, `ollama`. */
+  device: string;
+  workers_total: number;
+  workers_busy: number;
+  queue_len: number;
+  done: number;
+  total: number;
+  rate_per_s: number;
+  eta_s: number | null;
+};
+
+/** One worker lane: what that worker is doing this instant. */
+export type PipelineWorker = {
+  stage: string;
+  worker_index: number;
+  state: 'idle' | 'busy' | 'waiting';
+  /** Why it is waiting: `gpu`, `lock`, `ollama` or `paused`; null unless waiting. */
+  waiting_for: 'gpu' | 'lock' | 'ollama' | 'paused' | null;
+  /** The file name, to show beside a thumbnail. */
+  file: string | null;
+  step: string | null;
+  ms_in_step: number;
+};
+
+/** A frame that just finished, newest first in `ScanProgress.recent`. */
+export type ScanRecentFrame = {
+  image_id: number;
+  /** The same path `Frame.thumb_path` holds; run it through `asset()` as usual. */
+  thumb_url: string;
+  subject: string;
+  verdict: 'sharp' | 'soft' | 'panning';
+  /** What the frame reads as once identified: a race number or plate. */
+  label?: string | null;
+};
+
+export type ScanFound = {
+  subjects: number;
+  soft: number;
+  closed_eyes: number;
+  numbers: number;
+  plates: number;
+  bursts: number;
+  keepers: number;
+};
+
+/** The payload of the `scan-progress` event, ~4 per second while a scan runs. */
+export type ScanProgress = {
+  job_id: number;
+  state: 'running' | 'done' | 'stopped' | 'error';
+  /** The stage the header shows, and its place in `stage_count`. */
+  stage: string;
+  stage_index: number;
+  stage_count: number;
+  done: number;
+  total: number;
+  rate_per_s: number;
+  eta_s: number | null;
+  recent: ScanRecentFrame[];
+  found: ScanFound;
+  pipeline: { stages: PipelineStage[]; workers: PipelineWorker[] };
+};
+
+/** What `regroup` (and an `update_job_settings` gap/preset patch) returns. */
+export type RegroupCounts = { bursts: number; moments: number; keepers: number };
+
+/** One pool's worker count and its cap; `live: false` means "applies next scan". */
+export type WorkerLimit = { current: number; min: number; max: number; default: number; live: boolean };
+
+/** The `worker_limits` command: per-stage worker counts and their caps. */
+export type WorkerLimits = {
+  cores: number;
+  cull: WorkerLimit;
+  detect: WorkerLimit;
+  preview: WorkerLimit;
+  identify: WorkerLimit;
+  note: string;
+};
 
 export type UpdateInfo = {
   ok: boolean;
