@@ -367,7 +367,9 @@ impl ExpressionModel {
         let wide = flat.iter().fold(0f32, |m, v| m.max(v.abs()));
         let scale = if wide <= 2.0 { CROP as f64 } else { 1.0 };
         Ok(flat
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|p| (f64::from(p[0]) * scale, f64::from(p[1]) * scale))
             .collect())
     }
