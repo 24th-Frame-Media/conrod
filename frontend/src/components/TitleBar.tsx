@@ -13,6 +13,8 @@ const TABS: [Page, string, string][] = [
   ['Settings', 'Settings', 'Settings and vehicles'],
 ];
 
+const SCAN_TAB: [Page, string, string] = ['Scan', 'Scan', 'Watch the scan'];
+
 export type StatusActions = { pause: () => void; resume: () => void; stop: () => void; cancel: (key: string) => void };
 
 function workLabel(label: string): string {
@@ -143,6 +145,8 @@ type Props = {
 export function TitleBar({ page, setPage, jobs, models, status, profile, actions, popoverOpen }: Props) {
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const photos = jobs.reduce((n, j) => n + j.total, 0);
+  // The Scan tab exists only while a scan runs, or while its screen is open (to read the summary).
+  const tabs = status.activeJob != null || page === 'Scan' ? [TABS[0], SCAN_TAB, ...TABS.slice(1)] : TABS;
   return (
     <header className="topbar" data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region>
@@ -150,8 +154,10 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, actions
         <h1>Conrod</h1>
       </div>
       <nav className="tabs" aria-label="Screens">
-        {TABS.map(([id, label, title]) => (
-          <button key={id} className={page === id ? 'active' : ''} title={title} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>{label}</button>
+        {tabs.map(([id, label, title]) => (
+          <button key={id} className={page === id ? 'active' : ''} title={title} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>
+            {label}{id === 'Scan' && status.activeJob != null && <i className="tab-live" aria-label="running" />}
+          </button>
         ))}
       </nav>
       <div className="spacer" data-tauri-drag-region />

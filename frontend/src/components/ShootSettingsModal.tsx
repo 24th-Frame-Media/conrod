@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Icon } from './basics';
-import { PROFILE_GROUPS, type Settings } from '../lib/types';
+import { type Settings } from '../lib/types';
+import { ShootTypeSelect } from './ShootTypeSelect';
 
 type Props = {
   jobId: number;
@@ -75,23 +76,8 @@ export function ShootSettingsModal({
 
         <div className="shoot-settings-body">
           <div className="field-group">
-            <label className="field-label">Type of shoot</label>
-            <select
-              className="shoot-preset-select"
-              value={profile}
-              onChange={(e) => setProfile(e.target.value)}
-            >
-              {PROFILE_GROUPS.map((group) => (
-                <optgroup key={group.id} label={group.title}>
-                  <option value={group.id}>{group.title} (General)</option>
-                  {group.children.map((child) => (
-                    <option key={child.id} value={child.id}>
-                      {group.title} · {child.title}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+            <label className="field-label" htmlFor="shoot-type">Type of shoot</label>
+            <ShootTypeSelect id="shoot-type" value={profile} onChange={setProfile} />
           </div>
 
           <div className="field-group toggles-group">

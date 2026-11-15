@@ -9,7 +9,8 @@ import type { DevStart } from './lib/mock';
 import type { Page, ScanArgs, Status } from './lib/types';
 import { Library } from './screens/Library';
 import { noReviewVerbs, ReviewScreen, type ReviewVerbs } from './screens/Review';
-import { ImportDialog, type ScanDraft } from './screens/Scan';
+import { ImportDialog, type ImportDefaults, type ScanDraft } from './screens/Import';
+import { ScanScreen } from './screens/Scan';
 import { Settings } from './screens/Settings';
 import { noTrainVerbs, Train, type TrainVerbs } from './screens/Train';
 import { useFolderDrop, useLocalFlag, useRun } from './state/hooks';
@@ -17,6 +18,7 @@ import { useToast } from './state/toast';
 import { useEngine } from './state/useEngine';
 import { useHotkeys } from './state/useHotkeys';
 import { useReview } from './state/useReview';
+import { useScanProgress } from './state/useScanProgress';
 
 /** Wires the engine hooks to the screens; every screen is a plain component that gets what it shows as props. */
 export function App() {
@@ -41,6 +43,15 @@ export function App() {
   const eng = useEngine(jobId, rv.refresh, run);
   const { status } = eng;
   const scanning = status.activeJob !== null;
+  const scanLive = useScanProgress();
+  // Review is locked for an album until its scan finishes: asking for it shows the scan instead.
+  // The scan's own final snapshot unlocks it a beat before the pushed status catches up.
+  const locked = jobId != null && status.activeJob === jobId && (scanLive[jobId]?.progress.state ?? 'running') === 'running';
+  const view: Page = page === 'Review' && locked ? 'Scan' : page;
+  const goPage = (next: Page) => {
+    if (next === 'Scan' && status.activeJob != null) setJobId(status.activeJob);
+    setPage(next === 'Review' && locked ? 'Scan' : next);
+  };
 
   useEffect(() => {
     if (eng.ready && typeof eng.settings.scan_profile === 'string') setProfile(eng.settings.scan_profile);
@@ -62,19 +73,20 @@ export function App() {
   const dropping = useFolderDrop((folder) => {
     setDraft({ root: folder, label: filename(folder) });
     setShowImport(true);
-    toast(`Ready to import ${filename(folder)}. Choose options and press Import.`);
+    toast(`Ready to import ${filename(folder)}. Check the options and press Scan.`);
   });
 
-  const startScan = async (args: ScanArgs) => {
+  const startScan = async (args: ScanArgs, defaults?: ImportDefaults) => {
     setStarting(true);
     await run(async () => {
+      // A new album copies the saved settings when it is created, so strictness and burst gap go in first, and double as "last used".
+      if (defaults) eng.setSettings(await engine.saveSettings(defaults));
       const { jobId: id } = await engine.scan(args);
       await eng.refreshJobs();
       setJobId(id);
       eng.setStatus(await engine.status());
       setShowImport(false);
-      setPage('Review');
-      toast('stage' in args && args.stage === 'index' ? 'Imported. Review your photos and reject unwanted frames before running ML.' : 'Subject rating started. Review suggested culls before identification.', { tone: 'ok' });
+      setPage('Scan');
       if (inTauri) void getCurrentWindow().requestUserAttention(UserAttentionType.Informational);
     });
     setStarting(false);
@@ -84,7 +96,7 @@ export function App() {
     await engine.write(id, dryRun);
     toast(dryRun ? 'Checking what would be written. The activity menu lists it and no file is touched.' : 'Writing started. Progress is in the activity menu.');
   });
-  const openJob = (id: number) => { setJobId(id); setPage('Review'); };
+  const openJob = (id: number) => { setJobId(id); setPage(status.activeJob === id ? 'Scan' : 'Review'); };
 
   const actions: StatusActions = {
     pause: () => void run(async () => { await engine.pause(); toast('Paused. Anything mid-analysis will still finish.'); }),
@@ -98,7 +110,7 @@ export function App() {
   };
 
   useHotkeys({
-    page, viewerOpen: viewer, rejected: () => reviewVerbs.current.rejected(), picked: () => reviewVerbs.current.picked(),
+    page: view, viewerOpen: viewer, rejected: () => reviewVerbs.current.rejected(), picked: () => reviewVerbs.current.picked(),
     stepFrame: (d) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepFrame(d)),
     stepBurst: (d) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepBurst(d)),
     nextBurst: (d) => reviewVerbs.current.nextBurst(d),
@@ -119,10 +131,10 @@ export function App() {
 
   return (
     <div className="app">
-      <TitleBar page={page} setPage={setPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} actions={actions} popoverOpen={dev?.popover ?? false} />
-      <main className="stage" key={page}>
-        {page === 'Library' && (
-          <Library jobs={eng.jobs} models={eng.models} scanning={scanning} onOpen={(j) => openJob(j.id)} onNewScan={() => setShowImport(true)}
+      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} actions={actions} popoverOpen={dev?.popover ?? false} />
+      <main className="stage" key={view}>
+        {view === 'Library' && (
+          <Library jobs={eng.jobs} models={eng.models} scanning={scanning} live={scanLive} activeJob={status.activeJob} onOpen={(j) => openJob(j.id)} onNewScan={() => setShowImport(true)}
             onIdentify={(j) => identify(j.id)} onResume={(j) => void startScan({ jobId: j.id })}
             onDelete={(j) => void run(async () => {
               await engine.deleteJob(j.id);
@@ -136,7 +148,13 @@ export function App() {
               toast(result.ok ? 'Album settings updated' : 'Could not update album settings', { tone: result.ok ? 'ok' : 'error' });
             })} />
         )}
-        {page === 'Review' && (
+        {view === 'Scan' && (
+          <ScanScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? scanLive[jobId] : undefined} running={locked}
+            paused={status.tasks.some((t) => t.state === 'paused')} run={run} onSettingsSaved={eng.setSettings}
+            onPause={actions.pause} onResume={actions.resume} onCancel={actions.stop}
+            onReview={() => setPage('Review')} onLibrary={() => setPage('Library')} />
+        )}
+        {view === 'Review' && (
           <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} status={status} settings={eng.settings}
             showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} verbs={reviewVerbs}
             onJobsChanged={eng.refreshJobs} onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={() => jobId != null && identify(jobId)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
@@ -160,15 +178,14 @@ export function App() {
               onWrite={(dryRun) => jobId != null && write(jobId, dryRun)}
               onEdit={(id, updates) => run(async () => { await engine.editDetection(id, updates); await rv.refresh(); })} />
         )}
-        {page === 'Train' && (
+        {view === 'Train' && (
           <Train rv={rv} jobs={eng.jobs} jobId={jobId} run={run} toast={toast} showBoxes={showBoxes} verbs={trainVerbs} onPickJob={setJobId}
             onLibrary={() => setPage('Library')} />
         )}
-        {page === 'Settings' && <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status} />}
+        {view === 'Settings' && <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status} />}
       </main>
-      <ImportDialog draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} models={eng.models} settings={eng.settings} status={status} busy={starting}
-        actions={actions} onStart={(args) => void startScan(args)} onReviewActive={() => { if (status.activeJob != null) openJob(status.activeJob); }}
-        visible={showImport} onClose={() => setShowImport(false)} />
+      <ImportDialog draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} settings={eng.settings} status={status} busy={starting}
+        onStart={(args, defaults) => void startScan(args, defaults)} visible={showImport} onClose={() => setShowImport(false)} />
       {help && <KeysDialog onClose={() => setHelp(false)} />}
       {dropping && <div className="drop-overlay"><Icon name="drop" size={34} /><b>Drop a folder to scan it</b><span>Photos, or a folder of them</span></div>}
       <Splash gone={eng.ready} />
