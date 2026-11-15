@@ -7,8 +7,8 @@
 //! sends it as one event; the frontend draws the scan screen from that.
 
 use conrod_core::progress::{
-    Found, Pipeline, RateMeter, RecentFrame, ScanProgress, StageNode, WorkerLane, RECENT_LIMIT,
-    STAGES,
+    Found, Overall, Pipeline, RateMeter, RecentFrame, ScanProgress, StageNode, WorkerLane,
+    RECENT_LIMIT, STAGES,
 };
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -86,13 +86,35 @@ pub struct Progress {
     state: Mutex<&'static str>,
     finished: AtomicBool,
     final_sent: AtomicBool,
+    /// Configured seconds of identify work per crop: the VLM estimate over the
+    /// identify worker count.
+    identify_cost_per_item: f64,
 }
+
+/// The configured cost of one VLM crop: 8 s of qwen2.5vl:7b on the reference
+/// machine. Identify's weight is this over its worker count.
+pub const VLM_SECONDS_PER_CROP: f64 = 8.0;
+/// The cull lane's cost per frame before it has measured one (~15 fps).
+const FALLBACK_FRAME_SECONDS: f64 = 1.0 / 15.0;
+/// Items a stage needs before its ETA is worth believing.
+pub const ETA_CONFIDENT_AFTER: u64 = 20;
 
 impl Progress {
     /// Lay out the pipeline. `stages` is the flowchart, `pools` is
     /// `(home stage, workers)` per worker pool: each pool gets one lane per
-    /// worker, which rests on its home stage when idle.
+    /// worker, which rests on its home stage when idle. Identify's estimate is
+    /// one worker's VLM crop, since its worker count is not known here.
     pub fn new(job: i64, stages: Vec<StageSpec>, pools: &[(&'static str, usize)]) -> Arc<Progress> {
+        Progress::with_identify_cost(job, stages, pools, VLM_SECONDS_PER_CROP)
+    }
+
+    /// [`Progress::new`] with identify's configured seconds per crop.
+    pub fn with_identify_cost(
+        job: i64,
+        stages: Vec<StageSpec>,
+        pools: &[(&'static str, usize)],
+        identify_cost_per_item: f64,
+    ) -> Arc<Progress> {
         let mut lanes = Vec::new();
         for &(pool, workers) in pools {
             for index in 0..workers.max(1) {
@@ -133,6 +155,7 @@ impl Progress {
             state: Mutex::new("running"),
             finished: AtomicBool::new(false),
             final_sent: AtomicBool::new(false),
+            identify_cost_per_item,
         })
     }
 
@@ -281,14 +304,28 @@ impl Progress {
         let now = self.started.elapsed().as_secs_f64();
         let phase = self.phase.load(Ordering::Relaxed);
         let mut stages = crate::lock(&self.stages);
-        let mut nodes = Vec::with_capacity(stages.len());
-        let lanes = crate::lock(&self.lanes);
+        let mut measured = Vec::with_capacity(stages.len());
         for node in stages.iter_mut() {
             node.meter.observe(now, node.done);
+            measured.push((
+                round2(node.meter.rate().unwrap_or(0.0)),
+                node.meter.eta(node.done, node.total).map(round1),
+            ));
+        }
+        let lanes = crate::lock(&self.lanes);
+        let mut nodes = Vec::with_capacity(stages.len());
+        for (index, (node, (rate, eta))) in stages.iter().zip(measured).enumerate() {
             let busy = lanes
                 .iter()
                 .filter(|lane| lane.state == BUSY && lane.stage == node.id)
                 .count() as u32;
+            // Frames the nearest upstream stage has finished that this one has
+            // not taken yet; the first stage is a source and never has a queue.
+            let upstream = stages[..index]
+                .iter()
+                .rev()
+                .find(|stage| stage.total > 0)
+                .map_or(0, |stage| stage.done);
             nodes.push(StageNode {
                 id: node.id.to_string(),
                 label: node.label.to_string(),
@@ -296,13 +333,14 @@ impl Progress {
                 device: node.device.clone(),
                 workers_total: node.workers_total,
                 workers_busy: busy,
-                queue_len: node.total.saturating_sub(node.done),
+                queue_len: upstream.saturating_sub(node.done),
                 done: node.done,
                 total: node.total,
-                rate_per_s: round2(node.meter.rate().unwrap_or(0.0)),
-                eta_s: node.meter.eta(node.done, node.total).map(round1),
+                rate_per_s: rate,
+                eta_s: eta,
             });
         }
+        let overall = self.overall(&nodes);
         let (stage, done, total, rate, eta) = stages
             .get(phase)
             .or_else(|| stages.first())
@@ -352,6 +390,67 @@ impl Progress {
                 stages: nodes,
                 workers: lane_out,
             },
+            overall,
+        }
+    }
+
+    /// The whole scan in weighted work units: each stage's items cost its
+    /// measured seconds per item, so the header's bar follows the work, not the
+    /// stage with the most items. A stage that has not started yet contributes
+    /// its configured cost (`identify` = the VLM estimate), which is why the
+    /// ETA is flagged unsure until every real stage is 20 items in.
+    fn overall(&self, nodes: &[StageNode]) -> Overall {
+        let frame_cost = nodes
+            .iter()
+            .find(|node| {
+                matches!(
+                    node.id.as_str(),
+                    "read" | "detect" | "sharpness" | "faces"
+                ) && node.rate_per_s > 0.0
+            })
+            .map_or(FALLBACK_FRAME_SECONDS, |node| 1.0 / node.rate_per_s);
+        let cost = |id: &str| match id {
+            "identify" => self.identify_cost_per_item.max(0.001),
+            // Grouping and picking are one cheap pass over the album.
+            "group" | "pick" => frame_cost / 16.0,
+            _ => frame_cost / 4.0,
+        };
+        let mut done = 0.0;
+        let mut total = 0.0;
+        let mut rate = 0.0;
+        for node in nodes {
+            let weight = cost(&node.id);
+            done += node.done as f64 * weight;
+            total += node.total as f64 * weight;
+            if node.total > 0 && node.done < node.total {
+                // A measured lane at its own rate; an unstarted stage streams
+                // its own work at the configured cost, which is 1 unit/s.
+                rate += if node.rate_per_s > 0.0 {
+                    node.rate_per_s * weight
+                } else {
+                    1.0
+                };
+            }
+        }
+        let left = (total - done).max(0.0);
+        let fraction = if total > 0.0 {
+            (done / total).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let eta = (rate > 0.0 && left > 0.0).then(|| left / rate);
+        let eta_confident = eta.is_some()
+            && nodes
+                .iter()
+                .filter(|node| node.total >= ETA_CONFIDENT_AFTER)
+                .all(|node| node.done >= ETA_CONFIDENT_AFTER);
+        Overall {
+            done: round2(done),
+            total: round2(total),
+            fraction: round2(fraction * 100.0) / 100.0,
+            rate_per_s: round2(rate),
+            eta_s: eta.map(round1),
+            eta_confident,
         }
     }
 }
@@ -378,7 +477,9 @@ pub fn for_scan(
         ("read", cull as usize),
         ("identify", identify as usize),
     ];
-    Progress::new(job, stages, &lanes)
+    // One crop's VLM time spread over the identify workers: a crop waits
+    // VLM_SECONDS_PER_CROP / workers before it comes back.
+    Progress::with_identify_cost(job, stages, &lanes, VLM_SECONDS_PER_CROP / identify.max(1) as f64)
 }
 
 fn round1(value: f64) -> f64 {
@@ -445,10 +546,18 @@ mod tests {
         assert_eq!(busy.pipeline.stages[1].workers_busy, 1, "one worker is inside detect");
         assert_eq!(busy.pipeline.workers[0].state, "busy");
         assert_eq!(
-            busy.pipeline.stages[1].queue_len, 10,
-            "queue is what is left"
+            busy.pipeline.stages[1].queue_len, 0,
+            "nothing upstream yet: read has not finished a frame"
         );
-        progress.advance("detect", 10);
+        // read hands 10 frames on; detect has taken 4 of them.
+        progress.total("read", 10);
+        progress.advance("read", 10);
+        progress.advance("detect", 4);
+        assert_eq!(
+            progress.snapshot().pipeline.stages[1].queue_len, 6,
+            "frames finished upstream that detect has not taken"
+        );
+        progress.advance("detect", 6);
         progress.add_found(|found| found.subjects = 12);
         progress.recent(RecentFrame {
             image_id: 4,
@@ -468,6 +577,57 @@ mod tests {
         assert_eq!(snap.pipeline.stages[1].model, "yolo11s-960.onnx");
         progress.idle("read", 0);
         assert_eq!(progress.snapshot().pipeline.stages[1].workers_busy, 0);
+    }
+
+    #[test]
+    fn the_overall_is_weighted_by_cost_and_the_eta_is_unsure_until_stages_are_warm() {
+        let progress = Progress::with_identify_cost(
+            2,
+            vec![
+                StageSpec::new("read", 1),
+                StageSpec::new("detect", 1),
+                StageSpec::new("sharpness", 1),
+                StageSpec::new("faces", 1),
+                StageSpec::new("identify", 2),
+                StageSpec::new("group", 1),
+                StageSpec::new("pick", 1),
+            ],
+            &[("read", 1), ("identify", 2)],
+            4.0,
+        );
+        for stage in ["read", "detect", "sharpness", "faces"] {
+            progress.total(stage, 100);
+            progress.advance(stage, 10);
+        }
+        progress.total("identify", 40);
+        let first = progress.snapshot();
+        assert!(first.overall.total > 0.0);
+        assert!(
+            first.overall.eta_s.is_some(),
+            "an unstarted identify still contributes its configured estimate"
+        );
+        assert!(!first.overall.eta_confident, "10 of 100 frames is not enough");
+        assert!(first.overall.fraction > 0.0 && first.overall.fraction < 1.0);
+        // Identify weighs 4 s a crop against a cull frame's ~0.025 s, so 40
+        // crops dominate the bar even though there are only 40 of them.
+        let identify_share = 40.0 * 4.0 / first.overall.total;
+        assert!(identify_share > 0.5, "identify dominates: {identify_share}");
+
+        for stage in ["read", "detect", "sharpness", "faces"] {
+            progress.advance(stage, 20);
+        }
+        progress.advance("identify", 20);
+        let warm = progress.snapshot();
+        assert!(
+            warm.overall.eta_confident,
+            "every stage is 20+ items in: {warm:?}"
+        );
+        assert!(warm.overall.eta_s.is_some());
+        assert_eq!(warm.pipeline.stages[4].queue_len, 10, "faces done 30, identify took 20");
+        assert!(
+            warm.overall.fraction > first.overall.fraction,
+            "the bar follows the work"
+        );
     }
 
     #[test]

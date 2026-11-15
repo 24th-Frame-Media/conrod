@@ -79,9 +79,12 @@ export function App() {
   const startScan = async (args: ScanArgs, defaults?: ImportDefaults) => {
     setStarting(true);
     await run(async () => {
-      // A new album copies the saved settings when it is created, so strictness and burst gap go in first, and double as "last used".
-      if (defaults) eng.setSettings(await engine.saveSettings(defaults));
-      const { jobId: id } = await engine.scan(args);
+      // The sheet's choices belong to this album: they travel with the scan and
+      // land in its job settings. Global defaults are only changed from Settings.
+      const scan: ScanArgs = defaults
+        ? { ...args, scanProfile: defaults.scan_profile, blurStrictness: defaults.blur_strictness, burstGap: defaults.burst_gap }
+        : args;
+      const { jobId: id } = await engine.scan(scan);
       await eng.refreshJobs();
       setJobId(id);
       eng.setStatus(await engine.status());

@@ -148,6 +148,9 @@ impl Desktop {
             read_plates: None,
             read_numbers: None,
             include_people: None,
+            scan_profile: None,
+            blur_strictness: None,
+            burst_gap: None,
         })
         .map(|_| ())
     }
@@ -567,7 +570,13 @@ impl Desktop {
             if !root.is_dir() {
                 return Err("Choose a photo folder".into());
             }
-            let profile = a.profile.as_deref().unwrap_or(&settings.scan_profile);
+            // The sheet's choices belong to the album being created, not to the
+            // global defaults: they are written once, into its settings_json.
+            let profile = a
+                .scan_profile
+                .as_deref()
+                .or(a.profile.as_deref())
+                .unwrap_or(&settings.scan_profile);
             settings.scan_profile = ShootPreset::parse(profile).name().into();
             if let Some(read) = a.read_plates {
                 settings.read_plates = read;
@@ -577,6 +586,18 @@ impl Desktop {
             }
             if let Some(people) = a.include_people {
                 settings.include_people = people;
+            }
+            if let Some(strictness) = a.blur_strictness.as_deref() {
+                if !["strict", "moderate", "lenient"].contains(&strictness) {
+                    return Err("Strictness must be strict, moderate or lenient".into());
+                }
+                settings.blur_strictness = strictness.to_string();
+            }
+            if let Some(gap) = a.burst_gap {
+                if !(gap.is_finite() && gap > 0.0) {
+                    return Err("Burst gap must be a positive number of seconds".into());
+                }
+                settings.burst_gap = gap;
             }
             settings.extra.insert(
                 "native_scan_stage".into(),
@@ -1056,6 +1077,61 @@ mod tests {
         assert_eq!(out["bursts"], 1);
         assert_eq!(out["moments"], 1);
         assert!(out["keepers"].as_u64().unwrap() >= 1);
+    }
+
+    #[test]
+    fn a_new_album_takes_the_sheets_choices_without_touching_the_global_defaults() {
+        let root =
+            std::env::temp_dir().join(format!("conrod-scanargs-{}-{}", std::process::id(), now()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.jpg"), b"x").unwrap();
+        let desktop = Desktop::open(root.clone()).unwrap();
+        let before = lock(&desktop.settings).clone();
+
+        let out = desktop
+            .dispatch(
+                "scan",
+                json!({
+                    "root": root.to_string_lossy(),
+                    "label": "Sheet album",
+                    "stage": "index",
+                    "scanProfile": "portrait",
+                    "blurStrictness": "lenient",
+                    "burstGap": 2.5,
+                }),
+            )
+            .unwrap();
+        let job = out["jobId"].as_i64().unwrap();
+
+        let stored: String = lock(&desktop.db)
+            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| r.get(0))
+            .unwrap();
+        let map: Map<String, Value> = serde_json::from_str(&stored).unwrap();
+        assert!(
+            map["scan_profile"].as_str().unwrap().starts_with("portrait"),
+            "{map:?}"
+        );
+        assert_eq!(map["blur_strictness"], "lenient");
+        assert_eq!(map["burst_gap"], 2.5);
+
+        let after = lock(&desktop.settings).clone();
+        assert_eq!(after, before, "the sheet never writes the global defaults");
+
+        // The album's own settings report what the sheet chose.
+        let effective = crate::operations::settings(&desktop, job).unwrap();
+        assert_eq!(effective.blur_strictness, "lenient");
+        assert_eq!(effective.burst_gap, 2.5);
+
+        // Nonsense is refused before an album exists.
+        for args in [
+            json!({"root": root.to_string_lossy(), "stage": "index", "burstGap": 0}),
+            json!({"root": root.to_string_lossy(), "stage": "index", "blurStrictness": "loud"}),
+        ] {
+            assert!(desktop.dispatch("scan", args).is_err());
+        }
+        drop(desktop);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

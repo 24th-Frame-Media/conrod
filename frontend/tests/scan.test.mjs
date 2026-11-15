@@ -77,6 +77,18 @@ test('overall progress and ETA come from every stage, not the one the header nam
   assert.equal(overallEta(null), null);
 });
 
+test("the engine's weighted overall wins over the per-stage mean, and the fallback stays", () => {
+  const stages = [st('read', { done: 100 }), st('detect', { done: 40, workers_busy: 2, eta_s: 30 })];
+  const overall = { done: 12, total: 100, fraction: 0.12, rate_per_s: 3.4, eta_s: 42, eta_confident: false };
+  assert.equal(overallFraction(stages, overall), 0.12, 'the weighted fraction, not the stage mean');
+  assert.equal(overallEta(stages, overall), 42, 'the engine knows about stages that have not started');
+  assert.equal(overallFraction(stages), (1 + 0.4) / 2, 'no overall: the old per-stage mean');
+  assert.equal(overallEta(stages), 30, 'no overall: the old slowest-stage ETA');
+  assert.equal(overallFraction(stages, { fraction: 1.7 }), 1, 'clamped to 0..1');
+  assert.equal(overallFraction(stages, { fraction: -2 }), 0);
+  assert.equal(overallEta(stages, { eta_s: null }), null, 'an overall without an ETA means unknown, not a guess');
+});
+
 test('worker lanes: reasons and counts', () => {
   assert.equal(waitingText({ state: 'idle' }), 'idle');
   assert.equal(waitingText({ state: 'busy' }), 'working');

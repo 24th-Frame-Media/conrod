@@ -62,9 +62,9 @@ export function ScanScreen({ job, live, running, paused, run, onSettingsSaved, o
   const head = stages.find((s) => s.id === p?.stage);
   const identify = stages.some((s) => s.id === 'identify' && stageStatus(s) !== 'off');
   const total = stages[0]?.total || p?.total || job.total;
-  const frac = p ? (state === 'done' ? 1 : overallFraction(stages)) : 0;
+  const frac = p ? (state === 'done' ? 1 : overallFraction(stages, p.overall)) : 0;
   const pct = Math.round(frac * 100);
-  const eta = p ? overallEta(stages) : null;
+  const eta = p ? overallEta(stages, p.overall) : null;
   const rate = formatRate(p?.rate_per_s);
   const doneNow = state === 'done';
   return (

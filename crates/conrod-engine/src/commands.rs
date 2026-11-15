@@ -86,6 +86,13 @@ pub struct ScanArgs {
     pub read_numbers: Option<bool>,
     /// Motorsport: look at people too. Left out keeps the saved default.
     pub include_people: Option<bool>,
+    /// The shoot type for a *new* album: stored on that album's own settings,
+    /// never written back to the global defaults.
+    pub scan_profile: Option<String>,
+    /// Blur strictness for a new album: `strict`, `moderate` or `lenient`.
+    pub blur_strictness: Option<String>,
+    /// Burst gap in seconds for a new album.
+    pub burst_gap: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]

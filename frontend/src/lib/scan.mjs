@@ -64,8 +64,18 @@ export function bottleneck(stages, workers, minQueue = 3) {
   return ranked.length && ranked[0][1] >= 2 && (ranked.length === 1 || ranked[0][1] > ranked[1][1]) ? ranked[0][0] : null;
 }
 
-/** 0..1 across every stage this scan runs, each counting the same: the bar under the header. */
-export function overallFraction(stages) {
+/**
+ * 0..1 across every stage this scan runs, for the bar under the header. The engine's `overall.fraction` already
+ * weights each stage by its cost per item, so it is preferred; the stage mean below is the fallback for a payload
+ * from before it existed (or a mock without one).
+ */
+export function overallFraction(stages, overall) {
+  if (overall && Number.isFinite(overall.fraction)) return Math.max(0, Math.min(1, overall.fraction));
+  return derivedFraction(stages);
+}
+
+/** The old per-stage mean, kept for payloads with no `overall`. */
+function derivedFraction(stages) {
   const real = (Array.isArray(stages) ? stages : []).filter((s) => stageStatus(s) !== 'off');
   if (!real.length) return 0;
   const sum = real.reduce((n, s) => n + ((s.total ?? 0) > 0 ? Math.min(1, (s.done ?? 0) / s.total) : 0), 0);
@@ -73,10 +83,15 @@ export function overallFraction(stages) {
 }
 
 /**
- * The time left for the whole scan: the slowest running stage's own ETA. Null while any running stage has no
- * ETA of its own yet (it has no rate), or nothing is running.
+ * The time left for the whole scan: the engine's `overall.eta_s` when present (a null there means it cannot say),
+ * else the slowest running stage's own ETA, and null while any running stage has no ETA of its own yet.
  */
-export function overallEta(stages) {
+export function overallEta(stages, overall) {
+  if (overall) return Number.isFinite(overall.eta_s) ? overall.eta_s : null;
+  return derivedEta(stages);
+}
+
+function derivedEta(stages) {
   const running = (Array.isArray(stages) ? stages : []).filter((s) => stageStatus(s) === 'active' && (s.total ?? 0) > (s.done ?? 0));
   if (!running.length) return null;
   let slowest = 0;

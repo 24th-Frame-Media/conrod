@@ -1,4 +1,4 @@
-import type { PipelineStage, PipelineWorker, ScanFound, WorkerLimit } from './types';
+import type { PipelineStage, PipelineWorker, ScanFound, ScanOverall, WorkerLimit } from './types';
 
 export type StageStatus = 'off' | 'done' | 'active' | 'pending';
 export type EtaSample = { finish: number; now: number };
@@ -10,8 +10,8 @@ export function orderStages(stages: PipelineStage[] | null | undefined): Pipelin
 export function stageStatus(stage: PipelineStage | null | undefined): StageStatus;
 export function readyQueue(ordered: PipelineStage[], index: number): number;
 export function bottleneck(stages: PipelineStage[] | null | undefined, workers?: PipelineWorker[] | null, minQueue?: number): string | null;
-export function overallFraction(stages: PipelineStage[] | null | undefined): number;
-export function overallEta(stages: PipelineStage[] | null | undefined): number | null;
+export function overallFraction(stages: PipelineStage[] | null | undefined, overall?: ScanOverall | null): number;
+export function overallEta(stages: PipelineStage[] | null | undefined, overall?: ScanOverall | null): number | null;
 export function waitingText(worker: PipelineWorker | null | undefined): string;
 export function workersOf(workers: PipelineWorker[] | null | undefined, stageId: string): PipelineWorker[];
 export function workerCounts(stage: PipelineStage, workers: PipelineWorker[] | null | undefined): { busy: number; waiting: number; idle: number };
