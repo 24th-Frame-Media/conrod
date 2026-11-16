@@ -165,7 +165,11 @@ export type ScanRecentFrame = {
   /** The same path `Frame.thumb_path` holds; run it through `asset()` as usual. */
   thumb_url: string;
   subject: string;
-  verdict: 'sharp' | 'soft' | 'panning';
+  verdict: 'sharp' | 'soft';
+  /** A pan is a flag, not a verdict: a panned car can still be soft. */
+  panning?: boolean;
+  /** Older payloads folded the pan into the verdict. */
+  legacy?: never;
   /** What the frame reads as once identified: a race number or plate. */
   label?: string | null;
 };
@@ -210,6 +214,27 @@ export type ScanProgress = {
   /** The whole scan, weighted across stages; prefer it over deriving one. */
   overall: ScanOverall;
 };
+
+/** One detection the identify pass has read: the light row behind the identifications list. */
+export type IdentifiedRow = {
+  id: number;
+  image_id: number;
+  cls: string;
+  region_type: string | null;
+  crop_path: string | null;
+  number: string | null;
+  plate: string | null;
+  number_conf: number | null;
+  plate_conf: number | null;
+  /** A JSON string: make, model, team, driver, sponsors, confidences. */
+  attributes: string | null;
+  quality: number | null;
+  reviewed: number;
+  rejected: number;
+  frame_path: string;
+  frame_thumb: string | null;
+};
+export type Identified = { rows: IdentifiedRow[]; total: number; unreviewed: number; shown: number };
 
 /** What `regroup` (and an `update_job_settings` gap/preset patch) returns. */
 export type RegroupCounts = { bursts: number; moments: number; keepers: number };

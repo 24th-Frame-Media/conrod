@@ -384,6 +384,7 @@ impl Desktop {
             }
             Command::DeleteJob(a) => self.delete_job(a.job_id),
             Command::Identify(a) => crate::operations::identify(self, a.job_id),
+            Command::Identified(a) => self.identified(a.job_id),
             Command::Write(a) => {
                 crate::operations::write(self, a.job_id, a.dry_run, a.embed_in_raw)
             }
@@ -611,6 +612,44 @@ impl Desktop {
 
     fn review(&self, job: i64) -> Result<Value> {
         review_payload(&lock(&self.reader), job)
+    }
+
+    /// What the identify pass has read in this album: numbers, plates and the
+    /// vision model's attributes, newest work first. A light query for the
+    /// identifications list, not the whole review payload.
+    fn identified(&self, job: i64) -> Result<Value> {
+        const CAP: i64 = 400;
+        let db = lock(&self.reader);
+        let read = "COALESCE(d.number,'')<>'' OR COALESCE(d.plate,'')<>'' OR COALESCE(d.attributes,'') NOT IN ('','{}','null')";
+        let count = |extra: &str| -> Result<i64> {
+            let sql = format!(
+                "SELECT count(*) FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND ({read}) {extra}"
+            );
+            let found = rows(&db, &sql, [job])?;
+            Ok(found
+                .first()
+                .and_then(Value::as_object)
+                .and_then(|obj| obj.values().next())
+                .and_then(Value::as_i64)
+                .unwrap_or(0))
+        };
+        let total = count("")?;
+        let unreviewed = count("AND COALESCE(d.reviewed,0)=0")?;
+        let sql = format!(
+            "SELECT d.id,d.image_id,d.cls,d.region_type,d.crop_path,d.number,d.plate,d.number_conf,d.plate_conf,
+                    d.attributes,d.quality,d.reviewed,d.rejected,d.group_key,
+                    i.path AS frame_path,i.thumb_path AS frame_thumb
+             FROM detections d JOIN images i ON i.id=d.image_id
+             WHERE i.job_id=?1 AND ({read})
+             ORDER BY COALESCE(d.reviewed,0) ASC, d.image_id, d.id LIMIT {CAP}"
+        );
+        let rows = rows_compact(&db, &sql, [job])?;
+        Ok(json!({
+            "rows": rows,
+            "total": total,
+            "unreviewed": unreviewed,
+            "shown": CAP.min(total),
+        }))
     }
 
     fn mark(&self, a: &MarkArgs) -> Result<Value> {
@@ -938,18 +977,16 @@ impl Desktop {
         let Some(progress) = self.progress() else {
             return;
         };
+        // A pan is an extra flag, never a replacement for the sharpness verdict:
+        // a panned car can still come out soft, and the strip must say which.
         let panning = f.subjects.iter().any(|subject| subject.panning);
-        let verdict = if panning {
-            "panning"
-        } else {
-            match conrod_vision::sharpness::verdict_for(
-                f.rating,
-                settings.sharp_at,
-                settings.blurred_below,
-            ) {
-                "sharp" => "sharp",
-                _ => "soft",
-            }
+        let verdict = match conrod_vision::sharpness::verdict_for(
+            f.rating,
+            settings.sharp_at,
+            settings.blurred_below,
+        ) {
+            "sharp" => "sharp",
+            _ => "soft",
         };
         let subject = f
             .subjects
@@ -975,6 +1012,7 @@ impl Desktop {
             thumb_url: thumb.to_string_lossy().into_owned(),
             subject: subject.to_string(),
             verdict: verdict.to_string(),
+            panning,
             label: None,
         });
     }

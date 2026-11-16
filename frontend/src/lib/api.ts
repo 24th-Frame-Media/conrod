@@ -34,6 +34,8 @@ export const engine = {
   editDetection: (detectionId: number, updates: Record<string, string | string[] | null>) => call('edit_detection', { detectionId, ...updates }),
   preview: (imageId: number) => call<string>('preview', { imageId }),
   identify: (jobId: number) => call('identify', { jobId }),
+  identified: (jobId: number) => call<import('./types').Identified>('identified', { jobId }),
+  acceptIdentifications: (ids: number[]) => call('bulk_edit', { ids, reviewed: true }),
   write: (jobId: number, dryRun = false) => call('write', { jobId, dryRun }),
   cancelOperation: (key: string) => call('cancel_operation', { key }),
   saveSettings: (settings: Settings) => call<Settings>('save_settings', settings),

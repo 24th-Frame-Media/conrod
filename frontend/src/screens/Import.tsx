@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useRun } from '../state/hooks';
-import { FilePick, Icon } from '../components/basics';
+import { FilePick, Icon, Portal, useBackdropClose } from '../components/basics';
 import { ShootTypeSelect } from '../components/ShootTypeSelect';
 import { StrictnessSlider } from '../components/StrictnessSlider';
 import { call, chooseFolder } from '../lib/api';
@@ -22,6 +22,7 @@ const DEFAULT_GAP = 1.5;
 /** Import sheet: folder, label, shoot type, strictness, and one Scan button. */
 export function ImportDialog({ draft, setDraft, profile, setProfile, settings, status, busy, onStart, visible, onClose }: Props) {
   const run = useRun();
+  const backdrop = useBackdropClose(onClose);
   const [recursive, setRecursive] = useState(true);
   const [strictness, setStrictness] = useState('moderate');
   const [strictnessTouched, setStrictnessTouched] = useState(false);
@@ -61,7 +62,8 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   };
   if (!visible) return null;
   return (
-    <div className="import-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <Portal>
+    <div className="import-overlay" {...backdrop}>
       <div className="import-dialog import-sheet" role="dialog" aria-label="Import photos">
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
         <h2>Import photos</h2>
@@ -116,5 +118,6 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

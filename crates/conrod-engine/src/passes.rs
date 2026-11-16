@@ -654,7 +654,7 @@ fn find_people(
             if stop.load(Ordering::Relaxed) {
                 return Ok(());
             }
-            task.detail(format!("Looking for faces Â· {path}"));
+            task.detail(format!("Looking for faces in {path}"));
             let raw = conrod_io::raw::read(std::path::Path::new(path))?;
             let rgb = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
             let grey = rgb.to_gray();
@@ -913,7 +913,7 @@ pub(crate) fn embed_faces_missing(
             continue;
         };
         task.detail(format!(
-            "Matching face Â· {}",
+            "Matching face in {}",
             std::path::Path::new(path)
                 .file_name()
                 .unwrap_or_default()

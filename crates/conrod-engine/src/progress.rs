@@ -564,7 +564,8 @@ mod tests {
             image_id: 4,
             thumb_url: "thumb-4.jpg".into(),
             subject: "vehicle".into(),
-            verdict: "panning".into(),
+            verdict: "sharp".into(),
+            panning: true,
             label: None,
         });
         let snap = progress.snapshot();
@@ -574,7 +575,8 @@ mod tests {
         assert_eq!((snap.done, snap.total), (10, 10));
         assert_eq!(snap.found.subjects, 12);
         assert_eq!(snap.recent[0].image_id, 4);
-        assert_eq!(snap.recent[0].verdict, "panning");
+        assert_eq!(snap.recent[0].verdict, "sharp");
+        assert!(snap.recent[0].panning, "a pan is a flag beside the sharpness verdict");
         assert_eq!(snap.pipeline.stages[1].model, "yolo11s-960.onnx");
         progress.idle("read", 0);
         assert_eq!(progress.snapshot().pipeline.stages[1].workers_busy, 0);
@@ -656,6 +658,7 @@ mod tests {
                 thumb_url: String::new(),
                 subject: "frame".into(),
                 verdict: "sharp".into(),
+                panning: false,
                 label: None,
             });
         }
