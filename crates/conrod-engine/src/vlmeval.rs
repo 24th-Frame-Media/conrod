@@ -64,8 +64,8 @@ fn decode(path: &str) -> Result<Rgb, String> {
 
 /// Crops whose full request, raw model reply and gate trace are kept in the
 /// results: 001 (reply cut off), 017 (OCR number over the model's), 022
-/// (make/model lost).
-const DEBUG_IDS: [&str; 3] = ["001", "017", "022"];
+/// (make/model lost), 053 (a six-letter personalised plate).
+const DEBUG_IDS: [&str; 4] = ["001", "017", "022", "053"];
 
 /// The exact request the app sends for this crop, rebuilt without a call so
 /// the eval can show what differs from `scripts/vlm_bench.py`.
@@ -114,10 +114,21 @@ fn record(a: &conrod_core::analysis::VehicleAnalysis) -> Value {
 #[ignore]
 fn vlm_production_eval() {
     let dir = PathBuf::from(VLM_DIR);
-    let crops: Vec<Value> = serde_json::from_str(
+    let mut crops: Vec<Value> = serde_json::from_str(
         &std::fs::read_to_string(dir.join("crops.json")).expect("read crops.json"),
     )
     .expect("parse crops.json");
+    // `CONROD_VLM_IDS=053,062` re-runs just those crops while debugging one reading.
+    if let Ok(only) = std::env::var("CONROD_VLM_IDS") {
+        let keep: Vec<&str> = only
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !keep.is_empty() {
+            crops.retain(|c| c["id"].as_str().is_some_and(|id| keep.contains(&id)));
+        }
+    }
     let base = Settings::default();
 
     let plate_models = match (
