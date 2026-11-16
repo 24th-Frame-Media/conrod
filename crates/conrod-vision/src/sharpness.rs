@@ -17,6 +17,9 @@ pub const TILE_PERCENTILE: f64 = 80.0;
 pub const MIN_TILE_CONTRAST: f64 = 1.5;
 pub const WORKING_EDGE: usize = 1024;
 pub const PAN_MARGIN: f64 = 0.15;
+/// Background streak coherence that marks a frame as a pan when there is no
+/// subject box to compare against (same bar the engine's pan flag uses).
+pub const PAN_COHERENCE: f64 = 0.80;
 pub const PAN_BACKGROUND_CEILING: f64 = 0.55;
 pub const BANDS: usize = 3;
 pub const END_MARGIN: f64 = 0.12;
@@ -416,8 +419,26 @@ pub fn measure(image: &Gray, bbox: Option<[f64; 4]>, model: Option<&SharpModel>)
         if score < 0.0 {
             return Sharpness::default();
         }
+        // No box (a close, cropped car the detector missed). If the frame's own
+        // surroundings streak the way a pan does, a sharp roof over a smeared
+        // body must not pass as a sharp frame: judge the centre the way the
+        // subject would be judged.
+        let (w, h) = (data.w as f64, data.h as f64);
+        let centre = [w * 0.25, h * 0.25, w * 0.75, h * 0.75];
+        let pan = crate::streaks::background_streaks(&grey, centre)
+            .is_some_and(|coherence| coherence >= PAN_COHERENCE);
+        let cap = pan.then(|| {
+            pan_consistency(&data.crop(
+                (centre[0] as usize).min(data.w - 1),
+                (centre[1] as usize).min(data.h - 1),
+                (centre[2] as usize).min(data.w),
+                (centre[3] as usize).min(data.h),
+            ))
+        }).flatten();
+        let panning = pan && cap.is_some();
         return Sharpness {
-            score,
+            score: cap.map_or(score, |c| score.min(c)),
+            panning,
             measured: true,
             ..Sharpness::default()
         };
