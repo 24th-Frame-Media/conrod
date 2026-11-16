@@ -14,12 +14,14 @@ type CardProps = {
   stack: StackView; selected: boolean; open: boolean;
   /** Frames in the burst when its lead is the engine's unaccepted suggestion. */
   suggestion?: number;
+  /** The burst's size and best stars when no frame in it is worth keeping. */
+  soft?: { size: number; best: number };
   left: number; top: number; width: number; height: number;
   onToggle: (stack: StackView) => void;
   onPick?: (id: number) => void;
 };
 
-const StackCard = memo(function StackCard({ stack, selected, open, suggestion, left, top, width, height, onToggle, onPick }: CardProps) {
+const StackCard = memo(function StackCard({ stack, selected, open, suggestion, soft, left, top, width, height, onToggle, onPick }: CardProps) {
   const { lead } = stack;
   const count = stack.frames.length;
   const suggested = suggestion != null && !lead.picked;
@@ -37,6 +39,10 @@ const StackCard = memo(function StackCard({ stack, selected, open, suggestion, l
             onClick={(e) => { e.stopPropagation(); onPick?.(lead.id); }}>
             <KeeperMark inline /><span>Suggested</span>
           </button>
+        ) : soft ? (
+          <span className="no-keeper" title={`All ${soft.size} frames in this burst are soft (best ${soft.best} of 5). Nothing here is worth keeping, so no keeper is proposed.`}>
+            No keeper
+          </span>
         ) : stack.keepers.length > 0 ? (
           <KeeperMark label={lead.picked ? 'Keeper, picked by you' : 'Keeper, the engine\u2019s best of the burst'} />
         ) : null}
@@ -53,9 +59,10 @@ const StackCard = memo(function StackCard({ stack, selected, open, suggestion, l
  * Shared renderer for grouped-photo grids (burst, duplicate or vehicle stacks). Windowed: only the rows near the
  * viewport are mounted, so a 3 000-frame shoot costs what a 50-frame one does. The open stack's strip sits under its row.
  */
-export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeperIds, suggestions, culled, onToggle, onSelect, onOpen, onPick, ariaLabel, empty }: {
+export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeperIds, suggestions, softBursts, culled, onToggle, onSelect, onOpen, onPick, ariaLabel, empty }: {
   stacks: StackView[]; selectedKey: string | null; selectedId: number | null; expandedKey: string | null; keeperIds: ReadonlySet<number>;
   suggestions?: Map<number, number>;
+  softBursts?: Map<number, { size: number; best: number }>;
   culled: (frame: Frame) => boolean; onToggle: (stack: StackView) => void; onSelect: (id: number) => void; onOpen: () => void; onPick?: (id: number) => void;
   ariaLabel: string; empty: ReactNode;
 }) {
@@ -100,13 +107,17 @@ export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeper
       <div className="burst-grid-inner" ref={inner} role="list" aria-label={ariaLabel} style={{ height: layout.height }}>
         {items.map((stack, n) => {
           const i = first * layout.cols + n;
-          return <StackCard key={stack.key} stack={stack} selected={stack.key === selectedKey} open={stack.key === expandedKey} suggestion={suggestions?.get(stack.lead.id)}
+          const soft = !stack.keepers.length && stack.key.startsWith('b') && stack.lead.burst_key != null ? softBursts?.get(stack.lead.burst_key) : undefined;
+          return <StackCard key={stack.key} stack={stack} selected={stack.key === selectedKey} open={stack.key === expandedKey} suggestion={suggestions?.get(stack.lead.id)} soft={soft}
             left={(i % layout.cols) * (width + GAP)} top={layout.rowTop(Math.floor(i / layout.cols))} width={width} height={cardH} onToggle={onToggle} onPick={onPick} />;
         })}
         {showStrip && openStack && (
           <div className="burst-expanded" style={{ top: layout.expandedTop, height: EXPANDED_H }}>
             <div className="burst-expanded-head">
               <b>{openStack.title} · {openStack.frames.length} {openStack.photoWord ?? 'frames'}{openStack.total > openStack.frames.length ? ` of ${openStack.total}` : ''}</b>
+              {!openStack.keepers.length && openStack.lead.burst_key != null && softBursts?.get(openStack.lead.burst_key) && (
+                <span className="no-keeper-note">· No keeper: all {softBursts.get(openStack.lead.burst_key)!.size} frames are soft</span>
+              )}
               <span className="muted" style={{ marginLeft: 8 }}>· In shooting order · ← → to move, Esc to close</span>
             </div>
             <BurstFilmstrip

@@ -506,6 +506,13 @@ pub fn pick_of_pass(
     }
     let (mut picks, mut frame_picks): (Vec<i64>, Vec<i64>) = (Vec::new(), Vec::new());
     for candidate in best.values() {
+        // A burst whose best frame is still below three stars has no keeper.
+        // Proposing the least-bad soft frame of a bad set is worse than saying
+        // nothing: the photographer asked for a pick only when there is one.
+        // A hand star is the photographer's own word, so it always counts.
+        if candidate.by_hand < 3 && candidate.score < conrod_vision::sharpness::KEEPER_MIN_RATING {
+            continue;
+        }
         if candidate.on_frame {
             frame_picks.push(candidate.row);
         } else {
@@ -532,6 +539,9 @@ pub fn pick_of_pass(
     Ok(json!({
         "passes": best.len(),
         "picks": picks.len() + frame_picks.len(),
+        // Bursts where nothing cleared the keeper bar: the UI says "no keeper"
+        // instead of showing a green suggestion on the least-bad frame.
+        "unpicked": best.len().saturating_sub(picks.len() + frame_picks.len()),
         "considered": found.len()
     }))
 }
@@ -1211,13 +1221,13 @@ mod tests {
         let g2 = lib.frame("5.jpg", Some(2));
         let none = lib.frame("6.jpg", None);
         let (a, b, c) = (
-            lib.detection(f1, "vehicle", 0.60),
-            lib.detection(f2, "vehicle", 0.80),
-            lib.detection(f3, "vehicle", 0.80),
+            lib.detection(f1, "vehicle", 0.90),
+            lib.detection(f2, "vehicle", 0.97),
+            lib.detection(f3, "vehicle", 0.97),
         );
         let (d1, d2) = (
-            lib.detection(g1, "vehicle", 0.70),
-            lib.detection(g2, "vehicle", 0.55),
+            lib.detection(g1, "vehicle", 0.88),
+            lib.detection(g2, "vehicle", 0.80),
         );
         lib.detection(none, "vehicle", 0.99);
         let out = lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
@@ -1512,12 +1522,12 @@ mod tests {
         let lib = Lib::new("pick-groups");
         let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
         let (car_a1, car_b1) = (
-            lib.detection(f1, "vehicle", 0.9),
-            lib.detection(f1, "vehicle", 0.5),
+            lib.detection(f1, "vehicle", 0.95),
+            lib.detection(f1, "vehicle", 0.80),
         );
         let (car_a2, car_b2) = (
-            lib.detection(f2, "vehicle", 0.7),
-            lib.detection(f2, "vehicle", 0.6),
+            lib.detection(f2, "vehicle", 0.86),
+            lib.detection(f2, "vehicle", 0.90),
         );
         // A face in the frame does not compete with the cars under Motorsport.
         let face = lib.detection(f1, "face", 0.99);
@@ -1551,7 +1561,7 @@ mod tests {
             lib.detection(f1, "vehicle", 0.9),
             lib.detection(f2, "vehicle", 0.8),
         );
-        let other = lib.detection(f3, "vehicle", 0.7);
+        let other = lib.detection(f3, "vehicle", 0.82);
         look(&lib, a1, [1.0, 0.0, 0.0]);
         look(&lib, a2, [0.99, 0.14, 0.0]);
         look(&lib, other, [0.0, 1.0, 0.0]);
@@ -1655,7 +1665,7 @@ mod tests {
         let frame = lib.frame("1.jpg", Some(1));
         let car = lib.detection(frame, "vehicle", 0.9);
         let person = lib.detection(frame, "person", 0.5);
-        let face = lib.detection(frame, "face", 0.3);
+        let face = lib.detection(frame, "face", 0.85);
         // Already prepared for naming, so no model or photo is needed.
         lib.sql("UPDATE detections SET embedding='x' WHERE id=?", [face]);
         // The person fills more of the frame than the car.
@@ -1683,7 +1693,7 @@ mod tests {
         assert_eq!(jobs[0]["include_people"], true);
         assert_eq!(jobs[0]["scan_profile"], "motorsport");
         let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [frame]);
-        assert_eq!(rating, 0.3, "a person as main subject: the face decides");
+        assert_eq!(rating, 0.85, "a person as main subject: the face decides");
         assert_eq!(picks(&lib).len(), 1);
 
         // The car as main subject: the vehicle decides again.
@@ -1786,33 +1796,63 @@ mod tests {
     }
 
     #[test]
-    fn a_culled_frame_loses_to_an_unculled_one_and_an_all_culled_pass_still_keeps_one() {
+    fn a_culled_frame_loses_to_an_unculled_one_and_a_pass_with_nothing_worth_keeping_picks_nothing() {
         let lib = Lib::new("pick-cull");
         let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
         let (f3, f4) = (lib.frame("3.jpg", Some(2)), lib.frame("4.jpg", Some(2)));
-        let clean = lib.detection(f1, "vehicle", 0.4);
-        let blurred = lib.detection(f2, "vehicle", 0.9);
+        let clean = lib.detection(f1, "vehicle", 0.80);
+        let blurred = lib.detection(f2, "vehicle", 0.90);
         lib.sql(
             "UPDATE detections SET cull_reason='too blurred' WHERE id=?",
             [blurred],
         );
-        let closed = lib.detection(f3, "vehicle", 0.7);
+        // Nothing in the second pass can be kept: both are soft, and the hand
+        // star is the only thing that can save one -- here it is absent.
+        let closed = lib.detection(f3, "vehicle", 0.66);
         lib.sql(
             "UPDATE detections SET cull_reason='eyes closed' WHERE id=?",
             [closed],
         );
-        let starred = lib.detection(f4, "vehicle", 0.2);
-        lib.sql(
-            "UPDATE detections SET cull_reason='1 star', stars=1 WHERE id=?",
-            [starred],
-        );
-        lib.run("pick_keepers", json!({"jobId": lib.job}))
+        let starred = lib.detection(f4, "vehicle", 0.66);
+        lib.sql("UPDATE detections SET stars=1 WHERE id=?", [starred]);
+        let out = lib
+            .run("pick_keepers", json!({"jobId": lib.job}))
             .unwrap();
         assert_eq!(
             picks(&lib),
-            vec![clean, starred],
-            "a cull only wins when every candidate of its pass is culled, and a hand star still leads"
+            vec![clean],
+            "a cull loses to an unculled frame, and a soft pass has no keeper at all"
         );
+        assert_eq!(out["unpicked"].as_i64(), Some(1));
+    }
+
+    #[test]
+    fn a_pass_of_all_soft_frames_has_no_keeper_until_a_hand_star_says_otherwise() {
+        let lib = Lib::new("pick-soft");
+        let (f1, f2, f3) = (
+            lib.frame("1.jpg", Some(1)),
+            lib.frame("2.jpg", Some(1)),
+            lib.frame("3.jpg", Some(1)),
+        );
+        // Three pans in one burst, all two stars: exactly the set that used to
+        // get the least-bad frame proposed as its keeper.
+        let a = lib.detection(f1, "vehicle", 0.66);
+        let b = lib.detection(f2, "vehicle", 0.67);
+        lib.detection(f3, "vehicle", 0.64);
+        let out = lib
+            .run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(out["passes"].as_i64(), Some(1));
+        assert_eq!(out["picks"].as_i64(), Some(0), "no keeper is the answer");
+        assert_eq!(out["unpicked"].as_i64(), Some(1));
+        assert_eq!(picks(&lib), Vec::<i64>::new());
+
+        // A hand star of three is the photographer's own word and wins the pass.
+        lib.sql("UPDATE detections SET stars=3 WHERE id=?", [a]);
+        lib.run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(picks(&lib), vec![a]);
+        let _ = b;
     }
 
     #[test]

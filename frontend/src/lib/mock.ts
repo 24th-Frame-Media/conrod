@@ -42,19 +42,22 @@ function makeDb(): Db {
   const count = Math.max(8, Number(params().get('frames')) || 64);
   for (let i = 0; i < count; i += 1) {
     const [make, model, colour, team, no, plate, hue] = CARS[i % CARS.length];
-    const id = 1000 + i, rating = 0.5 + ((i * 37) % 48) / 100;
+    // Burst 2 is all soft (two stars or less) and has no engine pick: the grid must
+    // say "No keeper" there instead of proposing the least-bad frame.
+    const soft = Math.floor(i / 5) === 2;
+    const id = 1000 + i, rating = soft ? 0.6 + ((i * 7) % 6) / 100 : 0.5 + ((i * 37) % 48) / 100;
     const cx = 0.38 + ((i * 13) % 25) / 100, s = 0.5 + ((i * 7) % 20) / 100;
     const read = i % 4 !== 3;
     frames.push({
       id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > count - 4 ? 'pending' : 'done',
       thumb_path: scene(hue, cx, s, colour, 420, 280), preview_path: null, width: W, height: H, rating,
-      manual_stars: i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, picked: i % 17 === 5 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
+      manual_stars: soft ? null : i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, picked: i % 17 === 5 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
     });
     dets.push({
       id: 5000 + i, image_id: id, cls: 'car', x1: (cx - s / 2) * W, y1: 0.38 * H, x2: (cx + s / 2) * W, y2: 0.74 * H,
       sharpness: rating, panning: i % 3 === 0 ? 1 : 0, number: read ? no : null, plate: read ? plate : null,
       cull_reason: rating < 0.6 ? 'Motion blur' : null, rating, rating_verdict: rating >= 0.8 ? 'good' : rating >= 0.6 ? 'fair' : 'poor', sharp_end: i % 3 === 0 ? 'subject' : 'even',
-      attributes: JSON.stringify(read ? { make, model, colour, team, race_number: no, plate } : {}), burst_pick: i % 5 === 0 ? 1 : 0, region_type: 'vehicle',
+      attributes: JSON.stringify(read ? { make, model, colour, team, race_number: no, plate } : {}), burst_pick: soft ? 0 : i % 5 === 0 ? 1 : 0, region_type: 'vehicle',
     });
   }
   const jobs: Job[] = [

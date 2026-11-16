@@ -45,6 +45,11 @@ pub const RAW_BLURRED: f64 = 0.10;
 pub const RAW_SHARP: f64 = 0.85;
 /// Star floors, fitted to one photographer's hand ratings.
 pub const STAR_BANDS: [(f64, u8); 5] = [(0.958, 5), (0.825, 4), (0.728, 3), (0.606, 2), (0.0, 1)];
+/// A burst with nothing this good has no keeper at all: the engine says "all
+/// soft" rather than proposing the least-bad frame of a bad set. Three stars --
+/// "fair" -- is the bar. A frame the photographer starred by hand always counts,
+/// whatever it measures.
+pub const KEEPER_MIN_RATING: f64 = STAR_BANDS[2].0;
 pub const SHARP_AT: f64 = 0.825;
 pub const BLURRED_BELOW: f64 = 0.606;
 /// Edge-blur (`sigma_worst`, normalised to
