@@ -27,6 +27,21 @@
 //! Edge-blur sigma of the same ring does *not* separate the two (streaks are
 //! crisp lines, not defocus), which is why the tile measure is used here.
 //!
+//! # The pan axis
+//!
+//! The same tiles answer *which way* the background is smeared: the weighted
+//! circular mean of `2*theta` over the per-tile structure tensors, where
+//! `theta` is a tile's dominant gradient orientation. The gradient runs across
+//! a streak, so the streak direction -- the pan axis -- is that mean plus 90
+//! degrees. Angles are degrees clockwise from image-right, folded to
+//! `(-90, 90]`, so 0 is a horizontal pan and 90 one straight up or down.
+//!
+//! A single frame gives the *line* of a pan, not the arrow: motion blur is
+//! symmetric, so panning left and panning right leave the same background.
+//! [`Pan::axis_deg`] is therefore unsigned by nature, and `framing`'s
+//! `Motion::AxisDeg` scores lead room symmetrically rather than inventing a
+//! direction.
+//!
 //! Cost: about 23 ms per subject, one pass over the ring after an integer
 //! area-average downscale.
 
@@ -54,6 +69,25 @@ const MIN_EDGE: usize = 48;
 /// Tiles below this percentile of the region's gradient energy are noise.
 const TRACE_PERCENTILE: f32 = 0.30;
 
+/// One subject's panned background, measured from the ring around its box.
+///
+/// The two numbers come from the same tiles, so a caller pays for the analysis
+/// once: the coherence the pan flag reads, and the axis lead room is measured
+/// along.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pan {
+    /// Mean per-tile coherence `(l1 - l2) / (l1 + l2)` of the structure
+    /// tensor, 0..=1. Compare with [`PAN_COHERENCE`].
+    pub coherence: f64,
+    /// The direction the background is smeared along, in degrees clockwise
+    /// from image-right, folded to (-90, 90]: 0 is a horizontal pan, 90 a
+    /// vertical one. An axis, not an arrow (see the module notes).
+    pub axis_deg: f64,
+    /// How parallel the tiles' orientations are, 0..=1 (1 = every tile
+    /// agrees). A low value means the mean axis is noise.
+    pub consistency: f64,
+}
+
 /// The ring around `bbox`: the box grown by one width horizontally and one
 /// height vertically, clipped to the frame, minus the box. `None` when there
 /// is nothing to measure (no box, too small a frame, or too few usable tiles).
@@ -62,7 +96,7 @@ const TRACE_PERCENTILE: f32 = 0.30;
 /// dimension) its one-box expansion covers the frame, so the whole frame
 /// outside the box is used instead: a "ring" that is clipped to the frame edge
 /// is not a ring, but the background is still the background.
-pub fn background_streaks(gray: &Gray, bbox: [f64; 4]) -> Option<f64> {
+pub fn background_pan(gray: &Gray, bbox: [f64; 4]) -> Option<Pan> {
     let (iw, ih) = (gray.width, gray.height);
     if iw < MIN_EDGE || ih < MIN_EDGE {
         return None;
@@ -173,7 +207,7 @@ pub fn background_streaks(gray: &Gray, bbox: [f64; 4]) -> Option<f64> {
     sorted_traces.sort_by(f32::total_cmp);
     let floor = pick(&sorted_traces, TRACE_PERCENTILE);
 
-    let (mut sum, mut n) = (0f64, 0usize);
+    let (mut sum, mut n, mut z, mut s) = (0f64, 0usize, 0f64, 0f64);
     for (&(jxx, jxy, jyy), &t) in tensors.iter().zip(traces.iter()) {
         if t <= 0.0 || t < floor {
             continue;
@@ -184,13 +218,43 @@ pub fn background_streaks(gray: &Gray, bbox: [f64; 4]) -> Option<f64> {
         if l1 + l2 <= 0.0 {
             continue;
         }
-        sum += ((l1 - l2) / (l1 + l2)) as f64;
+        let c = ((l1 - l2) / (l1 + l2)) as f64;
+        // The tile's gradient orientation; the mean of the doubled angle is
+        // the circular mean of a line, which has no 180-degree ambiguity.
+        let theta = 0.5 * ((2.0f32 * jxy).atan2(jxx - jyy) as f64);
+        sum += c;
+        z += c * (2.0 * theta).cos();
+        s += c * (2.0 * theta).sin();
         n += 1;
     }
     if n < MIN_TILES || sum <= 0.0 {
         return None;
     }
-    Some(sum / n as f64)
+    // The streak is across the gradient, so the pan axis is the mean gradient
+    // orientation plus 90 degrees, folded back onto the half turn.
+    let gradient_deg = 0.5 * s.atan2(z).to_degrees();
+    Some(Pan {
+        coherence: sum / n as f64,
+        axis_deg: fold_deg(gradient_deg + 90.0),
+        consistency: z.hypot(s) / sum,
+    })
+}
+
+/// The pan measure's coherence alone, for the callers that only ask the
+/// yes/no question (the pan flag, the tests, the measurement harness).
+pub fn background_streaks(gray: &Gray, bbox: [f64; 4]) -> Option<f64> {
+    background_pan(gray, bbox).map(|pan| pan.coherence)
+}
+
+/// Fold an angle in degrees into (-90, 90]: a line has no arrow, so 100 and
+/// -80 are the same direction.
+fn fold_deg(deg: f64) -> f64 {
+    let d = deg.rem_euclid(180.0);
+    if d > 90.0 {
+        d - 180.0
+    } else {
+        d
+    }
 }
 
 /// The box in pixels, clamped to the frame.
@@ -296,6 +360,16 @@ mod tests {
         data
     }
 
+    /// The same smear turned on its side: vertical streaks, a vertical pan.
+    fn vertical_pan_background(w: usize, h: usize) -> Vec<u8> {
+        let bands = texture(w, 1, 21);
+        let mut data = vec![0u8; w * h];
+        for y in 0..h {
+            data[y * w..(y + 1) * w].copy_from_slice(&bands);
+        }
+        data
+    }
+
     /// The frame with a sharp textured subject pasted into the box.
     fn frame(mut data: Vec<u8>, w: usize, h: usize, box_px: [usize; 4], seed: u64) -> Gray {
         let [x0, y0, x1, y1] = box_px;
@@ -325,6 +399,46 @@ mod tests {
         let s = background_streaks(&g, BOX).expect("texture measured");
         println!("isotropic background coherence {s:.3}");
         assert!(s < PAN_COHERENCE, "static background read {s:.3}");
+    }
+
+    #[test]
+    fn the_pan_axis_is_the_streak_direction() {
+        // A horizontal smear is a pan along x: 0 degrees.
+        let g = frame(pan_background(W, H), W, H, px(BOX), 7);
+        let pan = background_pan(&g, BOX).expect("pan measured");
+        println!("horizontal pan {pan:?}");
+        assert!(pan.coherence >= PAN_COHERENCE, "{pan:?}");
+        assert!(
+            pan.axis_deg.abs() < 10.0,
+            "horizontal pan read as {:.1} deg",
+            pan.axis_deg
+        );
+        assert!(pan.consistency > 0.9, "tiles disagree: {pan:?}");
+        // Turned on its side the axis is vertical, and folding makes
+        // up-or-down the same 90 degrees.
+        let g = frame(vertical_pan_background(W, H), W, H, px(BOX), 7);
+        let pan = background_pan(&g, BOX).expect("vertical pan measured");
+        println!("vertical pan {pan:?}");
+        assert!(
+            (pan.axis_deg.abs() - 90.0).abs() < 10.0,
+            "vertical pan read as {:.1} deg",
+            pan.axis_deg
+        );
+        // A still background has no axis worth using: the flag's own number
+        // stays below the threshold, and the tile orientations disagree.
+        let g = frame(texture(W, H, 3), W, H, px(BOX), 7);
+        let pan = background_pan(&g, BOX).expect("texture measured");
+        assert!(pan.coherence < PAN_COHERENCE, "{pan:?}");
+        assert!(pan.consistency < 0.5, "a still frame looked parallel: {pan:?}");
+    }
+
+    #[test]
+    fn a_folded_line_has_no_arrow() {
+        assert!((fold_deg(0.0)).abs() < 1e-9);
+        assert!((fold_deg(180.0)).abs() < 1e-9);
+        assert!((fold_deg(90.0) - 90.0).abs() < 1e-9);
+        assert!((fold_deg(100.0) + 80.0).abs() < 1e-9);
+        assert!((fold_deg(-100.0) - 80.0).abs() < 1e-9);
     }
 
     #[test]
