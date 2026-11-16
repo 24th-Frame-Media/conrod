@@ -67,13 +67,23 @@ borderline mesh read on an ambiguous pose, not a logic error. Retuning the
    drops made these keys nearly inert rather than correctly placed. The cut-side
    gate before size is the part that does respect the evidence ("a cut-off
    subject never wins on size"); occlusion and lead room do not rank unless
-   ratings tie. Not changed (any re-order moves Motorsport/Ford picks); needs a
-   principled A/B on more bursts than readiness has.
+   ratings tie. **Fixed**: `beats` is now one lexicographic key tuple
+   (`Candidate::key`: stars, no cull, rating band, exposure, buck, cut sides,
+   size, framing bucket, eyes-open bucket, smile bucket, exact rating, quality,
+   sharpness, frame, row). Only the keys that used to compare by a pairwise
+   margin are bucketed (framing/eyes/smile/buck at 0.10); the keys that were
+   already exact (area, rating, quality, sharpness) stay exact, because
+   bucketing them tied frames of genuinely different size and lost a motorsport
+   pick (46.7 -> 40.0 on readiness; back to 46.7 with exact size). Tests:
+   `the_key_ladder_is_a_total_order`,
+   `within_the_rating_band_the_more_open_eyes_win`.
 5. **Margin comparisons are not transitive** (framing 0.10, smile 0.10). The
    fold in `pick_of_pass` therefore depends on iteration order (`ORDER BY
    i.id`) for bursts of 3+. Deterministic, but a rescan with a different frame
-   order can flip a pick. Mitigation if it matters: quantise to buckets (like
-   `RATING_BAND`) instead of a pairwise margin.
+   order can flip a pick. **Fixed** by the same bucket ladder: every key is an
+   integer bucket or an exact total-ordered value, so the fold cannot depend on
+   row order. Test: `the_keeper_order_does_not_depend_on_the_order_the_rows_arrive_in`
+   (framing 0.50/0.56/0.63, the trio the old 0.10 margin split in two).
 6. **Occlusion treats any covering box as in front** (`framing.rs::occlusion`).
    A small subject in front of a larger car/person gets 1.0 occlusion because
    the bigger box contains it. Count only boxes not larger than the subject, or
@@ -81,7 +91,16 @@ borderline mesh read on an ambiguous pose, not a logic error. Retuning the
 7. **Lead room is never measured**: `cull_frame` passes `motion = None` to
    `vis_framing::framing`, so `lead_room` stays `None` and the sport policy's
    lead-room term is dropped. The commit text and the sport policy imply it is
-   used.
+   used. **Fixed**: `streaks::background_pan` now returns the pan axis (the
+   line the background is smeared along, degrees clockwise from image-right,
+   from the same tiles the pan flag reads) beside the coherence;
+   `pan_motion` passes it as `Motion::AxisDeg` on frames the pan flag calls a
+   pan, and `None` elsewhere. One frame cannot say which way along that line
+   the subject travelled (motion blur is symmetric), so the axis is scored on
+   the side with the room and the lead term drops for a subject centred on the
+   line (head-on cars). Tests: `the_pan_axis_is_the_streak_direction`,
+   `an_axis_gives_lead_room_without_guessing_the_direction`,
+   `a_panning_frame_gets_lead_room_and_a_still_one_gets_none`.
 8. **Mesh can cull on its own when OCEC did not judge**
    (`lib.rs`, `!ocec_judged || ocec_closed`). The comment says the mesh "never
    invents" a closed eye, but for a face OCEC skipped (turned or small head)

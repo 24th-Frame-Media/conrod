@@ -1,4 +1,4 @@
-//! Passes over a whole album that work from what is already stored and read no
+﻿//! Passes over a whole album that work from what is already stored and read no
 //! photograph: which frame of each pass is the keeper (`pick_of_pass`), and which
 //! vehicles are one car (`consolidate`, behind the Group action). Ports
 //! `pipeline.pick_of_pass`, `pipeline.embed_missing` and `grouping.consolidate`.
@@ -42,15 +42,71 @@ pub(crate) fn region_name(kind: Subject) -> &'static str {
 /// better, so the subject's prominence decides between them.
 const RATING_BAND: f64 = 0.03;
 
-/// The smile difference that counts as a difference, not measurement noise.
-const SMILE_MARGIN: f64 = 0.10;
-/// The framing difference worth reordering two near-equal candidates.
-const FRAMING_MARGIN: f64 = 0.10;
-
 /// The same band for a face or an eye. Their score is an edge-blur estimate,
 /// not the tile ratio the band was measured on: a hundredth of it is a real
 /// difference between two portraits, and the keeper must follow it.
 const FACE_BAND: f64 = 0.005;
+
+/// Bucket widths of the keeper order's soft keys. The order is one lexicographic
+/// tuple (see [`Candidate::key`]) and each soft key is quantised, so that a
+/// difference inside measurement noise ties and the comparison is a *total*
+/// order: a pairwise "within 0.10" margin is not transitive, which made a
+/// three-frame pass depend on the order its rows came back in.
+///
+/// Only the keys that used to compare by a pairwise margin are bucketed, and
+/// each width is that margin:
+///
+/// - rodeo `buck_score`: 0.10 (the animal's rear, read coarsely).
+/// - framing score: 0.10 (the margin the earlier A/B used).
+/// - lowest eye-open: 0.10 (blendshape flicker between frames of one burst).
+/// - smile: 0.10 (the margin the portrait case was tuned with).
+///
+/// The keys that were already compared exactly stay exact (the rating, the
+/// subject's area, NIMA quality, the stored sharpness, the frame and the row
+/// id): they are measurements, not margins, and quantising them ties frames
+/// that genuinely differ. The one A/B that tried it lost a motorsport pick.
+const BUCK_BUCKET: f64 = 0.10;
+const FRAMING_BUCKET: f64 = 0.10;
+const EYES_BUCKET: f64 = 0.10;
+const SMILE_BUCKET: f64 = 0.10;
+
+/// An exactly ordered measurement in a key tuple: `total_cmp`, with NaN (or an
+/// absent value) sorted below every real one, so a missing measurement never
+/// wins a comparison it has no evidence for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Exact(f64);
+
+impl Eq for Exact {}
+
+impl Ord for Exact {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+impl PartialOrd for Exact {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn exact(value: f64) -> Exact {
+    Exact(if value.is_finite() {
+        value
+    } else {
+        f64::NEG_INFINITY
+    })
+}
+
+/// A value's bucket, floor-divided. Missing, non-finite and negative values
+/// land at or below the first bucket, so "no measurement" ranks like the worst
+/// real one and never beats it.
+fn bucket(value: Option<f64>, width: f64) -> i64 {
+    match value {
+        Some(v) if v.is_finite() => (v / width).floor() as i64,
+        _ => 0,
+    }
+}
 
 /// One candidate for the keeper of a unit: a subject, or a frame with no
 /// subject the profile rates.
@@ -76,6 +132,8 @@ struct Candidate {
     bright: bool,
     /// The preset's framing score for this subject, 0..1.
     framing: Option<f64>,
+    /// The lowest eye-open among the frame's faces, 0..1.
+    eyes: Option<f64>,
     /// The highest smile among the frame's faces, 0..1.
     smile: Option<f64>,
     /// Rodeo: how much the animal is rearing under its rider, 0..1.
@@ -87,88 +145,114 @@ struct Candidate {
 struct Ranking {
     quality: bool,
     framing: bool,
+    eyes: bool,
     smile: bool,
     buck: bool,
 }
 
+/// The keeper order as one lexicographic tuple: every field to the left
+/// dominates every field to the right, and every field is an integer bucket or
+/// an exactly ordered value, so the comparison is a total order and a sort of
+/// it cannot depend on the order the rows arrived in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Key {
+    /// A hand star (or the star already in the file) wins outright.
+    by_hand: i64,
+    /// A frame no rule culled beats one that was culled.
+    unculled: i64,
+    /// Rating in the candidate's band (the wider of the two kinds).
+    rating_band: i64,
+    /// A clean exposure beats a clipped one; never a cull.
+    bright: i64,
+    /// Rodeo/equestrian only.
+    buck: i64,
+    /// Fewer frame edges run the subject off -- negated, so fewer wins. This
+    /// sits above size: a cut-off subject never wins on size.
+    cut_sides: i64,
+    /// Larger subject, as a share of the frame. Size stays ahead of the soft
+    /// composition keys: the readiness A/B that put framing above size lost
+    /// motorsport picks (46.7 -> 33.3), and the same A/B on this ladder kept
+    /// size ahead. Exact rather than bucketed: the area is a real measurement,
+    /// not a margin, and quantising it tied subjects that differ.
+    area: Exact,
+    /// The preset's framing score (cut sides, size band, mode, occlusion,
+    /// lead room, tilt), when the preset has a framing policy. Occlusion and
+    /// lead room ride here, so the least-occluded composition wins between
+    /// subjects of the same size.
+    framing: i64,
+    /// The lowest eye-open among the frame's faces, on people presets.
+    eyes: i64,
+    /// The highest smile among the frame's faces, on people presets.
+    smile: i64,
+    /// The exact rating, finer than its band.
+    rating: Exact,
+    /// NIMA quality, when the album asks for it.
+    quality: Exact,
+    /// The stored subject sharpness.
+    sharpness: Exact,
+    /// The earlier frame, then the earlier row, as negative ids so the earlier
+    /// one is the larger key: a full tie always keeps the same candidate,
+    /// whatever order the rows came back in.
+    frame: i64,
+    row: i64,
+}
+
 impl Candidate {
-    /// In the order the keeper is decided: a hand star first, then a frame no
-    /// rule culled, then the rating in the candidate's band (the wider of the
-    /// two, where the kinds differ), then a clean exposure, then the rodeo
-    /// buck (in that preset only), then the subject that the frame edge cuts
-    /// off least -- a cropped subject never wins on size -- then the larger
-    /// subject and the exact rating, then the preset's framing score, then a
-    /// smile, then (opt-in) NIMA quality, then the stored subject sharpness,
-    /// and finally the earlier frame. Framing and the smile rank late because
-    /// readiness showed them dropping pick rates when they outranked size.
+    /// The whole keeper order in one tuple; the doc comment on [`Key`] lists
+    /// the fields in the order they dominate. Readiness decided the order:
+    /// stars, no cull, the rating band, a clean exposure and the subject's size
+    /// before composition, because framing above size cost three cases' pick
+    /// rates (motorsport 46.7 -> 33.3, car meet 67 -> 33.3, portrait 42.9 ->
+    /// 35.7). Framing, eyes and the smile then refine same-size, same-band
+    /// frames; a cut-off subject has already lost at `cut_sides`.
+    ///
+    /// The preset decides which soft keys apply ([`Ranking`]); where one does
+    /// not, its bucket is the constant 0 and it cannot reorder anything.
+    fn key(&self, r: &Ranking) -> Key {
+        let band_width = self.band;
+        Key {
+            by_hand: self.by_hand,
+            unculled: i64::from(!self.culled),
+            rating_band: bucket(Some(self.score), band_width),
+            bright: i64::from(self.bright),
+            buck: if r.buck { bucket(self.buck, BUCK_BUCKET) } else { 0 },
+            cut_sides: -i64::from(self.sides),
+            framing: if r.framing {
+                bucket(self.framing, FRAMING_BUCKET)
+            } else {
+                0
+            },
+            eyes: if r.eyes { bucket(self.eyes, EYES_BUCKET) } else { 0 },
+            smile: if r.smile {
+                bucket(self.smile, SMILE_BUCKET)
+            } else {
+                0
+            },
+            area: exact(self.area),
+            rating: exact(self.score),
+            quality: if r.quality {
+                exact(self.quality.unwrap_or(f64::NEG_INFINITY))
+            } else {
+                exact(f64::NEG_INFINITY)
+            },
+            sharpness: exact(self.sharpness),
+            frame: -self.frame,
+            row: -self.row,
+        }
+    }
+
+    /// Is this candidate the better keeper? A strict comparison of the key
+    /// tuple: antisymmetric and transitive, and equal keys never beat each
+    /// other, so the first frame held stays (the fold in `pick_of_pass`).
     fn beats(&self, other: &Self, r: &Ranking) -> bool {
-        if self.by_hand != other.by_hand {
-            return self.by_hand > other.by_hand;
-        }
-        if self.culled != other.culled {
-            return !self.culled;
-        }
-        let band_width = self.band.max(other.band);
-        let band = (self.score / band_width).floor();
-        let other_band = (other.score / band_width).floor();
-        if band != other_band {
-            return band > other_band;
-        }
-        if self.bright != other.bright {
-            return self.bright;
-        }
-        if r.buck {
-            if let (Some(a), Some(b)) = (self.buck, other.buck) {
-                if a != b {
-                    return a > b;
-                }
-            }
-        }
-        // A cropped subject never wins on size: the contact-sheet comparison
-        // showed the delivered frame keeping the subject whole.
-        if self.sides != other.sides {
-            return self.sides < other.sides;
-        }
-        if self.area != other.area {
-            return self.area > other.area;
-        }
-        if self.score != other.score {
-            return self.score > other.score;
-        }
-        // Everything below is a tiebreak on a near-tie. Readiness set this
-        // order: framing as a pre-size key dropped three cases' pick rates
-        // (motorsport 46.7 -> 33.3, car meet 67 -> 33.3, portrait 42.9 ->
-        // 35.7), so it ranks after the rating and only on a real difference.
-        if r.framing {
-            if let (Some(a), Some(b)) = (self.framing, other.framing) {
-                if (a - b).abs() >= FRAMING_MARGIN {
-                    return a > b;
-                }
-            }
-        }
-        if r.smile {
-            // A smile decides between frames that differ, not a 0.02 flicker:
-            // the readiness portrait case lost picks to a tie on noise.
-            if let (Some(a), Some(b)) = (self.smile, other.smile) {
-                if (a - b).abs() >= SMILE_MARGIN {
-                    return a > b;
-                }
-            }
-        }
-        if self.score != other.score {
-            return self.score > other.score;
-        }
-        if r.quality {
-            if let (Some(a), Some(b)) = (self.quality, other.quality) {
-                if a != b {
-                    return a > b;
-                }
-            }
-        }
-        if self.sharpness != other.sharpness {
-            return self.sharpness > other.sharpness;
-        }
-        self.frame < other.frame
+        // The rating band is the wider of the two kinds' bands, as it always
+        // was: one band has to decide, not each candidate's own.
+        let band = self.band.max(other.band);
+        let mut mine = self.key(r);
+        let mut theirs = other.key(r);
+        mine.rating_band = bucket(Some(self.score), band);
+        theirs.rating_band = bucket(Some(other.score), band);
+        mine > theirs
     }
 }
 
@@ -205,7 +289,7 @@ pub fn pick_of_pass(
     };
     let found = rows(
         conn,
-        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.set_id, i.dark_frame, i.exposure_verdict, i.smile_max, i.buck_score, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.set_id, i.dark_frame, i.exposure_verdict, i.eye_open_min, i.smile_max, i.buck_score, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
         params![job, crate::EYES_CLOSED],
     )?;
     // Which optional keys rank is the preset's decision; read it from the album
@@ -226,7 +310,18 @@ pub fn pick_of_pass(
     let ranking = Ranking {
         quality: use_quality_score,
         framing: crate::framing_policy(preset).is_some(),
-        // A smile decides between otherwise equal people frames.
+        // Eyes and smile decide between otherwise equal people frames: the
+        // same presets as a smile, because eyes-open is a face judgement.
+        eyes: matches!(
+            preset,
+            ShootPreset::Portrait
+                | ShootPreset::PortraitGroup
+                | ShootPreset::PortraitCouple
+                | ShootPreset::Wedding
+                | ShootPreset::Event
+                | ShootPreset::EventShows
+                | ShootPreset::EventParties
+        ),
         smile: matches!(
             preset,
             ShootPreset::Portrait
@@ -347,6 +442,7 @@ pub fn pick_of_pass(
                 sides: framing::assess(bbox, width, height).sides,
                 area,
                 framing: r["framing_score"].as_f64(),
+                eyes: r["eye_open_min"].as_f64(),
                 smile: r["smile_max"].as_f64(),
                 buck: r["buck_score"].as_f64(),
                 band: if matches!(region, "eye" | "face") {
@@ -362,7 +458,7 @@ pub fn pick_of_pass(
     // burst's ungrouped unit, rated by the frame.
     let spare = rows(
         conn,
-        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness,set_id,dark_frame,exposure_verdict,smile_max,buck_score FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 ORDER BY id",
+        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness,set_id,dark_frame,exposure_verdict,eye_open_min,smile_max,buck_score FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 ORDER BY id",
         [job],
     )?;
     for r in &spare {
@@ -390,6 +486,7 @@ pub fn pick_of_pass(
                 sides: 0,
                 area: 0.0,
                 framing: None,
+                eyes: r["eye_open_min"].as_f64(),
                 smile: r["smile_max"].as_f64(),
                 buck: r["buck_score"].as_f64(),
                 band: RATING_BAND,
@@ -557,7 +654,7 @@ fn find_people(
             if stop.load(Ordering::Relaxed) {
                 return Ok(());
             }
-            task.detail(format!("Looking for faces · {path}"));
+            task.detail(format!("Looking for faces Â· {path}"));
             let raw = conrod_io::raw::read(std::path::Path::new(path))?;
             let rgb = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
             let grey = rgb.to_gray();
@@ -816,7 +913,7 @@ pub(crate) fn embed_faces_missing(
             continue;
         };
         task.detail(format!(
-            "Matching face · {}",
+            "Matching face Â· {}",
             std::path::Path::new(path)
                 .file_name()
                 .unwrap_or_default()
@@ -1227,6 +1324,171 @@ mod tests {
             vec![uncut],
             "a subject cut off on two sides loses to a smaller one inside the frame"
         );
+    }
+
+    /// A candidate with the plainest possible everything, for the key-ladder
+    /// tests: one frame, no cull, a mid rating, an average-sized subject.
+    fn plain(frame: i64) -> Candidate {
+        Candidate {
+            frame,
+            row: frame,
+            on_frame: false,
+            by_hand: 0,
+            culled: false,
+            score: 0.80,
+            sharpness: 0.80,
+            quality: None,
+            sides: 0,
+            area: 0.20,
+            band: RATING_BAND,
+            bright: true,
+            framing: None,
+            eyes: None,
+            smile: None,
+            buck: None,
+        }
+    }
+
+    fn everything() -> Ranking {
+        Ranking {
+            quality: true,
+            framing: true,
+            eyes: true,
+            smile: true,
+            buck: true,
+        }
+    }
+
+    #[test]
+    fn the_keeper_order_does_not_depend_on_the_order_the_rows_arrive_in() {
+        let r = everything();
+        // Framing 0.50, 0.56 and 0.63. Each neighbouring pair is inside the old
+        // 0.10 pairwise margin, which made that comparison non-transitive: the
+        // fold kept whichever frame it met first in the middle of the trio. As
+        // buckets (0.10 wide) the top two are 5, 5, 6, so 0.63 is the best
+        // candidate whatever order the rows come in.
+        let candidates: Vec<Candidate> = [0.50, 0.56, 0.63]
+            .into_iter()
+            .enumerate()
+            .map(|(i, framing)| Candidate {
+                framing: Some(framing),
+                ..plain(i as i64 + 1)
+            })
+            .collect();
+        let fold = |order: &[&Candidate]| -> i64 {
+            let mut held = order[0];
+            for &candidate in &order[1..] {
+                if candidate.beats(held, &r) {
+                    held = candidate;
+                }
+            }
+            held.frame
+        };
+        let [a, b, c] = [&candidates[0], &candidates[1], &candidates[2]];
+        assert_eq!(fold(&[a, b, c]), c.frame);
+        assert_eq!(fold(&[c, b, a]), c.frame);
+        assert_eq!(fold(&[b, a, c]), c.frame, "the middle frame stays behind");
+        assert_eq!(fold(&[b, c, a]), c.frame);
+    }
+
+    #[test]
+    fn the_key_ladder_is_a_total_order() {
+        let r = everything();
+        let mut candidates = vec![
+            plain(1),
+            Candidate {
+                score: 0.86,
+                ..plain(2)
+            },
+            Candidate {
+                framing: Some(0.20),
+                ..plain(3)
+            },
+            Candidate {
+                framing: Some(0.90),
+                eyes: Some(0.90),
+                smile: Some(0.90),
+                ..plain(4)
+            },
+            Candidate {
+                culled: true,
+                score: 0.99,
+                ..plain(5)
+            },
+            Candidate {
+                sides: 2,
+                area: 0.90,
+                ..plain(6)
+            },
+            Candidate {
+                by_hand: 3,
+                ..plain(7)
+            },
+            Candidate {
+                area: 0.21,
+                sharpness: 0.60,
+                ..plain(8)
+            },
+        ];
+        // The exact rating a key is compared by: the quiet key override the
+        // fold uses (both sides get the wider band).
+        let key = |a: &Candidate, b: &Candidate| -> Key {
+            let mut k = a.key(&r);
+            k.rating_band = bucket(Some(a.score), a.band.max(b.band));
+            k
+        };
+        // Totality and antisymmetry: no pair is both better and worse, and an
+        // unequal pair always has exactly one direction.
+        for a in &candidates {
+            for b in &candidates {
+                let ab = a.beats(b, &r);
+                let ba = b.beats(a, &r);
+                assert!(!(ab && ba), "{:?} beats both ways", (a.frame, b.frame));
+                assert_eq!(ab, key(a, b) > key(b, a));
+                assert_eq!(
+                    ab || ba,
+                    key(a, b) != key(b, a),
+                    "an unequal pair must have a direction ({}, {})",
+                    a.frame,
+                    b.frame
+                );
+            }
+        }
+        // Transitivity: the fold can never depend on which frame it held first.
+        for a in &candidates {
+            for b in &candidates {
+                for c in &candidates {
+                    if a.beats(b, &r) && b.beats(c, &r) {
+                        assert!(a.beats(c, &r), "{} > {} > {} but not >", a.frame, b.frame, c.frame);
+                    }
+                }
+            }
+        }
+        // No key is dead: a stable sort of the set is the fold's answer.
+        candidates.sort_by(|a, b| key(b, a).cmp(&key(a, b)));
+    }
+
+    #[test]
+    fn within_the_rating_band_the_more_open_eyes_win() {
+        let r = everything();
+        let open = Candidate {
+            eyes: Some(0.70),
+            ..plain(2)
+        };
+        let narrow_eyed = Candidate {
+            eyes: Some(0.30),
+            ..plain(1)
+        };
+        assert!(
+            open.beats(&narrow_eyed, &r) && !narrow_eyed.beats(&open, &r),
+            "the more open eyes win a same-size, same-rating frame"
+        );
+        // A missing measurement is not evidence of open eyes: it ranks below a
+        // measured low value, and equal to another missing one.
+        let unmeasured = plain(3);
+        assert!(narrow_eyed.beats(&unmeasured, &r));
+        assert!(!unmeasured.beats(&narrow_eyed, &r));
+        assert!(!plain(4).beats(&unmeasured, &r), "two unknowns tie");
     }
 
     #[test]
