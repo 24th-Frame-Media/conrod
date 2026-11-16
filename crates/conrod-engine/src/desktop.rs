@@ -641,7 +641,9 @@ impl Desktop {
                     i.path AS frame_path,i.thumb_path AS frame_thumb
              FROM detections d JOIN images i ON i.id=d.image_id
              WHERE i.job_id=?1 AND ({read})
-             ORDER BY COALESCE(d.reviewed,0) ASC, d.image_id, d.id LIMIT {CAP}"
+             ORDER BY COALESCE(d.reviewed,0) ASC,
+                      (COALESCE(d.number,'')='' AND COALESCE(d.plate,'')='') ASC,
+                      d.image_id, d.id LIMIT {CAP}"
         );
         let rows = rows_compact(&db, &sql, [job])?;
         Ok(json!({
