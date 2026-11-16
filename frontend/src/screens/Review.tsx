@@ -12,6 +12,7 @@ import { useLocalFlag, useRun } from '../state/hooks';
 import { useToast } from '../state/toast';
 import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
 import { ShootSettingsModal } from '../components/ShootSettingsModal';
+import { ExportSheet } from '../components/ExportSheet';
 import type { Frame, Job, KnownVehicle, MarkValues, Settings, Status, Task } from '../lib/types';
 import { profileLabel, profileParent } from '../lib/types';
 import { facetsFor } from '../lib/facets.mjs';
@@ -128,6 +129,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const [known, setKnown] = useState<KnownVehicle[]>([]);
   const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [autoAdvance, setAutoAdvance] = useLocalFlag('conrod.autoAdvance', true);
   const [cols, setCols] = useState(4);
   const run = useRun();
@@ -284,7 +286,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   }
   const filtered = filters.search !== '' || filters.facet !== null || filters.view !== 'all' || filters.minStars > 0;
   const emptyState = (
-    <Empty icon="images" title={review.frames.length ? 'Nothing matches these filters.' : scanning ? 'Waiting for the first frames…' : 'No photographs to show yet.'}>
+    <Empty icon="images" title={review.frames.length ? 'Nothing matches these filters.' : rv.loading ? 'Loading this album…' : scanning ? 'Waiting for the first frames…' : 'No photographs to show yet.'}>
       {filtered && <button className="ghost" onClick={() => patchFilters({ ...defaultFilters })}>Clear filters</button>}
     </Empty>
   );
@@ -336,8 +338,8 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       }
     : {
         label: 'Write XMP',
-        onClick: () => onWrite(false),
-        title: 'Write ratings, tags, and vehicle metadata to XMP sidecars',
+        onClick: () => setExportOpen(true),
+        title: 'Export: write ratings, tags, and vehicle metadata to XMP sidecars',
       };
 
   const actionItems: MenuItem[] = [
@@ -366,14 +368,14 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     },
     {
       id: 'write',
-      label: 'Write XMP',
-      hint: 'Write ratings, stars, and tags directly to photo sidecars',
-      onClick: () => onWrite(false),
+      label: 'Export…',
+      hint: 'Review what leaves Conrod, then write XMP sidecars',
+      onClick: () => setExportOpen(true),
     },
     {
       id: 'dry_run',
       label: 'Dry run (preview XMP)',
-      hint: 'Simulate XMP write without touching files on disk',
+      hint: 'List what would be written without touching files on disk',
       onClick: () => onWrite(true),
     },
     { type: 'divider' },
@@ -573,6 +575,15 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           await saveAlbum(patch);
           toast('Shoot settings updated for this album.');
         }}
+      />
+      <ExportSheet
+        visible={exportOpen}
+        albumLabel={currentJob?.label ?? ''}
+        frames={review.frames}
+        keepers={rv.keepers}
+        dryRunFirst={false}
+        onClose={() => setExportOpen(false)}
+        onWrite={onWrite}
       />
       {confirmReset === 'reset_ratings' && (
         <Confirm
