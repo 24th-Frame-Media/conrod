@@ -183,6 +183,12 @@ export function Inspector({
         <dd>{frame.burst_key == null || (allFrames.length > 0 && allFrames.filter((f) => f.burst_key === frame.burst_key).length < 2) ? '—' : frame.burst_key}</dd>
       </dl>
 
+      {frame.taste != null && (
+        <p className="muted taste-score" title="Learned taste: ranks this frame against its burst. A sort signal, not a keeper.">
+          Taste {frame.taste.toFixed(2)}
+        </p>
+      )}
+
       {frame.error && <p className="error-text">{frame.error}</p>}
 
       <DetectionsTable

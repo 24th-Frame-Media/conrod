@@ -177,6 +177,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("detections", "burst_pick", "INTEGER"),
     // The same flag at frame level, for a frame with no subject to mark.
     ("images", "burst_pick", "INTEGER"),
+    // The learned taste score, 0..1: a sort signal inside a burst, never a
+    // keeper. Written by `taste_rank` from the cached preview.
+    ("images", "taste", "REAL"),
     // Other readings of the same car's plate. See known_vehicles.
     ("known_vehicles", "aliases", "TEXT"),
     ("known_vehicles", "driver", "TEXT"),

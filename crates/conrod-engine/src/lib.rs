@@ -42,6 +42,7 @@ pub mod region_training;
 pub mod rescore;
 pub mod selftest;
 pub mod setup;
+pub mod taste;
 #[cfg(test)]
 mod testkit;
 #[cfg(test)]

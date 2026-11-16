@@ -57,6 +57,18 @@
       ]
     },
     {
+      "name": "dinov2-small-tower.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "Apache-2.0 (Meta DINOv2)",
+      "note": "The learned taste head's image tower (fp32 export). Not part of a fresh install; see scripts/taste/train_head.py",
+      "sha256": "f22797eabf810a75e41de68d378541ebea372122b25c4ce3ef25ff618250c20a",
+      "size": 88532934,
+      "sources": [
+        "https://huggingface.co/onnx-community/dinov2-small/resolve/main/onnx/model.onnx"
+      ]
+    },
+    {
       "name": "yolo-v9-t-640-license-plates-end2end.onnx",
       "dest": "models",
       "extract": false,
