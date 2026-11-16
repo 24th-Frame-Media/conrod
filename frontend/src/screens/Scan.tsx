@@ -13,7 +13,7 @@ type Props = {
   onPause: () => void; onResume: () => void; onCancel: () => void; onReview: () => void; onLibrary: () => void;
 };
 
-const VERDICT: Record<ScanRecentFrame['verdict'], string> = { sharp: 'Sharp', soft: 'Soft', panning: 'Pan' };
+const VERDICT: Record<ScanRecentFrame['verdict'], string> = { sharp: 'Sharp', soft: 'Soft' };
 const FOUND: [keyof ScanFound, string][] = [
   ['subjects', 'Subjects'], ['soft', 'Soft'], ['closed_eyes', 'Closed eyes'], ['numbers', 'Numbers'], ['plates', 'Plates'], ['bursts', 'Bursts'], ['keepers', 'Keepers'],
 ];
@@ -25,7 +25,7 @@ function Thumbs({ recent }: { recent: ScanRecentFrame[] }) {
       {recent.slice(0, 24).map((f) => (
         <figure className={`scan-thumb ${f.verdict}`} key={f.image_id}>
           <img src={asset(f.thumb_url)} alt="" loading="lazy" draggable={false} />
-          <span className="verdict">{VERDICT[f.verdict] ?? f.verdict}</span>
+          <span className="verdict">{(VERDICT[f.verdict] ?? f.verdict) + (f.panning ? ' · pan' : '')}</span>
           {f.label && <span className="label mono">{f.label}</span>}
         </figure>
       ))}

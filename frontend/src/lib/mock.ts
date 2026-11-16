@@ -146,7 +146,12 @@ function tickSim(db: Db): void {
   }
   for (let k = Math.floor(prevFaces); k < Math.floor(s.done[3]); k += 1) {
     const labelled = s.done[4] > 0 && k % 5 < 3, car = CARS[k % CARS.length];
-    s.recent.unshift({ image_id: 1000 + k, thumb_url: mockThumb(k), subject: 'car', verdict: k % 5 === 3 ? 'soft' : k % 7 === 2 ? 'panning' : 'sharp', label: labelled ? (k % 2 ? `#${car[4]}` : car[5]) : null });
+    s.recent.unshift({
+      image_id: 1000 + k, thumb_url: mockThumb(k), subject: 'car',
+      verdict: k % 5 === 3 ? 'soft' : 'sharp',
+      panning: k % 5 !== 3 && k % 7 === 2,
+      label: labelled ? (k % 2 ? `#${car[4]}` : car[5]) : null,
+    });
   }
   s.recent = s.recent.slice(0, 24);
   const finished = s.pick >= s.total;
@@ -271,6 +276,22 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       return out({ ok: true, jobId: a.jobId });
     }
     case 'review': return out({ frames: db.frames, detections: db.dets });
+    case 'identified': {
+      const rows = db.dets
+        .filter((d) => d.number || d.plate || (d.attributes && d.attributes !== '{}'))
+        .map((d) => {
+          const f = db.frames.find((x) => x.id === d.image_id);
+          return {
+            id: d.id, image_id: d.image_id, cls: d.cls, region_type: d.region_type,
+            crop_path: d.crop_path, number: d.number, plate: d.plate,
+            number_conf: d.number ? 0.9 : null, plate_conf: d.plate ? 0.8 : null,
+            attributes: d.attributes, quality: d.quality ?? null,
+            reviewed: d.reviewed ?? 0, rejected: d.rejected ?? 0,
+            frame_path: f?.path ?? '', frame_thumb: f?.thumb_path ?? null,
+          };
+        });
+      return out({ rows: rows.slice(0, 400), total: rows.length, unreviewed: rows.filter((r) => r.reviewed !== 1).length, shown: Math.min(400, rows.length) });
+    }
     case 'scan': {
       if (a.jobId == null && typeof a.root === 'string') {
         const id = Math.max(0, ...db.jobs.map((j) => j.id)) + 1;

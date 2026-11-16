@@ -355,6 +355,7 @@ pub enum Command {
     Stop {},
     DeleteJob(JobArgs),
     Identify(JobArgs),
+    Identified(JobArgs),
     Write(WriteArgs),
     CancelOperation(KeyArgs),
     InstallModels {},

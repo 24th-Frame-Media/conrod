@@ -1,4 +1,30 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+
+/**
+ * Sheets live on `document.body`, not inside the screen: a transformed or scrolled
+ * ancestor turns `position: fixed` into "relative to that ancestor", which is what
+ * made the import sheet drift off screen.
+ */
+export function Portal({ children }: { children: ReactNode }) {
+  return createPortal(children, document.body);
+}
+
+/**
+ * Backdrop click that does not fire when a text selection started inside the sheet
+ * and ended on the backdrop: only a press that began on the backdrop closes.
+ */
+export function useBackdropClose(onClose: () => void) {
+  const down = useRef(false);
+  return {
+    onMouseDown: (e: ReactMouseEvent) => { down.current = e.target === e.currentTarget; },
+    onClick: (e: ReactMouseEvent) => {
+      const close = down.current && e.target === e.currentTarget;
+      down.current = false;
+      if (close) onClose();
+    },
+  };
+}
 
 const PATHS = {
   x: 'M6 6l12 12M18 6L6 18',

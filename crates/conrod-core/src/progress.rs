@@ -99,8 +99,13 @@ pub struct RecentFrame {
     pub thumb_url: String,
     /// The frame's main subject class, `"vehicle"`, `"person"` or `"frame"`.
     pub subject: String,
-    /// `sharp`, `soft` or `panning`.
+    /// How sharp the subject is: `sharp` or `soft`. A pan is a separate flag, so a
+    /// panned subject still says whether it came out sharp.
     pub verdict: String,
+    /// True when the frame was taken as a pan: the subject is sharp and the
+    /// background is streaked.
+    #[serde(default)]
+    pub panning: bool,
     /// What the frame reads as once known: a race number or plate. `null` until
     /// identification has looked at it.
     pub label: Option<String>,

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Icon } from './basics';
+import { Icon, Portal, useBackdropClose } from './basics';
 import { type Settings } from '../lib/types';
 import { ShootTypeSelect } from './ShootTypeSelect';
 
@@ -32,6 +32,7 @@ export function ShootSettingsModal({
   const [readPlates, setReadPlates] = useState(initialSettings.read_plates !== false);
   const [groupVehicles, setGroupVehicles] = useState(initialSettings.group_vehicles !== false);
   const [saving, setSaving] = useState(false);
+  const backdrop = useBackdropClose(onClose);
 
   useEffect(() => {
     if (visible) {
@@ -61,12 +62,8 @@ export function ShootSettingsModal({
   };
 
   return (
-    <div
-      className="import-overlay"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <Portal>
+    <div className="import-overlay" {...backdrop}>
       <div className="import-dialog shoot-settings-modal" style={{ maxWidth: 540 }}>
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}>
           <Icon name="x" />
@@ -132,5 +129,6 @@ export function ShootSettingsModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

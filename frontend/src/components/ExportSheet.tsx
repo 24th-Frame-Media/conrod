@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { exportLine, exportSummary } from '../lib/export.mjs';
 import type { Frame } from '../lib/types';
-import { Icon } from './basics';
+import { Icon, Portal, useBackdropClose } from './basics';
 
 type Props = {
   visible: boolean;
@@ -21,6 +21,7 @@ type Props = {
 export function ExportSheet({ visible, albumLabel, frames, keepers, dryRunFirst, onClose, onWrite }: Props) {
   const [dryRun, setDryRun] = useState(dryRunFirst);
   const summary = useMemo(() => exportSummary(frames, keepers), [frames, keepers]);
+  const backdrop = useBackdropClose(onClose);
 
   useEffect(() => {
     if (visible) setDryRun(dryRunFirst);
@@ -28,7 +29,8 @@ export function ExportSheet({ visible, albumLabel, frames, keepers, dryRunFirst,
 
   if (!visible) return null;
   return (
-    <div className="import-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <Portal>
+    <div className="import-overlay" {...backdrop}>
       <div className="import-dialog export-sheet" style={{ maxWidth: 560 }}>
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
         <h2>Export</h2>
@@ -69,5 +71,6 @@ export function ExportSheet({ visible, albumLabel, frames, keepers, dryRunFirst,
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

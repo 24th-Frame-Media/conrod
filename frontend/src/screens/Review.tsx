@@ -14,6 +14,7 @@ import { useToast } from '../state/toast';
 import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
 import { ShootSettingsModal } from '../components/ShootSettingsModal';
 import { ExportSheet } from '../components/ExportSheet';
+import { Identifications } from '../components/Identifications';
 import type { Frame, Job, KnownVehicle, MarkValues, Settings, Status, Task } from '../lib/types';
 import { profileLabel, profileParent } from '../lib/types';
 import { facetsFor } from '../lib/facets.mjs';
@@ -175,6 +176,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
 
   // 1.3: which of grid / loupe (Viewer) / compare is showing; G/E/C reach this through `verbs`.
   const [view, setView] = useState<ReviewView>('grid');
+  const [idsOpen, setIdsOpen] = useState(false);
   const [comparePane, setComparePane] = useState<'left' | 'right'>('left');
   const [compareRightId, setCompareRightId] = useState<number | null>(null);
   const compareRight = useMemo(() => {
@@ -367,6 +369,13 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       badge: eligible > 0 ? eligible : undefined,
       disabled: busy || identifying || eligible === 0,
       onClick: onIdentify,
+    },
+    {
+      id: 'identified',
+      label: 'Identifications…',
+      hint: 'See what was read on each photo, and accept it one by one',
+      disabled: !review.detections.some((d) => d.number || d.plate || (d.attributes && d.attributes !== '{}')),
+      onClick: () => setIdsOpen(true),
     },
     {
       id: 'accept_all',
@@ -584,6 +593,16 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           await saveAlbum(patch);
           toast('Shoot settings updated for this album.');
         }}
+      />
+      <Identifications
+        visible={idsOpen}
+        jobId={jobId}
+        albumLabel={currentJob?.label ?? ''}
+        identifying={identifying}
+        onClose={() => setIdsOpen(false)}
+        onOpenFrame={(id) => { setIdsOpen(false); rv.setSelected(id); setView('grid'); }}
+        onAccepted={() => { void onJobsChanged(); void rv.refresh(); }}
+        toast={toast}
       />
       <ExportSheet
         visible={exportOpen}
