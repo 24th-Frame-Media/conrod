@@ -31,6 +31,7 @@ with a nonzero exit code if a task fails.
 | rescore | jobId | operation; apply learned/current scoring to stored features, preserving hand ratings |
 | rescan | jobId | operation; re-read every photo and re-measure sharpness inside the stored boxes, preserving all hand edits |
 | pick_keepers | jobId | Best subject per car per pass |
+| taste_rank | jobId, force? | operation; score each frame's cached preview with the learned taste head into `images.taste` (skips scored frames unless `force`); `head: false` when no head is installed |
 | group / regroup | jobId | operation; embeddings, groups and consensus |
 | rename_job | jobId, label? | Trim label; blank/null restores folder name |
 | summary | jobId | job, counts, images, numbers (with entry-list descriptions), plates, map_size, by_region |

@@ -53,6 +53,17 @@ pub struct JobArgs {
     pub job_id: i64,
 }
 
+/// `taste_rank`: score every frame's cached preview, unless it already has a
+/// score -- `force` rescores the whole album.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TasteArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    #[serde(default)]
+    pub force: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageArgs {
@@ -369,6 +380,9 @@ pub enum Command {
     Rescore(JobArgs),
     Rescan(JobArgs),
     PickKeepers(JobArgs),
+    /// Score every frame's cached preview with the learned taste head. A sort
+    /// signal only: it never changes a pick.
+    TasteRank(TasteArgs),
     Group(JobArgs),
     /// The old name for `group`, kept so an older window still works.
     Regroup(JobArgs),
@@ -527,6 +541,17 @@ mod tests {
             Ok(Command::Rescan(_))
         ));
         assert!(Command::parse("rescan", json!({})).is_err());
+        let Ok(Command::TasteRank(taste)) =
+            Command::parse("taste_rank", json!({"jobId": 2, "force": true}))
+        else {
+            panic!()
+        };
+        assert_eq!((taste.job_id, taste.force), (2, true));
+        let Ok(Command::TasteRank(taste)) = Command::parse("taste_rank", json!({"jobId": 2})) else {
+            panic!()
+        };
+        assert!(!taste.force, "a plain run only fills in what is missing");
+        assert!(Command::parse("taste_rank", json!({})).is_err());
         let Ok(Command::RenameJob(a)) =
             Command::parse("rename_job", json!({"jobId": 1, "label": null}))
         else {

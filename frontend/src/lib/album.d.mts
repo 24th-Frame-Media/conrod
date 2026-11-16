@@ -1,5 +1,5 @@
 export type Grouping = 'bursts' | 'vehicles' | 'dupes' | 'flat';
-export type ReviewPrefs = { grouping: Grouping; sort: 'review' | 'best' | 'worst' | 'frame' | 'pick'; view: 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook'; minStars: number };
+export type ReviewPrefs = { grouping: Grouping; sort: 'review' | 'best' | 'worst' | 'frame' | 'pick' | 'taste'; view: 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook'; minStars: number };
 export const GROUPINGS: readonly Grouping[];
 export const SORTS: readonly string[];
 export const VIEWS: readonly string[];

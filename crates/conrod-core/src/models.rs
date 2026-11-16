@@ -24,6 +24,12 @@ pub const OCR_RECOGNISER: &str = "ch_PP-OCRv4_rec_infer.onnx";
 /// NIMA technical quality (idealo/image-quality-assessment, MobileNet, Apache-2.0).
 /// Opt-in, not part of a fresh install's default set.
 pub const QUALITY: &str = "nima-mobilenet-technical.onnx";
+/// DINOv2-small image tower for the learned taste score (Apache-2.0). The
+/// fp32 export the experiment measured, not the quantised similarity model.
+pub const TASTE_TOWER: &str = "dinov2-small-tower.onnx";
+/// The learned head beside it: weights, feature order and standardisation.
+/// Absent means taste is off; `scripts/taste/train_head.py` writes it.
+pub const TASTE_HEAD: &str = "taste-head.json";
 const OCR_DETECTOR_V3: &str = "ch_PP-OCRv3_det_infer.onnx";
 
 /// The plate models' homes in the OCR libraries' on-disk caches, under
