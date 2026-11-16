@@ -35,6 +35,8 @@ test('the one-line summary skips what is not there', () => {
   assert.equal(summaryOf(row), 'No. 23 · MNT911 · Porsche 911 GT3 R · Manthey · Dick Johnson');
   assert.equal(summaryOf({ attributes: '{}' }), 'Nothing readable');
   assert.equal(summaryOf({ plate: 'ABC123', attributes: '{}' }), 'ABC123');
+  // a livery with no number still shows its words
+  assert.equal(summaryOf({ attributes: JSON.stringify({ kind: 'car', text: ['PIRTEK', 'TOURINGCAR', 'THIRD'] }) }), 'PIRTEK · TOURINGCAR');
 });
 
 test('counts say how much still needs a look', () => {

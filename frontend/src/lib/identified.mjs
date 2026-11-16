@@ -52,7 +52,11 @@ export function summaryOf(row) {
     r.driver,
     r.person,
   ].filter(Boolean);
-  return parts.length ? parts.join(' · ') : 'Nothing readable';
+  if (parts.length) return parts.join(' · ');
+  // A livery with no number or plate still has words worth showing.
+  const text = attributesOf(row?.attributes).text;
+  const words = Array.isArray(text) ? text.filter((t) => typeof t === 'string' && t.trim()).slice(0, 2) : [];
+  return words.length ? words.join(' · ') : 'Nothing readable';
 }
 
 /** Counts for the header: how much is done, and how much still needs a look. */
