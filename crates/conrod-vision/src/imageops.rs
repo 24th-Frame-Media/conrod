@@ -481,7 +481,7 @@ impl Rgb {
                     let sy = h - 1 - y;
                     let src_row = &self.data[sy * w * 3..(sy + 1) * w * 3];
                     let dst_row = &mut out[y * nw * 3..(y + 1) * nw * 3];
-                    for (x, dst_px) in dst_row.chunks_exact_mut(3).enumerate() {
+                    for (x, dst_px) in dst_row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
                         let sx = (w - 1 - x) * 3;
                         dst_px.copy_from_slice(&src_row[sx..sx + 3]);
                     }
