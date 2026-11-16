@@ -556,6 +556,7 @@ const FORMATS: &[&[(bool, std::ops::RangeInclusive<usize>)]] = &[
     &[(DIGIT, 1..=3), (LETTER, 1..=3), (DIGIT, 1..=3)],
     &[(DIGIT, 4..=6), (LETTER, 1..=1)], // club and historic registration, e.g. 73111J
     &[(LETTER, 1..=1), (DIGIT, 4..=6)],
+    &[(LETTER, 6..=6)], // custom and personalised issue, e.g. SRBGTR
 ];
 
 fn matches_any_format(token: &str) -> bool {
