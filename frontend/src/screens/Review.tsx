@@ -29,10 +29,12 @@ export type ReviewVerbs = {
   stepFrame: (delta: number) => void; stepBurst: (delta: number) => void; nextBurst: (delta: number) => void;
   nextUndecided: () => void; enter: () => void; escape: () => void;
   mark: (values: MarkValues) => void; rejected: () => boolean; picked: () => boolean;
+  undo: () => void; redo: () => void;
 };
 export const noReviewVerbs: ReviewVerbs = {
   view: 'grid', setView: () => {}, stepFrame: () => {}, stepBurst: () => {}, nextBurst: () => {}, nextUndecided: () => {},
   enter: () => {}, escape: () => {}, mark: () => {}, rejected: () => false, picked: () => false,
+  undo: () => {}, redo: () => {},
 };
 
 function currentItem(task: Task): string {
@@ -258,6 +260,8 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     },
     rejected: () => Boolean(activeCompareFrame && facts.get(activeCompareFrame.id)?.cull),
     picked: () => Boolean(activeCompareFrame?.picked),
+    undo: () => { const id = rv.undo(); if (id != null) goTo(id); },
+    redo: () => { const id = rv.redo(); if (id != null) goTo(id); },
   };
   const viewerStack = frame ? stackOf.get(frame.id) ?? null : null;
   const compareStack = (compareRight ?? frame) ? stackOf.get((compareRight ?? frame)!.id) ?? null : null;
