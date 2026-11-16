@@ -23,6 +23,8 @@ const filtersFor = (jobId: number | null): Filters => {
  */
 export function useReview(jobId: number | null, run: Runner) {
   const [review, setReview] = useState<Review>(emptyReview);
+  /** True while the album's first payload is in flight, so an empty grid can say it is loading, not empty. */
+  const [loading, setLoading] = useState(jobId != null);
   const [selected, setSelected] = useState<number | null>(null);
   const [filters, setFilters] = useState<Filters>(() => filtersFor(jobId));
   const [grouping, setGrouping] = useState<Grouping>(() => loadPrefs(jobId).grouping);
@@ -36,7 +38,7 @@ export function useReview(jobId: number | null, run: Runner) {
     setViewJob(jobId);
     setFilters(filtersFor(jobId));
     setGrouping(loadPrefs(jobId).grouping);
-    setReview(emptyReview); setSelected(null); setExpanded(null);
+    setReview(emptyReview); setSelected(null); setExpanded(null); setLoading(jobId != null);
   }
 
   useEffect(() => {
@@ -46,9 +48,14 @@ export function useReview(jobId: number | null, run: Runner) {
 
   const refresh = useCallback(async () => {
     if (jobId == null) return;
-    const r = await engine.review(jobId);
-    if (current.current !== jobId) return; // the album changed while this was in flight
-    setReview(r);
+    setLoading(true);
+    try {
+      const r = await engine.review(jobId);
+      if (current.current !== jobId) return; // the album changed while this was in flight
+      setReview(r);
+    } finally {
+      if (current.current === jobId) setLoading(false);
+    }
   }, [jobId]);
 
   useEffect(() => {
@@ -107,6 +114,6 @@ export function useReview(jobId: number | null, run: Runner) {
     });
   }, [selected, run]);
 
-  return { review, refresh, selected, setSelected, filters, patchFilters, grouping, setGrouping, expanded, setExpanded, facts, facets, keepers, frames, frame, step, mark };
+  return { review, refresh, loading, selected, setSelected, filters, patchFilters, grouping, setGrouping, expanded, setExpanded, facts, facets, keepers, frames, frame, step, mark };
 }
 export type ReviewModel = ReturnType<typeof useReview>;

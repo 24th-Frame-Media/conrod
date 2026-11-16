@@ -1775,6 +1775,13 @@ dialog.viewer {
 .import-check b { font-weight: 500; }
 .import-check small { color: var(--text-mute); font-size: 12px; line-height: 1.4; }
 .import-note { font-size: 12.5px; }
+.export-counts { margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: 12.5px; color: var(--text-dim); }
+.export-dest { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 14px; }
+.export-dest-icon { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; background: var(--surface-3); color: var(--text-dim); }
+.export-dest b { font-weight: 500; }
+.export-dest p { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; }
+.export-sheet .import-check { margin: 0 0 10px; }
+.export-hint { font-size: 12.5px; line-height: 1.45; margin: 0; }
 .import-gap { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .import-gap label { display: grid; gap: 1px; max-width: 38ch; }
 .import-gap b { font-weight: 500; }
