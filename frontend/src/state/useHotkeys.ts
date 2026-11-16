@@ -18,6 +18,9 @@ export type Hotkeys = {
   /** Enter: expand the stack in place, or open the loupe. */
   enter: () => void;
   mark: (values: MarkValues) => void;
+  /** Ctrl+Z / Ctrl+Shift+Z while culling: undo (redo) the last decision. */
+  undo: () => void;
+  redo: () => void;
   openViewer: () => void;
   closeOverlays: () => void;
   toggleHelp: () => void;
@@ -35,8 +38,16 @@ export function useHotkeys(keys: Hotkeys) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target?.closest?.('input,textarea,select') || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (target?.closest?.('input,textarea,select') || e.altKey) return;
       const h = latest.current;
+      // Undo and redo are the only shortcuts with a modifier.
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if (h.page !== 'Review') return;
+        e.preventDefault();
+        if (e.shiftKey) h.redo(); else h.undo();
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) return;
       const k = e.key.toLowerCase();
       // Enter and Space still press a focused toolbar or dialog button.
       const inChrome = Boolean(target?.closest?.('.toolbar, dialog')) && Boolean(target?.closest?.('button, a, summary'));

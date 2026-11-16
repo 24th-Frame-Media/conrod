@@ -120,6 +120,8 @@ export function App() {
     nextUndecided: () => reviewVerbs.current.nextUndecided(),
     enter: () => reviewVerbs.current.enter(),
     mark: (values) => reviewVerbs.current.mark(values),
+    undo: () => reviewVerbs.current.undo(),
+    redo: () => reviewVerbs.current.redo(),
     openViewer: () => { if (rv.frame) { setViewer(true); reviewVerbs.current.setView('loupe'); } },
     closeOverlays: () => {
       if (help || showImport) { setHelp(false); setShowImport(false); return; }

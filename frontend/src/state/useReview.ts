@@ -3,10 +3,27 @@ import { call, engine } from '../lib/api';
 import { buildFacets, buildFacts, defaultFilters, keeperIds, visibleFrames, type Filters } from '../lib/review';
 import { defaultPrefs, parsePrefs, prefsKey, type Grouping } from '../lib/album.mjs';
 import { nearestVisible } from '../lib/stacks.mjs';
+import { capture, record, redo as redoHistory, undo as undoHistory, type UndoEntry } from '../lib/undo.mjs';
 import type { Frame, MarkValues, Review } from '../lib/types';
 import type { Runner } from './hooks';
 
 const emptyReview: Review = { frames: [], detections: [] };
+
+/** One frame's local values after a mark, without waiting for a reload. */
+const patchReview = (r: Review, id: number, values: MarkValues): Review => ({
+  ...r,
+  detections: r.detections.map((d) => d.image_id !== id ? d : {
+    ...d,
+    ...('stars' in values ? { stars: values.stars ?? null } : {}),
+    ...('rejected' in values ? { rejected: values.rejected ? 1 : 0, ...(!values.rejected ? { cull_reason: null } : {}) } : {}),
+  }),
+  frames: r.frames.map((f) => (f.id !== id ? f : {
+    ...f,
+    ...('stars' in values ? { manual_stars: values.stars ?? null } : {}),
+    ...('rejected' in values ? { rejected: values.rejected ? 1 : 0, ...(values.rejected ? { picked: 0 } : {}) } : {}),
+    ...('picked' in values ? { picked: values.picked ? 1 : 0, ...(values.picked ? { rejected: 0 } : {}) } : {}),
+  })),
+});
 
 const loadPrefs = (jobId: number | null) => {
   if (jobId == null) return defaultPrefs;
@@ -93,27 +110,39 @@ export function useReview(jobId: number | null, run: Runner) {
     });
   }, [frames]);
 
+  /** The changes this visit can step back through, newest last; a new mark clears the redo side. */
+  const past = useRef<UndoEntry[]>([]);
+  const future = useRef<UndoEntry[]>([]);
+  const apply = useCallback((id: number, values: MarkValues) => run(async () => {
+    await engine.mark(id, values);
+    setReview((r) => patchReview(r, id, values));
+  }), [run]);
+
   const mark = useCallback((values: MarkValues, id: number | null = selected) => {
     if (id == null) return Promise.resolve(undefined);
-    return run(async () => {
-      await engine.mark(id, values);
-      setReview((r) => ({
-        ...r,
-        detections: r.detections.map((d) => d.image_id !== id ? d : {
-          ...d,
-          ...('stars' in values ? { stars: values.stars ?? null } : {}),
-          ...('rejected' in values ? { rejected: values.rejected ? 1 : 0, ...(!values.rejected ? { cull_reason: null } : {}) } : {}),
-        }),
-        frames: r.frames.map((f) => (f.id !== id ? f : {
-          ...f,
-          ...('stars' in values ? { manual_stars: values.stars ?? null } : {}),
-          ...('rejected' in values ? { rejected: values.rejected ? 1 : 0, ...(values.rejected ? { picked: 0 } : {}) } : {}),
-          ...('picked' in values ? { picked: values.picked ? 1 : 0, ...(values.picked ? { rejected: 0 } : {}) } : {}),
-        })),
-      }));
-    });
-  }, [selected, run]);
+    const frame = review.frames.find((f) => f.id === id) ?? null;
+    past.current = record(past.current, { id, restore: capture(frame, values), after: values });
+    future.current = [];
+    return apply(id, values);
+  }, [selected, review.frames, apply]);
 
-  return { review, refresh, loading, selected, setSelected, filters, patchFilters, grouping, setGrouping, expanded, setExpanded, facts, facets, keepers, frames, frame, step, mark };
+  /** Undo one decision; returns the frame it changed, so the view can go back to it. */
+  const undo = useCallback((): number | null => {
+    const step = undoHistory(past.current, future.current);
+    if (!step) return null;
+    ({ past: past.current, future: future.current } = step);
+    void apply(step.entry.id, step.entry.restore);
+    return step.entry.id;
+  }, [apply]);
+
+  const redo = useCallback((): number | null => {
+    const step = redoHistory(past.current, future.current);
+    if (!step) return null;
+    ({ past: past.current, future: future.current } = step);
+    void apply(step.entry.id, step.entry.after);
+    return step.entry.id;
+  }, [apply]);
+
+  return { review, refresh, loading, selected, setSelected, filters, patchFilters, grouping, setGrouping, expanded, setExpanded, facts, facets, keepers, frames, frame, step, mark, undo, redo };
 }
 export type ReviewModel = ReturnType<typeof useReview>;

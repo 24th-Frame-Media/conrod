@@ -102,6 +102,7 @@ const KEYS: [string, string][] = [
   ['U', 'clear stars, reject and keeper on this photo'],
   ['1 – 5', 'give it that many stars'],
   ['0', 'clear the stars, back to the measured rating'],
+  ['Ctrl+Z  /  Ctrl+Shift+Z', 'undo / redo the last decision'],
   ['G  /  E  /  C', 'grid, full frame, compare the burst side by side'],
   ['B', 'show or hide detection outlines'],
   ['?', 'this list'],
