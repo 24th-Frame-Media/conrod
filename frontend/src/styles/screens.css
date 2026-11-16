@@ -176,6 +176,10 @@
 .card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .card.rejected { opacity: .4; }
 .card.picked { border-left: 3px solid var(--good); }
+/* The engine's suggestion, before you accept it: a green frame around the thumb plus a clickable pill. A
+   full ring, not just the left edge, so it cannot be confused with the green edge of a well-rated frame. */
+.card.suggested { border-left: 3px solid var(--good); }
+.card.suggested:not(.selected) { border-color: rgba(76, 195, 138, .7); box-shadow: inset 0 0 0 2px rgba(76, 195, 138, .32); }
 .card.rated-good { border-left: 3px solid var(--good); }
 .card.rated-fair { border-left: 3px solid var(--warn2); }
 .card.rated-poor { border-left: 3px solid var(--bad); }
@@ -194,6 +198,9 @@
 .keeper-mark { position: absolute; left: 8px; bottom: 8px; z-index: 2; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: var(--overlay-accent); pointer-events: none; }
 .burst-strip .keeper-mark { left: 8px; bottom: 8px; }
 .keeper-mark.inline { position: static; width: 14px; height: 14px; border-radius: 0; background: none; }
+/* "Suggested" / "Close call": one click keeps the frame the engine picked. Sits where the keeper tick sits. */
+.suggest { position: absolute; left: 8px; bottom: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px 3px 5px; border-radius: 6px; border: 1px solid rgba(76, 195, 138, .5); background: rgba(8, 24, 16, .62); backdrop-filter: blur(4px); color: var(--overlay-good); font: 11px/14px var(--mono); letter-spacing: .02em; text-transform: none; cursor: pointer; }
+.suggest:hover { background: rgba(76, 195, 138, .2); border-color: var(--overlay-good); }
 .icon-btn { position: absolute; top: 8px; left: 8px; z-index: 2; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .6); backdrop-filter: blur(4px); border: 1px solid var(--overlay-line); border-radius: 6px; color: var(--overlay-text-dim); font-size: 12px; line-height: 1; opacity: 0; transition: opacity .14s var(--ease), color .14s var(--ease), border-color .14s var(--ease); }
 .card:hover .icon-btn, .card.rejected .icon-btn, .card.culled .icon-btn { opacity: 1; }
 .icon-btn:hover, .card.rejected .icon-btn { color: var(--overlay-bad); border-color: rgba(229, 87, 92, .3); }
@@ -880,6 +887,9 @@ dialog.viewer {
 .burst-stack:hover .burst-layers, .burst-stack.open .burst-layers { border-color: var(--line-hover); }
 .burst-stack.selected .burst-layers { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), 3px 3px 0 var(--surface-2), 6px 6px 0 var(--surface-3), 9px 9px 0 var(--surface); }
 .burst-stack.selected .burst-caption b { color: var(--accent); }
+/* A burst whose lead is the engine's unaccepted suggestion. */
+.burst-stack.suggested .burst-layers { border-color: rgba(76, 195, 138, .55); }
+.burst-stack.suggested .burst-caption b { color: var(--text); }
 .burst-layers .image-load, .burst-layers img { width: 100%; height: 100%; object-fit: cover; }
 
 .burst-caption { display: grid; gap: 2px; padding: 0 4px; }

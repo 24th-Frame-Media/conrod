@@ -20,6 +20,21 @@ export function keepersOf(group, facts) {
   return group.filter((f) => facts.get(f.id)?.pick && decisionOf(f, facts.get(f.id)) !== 'rejected');
 }
 
+/**
+ * The size of the burst each suggested keeper heads: the engine's unaccepted pick, and how many frames it beat.
+ * A burst already picked by hand has no suggestion left to make, so it is absent. Whole-album, like `keeperIds`.
+ *
+ * Deliberately no confidence number: the engine's pick is a total order over many signals, not a rating, so a
+ * rating margin would be a made-up probability. "Best of 18" is the honest claim.
+ */
+export function suggestionSizes(frames, facts) {
+  const out = new Map();
+  for (const group of groupBy(frames, (f) => groupKeyOf(f)).values()) {
+    for (const pick of keepersOf(group, facts).filter((f) => !f.picked)) out.set(pick.id, group.length);
+  }
+  return out;
+}
+
 /** Stack key for a frame: its burst (or dupe set); a frame with no group is its own stack. */
 export function groupKeyOf(frame, dupes = false) {
   const key = dupes ? frame.dupe_key : frame.burst_key;

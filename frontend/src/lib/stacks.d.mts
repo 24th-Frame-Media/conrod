@@ -9,6 +9,8 @@ export type Stack<F extends StackFrame = StackFrame> = { key: string; frames: F[
 
 export function decisionOf(frame: StackFrame, fact: StackFact | undefined): Decision;
 export function keepersOf<F extends StackFrame>(group: F[], facts: Facts): F[];
+/** Burst size behind each suggested (unaccepted) keeper, by frame id. */
+export function suggestionSizes(frames: StackFrame[], facts: Facts): Map<number, number>;
 export function groupKeyOf(frame: StackFrame, dupes?: boolean): string;
 export function keeperIds(frames: StackFrame[], facts: Facts): Set<number>;
 export function leadOf<F extends StackFrame>(frames: F[], keepers: F[], facts: Facts): F;

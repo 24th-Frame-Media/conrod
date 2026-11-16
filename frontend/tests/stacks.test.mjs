@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildStacks, decisionOf, keeperIds, keepersOf, nearestVisible, nextUndecided, reviewOrder,
-  scrollTopFor, stackLayout, stepFlat, stepInStack, stepRow, stepStack, visibleRows,
+  scrollTopFor, stackLayout, stepFlat, stepInStack, stepRow, stepStack, suggestionSizes, visibleRows,
 } from '../src/lib/stacks.mjs';
 
 const f = (id, burst, extra = {}) => ({ id, path: `D:\\IMG_${String(id).padStart(4, '0')}.CR3`, burst_key: burst, rejected: 0, picked: 0, manual_stars: null, rating: 0.5, ...extra });
@@ -35,6 +35,24 @@ test('keeperIds works burst by burst over the whole album, so a filter cannot ch
   assert.deepEqual([...keeperIds(frames, facts)].sort(), [2, 5]);
   const marked = frames.map((x) => (x.id === 4 ? { ...x, picked: 1 } : x));
   assert.deepEqual([...keeperIds(marked, facts)].sort(), [4, 5]);
+});
+
+test('a suggestion carries the size of the burst it heads, and stops being a suggestion once you pick', () => {
+  const burst = [f(1, 1), f(2, 1), f(3, 1)];
+  const sizes = suggestionSizes(burst, factsOf({ 1: { pick: true } }));
+  assert.equal(sizes.get(1), 3, 'best of three frames');
+  assert.equal(sizes.size, 1);
+
+  const picked = burst.map((x) => (x.id === 2 ? { ...x, picked: 1 } : x));
+  assert.equal(suggestionSizes(picked, factsOf({ 1: { pick: true } })).size, 0, 'a manual pick settles the burst');
+
+  const rejectedLeader = burst.map((x) => (x.id === 1 ? { ...x, rejected: 1 } : x));
+  assert.equal(suggestionSizes(rejectedLeader, factsOf({ 1: { pick: true } })).size, 0, 'a rejected pick suggests nothing');
+
+  const twoBursts = suggestionSizes(frames, facts);
+  assert.equal(twoBursts.get(2), 4);
+  assert.equal(twoBursts.get(5), 2);
+  assert.equal(twoBursts.get(7), undefined, 'a lone frame is not a burst to choose within');
 });
 
 test('stacks are built from the filtered list: counts, order and lead follow the filter, the total stays', () => {
