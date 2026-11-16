@@ -54,6 +54,12 @@ pub const PHI_MAX_DIST: f64 = 0.382;
 /// 4.4 (about twice as much room ahead as behind).
 pub const LEAD_TARGET: f32 = 0.34;
 
+/// Below this the subject is centred along the motion line: a head-on car or a
+/// centred pan is a valid composition, and the lead term drops instead of
+/// failing (research 4.4: no lead room for head-on cars, use centring; 4.7).
+/// Own choice, tune on labels.
+pub const LEAD_NEUTRAL: f32 = 0.10;
+
 /// Horizontal imbalance beyond this is penalised, unless the subject is
 /// centred. Source: research 4.3 (`|b_x| > 0.25`).
 pub const BALANCE_THRESHOLD: f32 = 0.25;
@@ -74,6 +80,11 @@ pub enum Motion {
     Vector([f64; 2]),
     /// Degrees clockwise from image-right (+x), y pointing down.
     AngleDeg(f64),
+    /// Degrees of the line a subject moves along, with the direction along it
+    /// unknown: a panned background (or any one frame) shows the line a subject
+    /// travels on, not which way along it. Lead room is scored on whichever
+    /// side has the room, so neither travel direction is guessed at.
+    AxisDeg(f64),
 }
 
 impl Motion {
@@ -81,7 +92,7 @@ impl Motion {
     pub fn unit(self) -> Option<[f64; 2]> {
         let v = match self {
             Motion::Vector(v) => v,
-            Motion::AngleDeg(deg) => {
+            Motion::AngleDeg(deg) | Motion::AxisDeg(deg) => {
                 let r = deg.to_radians();
                 [r.cos(), r.sin()]
             }
@@ -92,6 +103,12 @@ impl Motion {
         } else {
             None
         }
+    }
+
+    /// Does this motion know which way along its line the subject goes? Only an
+    /// arrow does; an axis does not, so its lead room is symmetric.
+    pub fn signed(self) -> bool {
+        !matches!(self, Motion::AxisDeg(_))
     }
 }
 
@@ -120,7 +137,10 @@ pub struct Framing {
     pub subject_frac: f32,
     pub size_band: SizeBand,
     /// Room ahead minus room behind along the motion direction, over the
-    /// frame's extent along that direction; -1..=1. `None` without motion.
+    /// frame's extent along that direction; -1..=1 when the direction is known
+    /// (`Motion::Vector`/`AngleDeg`), 0..=1 when only the line is known
+    /// (`Motion::AxisDeg`, which scores the side with the room). `None` without
+    /// motion.
     pub lead_room: Option<f32>,
     /// Centroid distance to the nearest rule-of-thirds point, divided by the
     /// frame diagonal; 0..=1/3.
@@ -293,8 +313,15 @@ pub fn framing(
         subject_frac: frac as f32,
         size_band,
         lead_room: motion
-            .and_then(Motion::unit)
-            .map(|d| lead_room(d, b, w, h))
+            .and_then(|m| m.unit().map(|d| (m, d)))
+            .map(|(m, d)| {
+                let l = lead_room(d, b, w, h);
+                if m.signed() {
+                    l
+                } else {
+                    l.abs()
+                }
+            })
             .map(|l| l as f32),
         thirds_dist: grid_dist(nx, ny, THIRDS_POINTS) as f32,
         phi_dist: grid_dist(nx, ny, PHI_POINTS) as f32,
@@ -348,7 +375,9 @@ pub fn framing_score(f: &Framing, policy: &FramingPolicy) -> f32 {
     }
 
     if policy.lead_room {
-        if let Some(lead) = f.lead_room {
+        // A subject centred along the motion line is a head-on composition,
+        // which the mode term already scores: the lead question does not apply.
+        if let Some(lead) = f.lead_room.filter(|lead| lead.abs() >= LEAD_NEUTRAL) {
             let miss = (lead - LEAD_TARGET).abs() / (1.0 - LEAD_TARGET);
             add(1.0 - miss, policy.lead_weight);
         }
@@ -590,6 +619,49 @@ mod tests {
         assert!((down.lead_room.unwrap() - 0.8).abs() < 1e-5);
         // No direction: unknown, not zero.
         assert_eq!(framing(FRAME, subject_box, &[], None, None).lead_room, None);
+    }
+
+    #[test]
+    fn an_axis_gives_lead_room_without_guessing_the_direction() {
+        // The car left of centre with the line running along x: the room ahead
+        // (to the right) is bigger, so lead room is positive.
+        let left = framing(FRAME, [200.0, 400.0, 400.0, 600.0], &[], Some(Motion::AxisDeg(0.0)), None);
+        assert!((left.lead_room.unwrap() - 0.4).abs() < 1e-5);
+        // The mirror image: the same car right of centre, the room ahead (left)
+        // is bigger again, and the same positive number comes out. A frame
+        // cannot say which way the car travelled, so neither result may be
+        // penalised as "room behind".
+        let right = framing(FRAME, [600.0, 400.0, 800.0, 600.0], &[], Some(Motion::AxisDeg(0.0)), None);
+        assert!((right.lead_room.unwrap() - 0.4).abs() < 1e-5);
+        // 0 and 180 degrees are the same line.
+        let turned = framing(FRAME, [200.0, 400.0, 400.0, 600.0], &[], Some(Motion::AxisDeg(180.0)), None);
+        assert_eq!(turned.lead_room, left.lead_room);
+        // And a vertical pan measures the height, not the width.
+        let up = framing(FRAME, [400.0, 0.0, 600.0, 200.0], &[], Some(Motion::AxisDeg(90.0)), None);
+        assert!((up.lead_room.unwrap() - 0.8).abs() < 1e-5);
+        // An arrow along the same line still mirrors.
+        let along = framing(FRAME, [200.0, 400.0, 400.0, 600.0], &[], Some(Motion::AngleDeg(180.0)), None);
+        assert!((along.lead_room.unwrap() + 0.4).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_centred_subject_on_the_motion_line_drops_the_lead_term() {
+        // A head-on car: centred along the pan line, no lead question to answer.
+        let centred = framing(FRAME, [400.0, 400.0, 600.0, 600.0], &[], Some(Motion::AxisDeg(0.0)), None);
+        assert!(centred.lead_room.unwrap().abs() < LEAD_NEUTRAL);
+        let sport = FramingPolicy::sport();
+        let no_lead = FramingPolicy {
+            lead_weight: 0.0,
+            ..sport
+        };
+        assert_eq!(
+            framing_score(&centred, &sport),
+            framing_score(&centred, &no_lead),
+            "a centred subject is not penalised for being centred"
+        );
+        // But a subject clearly behind its room is scored, and scores lower.
+        let behind = framing(FRAME, [600.0, 400.0, 800.0, 600.0], &[], Some(Motion::AngleDeg(0.0)), None);
+        assert!(framing_score(&behind, &sport) < framing_score(&centred, &sport));
     }
 
     #[test]

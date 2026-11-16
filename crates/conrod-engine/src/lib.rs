@@ -257,6 +257,19 @@ pub(crate) fn framing_policy(preset: ShootPreset) -> Option<vis_framing::Framing
     }
 }
 
+/// The motion a frame's own pan measure supplies to framing: the axis the
+/// background is smeared along (degrees clockwise from image-right) on a frame
+/// the pan flag calls a pan, and nothing on any other frame. A single frame
+/// cannot say which way along that line the subject travelled -- motion blur is
+/// symmetric -- so the axis is passed as an axis, and lead room is measured on
+/// the side with the room rather than on a guessed direction.
+pub(crate) fn pan_motion(
+    panning: bool,
+    pan: Option<conrod_vision::streaks::Pan>,
+) -> Option<vis_framing::Motion> {
+    panning.then(|| vis_framing::Motion::AxisDeg(pan.map_or(0.0, |p| p.axis_deg)))
+}
+
 fn options(settings: &Settings, _profile: ScanProfile) -> DetectOptions {
     let preset = ShootPreset::parse(&settings.scan_profile);
     let mut classes = Vec::new();
@@ -568,15 +581,6 @@ pub fn cull_frame(
             .copied()
             .filter(|b| *b != det.bbox)
             .collect();
-        let measured = vis_framing::framing(
-            [fw as f64, fh as f64],
-            det.bbox,
-            &others,
-            None,
-            tilt,
-        );
-        let framing_score =
-            framing_policy.map(|policy| vis_framing::framing_score(&measured, &policy));
         let crop_grey = cut_gray(&grey, det.crop_box, settings, models.contains_key(kind));
         let scale = crop_grey.width as f64 / (det.crop_box[2] - det.crop_box[0]);
         let [cx, cy] = [det.crop_box[0], det.crop_box[1]];
@@ -629,10 +633,25 @@ pub fn cull_frame(
         let subject_not_blurred =
             sharpness::verdict_for(focus.score, settings.sharp_at, settings.blurred_below)
                 != "blurred";
+        // One measurement answers both questions: the coherence the pan flag
+        // reads, and the axis (the line the background is smeared along) that
+        // lead room is measured on. A panning frame is the one place the frame
+        // itself says where the subject is going, so framing gets that line
+        // instead of `None` for it (an axis, not an arrow: see `pan_motion`).
+        let pan = conrod_vision::streaks::background_pan(&grey, det.bbox);
         focus.panning = preset.pan_compatible()
             && subject_not_blurred
-            && conrod_vision::streaks::background_streaks(&grey, det.bbox)
-                .is_some_and(|s| s >= conrod_vision::streaks::PAN_COHERENCE);
+            && pan.is_some_and(|p| p.coherence >= conrod_vision::streaks::PAN_COHERENCE);
+        let motion = pan_motion(focus.panning, pan);
+        let measured = vis_framing::framing(
+            [fw as f64, fh as f64],
+            det.bbox,
+            &others,
+            motion,
+            tilt,
+        );
+        let framing_score =
+            framing_policy.map(|policy| vis_framing::framing_score(&measured, &policy));
         let verdict = sharpness::rating_for(rating, settings.sharp_at, settings.blurred_below);
         let stars = sharpness::stars_for(rating);
         let cull_reason = if policy.deliver_most {
@@ -1197,6 +1216,56 @@ mod tests {
             .collect();
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(found, ["a.jpg", "b/deep/n.JPEG", "b/m.cr2", "z.CR3"]);
+    }
+
+    #[test]
+    fn a_panning_frame_gets_lead_room_and_a_still_one_gets_none() {
+        const FRAME: [f64; 2] = [6000.0, 4000.0];
+        // The pan flag only fires on a measured pan; its axis is the line the
+        // background is smeared along (0 = horizontal).
+        let pan = conrod_vision::streaks::Pan {
+            coherence: 0.91,
+            axis_deg: 0.0,
+            consistency: 0.97,
+        };
+        let motion = pan_motion(true, Some(pan));
+        assert_eq!(motion, Some(vis_framing::Motion::AxisDeg(0.0)));
+
+        // The car left of centre: the room ahead is the larger share, so lead
+        // room is positive. Placed right of centre -- as a car travelling the
+        // other way would be -- it is positive again, mirrored: a single frame
+        // may not call either one "room behind".
+        let car = [1000.0, 1000.0, 3000.0, 3000.0];
+        let mirror = [3000.0, 1000.0, 5000.0, 3000.0];
+        let left = vis_framing::framing(FRAME, car, &[], motion, None);
+        let right = vis_framing::framing(FRAME, mirror, &[], motion, None);
+        let (l, r) = (left.lead_room.expect("panned"), right.lead_room.expect("panned"));
+        assert!(l > 0.20 && r > 0.20, "left {l:.3}, right {r:.3}");
+        assert!((l - r).abs() < 1e-6, "mirrored pans read the same: {l} vs {r}");
+        let policy = vis_framing::FramingPolicy::sport();
+        assert!(
+            (vis_framing::framing_score(&left, &policy)
+                - vis_framing::framing_score(&right, &policy))
+            .abs()
+                < 1e-6
+        );
+
+        // A still frame: no motion, so lead room is absent (not zero), and the
+        // sport score is the one without a lead term.
+        let still = pan_motion(false, Some(pan));
+        assert_eq!(still, None);
+        let held = vis_framing::framing(FRAME, car, &[], still, None);
+        assert_eq!(held.lead_room, None);
+        assert_eq!(
+            vis_framing::framing_score(&held, &policy),
+            vis_framing::framing_score(
+                &held,
+                &vis_framing::FramingPolicy {
+                    lead_weight: 0.0,
+                    ..policy
+                }
+            )
+        );
     }
 
     #[test]
