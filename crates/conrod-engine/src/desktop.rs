@@ -385,6 +385,16 @@ impl Desktop {
             Command::DeleteJob(a) => self.delete_job(a.job_id),
             Command::Identify(a) => crate::operations::identify(self, a.job_id),
             Command::Identified(a) => self.identified(a.job_id),
+            Command::ProviderModels(a) => Ok(
+                match conrod_io::vlm::list_models(&a.provider, &a.host, &a.api_key) {
+                    Ok(models) => json!({
+                        "models": models.into_iter()
+                            .map(|(id, name)| json!({"id": id, "name": name}))
+                            .collect::<Vec<_>>(),
+                    }),
+                    Err(e) => json!({"models": [], "error": e}),
+                },
+            ),
             Command::Write(a) => {
                 crate::operations::write(self, a.job_id, a.dry_run, a.embed_in_raw)
             }

@@ -21,6 +21,11 @@ use std::time::{Duration, SystemTime};
 use crate::settings::Settings;
 
 pub const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
+/// OpenCode Console / Go: one key for the models it lists, OpenAI-compatible.
+/// The chat endpoint lives under `inference/openai/v1`; the model list under
+/// `inference/v1`.
+pub const OPENCODE_CHAT_URL: &str = "https://opencode.ai/inference/openai/v1/chat/completions";
+pub const OPENCODE_MODELS_URL: &str = "https://opencode.ai/inference/v1/models";
 pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 const GEMINI_URL: &str =
@@ -591,6 +596,29 @@ pub fn openai_request(
     schema: &Value,
     num_predict: i64,
 ) -> ProviderRequest {
+    openai_request_at(OPENAI_URL, true, model, api_key, prompt, images, schema, num_predict)
+}
+
+/// An OpenAI-shaped chat request against any compatible gateway. `strict` asks
+/// for the schema as `response_format.json_schema`; a gateway whose models do
+/// not support strict schemas gets `json_object` plus the schema in the prompt,
+/// which the reply parser already tolerates.
+#[allow(clippy::too_many_arguments)]
+pub fn openai_request_at(
+    url: &str,
+    strict: bool,
+    model: &str,
+    api_key: &str,
+    prompt: &str,
+    images: &[String],
+    schema: &Value,
+    num_predict: i64,
+) -> ProviderRequest {
+    let prompt = if strict {
+        prompt.to_string()
+    } else {
+        format!("{prompt}\n\nReply with one JSON object matching this schema:\n{schema}")
+    };
     let mut content = vec![json!({"type": "text", "text": prompt})];
     for image in images {
         content.push(json!({
@@ -622,20 +650,87 @@ pub fn openai_request(
             );
         }
     }
+    let response_format = if strict {
+        json!({
+            "type": "json_schema",
+            "json_schema": {"name": "vehicle", "schema": strict_schema, "strict": true},
+        })
+    } else {
+        json!({"type": "json_object"})
+    };
     ProviderRequest {
-        url: OPENAI_URL.into(),
+        url: url.into(),
         headers: vec![("Authorization".into(), format!("Bearer {api_key}"))],
         query: vec![],
         json: json!({
             "model": model,
             "messages": [{"role": "user", "content": content}],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "vehicle", "schema": strict_schema, "strict": true},
-            },
+            "response_format": response_format,
             "max_tokens": num_predict,
             "temperature": 0.0,
         }),
+    }
+}
+
+/// Where an OpenCode service talks: the configured endpoint if there is one
+/// (a proxy, or a self-hosted gateway), else the Console/Go default. An
+/// endpoint given without a path is completed with `/chat/completions`.
+/// The models a provider key can call, as `(id, name)` pairs. Uses the
+/// provider's own list endpoint; anything that is not an OpenAI-shaped
+/// `{"data":[{"id":…}]}` (or `{"models":[…]}`) is reported as an error rather
+/// than guessed at.
+pub fn list_models(provider: &str, host: &str, api_key: &str) -> Result<Vec<(String, String)>, String> {
+    let (url, auth) = match provider.to_lowercase().as_str() {
+        "opencode" => {
+            let host = host.trim().trim_end_matches('/');
+            if host.is_empty() {
+                (OPENCODE_MODELS_URL.to_string(), true)
+            } else if host.ends_with("/models") {
+                (host.to_string(), true)
+            } else {
+                (format!("{host}/models"), true)
+            }
+        }
+        "openai" => ("https://api.openai.com/v1/models".to_string(), true),
+        other => return Err(format!("'{other}' does not list models; type the model name")),
+    };
+    let agent = ureq::Agent::new_with_defaults();
+    let mut request = agent.get(&url);
+    if auth {
+        request = request.header("Authorization", &format!("Bearer {api_key}"));
+    }
+    let response = request.call().map_err(|e| e.to_string())?;
+    let body: Value = response
+        .into_body()
+        .read_json()
+        .map_err(|e| format!("{url}: {e}"))?;
+    let list = body
+        .get("data")
+        .or_else(|| body.get("models"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{url} did not return a model list"))?;
+    let mut models: Vec<(String, String)> = list
+        .iter()
+        .filter_map(|item| {
+            let id = item.get("id").or_else(|| item.get("name")).and_then(Value::as_str)?;
+            let name = item.get("name").and_then(Value::as_str).unwrap_or(id);
+            Some((id.to_string(), name.to_string()))
+        })
+        .collect();
+    models.sort();
+    models.dedup();
+    Ok(models)
+}
+
+pub fn opencode_chat_url(host: &str) -> String {
+    let host = host.trim().trim_end_matches('/');
+    if host.is_empty() {
+        return OPENCODE_CHAT_URL.into();
+    }
+    if host.ends_with("/chat/completions") {
+        host.into()
+    } else {
+        format!("{host}/chat/completions")
     }
 }
 
@@ -747,6 +842,7 @@ pub fn display_name(provider: &str) -> String {
         "openai" => "OpenAI".into(),
         "anthropic" => "Anthropic".into(),
         "gemini" => "Gemini".into(),
+        "opencode" => "OpenCode".into(),
         other => other.to_string(),
     }
 }
@@ -795,6 +891,16 @@ pub fn build_request(
             &settings.vlm_api_key,
             prompt,
             images,
+            num_predict,
+        )),
+        "opencode" => Ok(openai_request_at(
+            &opencode_chat_url(&settings.vlm_host),
+            false,
+            &settings.vlm_model,
+            &settings.vlm_api_key,
+            prompt,
+            images,
+            schema,
             num_predict,
         )),
         other => Err(VlmError::UnknownProvider(other.to_string())),
@@ -875,6 +981,8 @@ fn parse_response(provider: &str, body: &Value) -> Result<Value, VlmError> {
         "ollama" => parse_ollama_response(body),
         "openai" => parse_openai_response(body),
         "anthropic" => parse_anthropic_response(body),
+        // The gateway speaks the OpenAI envelope.
+        "opencode" => parse_openai_response(body),
         "gemini" => parse_gemini_response(body),
         other => Err(VlmError::UnknownProvider(other.to_string())),
     }
@@ -1716,6 +1824,45 @@ mod tests {
         assert_eq!(
             candidate_line(&some),
             "make/model must be one of: Ford Mustang S650, Toyota GR Supra."
+        );
+    }
+
+    #[test]
+    fn the_opencode_provider_speaks_openai_with_json_object() {
+        let mut settings = Settings::default();
+        settings.vlm_provider = "opencode".into();
+        settings.vlm_model = "qwen3.8-max".into();
+        settings.vlm_api_key = "sk-test".into();
+        settings.vlm_host = String::new();
+        let schema = json!({"type": "object", "properties": {"number": {"type": "string"}}});
+        let request = build_request(&settings, "read the number", &["abc".into()], &schema, 100)
+            .expect("opencode is a provider");
+        assert_eq!(request.url, OPENCODE_CHAT_URL);
+        assert!(request
+            .headers
+            .iter()
+            .any(|(k, v)| k == "Authorization" && v == "Bearer sk-test"));
+        assert_eq!(request.json["response_format"]["type"], "json_object");
+        // The schema travels in the prompt: the gateway is not asked for a
+        // strict schema it may not support, and the reply parser reads JSON out
+        // of prose anyway.
+        let text = request.json["messages"][0]["content"][0]["text"]
+            .as_str()
+            .expect("a text part");
+        assert!(text.contains("read the number"));
+        assert!(text.contains("\"number\""));
+    }
+
+    #[test]
+    fn an_opencode_endpoint_is_completed_with_the_chat_path() {
+        assert_eq!(opencode_chat_url(""), OPENCODE_CHAT_URL);
+        assert_eq!(
+            opencode_chat_url("https://proxy.local/v1/"),
+            "https://proxy.local/v1/chat/completions"
+        );
+        assert_eq!(
+            opencode_chat_url("https://proxy.local/v1/chat/completions"),
+            "https://proxy.local/v1/chat/completions"
         );
     }
 }

@@ -268,7 +268,9 @@ export type OllamaModelsResponse = {
   error?: string;
 };
 
-export type VlmProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini';
+export type VlmProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'opencode';
+/** `provider_models`: the models a provider key can call. */
+export type ProviderModelsResponse = { models: { id: string; name: string }[]; error?: string };
 export type VlmService = {
   id: string;
   provider: VlmProvider;

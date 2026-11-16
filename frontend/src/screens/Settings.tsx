@@ -34,6 +34,7 @@ const VLM_PROVIDERS: { id: VlmProvider; name: string; defaultModel: string }[] =
   { id: 'openai', name: 'OpenAI (GPT-4o and newer)', defaultModel: 'gpt-4o' },
   { id: 'anthropic', name: 'Anthropic (Claude 3.5 / 3.7)', defaultModel: 'claude-3-7-sonnet-20250219' },
   { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini-1.5-flash' },
+  { id: 'opencode', name: 'OpenCode (Console / Go key)', defaultModel: 'qwen3.8-max' },
 ];
 
 const KEY_KINDS = [
@@ -139,6 +140,8 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
   const [apiKey, setApiKey] = useState('');
   const [keyKind, setKeyKind] = useState('auto');
   const [models, setModels] = useState<OllamaModel[]>([]);
+  const [providerModels, setProviderModels] = useState<{ id: string; name: string }[]>([]);
+  const [providerError, setProviderError] = useState<string | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -156,6 +159,22 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
     }
   }, []);
 
+  const loadProvider = useCallback(async () => {
+    setLoading(true);
+    setProviderError(null);
+    try {
+      const res = await engine.providerModels(provider, host, apiKey);
+      setProviderModels(res.models);
+      if (res.error) setProviderError(res.error);
+      if (!res.models.length && !res.error) setProviderError('The provider returned no models.');
+    } catch (e) {
+      setProviderError(String(e));
+      setProviderModels([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [provider, host, apiKey]);
+
   useEffect(() => {
     if (open && provider === 'ollama') void load(host);
   }, [open, provider, host, load]);
@@ -169,6 +188,7 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
       model: trimmed,
       enabled: true,
       ...(provider === 'ollama' ? { host } : { api_key: apiKey }),
+      ...(provider === 'opencode' && host.trim() ? { host: host.trim() } : {}),
       ...(provider === 'anthropic' ? { key_kind: keyKind } : {}),
     });
     setOpen(false);
@@ -193,6 +213,9 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
             const next = e.target.value as VlmProvider;
             setProvider(next);
             setModel(VLM_PROVIDERS.find((item) => item.id === next)?.defaultModel || '');
+            setHost(next === 'ollama' ? DEFAULT_OLLAMA_HOST : '');
+            setProviderModels([]);
+            setProviderError(null);
           }}
         >
           {VLM_PROVIDERS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -235,9 +258,33 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
               </select>
             </label>
           )}
+          {provider === 'opencode' && (
+            <label className="setting">
+              <span className="label">Endpoint (optional)</span>
+              <input type="text" value={host} spellCheck={false} placeholder="https://opencode.ai/inference/openai/v1" onChange={(e) => setHost(e.target.value)} />
+            </label>
+          )}
           <label className="setting">
             <span className="label">Model</span>
-            <input type="text" value={model} spellCheck={false} placeholder={VLM_PROVIDERS.find((p) => p.id === provider)?.defaultModel} onChange={(e) => setModel(e.target.value)} />
+            <div className="model-input-row">
+              <input
+                type="text"
+                list={`models-${provider}`}
+                value={model}
+                spellCheck={false}
+                placeholder={VLM_PROVIDERS.find((p) => p.id === provider)?.defaultModel}
+                onChange={(e) => setModel(e.target.value)}
+              />
+              {(provider === 'opencode' || provider === 'openai') && (
+                <button type="button" className="ghost small refresh-models-btn" disabled={loading || !apiKey.trim()} onClick={() => void loadProvider()} aria-label="Load the provider's models">
+                  {loading ? '…' : '↻'}
+                </button>
+              )}
+              <datalist id={`models-${provider}`}>
+                {providerModels.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </datalist>
+            </div>
+            {providerError && <span className="muted vlm-server-detail">{providerError}</span>}
           </label>
         </>
       )}

@@ -54,4 +54,6 @@ export const engine = {
   setIncludePeople: (jobId: number, value: boolean) => call<{ ok: boolean; jobId: number; settings: Settings; operation: string | null }>('set_include_people', { jobId, value }),
   updateJobSettings: (jobId: number, patch: Record<string, unknown>) => call('update_job_settings', { jobId, patch }),
   ollamaModels: (host?: string) => call<import('./types').OllamaModelsResponse>('ollama_models', { host }),
+  providerModels: (provider: string, host?: string, apiKey?: string) =>
+    call<import('./types').ProviderModelsResponse>('provider_models', { provider, host, apiKey }),
 };
