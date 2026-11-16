@@ -257,6 +257,10 @@ pub struct MomentFrame {
     pub taken: Option<f64>,
     /// The main subject's box as fractions of the frame: (x1, y1, x2, y2).
     pub subject: Option<[f64; 4]>,
+    /// The frame was taken as a pan. A pan is one continuous action: the car is
+    /// *meant* to cross the frame, so its box travelling does not start a new
+    /// moment the way a cut does.
+    pub panning: bool,
 }
 
 fn same_moment(anchor: Option<[f64; 4]>, subject: Option<[f64; 4]>) -> bool {
@@ -281,15 +285,23 @@ fn same_moment(anchor: Option<[f64; 4]>, subject: Option<[f64; 4]>) -> bool {
 pub fn split_moments(frames: &[MomentFrame]) -> Vec<i64> {
     // Per burst: the open moment's anchor subject and its key.
     let mut open: HashMap<i64, (Option<[f64; 4]>, i64)> = HashMap::new();
+    let mut previous_pan: HashMap<i64, bool> = HashMap::new();
     let mut moments: i64 = 0;
     frames
         .iter()
-        .map(|frame| match open.get(&frame.burst) {
-            Some(&(anchor, key)) if same_moment(anchor, frame.subject) => key,
-            _ => {
-                moments += 1;
-                open.insert(frame.burst, (frame.subject, moments));
-                moments
+        .map(|frame| {
+            let was_pan = previous_pan.insert(frame.burst, frame.panning).unwrap_or(false);
+            // A pan continues the moment it started in, however far the car has
+            // travelled: panning is one action, and a cut ends it naturally
+            // because the next frame is not a pan.
+            let continues = frame.panning && was_pan;
+            match open.get(&frame.burst) {
+                Some(&(anchor, key)) if continues || same_moment(anchor, frame.subject) => key,
+                _ => {
+                    moments += 1;
+                    open.insert(frame.burst, (frame.subject, moments));
+                    moments
+                }
             }
         })
         .collect()
@@ -516,6 +528,14 @@ mod moment_tests {
             burst,
             taken: None,
             subject,
+            panning: false,
+        }
+    }
+
+    fn pan_mf(burst: i64, subject: Option<[f64; 4]>) -> MomentFrame {
+        MomentFrame {
+            panning: true,
+            ..mf(burst, subject)
         }
     }
 
@@ -535,6 +555,22 @@ mod moment_tests {
         assert!((5..=7).contains(&moments), "{keys:?}");
         assert!(keys.windows(2).all(|w| w[0] <= w[1]), "{keys:?}");
         assert_eq!(keys[0], 1);
+    }
+
+    #[test]
+    fn a_pan_across_the_frame_stays_one_moment() {
+        // The car travels from the left third to the right third: far past the
+        // moment shift, but a pan is one action, not a cut.
+        let frames: Vec<_> = (0..12)
+            .map(|i| pan_mf(1, boxed(0.2 + 0.05 * f64::from(i), 0.5, 0.1)))
+            .collect();
+        assert_eq!(split_moments(&frames), vec![1; 12]);
+        // A pan followed by a static frame starts a new moment: the action ended.
+        let mut frames = frames;
+        frames.push(mf(1, boxed(0.9, 0.5, 0.1)));
+        let keys = split_moments(&frames);
+        assert_eq!(keys[11], 1);
+        assert_eq!(keys[12], 2);
     }
 
     #[test]

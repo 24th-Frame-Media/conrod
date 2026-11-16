@@ -1066,14 +1066,19 @@ impl Desktop {
         // Each image's largest subject, as a box: pixels until normalised below.
         let mut main: std::collections::HashMap<i64, (f64, [f64; 4])> =
             std::collections::HashMap::new();
+        // Frames taken as a pan: one continuous action, so their moments merge.
+        let mut pans: std::collections::HashSet<i64> = std::collections::HashSet::new();
         for d in rows(
             &db,
-            "SELECT d.image_id AS image,d.x1,d.y1,d.x2,d.y2 FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
+            "SELECT d.image_id AS image,d.x1,d.y1,d.x2,d.y2,d.panning AS pan FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
             [job],
         )? {
             let bbox = ["x1", "y1", "x2", "y2"].map(|k| d[k].as_f64().unwrap_or_default());
             let area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]);
             let image = d["image"].as_i64().unwrap_or_default();
+            if d["pan"].as_i64() == Some(1) {
+                pans.insert(image);
+            }
             if main.get(&image).is_none_or(|&(seen, _)| area > seen) {
                 main.insert(image, (area, bbox));
             }
@@ -1101,6 +1106,7 @@ impl Desktop {
                     burst: i64::from(frames[i].burst),
                     taken: frames[i].taken,
                     subject,
+                    panning: pans.contains(&id),
                 }
             })
             .collect();
