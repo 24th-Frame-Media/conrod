@@ -1231,8 +1231,10 @@ fn text(value: Option<&Value>) -> Option<String> {
 }
 
 /// A registration plate as shown: spaces, dots and dashes dropped, upper
-/// case, 2 to 7 letters and digits with at least one of each; anything else
-/// is not a plate.
+/// case, 2 to 7 letters and digits with at least one letter. Letters and
+/// digits mixed is the common issue; an all-letter token must be a known
+/// six-letter personalised format (`SRBGTR`), so a badge word still cannot
+/// pass as a plate.
 fn plate_text(value: Option<&Value>) -> Option<String> {
     let raw = text(value)?;
     let plate: String = raw
@@ -1240,10 +1242,13 @@ fn plate_text(value: Option<&Value>) -> Option<String> {
         .filter(|c| !c.is_whitespace() && !matches!(c, '.' | '-'))
         .collect::<String>()
         .to_uppercase();
+    let letters = plate.bytes().any(|b| b.is_ascii_alphabetic());
+    let digits = plate.bytes().any(|b| b.is_ascii_digit());
+    let personalised = !digits && conrod_vision::plates::looks_like_plate(&plate);
     let valid = (2..=7).contains(&plate.chars().count())
         && plate.chars().all(|c| c.is_ascii_alphanumeric())
-        && plate.chars().any(|c| c.is_ascii_alphabetic())
-        && plate.chars().any(|c| c.is_ascii_digit());
+        && letters
+        && (digits || personalised);
     valid.then_some(plate)
 }
 
@@ -1625,11 +1630,13 @@ mod tests {
     }
 
     #[test]
-    fn plates_are_cleaned_and_must_mix_letters_and_digits() {
+    fn plates_are_cleaned_and_accept_mixed_or_six_letter_personalised() {
         let plate = |s: &str| plate_text(Some(&json!(s)));
         assert_eq!(plate("ab-12 cd"), Some("AB12CD".into()));
         assert_eq!(plate("1ABC.23"), Some("1ABC23".into()));
-        assert_eq!(plate("ABCDEFG"), None, "letters only");
+        assert_eq!(plate("SRB GTR"), Some("SRBGTR".into()), "personalised");
+        assert_eq!(plate("ABCDEFG"), None, "seven letters is not a format");
+        assert_eq!(plate("NISMO"), None, "a five-letter badge is not a plate");
         assert_eq!(plate("1234"), None, "digits only");
         assert_eq!(plate("A1"), Some("A1".into()));
         assert_eq!(plate("A12345678"), None, "too long");
@@ -1663,6 +1670,16 @@ mod tests {
         let d = map_vehicle(&badge, &settings, true, true);
         assert_eq!(d.model_evidence.as_deref(), Some("badge"));
         assert!(!d.model_suggested);
+    }
+
+    #[test]
+    fn a_six_letter_personalised_plate_survives_the_vehicle_map() {
+        let settings = Settings::default();
+        let reply = json!({"plate": "SRB GTR", "evidence": "badge"});
+        assert_eq!(
+            map_vehicle(&reply, &settings, true, true).plate.as_deref(),
+            Some("SRBGTR")
+        );
     }
 
     #[test]
