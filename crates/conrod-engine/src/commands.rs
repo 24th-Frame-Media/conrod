@@ -294,12 +294,6 @@ pub struct RegionArgs {
 }
 
 #[derive(Debug, Deserialize, Default)]
-pub struct CheckUpdateArgs {
-    #[serde(default)]
-    pub force: bool,
-}
-
-#[derive(Debug, Deserialize, Default)]
 pub struct OllamaModelsArgs {
     #[serde(default)]
     pub host: Option<String>,
@@ -391,8 +385,6 @@ pub enum Command {
     ResetDetections(AlbumScope),
     ResetRatings(AlbumScope),
     ResetAll {},
-    CheckUpdate(CheckUpdateArgs),
-    InstallUpdate {},
     OllamaModels(OllamaModelsArgs),
     WatchStatus {},
     SetWatch(WatchArgs),

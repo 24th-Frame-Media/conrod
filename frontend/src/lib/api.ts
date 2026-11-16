@@ -51,7 +51,5 @@ export const engine = {
   deleteJob: (jobId: number) => call('delete_job', { jobId }),
   setIncludePeople: (jobId: number, value: boolean) => call<{ ok: boolean; jobId: number; settings: Settings; operation: string | null }>('set_include_people', { jobId, value }),
   updateJobSettings: (jobId: number, patch: Record<string, unknown>) => call('update_job_settings', { jobId, patch }),
-  checkUpdate: (force = false) => call<import('./types').UpdateInfo>('check_update', { force }),
-  installUpdate: () => call<{ operation: string }>('install_update'),
   ollamaModels: (host?: string) => call<import('./types').OllamaModelsResponse>('ollama_models', { host }),
 };

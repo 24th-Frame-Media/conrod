@@ -342,8 +342,6 @@ impl Desktop {
             Command::ResetRatings(a) => crate::housekeeping::reset_ratings(self, a.job_id),
             Command::ResetDetections(a) => crate::housekeeping::reset_detections(self, a.job_id),
             Command::ResetAll {} => crate::housekeeping::reset_all(self),
-            Command::CheckUpdate(a) => Ok(crate::updating::check(a.force)),
-            Command::InstallUpdate {} => crate::updating::install(self),
             Command::OllamaModels(a) => {
                 let host = a
                     .host

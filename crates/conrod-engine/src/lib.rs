@@ -57,7 +57,6 @@ mod pantest;
 #[cfg(test)]
 mod sporttest;
 pub mod training;
-pub mod updating;
 pub mod watching;
 
 pub const EXTENSIONS: [&str; 4] = ["cr3", "cr2", "jpg", "jpeg"];

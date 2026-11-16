@@ -1,9 +1,11 @@
 import { Maintenance } from '../components/Maintenance';
 import { Benchmark } from './Benchmark';
 import { Known } from './Known';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { check } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 import { engine, inTauri } from '../lib/api';
 import { words } from '../lib/format';
 
@@ -13,7 +15,6 @@ import type {
   Settings as SettingsMap,
   SettingValue,
   Toaster,
-  UpdateInfo,
   OllamaModel,
   Job,
   ModelInfo,
@@ -207,10 +208,14 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
     return keys.some((k) => draft[k] !== settings[k]);
   }, [draft, settings]);
 
-  // App Update state
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  // App update: Tauri's signed updater reads the release's latest.json.
+  const pending = useRef<Awaited<ReturnType<typeof check>> | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<{ version: string; notes: string | null; date: string | null } | null>(null);
+  const [upToDate, setUpToDate] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<{ done: number; total: number } | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   useEffect(() => {
     if (inTauri) void getVersion().then(setAppVersion);
@@ -222,37 +227,50 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
   const [ollamaLoading, setOllamaLoading] = useState(false);
 
   const checkForUpdates = useCallback(async (force = false) => {
+    if (!inTauri) return;
     setCheckingUpdate(true);
+    setUpdateError(null);
     try {
-      const res = await engine.checkUpdate(force);
-      setUpdateInfo(res);
-      if (force) {
-        if (res.newer) {
-          toast(`Update available: v${res.latest}`, { tone: 'ok' });
-        } else if (res.ok) {
-          toast(`Conrod is up to date (v${res.current}).`, { tone: 'ok' });
-        } else if (res.error) {
-          toast(res.error, { tone: 'error' });
-        }
+      const found = await check();
+      pending.current = found;
+      if (found) {
+        setUpdateInfo({ version: found.version, notes: found.body ?? null, date: found.date ?? null });
+        setUpToDate(false);
+        if (force) toast(`Update available: v${found.version}`, { tone: 'ok' });
+      } else {
+        setUpdateInfo(null);
+        setUpToDate(true);
+        if (force) toast(`Conrod is up to date${appVersion ? ` (v${appVersion})` : ''}.`, { tone: 'ok' });
       }
     } catch (e) {
+      setUpdateError(String(e));
+      setUpToDate(false);
       if (force) toast(String(e), { tone: 'error' });
     } finally {
       setCheckingUpdate(false);
     }
-  }, [toast]);
+  }, [toast, appVersion]);
 
   useEffect(() => {
     void checkForUpdates(false);
   }, [checkForUpdates]);
 
+  /** Download the signed bundle, let Tauri install it in place, then restart. */
   const handleInstallUpdate = () => void run(async () => {
+    const update = pending.current;
+    if (!update) return;
     setInstallingUpdate(true);
+    setUpdateProgress({ done: 0, total: 0 });
     try {
-      await engine.installUpdate();
-      toast('Installing update and restarting Conrod...', { tone: 'ok' });
+      await update.downloadAndInstall((event) => {
+        if (event.event === 'Started') setUpdateProgress({ done: 0, total: event.data.contentLength ?? 0 });
+        else if (event.event === 'Progress') setUpdateProgress((p) => ({ done: (p?.done ?? 0) + event.data.chunkLength, total: p?.total ?? 0 }));
+      });
+      toast('Update installed. Restarting Conrod…', { tone: 'ok' });
+      await relaunch();
     } catch (e) {
       setInstallingUpdate(false);
+      setUpdateProgress(null);
       toast(String(e), { tone: 'error' });
     }
   });
@@ -639,27 +657,25 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
             <div className="sidebar-card-header">
               <div className="sidebar-brand">
                 <span className="sidebar-brand-name">Conrod</span>
-                {(updateInfo?.current ?? appVersion) && (
-                  <span className="sidebar-brand-version">v{updateInfo?.current ?? appVersion}</span>
-                )}
+                {appVersion && <span className="sidebar-brand-version">v{appVersion}</span>}
               </div>
               {checkingUpdate ? (
                 <span className="pill-badge checking">Checking…</span>
-              ) : updateInfo?.newer ? (
+              ) : updateInfo ? (
                 <span className="pill-badge update-ready">Update available</span>
-              ) : updateInfo?.ok ? (
+              ) : upToDate ? (
                 <span className="pill-badge up-to-date">Up to date</span>
-              ) : updateInfo?.error ? (
+              ) : updateError ? (
                 <span className="pill-badge error">Check failed</span>
               ) : null}
             </div>
 
             <div className="sidebar-update-body">
-              {updateInfo?.newer ? (
+              {updateInfo ? (
                 <div className="sidebar-update-alert">
                   <div className="sidebar-update-lead">
-                    <strong>Version v{updateInfo.latest} is ready</strong>
-                    {updateInfo.size ? <span className="muted small"> · {(updateInfo.size / (1024 * 1024)).toFixed(1)} MB</span> : null}
+                    <strong>Version v{updateInfo.version} is ready</strong>
+                    {updateInfo.date ? <span className="muted small"> · {updateInfo.date.slice(0, 10)}</span> : null}
                   </div>
                   {updateInfo.notes && (
                     <details className="sidebar-update-notes">
@@ -667,28 +683,27 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                       <div className="notes-text">{updateInfo.notes}</div>
                     </details>
                   )}
-                  {updateInfo.installable ? (
-                    <button
-                      type="button"
-                      className="primary small full-width"
-                      disabled={installingUpdate}
-                      onClick={handleInstallUpdate}
-                    >
-                      {installingUpdate ? 'Installing update…' : 'Install update & restart'}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="button primary small full-width"
-                      onClick={() => void openUrl(`https://github.com/kapsikkum/conrod/releases/tag/${updateInfo.tag ?? `v${updateInfo.latest}`}`)}
-                    >
-                      Download from GitHub ↗
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className="primary small full-width"
+                    disabled={installingUpdate}
+                    onClick={handleInstallUpdate}
+                  >
+                    {installingUpdate
+                      ? updateProgress && updateProgress.total > 0
+                        ? `Downloading ${Math.round((updateProgress.done / updateProgress.total) * 100)}%…`
+                        : 'Installing update…'
+                      : 'Install update & restart'}
+                  </button>
+                  <p className="sidebar-update-desc small">Signed update, installed in place. Your library is untouched.</p>
                 </div>
+              ) : updateError ? (
+                <p className="sidebar-update-desc">
+                  {updateError}. <button type="button" className="sidebar-ext-link" onClick={() => void openUrl('https://github.com/kapsikkum/conrod/releases')}>Download from GitHub ↗</button>
+                </p>
               ) : (
                 <p className="sidebar-update-desc">
-                  Checks GitHub for the latest release. Updates are downloaded and installed automatically.
+                  Conrod checks the GitHub release for a signed update. It downloads and installs in place, then restarts.
                 </p>
               )}
 
