@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   orderStages, stageStatus, readyQueue, bottleneck, overallFraction, overallEta, waitingText, workersOf, workerCounts, formatDuration, formatRate,
-  pushEtaSample, etaStable, etaLabel, percent, summaryLine, clampWorkers,
+  pushEtaSample, etaStable, etaLabel, etaRemaining, percent, summaryLine, clampWorkers,
 } from '../src/lib/scan.mjs';
 
 const st = (id, o = {}) => ({ id, label: id, model: '', device: 'CPU', workers_total: 2, workers_busy: 0, queue_len: 0, done: 0, total: 100, rate_per_s: 0, eta_s: null, ...o });
@@ -131,6 +131,13 @@ test('the ETA says estimating until the projected finish settles', () => {
   let wild = [];
   for (let i = 0; i < 8; i += 1) wild = pushEtaSample(wild, i * 250, i % 2 ? 300 : 20, 10 + i, 100);
   assert.equal(etaStable(wild), false);
+  // a machine getting slower mid-scan: the finish drifts later but stays within half the time left
+  let drift = [];
+  for (let i = 0; i < 10; i += 1) drift = pushEtaSample(drift, i * 1000, 240 + i * 6, 100 + i * 10, 300);
+  assert.equal(etaStable(drift), true, 'a drifting estimate is still an estimate');
+  // the smoothed readout is the median finish, not the newest sample
+  assert.ok(etaRemaining(drift) > 200);
+  assert.equal(etaRemaining([], 0), null);
   // history is bounded
   let long = [];
   for (let i = 0; i < 40; i += 1) long = pushEtaSample(long, i * 250, 60 - i * 0.25, 10 + i, 100);

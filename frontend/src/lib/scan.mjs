@@ -160,13 +160,31 @@ export function pushEtaSample(history, nowMs, etaS, done, total) {
   return next.slice(-KEEP);
 }
 
-/** True when enough samples agree: the projected finish moved less than a quarter of the time left (or 3 s). */
+function median(xs) {
+  const a = [...xs].sort((x, y) => x - y);
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+/**
+ * True when at least 80% of the recent estimates agree with their median, within 60% of it (or 15 s). A
+ * machine that slows down mid-scan drifts within that band, so a nearly-finished scan keeps showing a time;
+ * an estimate that flips between very different answers does not.
+ */
 export function etaStable(history) {
   if (!Array.isArray(history) || history.length < MIN_SAMPLES) return false;
-  const finishes = history.map((h) => h.finish);
-  const spread = Math.max(...finishes) - Math.min(...finishes);
-  const left = Math.max(0, finishes[finishes.length - 1] - history[history.length - 1].now);
-  return spread <= Math.max(3000, left * 0.25);
+  const etas = history.map((h) => Math.max(0, (h.finish - h.now) / 1000));
+  const m = median(etas);
+  const tol = Math.max(15, m * 0.6);
+  const agree = etas.filter((e) => Math.abs(e - m) <= tol).length;
+  return agree / etas.length >= 0.8;
+}
+
+/** The smoothed time left in seconds: the median of the recent estimates, or null before there are samples. */
+export function etaRemaining(history) {
+  if (!Array.isArray(history) || history.length < 3) return null;
+  const m = median(history.map((h) => Math.max(0, (h.finish - h.now) / 1000)));
+  return Number.isFinite(m) ? Math.max(0, m) : null;
 }
 
 /** What the header says under "Time left": "estimating…" until the ETA is stable, then "about 2 min 05 s". */

@@ -19,6 +19,7 @@ export function formatDuration(seconds: number | null | undefined): string;
 export function formatRate(rate: number | null | undefined): string;
 export function pushEtaSample(history: EtaSample[] | null | undefined, nowMs: number, etaS: number | null | undefined, done: number, total: number): EtaSample[];
 export function etaStable(history: EtaSample[] | null | undefined): boolean;
+export function etaRemaining(history: EtaSample[] | null | undefined): number | null;
 export function etaLabel(etaS: number | null | undefined, stable: boolean): string;
 export function percent(done: number, total: number): number;
 export function summaryLine(total: number, found: Partial<ScanFound> | null | undefined): string;
