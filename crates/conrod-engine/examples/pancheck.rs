@@ -31,9 +31,21 @@ fn main() -> Result<(), String> {
         .orient(frame.orientation);
     let grey = image.to_gray();
     let m = sharpness::measure(&grey, bbox, None);
+    // What the scan / re-score stores for a frame with no detected subject: a pan
+    // keeps its capped score, everything else may take its in-focus area.
+    let stored = if bbox.is_none() {
+        sharpness::subjectless_score(&m, sharpness::focal_score(&grey))
+    } else {
+        Some(m.score)
+    };
     println!(
-        "{needle}: stored rating {rating:.3} · now score {:.3} · background {:.3} · panning {} · sharp end {} · share {:.2} · box {bbox:?}",
-        m.score, m.background, m.panning, m.sharp_end, m.pan_share
+        "{needle}: stored rating {rating:.3} · now score {:.3} · stored {:.3} · background {:.3} · panning {} · sharp end {} · share {:.2} · box {bbox:?}",
+        m.score,
+        stored.unwrap_or(f64::NAN),
+        m.background,
+        m.panning,
+        m.sharp_end,
+        m.pan_share
     );
     Ok(())
 }

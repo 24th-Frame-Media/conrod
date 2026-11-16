@@ -324,15 +324,12 @@ fn measure_frame(
         }
     }
     let whole = sharpness::measure(&grey, None, None);
-    let whole = whole.measured.then_some(whole.score);
-    // As `cull_frame` rates a subject-less frame: on its in-focus area.
+    // As `cull_frame` rates a subject-less frame: on its in-focus area, except a
+    // pan, which the cap already rated and whose sharp car must not lift it back.
     let whole = if subjects.is_empty() {
-        match (whole, sharpness::focal_score(&grey)) {
-            (Some(whole), Some(focal)) => Some(whole.max(focal)),
-            (whole, focal) => whole.or(focal),
-        }
+        sharpness::subjectless_score(&whole, sharpness::focal_score(&grey))
     } else {
-        whole
+        whole.measured.then_some(whole.score)
     };
     Ok((out, whole))
 }
