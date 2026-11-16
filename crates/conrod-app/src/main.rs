@@ -199,6 +199,10 @@ fn main() {
     }
     let builder = builder
         .plugin(tauri_plugin_opener::init())
+        // Signed, in-place updates from the GitHub release's latest.json; the
+        // process plugin restarts the app after an install.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let desktop =
                 Desktop::open(conrod_core::settings::data_root()).map_err(std::io::Error::other)?;

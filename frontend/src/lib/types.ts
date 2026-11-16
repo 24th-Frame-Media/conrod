@@ -225,18 +225,6 @@ export type WorkerLimits = {
   note: string;
 };
 
-export type UpdateInfo = {
-  ok: boolean;
-  current: string;
-  latest?: string;
-  newer?: boolean;
-  tag?: string;
-  size?: number;
-  notes?: string;
-  installable?: boolean;
-  error?: string;
-};
-
 export type OllamaModel = {
   name: string;
   size: number;
