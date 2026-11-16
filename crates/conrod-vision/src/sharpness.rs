@@ -450,8 +450,16 @@ pub fn measure(image: &Gray, bbox: Option<[f64; 4]>, model: Option<&SharpModel>)
     // Pan detection stays with the hand-built measure: whether the
     // background is smeared is a fact, not a matter of taste.
     let learned = model.and_then(|m| learned_score(m, &features));
+    // A matched pan keeps the whole subject crisp; a mismatched one leaves the
+    // roof or a door sharp and smears the rest. The tile percentile above is
+    // happy with that, so a pan is capped by its weakest measurable quarter.
+    let pan_cap = panning.then(|| pan_consistency(&subject)).flatten();
+    let mut final_score = learned.unwrap_or(score);
+    if let Some(cap) = pan_cap {
+        final_score = final_score.min(cap);
+    }
     Sharpness {
-        score: learned.unwrap_or(score),
+        score: final_score,
         background,
         panning,
         sharp_end,
@@ -462,6 +470,31 @@ pub fn measure(image: &Gray, bbox: Option<[f64; 4]>, model: Option<&SharpModel>)
         learned: learned.is_some(),
         ..Sharpness::default()
     }
+}
+
+/// The weakest measurable quarter of a panning subject, in the same 0..1 score.
+/// A quarter with too little contrast to measure (a blank door, the sky inside
+/// the box) is left out rather than counted as blurred. `None` when nothing can
+/// be measured, in which case the ordinary subject score stands.
+fn pan_consistency(subject: &Plane) -> Option<f64> {
+    let (w, h) = (subject.w, subject.h);
+    if w.min(h) < TILE_GRID * 4 {
+        return None;
+    }
+    let (mx, my) = (w / 2, h / 2);
+    let quarters = [
+        (0, 0, mx, my),
+        (mx, 0, w, my),
+        (0, my, mx, h),
+        (mx, my, w, h),
+    ];
+    let mut scores: Vec<f64> = quarters
+        .iter()
+        .map(|&(x1, y1, x2, y2)| region_score(&subject.crop(x1, y1, x2, y2), TILE_GRID))
+        .filter(|score| *score > 0.0)
+        .collect();
+    scores.sort_by(f64::total_cmp);
+    scores.first().copied()
 }
 
 /// The frame's in-focus area: how sharp its sharpest real region is.
@@ -901,6 +934,48 @@ mod tests {
         assert!(
             focal.is_none_or(|f| f < conrod_core::settings::BLURRED_BELOW),
             "a speck should not lift the in-focus area, got {focal:?}"
+        );
+    }
+
+    /// A pan: the subject box holds sharp texture while everything around it is
+    /// smeared; `half` smears the subject's lower half, the way a mismatched pan
+    /// leaves the roof crisp and the body moving.
+    fn pan_frame(edge: usize, half: bool) -> (Gray, [f64; 4]) {
+        let sharp = texture(edge);
+        let soft = blur(&sharp, 5);
+        let mut out = soft.clone();
+        let (x1, y1, x2, y2) = (edge * 2 / 10, edge * 3 / 10, edge * 8 / 10, edge * 8 / 10);
+        let half_line = (y1 + y2) / 2;
+        for y in y1..y2 {
+            for x in x1..x2 {
+                let source = if half && y >= half_line { &soft } else { &sharp };
+                out.data[y * edge + x] = source.data[y * edge + x];
+            }
+        }
+        (
+            out,
+            [x1 as f64, y1 as f64, x2 as f64, y2 as f64],
+        )
+    }
+
+    #[test]
+    fn a_pan_that_only_keeps_half_the_car_sharp_is_capped_by_its_weakest_quarter() {
+        let (all_sharp, box_all) = pan_frame(960, false);
+        let (half, box_half) = pan_frame(960, true);
+        let sharp = measure(&all_sharp, Some(box_all), None);
+        let partly = measure(&half, Some(box_half), None);
+        assert!(sharp.panning, "the smeared background makes it a pan");
+        assert!(partly.panning, "still a pan");
+        assert!(
+            sharp.score > 0.6,
+            "a matched pan is a sharp subject, got {}",
+            sharp.score
+        );
+        assert!(
+            partly.score <= sharp.score - 0.15,
+            "a half-smeared car must not rate like a sharp one: {} vs {}",
+            partly.score,
+            sharp.score
         );
     }
 

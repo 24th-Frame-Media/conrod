@@ -266,6 +266,7 @@ mod tests {
                 thumb_url: "cache/native/thumb-12.jpg".into(),
                 subject: "vehicle".into(),
                 verdict: "sharp".into(),
+                panning: false,
                 label: None,
             }],
             found: Found {
