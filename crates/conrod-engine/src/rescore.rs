@@ -109,15 +109,29 @@ fn load_models(d: &Desktop) -> HashMap<&'static str, SharpModel> {
         .collect()
 }
 
-/// The action: re-measure every stored subject of the album, as a background operation.
+/// The action: re-read every photo, re-measure each stored subject and each
+/// subject-less frame from the pixels, then derive ratings, verdicts and keepers.
+///
+/// It re-reads pixels on purpose: a threshold change (the pan sharp-share cap,
+/// a new strictness) cannot be applied from stored scores alone, and a photographer
+/// who asks for a re-score expects the numbers on screen to change. The stored
+/// boxes are kept, so nothing is re-detected and no hand work is lost.
 pub fn rescore(d: &Arc<Desktop>, job: i64) -> Result<Value> {
     require_job(d, job)?;
     if !d.status()["activeJob"].is_null() {
         return Err("A scan is running. Stop it first.".into());
     }
     let cfg = settings(d, job)?;
-    launch(d, job, "Re-measuring", move |d, stop, task| {
-        run(d, job, &cfg, stop, task)
+    launch(d, job, "Re-scoring", move |d, stop, task| {
+        let unread = remeasure_pixels(d, job, &cfg, stop, task)?;
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let (subjects, changed, skipped, keepers) = run(d, job, &cfg, stop, task)?;
+        task.detail(format!(
+            "Re-scored {subjects} subjects ({changed} changed, {skipped} kept as stored), {unread} photos unread, {keepers} keepers"
+        ));
+        Ok(())
     })
 }
 
@@ -134,9 +148,9 @@ pub fn rescan(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         if stop.load(Ordering::Relaxed) {
             return Ok(());
         }
-        run(d, job, &cfg, stop, task)?;
+        let (subjects, changed, skipped, keepers) = run(d, job, &cfg, stop, task)?;
         task.detail(format!(
-            "Rescanned the album; {unread} photos could not be read and were left as they were"
+            "Rescanned the album: {subjects} subjects ({changed} changed, {skipped} kept as stored), {unread} photos unread, {keepers} keepers"
         ));
         Ok(())
     })
@@ -366,7 +380,7 @@ pub(crate) fn run(
     cfg: &Settings,
     stop: &AtomicBool,
     task: &Task,
-) -> Result<()> {
+) -> Result<(usize, usize, usize, usize)> {
     let models = load_models(d);
     let profile = ScanProfile::parse(&cfg.scan_profile);
     let found = rows(
@@ -382,7 +396,7 @@ pub(crate) fn run(
     let mut batch = Vec::new();
     for (n, row) in found.iter().enumerate() {
         if stop.load(Ordering::Relaxed) {
-            return Ok(());
+            return Ok((0, 0, 0, 0));
         }
         let region = row["region"].as_str().unwrap_or("vehicle");
         let frame = frames
@@ -447,6 +461,15 @@ pub(crate) fn run(
     write(d, &batch)?;
 
     // The frame's own rating, from the subject the profile rates it by.
+    // A frame the detector found nothing in has no subject to rate it: its own
+    // in-focus area is the rating, and `remeasure_pixels` has just refreshed
+    // that. Without this pass a subject-less pan keeps whatever rating the scan
+    // gave it, however the measure has changed since.
+    let bare = rows(
+        &lock(&d.reader),
+        "SELECT i.id,i.sharpness FROM images i WHERE i.job_id=?1 AND i.status='done' AND NOT EXISTS(SELECT 1 FROM detections d WHERE d.image_id=i.id)",
+        [job],
+    )?;
     {
         let db = lock(&d.db);
         let tx = db.unchecked_transaction().map_err(err)?;
@@ -466,6 +489,16 @@ pub(crate) fn run(
             )
             .map_err(err)?;
         }
+        for row in &bare {
+            let Some(score) = row["sharpness"].as_f64() else {
+                continue;
+            };
+            tx.execute(
+                "UPDATE images SET rating=? WHERE id=?",
+                params![score, row["id"].as_i64().unwrap_or_default()],
+            )
+            .map_err(err)?;
+        }
         tx.commit().map_err(err)?;
     }
     // The stars have moved, so the keeper of a pass may have moved with them.
@@ -477,11 +510,15 @@ pub(crate) fn run(
         cfg.use_quality_score,
     )?;
     task.detail(format!(
-        "Re-measured {} subjects: {changed} changed, {skipped} could not be (no stored features); {} keepers",
-        found.len() - skipped,
-        picked["picks"]
+        "Re-measured {} subjects: {changed} changed, {skipped} kept as stored",
+        found.len() - skipped
     ));
-    Ok(())
+    Ok((
+        found.len() - skipped,
+        changed,
+        skipped,
+        picked["picks"].as_u64().unwrap_or_default() as usize,
+    ))
 }
 
 #[cfg(test)]
@@ -494,6 +531,21 @@ mod tests {
 
     fn cfg() -> Settings {
         Settings::default()
+    }
+
+    #[test]
+    fn a_frame_with_no_subject_is_rated_by_its_own_sharpness_on_a_rescore() {
+        let lib = Lib::new("rescore-bare");
+        let bare = lib.frame("bare.jpg", Some(1));
+        // The scan stored 1.0 for a pan the detector missed; the measure has since
+        // changed. No file on disk, so the pixel pass leaves the stored sharpness
+        // alone and the rating must still follow it.
+        lib.sql("UPDATE images SET sharpness=0.66, rating=1.0 WHERE id=?", [bare]);
+        lib.run("rescore", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare]);
+        assert!((rating - 0.66).abs() < 1e-9, "rating {rating}");
+        assert_eq!(lib.task("Re-scoring")["state"], "done");
     }
 
     fn stored<'a>(region: &'a str, heuristic: f64, features: &'a [f64]) -> Stored<'a> {
@@ -681,12 +733,12 @@ mod tests {
         assert!(started["operation"]
             .as_str()
             .unwrap()
-            .starts_with("Re-measuring"));
+            .starts_with("Re-scoring"));
         lib.wait_idle();
-        let task = lib.task("Re-measuring");
+        let task = lib.task("Re-scoring");
         assert_eq!(task["state"], "done", "{task}");
         assert!(
-            task["detail"].as_str().unwrap().contains("1 could not be"),
+            task["detail"].as_str().unwrap().contains("1 kept as stored"),
             "{task}"
         );
 
@@ -769,7 +821,7 @@ mod tests {
             task["detail"]
                 .as_str()
                 .unwrap()
-                .contains("1 photos could not"),
+                .contains("1 photos unread"),
             "{task}"
         );
 
