@@ -3,6 +3,7 @@ import { call } from '../lib/api';
 import { Confirm } from './basics';
 import { useRun } from '../state/hooks';
 
+/** Diagnostics, cache and the library reset. The Settings page supplies the heading. */
 export function Maintenance() {
   const run = useRun();
   const [cache, setCache] = useState<{ total: { files: number; bytes: number } } | null>(null);
@@ -14,16 +15,14 @@ export function Maintenance() {
   }, []);
 
   return (
-    <section className="setting-group maintenance-group">
-      <h3>System & Maintenance</h3>
-
+    <div className="maintenance-group">
       <div className="maintenance-sections">
-        {/* Setup Diagnostics Card */}
+        {/* Setup diagnostics */}
         <div className="maintenance-card">
           <div className="maintenance-card-header">
             <div>
-              <strong>Setup & Model Diagnostics</strong>
-              <p className="hint">Verify that AI detector models, OpenCV runtime, and vision hosts are available.</p>
+              <strong>Setup and models</strong>
+              <p className="hint">Check that the detector, plate reader and vision hosts are available.</p>
             </div>
             <div className="maintenance-btn-row">
               <button
@@ -45,7 +44,7 @@ export function Maintenance() {
             <div className="health-list">
               {health.map((h) => (
                 <div className={`health-item ${h.ready ? 'ready' : 'missing'}`} key={h.name}>
-                  <span className={`health-dot ${h.ready ? 'dot-ready' : 'dot-missing'}`} />
+                  <span className={`health-dot ${h.ready ? 'dot-ready' : 'dot-missing'}`} aria-hidden="true" />
                   <span className="health-name">{h.name}</span>
                   <span className="health-detail muted small">{h.detail ?? (h.ready ? 'Ready' : 'Not installed')}</span>
                 </div>
@@ -54,15 +53,15 @@ export function Maintenance() {
           )}
         </div>
 
-        {/* Cache & Storage Card */}
+        {/* Cache and storage */}
         <div className="maintenance-card">
           <div className="maintenance-card-header">
             <div>
-              <strong>Cache & Storage</strong>
+              <strong>Cache and storage</strong>
               <p className="hint">
                 {cache
                   ? `${cache.total.files.toLocaleString()} cached thumbnails and previews · ${(cache.total.bytes / (1024 * 1024)).toFixed(1)} MB`
-                  : 'Survey thumbnail, preview, and temporary inspection caches.'}
+                  : 'See how much space thumbnails, previews and temporary files use.'}
               </p>
             </div>
             <div className="maintenance-btn-row">
@@ -72,34 +71,24 @@ export function Maintenance() {
               >
                 Refresh usage
               </button>
-              <button
-                type="button"
-                onClick={() => setClear('orphaned')}
-              >
+              <button type="button" onClick={() => setClear('orphaned')}>
                 Clear unused cache
               </button>
-              <button
-                type="button"
-                onClick={() => setClear('previews')}
-              >
+              <button type="button" onClick={() => setClear('previews')}>
                 Clear previews
               </button>
             </div>
           </div>
         </div>
 
-        {/* Library Reset / Danger Zone */}
+        {/* Library reset */}
         <div className="maintenance-card danger-card">
           <div className="maintenance-card-header">
             <div>
-              <strong className="danger-text">Reset Library Data</strong>
-              <p className="hint">Removes all scanned albums, detections, and ratings. Your original RAW and JPEG photos are never modified or deleted.</p>
+              <strong className="danger-text">Reset library data</strong>
+              <p className="hint">Removes scanned albums, detections and ratings. Your original RAW and JPEG files are never modified or deleted.</p>
             </div>
-            <button
-              type="button"
-              className="danger"
-              onClick={() => setClear('all')}
-            >
+            <button type="button" className="danger" onClick={() => setClear('all')}>
               Reset library…
             </button>
           </div>
@@ -121,11 +110,11 @@ export function Maintenance() {
         >
           <p>
             {clear === 'all'
-              ? 'All albums, keeper stacks, and review markers will be removed. Known vehicles, learned focus models, and original photo files will remain untouched.'
-              : 'Cached previews and temporary files will be purged. High-resolution previews are re-created automatically whenever you inspect photos.'}
+              ? 'All albums, keeper stacks and review markers will be removed. Known vehicles, learned focus models and original photo files will remain untouched.'
+              : 'Cached previews and temporary files will be purged. High-resolution previews are re-created whenever you inspect photos.'}
           </p>
         </Confirm>
       )}
-    </section>
+    </div>
   );
 }
