@@ -1,5 +1,6 @@
 import { burstTopRanks, filename, filterFrames, frameStars, frameExcluded } from '../review.mjs';
 import { decisionOf, groupKeyOf, keeperIds } from './stacks.mjs';
+import { tasteOrder } from './taste.mjs';
 import type { AttributeKey, Attributes, Detection, Facet, Frame, Review, Sort, View } from './types';
 
 export { filename, frameStars, frameExcluded, decisionOf, keeperIds };
@@ -161,6 +162,7 @@ export function sortFrames(frames: Frame[], sort: Sort, keepers: Set<number>): F
   if (sort === 'best') return list.sort((a, b) => frameStars(b) - frameStars(a) || byName(a, b));
   if (sort === 'worst') return list.sort((a, b) => frameStars(a) - frameStars(b) || byName(a, b));
   if (sort === 'pick') return list.sort((a, b) => Number(keepers.has(b.id)) - Number(keepers.has(a.id)) || frameStars(b) - frameStars(a) || byName(a, b));
+  if (sort === 'taste') return tasteOrder(list);
   return list.sort(byName);
 }
 
