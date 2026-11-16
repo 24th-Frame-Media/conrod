@@ -32,8 +32,8 @@ fn main() -> Result<(), String> {
     let grey = image.to_gray();
     let m = sharpness::measure(&grey, bbox, None);
     println!(
-        "{needle}: stored rating {rating:.3} · now score {:.3} · background {:.3} · panning {} · sharp end {} · box {bbox:?}",
-        m.score, m.background, m.panning, m.sharp_end
+        "{needle}: stored rating {rating:.3} · now score {:.3} · background {:.3} · panning {} · sharp end {} · share {:.2} · box {bbox:?}",
+        m.score, m.background, m.panning, m.sharp_end, m.pan_share
     );
     Ok(())
 }

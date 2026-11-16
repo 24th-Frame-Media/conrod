@@ -20,6 +20,15 @@ pub const PAN_MARGIN: f64 = 0.15;
 /// Background streak coherence that marks a frame as a pan when there is no
 /// subject box to compare against (same bar the engine's pan flag uses).
 pub const PAN_COHERENCE: f64 = 0.80;
+/// A tile at or above this normalised score counts as sharp when measuring how
+/// much of a panning frame is sharp.
+pub const PAN_SHARE_SHARP: f64 = 0.75;
+/// A pan's rating is capped by how much of the frame is sharp: the car is the
+/// only part a pan keeps crisp, so a small car in a big streaked frame is a 3.
+/// cap = floor + share * slope, clamped to 1 (a car filling half the frame can
+/// still be a 5).
+pub const PAN_SHARE_FLOOR: f64 = 0.62;
+pub const PAN_SHARE_SLOPE: f64 = 0.45;
 pub const PAN_BACKGROUND_CEILING: f64 = 0.55;
 pub const BANDS: usize = 3;
 pub const END_MARGIN: f64 = 0.12;
@@ -122,6 +131,8 @@ pub struct Sharpness {
     /// The hand-built score where a learned model replaced `score`, else -1.
     pub heuristic: f64,
     pub learned: bool,
+    /// How much of the frame is sharp when it is a pan, 0..1; -1 otherwise.
+    pub pan_share: f64,
 }
 
 impl Default for Sharpness {
@@ -138,6 +149,7 @@ impl Default for Sharpness {
             features: Vec::new(),
             heuristic: -1.0,
             learned: false,
+            pan_share: -1.0,
         }
     }
 }
@@ -436,9 +448,12 @@ pub fn measure(image: &Gray, bbox: Option<[f64; 4]>, model: Option<&SharpModel>)
             ))
         }).flatten();
         let panning = pan && cap.is_some();
+        let share = pan.then(|| sharp_share(&data)).flatten();
+        let share_cap = share.map(pan_share_cap);
         return Sharpness {
-            score: cap.map_or(score, |c| score.min(c)),
+            score: [cap, share_cap].into_iter().flatten().fold(score, f64::min),
             panning,
+            pan_share: share.unwrap_or(-1.0),
             measured: true,
             ..Sharpness::default()
         };
@@ -475,12 +490,18 @@ pub fn measure(image: &Gray, bbox: Option<[f64; 4]>, model: Option<&SharpModel>)
     // roof or a door sharp and smears the rest. The tile percentile above is
     // happy with that, so a pan is capped by its weakest measurable quarter.
     let pan_cap = panning.then(|| pan_consistency(&subject)).flatten();
+    // What the picture looks like, not just the car: in a pan the car is the
+    // only thing that can be crisp, so how much of the frame it fills is what
+    // separates a 3 from a 5.
+    let share = panning.then(|| sharp_share(&data)).flatten();
+    let share_cap = share.map(pan_share_cap);
     let mut final_score = learned.unwrap_or(score);
-    if let Some(cap) = pan_cap {
+    for cap in [pan_cap, share_cap].into_iter().flatten() {
         final_score = final_score.min(cap);
     }
     Sharpness {
         score: final_score,
+        pan_share: share.unwrap_or(-1.0),
         background,
         panning,
         sharp_end,
@@ -491,6 +512,26 @@ pub fn measure(image: &Gray, bbox: Option<[f64; 4]>, model: Option<&SharpModel>)
         learned: learned.is_some(),
         ..Sharpness::default()
     }
+}
+
+/// How much of a panning frame is sharp, 0..1: the share of measurable tiles at
+/// or above [`PAN_SHARE_SHARP`]. `None` when too few tiles can be measured.
+fn sharp_share(data: &Plane) -> Option<f64> {
+    let tiles = tile_scores(data, TILE_GRID);
+    if tiles.len() < TILE_GRID * TILE_GRID / 2 {
+        return None;
+    }
+    let sharp = tiles
+        .iter()
+        .filter(|score| normalise(**score) >= PAN_SHARE_SHARP)
+        .count();
+    Some(sharp as f64 / tiles.len() as f64)
+}
+
+/// The rating a pan is allowed by its sharp share: most pans land at three
+/// stars, a car filling half the frame can still reach five.
+pub fn pan_share_cap(share: f64) -> f64 {
+    (PAN_SHARE_FLOOR + share * PAN_SHARE_SLOPE).clamp(PAN_SHARE_FLOOR, 1.0)
 }
 
 /// The weakest measurable quarter of a panning subject, in the same 0..1 score.
@@ -980,23 +1021,38 @@ mod tests {
     }
 
     #[test]
-    fn a_pan_that_only_keeps_half_the_car_sharp_is_capped_by_its_weakest_quarter() {
-        let (all_sharp, box_all) = pan_frame(960, false);
-        let (half, box_half) = pan_frame(960, true);
-        let sharp = measure(&all_sharp, Some(box_all), None);
-        let partly = measure(&half, Some(box_half), None);
-        assert!(sharp.panning, "the smeared background makes it a pan");
-        assert!(partly.panning, "still a pan");
+    fn a_pan_that_only_keeps_half_the_car_sharp_loses_to_its_weakest_quarter() {
+        let (all_sharp, [_ax1, _ay1, ax2, ay2]) = pan_frame(960, false);
+        let (half, _) = pan_frame(960, true);
+        let plane = |g: &Gray| Plane::from_gray(g);
+        let (a, b) = (plane(&all_sharp), plane(&half));
+        let edge = 960;
+        let (x1, y1) = (edge * 2 / 10, edge * 3 / 10);
+        let crop = |p: &Plane| p.crop(x1, y1, ax2 as usize, ay2 as usize);
+        let cap_all = pan_consistency(&crop(&a)).expect("measurable quarters");
+        let cap_half = pan_consistency(&crop(&b)).expect("measurable quarters");
         assert!(
-            sharp.score > 0.6,
-            "a matched pan is a sharp subject, got {}",
-            sharp.score
+            cap_half <= cap_all - 0.15,
+            "a half-smeared car loses to its weakest quarter: {cap_half} vs {cap_all}"
         );
+        let measured = measure(&half, Some(pan_frame(960, true).1), None);
+        assert!(measured.panning, "still a pan");
+    }
+
+    #[test]
+    fn a_small_car_in_a_streaked_frame_is_three_stars() {
+        let (frame, bbox) = pan_frame(960, false);
+        let measured = measure(&frame, Some(bbox), None);
+        assert!(measured.panning, "the smeared background makes it a pan");
         assert!(
-            partly.score <= sharp.score - 0.15,
-            "a half-smeared car must not rate like a sharp one: {} vs {}",
-            partly.score,
-            sharp.score
+            measured.pan_share > 0.0,
+            "a pan reports how much of the frame is sharp"
+        );
+        assert_eq!(
+            stars_for(measured.score),
+            3,
+            "a car filling a third of a streaked frame is a three, got {}",
+            measured.score
         );
     }
 
