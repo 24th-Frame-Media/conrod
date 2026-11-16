@@ -1,76 +1,39 @@
-import { Maintenance } from '../components/Maintenance';
-import { Benchmark } from './Benchmark';
-import { Known } from './Known';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { engine, inTauri } from '../lib/api';
-import { words } from '../lib/format';
-
-export const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
+import { plural } from '../lib/format';
+import {
+  FIELDS, SECTIONS, TABS, albumOverrideCounts, dirtyKeys, dirtyTabs, searchFields, tabById,
+  type SettingsTabId,
+} from '../lib/settings.mjs';
+import { SettingsSection, SettingRow } from '../components/SettingsFields';
+import { Maintenance } from '../components/Maintenance';
+import { Benchmark } from './Benchmark';
+import { Known } from './Known';
 import type {
-  Status,
-  Settings as SettingsMap,
-  SettingValue,
-  Toaster,
-  OllamaModel,
   Job,
   ModelInfo,
-  VlmService,
+  OllamaModel,
+  SettingValue,
+  Settings as SettingsMap,
+  Status,
+  Toaster,
   VlmProvider,
-  VlmStrategy,
+  VlmService,
 } from '../lib/types';
 import type { Runner } from '../state/hooks';
 
-const GROUPS: [string, string[]][] = [
-  ['Detection & focus', ['detect_conf', 'min_box_fraction', 'max_vehicles_per_frame', 'include_cars', 'include_bikes', 'include_trucks', 'sharp_at', 'blurred_below', 'blur_strictness', 'auto_reject_below_stars', 'cull_blurred', 'burst_gap']],
-  ['Identification & AI', ['read_plates', 'read_numbers', 'read_text', 'use_vlm', 'vlm_timeout', 'vlm_max_retries', 'vlm_input_edge', 'use_known_vehicles', 'entry_list', 'normalise_names']],
-  ['Metadata & desktop', ['write_rating', 'write_label', 'overwrite_rating', 'overwrite_label', 'write_caption', 'overwrite_caption', 'write_plate_keyword', 'write_sidecar_for_raw', 'keyword_prefix', 'close_to_tray']],
-];
-
-/** [label, hint]; a key without an entry falls back to its own name. */
-const META: Record<string, [string, string?]> = {
-  detect_conf: ['Detection confidence', 'Lower finds more vehicles, and more false ones.'],
-  min_box_fraction: ['Smallest subject', 'As a fraction of the frame.'],
-  max_vehicles_per_frame: ['Vehicles per frame'],
-  sharp_at: ['Counts as sharp at', 'Subject sharpness at or above this.'],
-  blurred_below: ['Counts as blurred below'],
-  blur_strictness: ['Blur strictness', 'How much softness to accept before a photo is rated soft or culled. Moderate suits long-lens and heat-haze shots; Strict flags any softness.'],
-  auto_reject_below_stars: ['Auto-reject below (stars)', '0 never rejects on its own.'],
-  cull_blurred: ['Cull blurred frames', 'A red rating, never a deletion.'],
-  burst_gap: ['Burst gap (seconds)', 'Frames closer than this belong to one pass.'],
-  use_vlm: ['Use vision model', 'Identify make, model, colour and team.'],
-  vlm_timeout: ['Timeout (seconds)'],
-  vlm_max_retries: ['Max retries'],
-  vlm_input_edge: ['Input image edge (px)', 'Images are resized so their longest edge fits this before upload.'],
-  use_known_vehicles: ['Use known vehicles', 'Fill blanks from cars you have met.'],
-  entry_list: ['Entry list', 'Optional race entry list (CSV or JSON: number, team, drivers, make, model, sponsors). Team and drivers are filled from the car number instead of guessed.'],
-  normalise_names: ['Tidy makes and models'],
-  write_sidecar_for_raw: ['Write sidecars next to RAW files'],
-  keyword_prefix: ['Keyword prefix'],
-  close_to_tray: ['Keep running in the tray when closed'],
-};
-const labelOf = (key: string) => META[key]?.[0] ?? words(key).replace(/^./, (c) => c.toUpperCase());
+export const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
 
 const VLM_PROVIDERS: { id: VlmProvider; name: string; defaultModel: string }[] = [
-  { id: 'ollama', name: 'Ollama (Local / Self-hosted)', defaultModel: 'qwen2.5vl:7b' },
-  { id: 'openai', name: 'OpenAI (GPT-4o, etc.)', defaultModel: 'gpt-4o' },
+  { id: 'ollama', name: 'Ollama (local or self-hosted)', defaultModel: 'qwen2.5vl:7b' },
+  { id: 'openai', name: 'OpenAI (GPT-4o and newer)', defaultModel: 'gpt-4o' },
   { id: 'anthropic', name: 'Anthropic (Claude 3.5 / 3.7)', defaultModel: 'claude-3-7-sonnet-20250219' },
   { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini-1.5-flash' },
-];
-
-const BLUR_STRICTNESS: { id: string; name: string }[] = [
-  { id: 'strict', name: 'Strict' },
-  { id: 'moderate', name: 'Moderate' },
-  { id: 'lenient', name: 'Lenient' },
-];
-
-const VLM_STRATEGIES: { id: VlmStrategy; name: string }[] = [
-  { id: 'least_busy', name: 'Least busy' },
-  { id: 'round_robin', name: 'Round robin' },
-  { id: 'random', name: 'Random' },
 ];
 
 const KEY_KINDS = [
@@ -80,25 +43,25 @@ const KEY_KINDS = [
 ];
 
 function getVlmServices(draft: SettingsMap): VlmService[] {
-  const v = draft.vlm_services;
-  return Array.isArray(v) ? (v as unknown as VlmService[]) : [];
+  const value = draft.vlm_services;
+  return Array.isArray(value) ? (value as unknown as VlmService[]) : [];
 }
 
 /** "Ollama · host:port" for a server card title, or just the provider name for cloud services. */
-function serverTitle(s: VlmService): string {
-  if (s.provider !== 'ollama') return VLM_PROVIDERS.find((p) => p.id === s.provider)?.name.split(' (')[0] || s.provider;
-  const host = (s.host || '').replace(/^https?:\/\//, '');
+function serverTitle(service: VlmService): string {
+  if (service.provider !== 'ollama') return VLM_PROVIDERS.find((p) => p.id === service.provider)?.name.split(' (')[0] || service.provider;
+  const host = (service.host || '').replace(/^https?:\/\//, '');
   return `Ollama · ${host}`;
 }
 
-/** A cloud model text field that only commits (and thus saves) on blur/Enter, not per keystroke. */
-function CloudModelInput({ model, onCommit }: { model: string; onCommit: (model: string) => void }) {
+/** A cloud model text field that only commits on blur or Enter, not on every keystroke. */
+function CloudModelInput({ model, title, onCommit }: { model: string; title: string; onCommit: (model: string) => void }) {
   const [value, setValue] = useState(model);
   useEffect(() => setValue(model), [model]);
   return (
     <input
       type="text"
-      aria-label="Model"
+      aria-label={`Model for ${title}`}
       value={value}
       spellCheck={false}
       onChange={(e) => setValue(e.target.value)}
@@ -108,22 +71,25 @@ function CloudModelInput({ model, onCommit }: { model: string; onCommit: (model:
   );
 }
 
-/** One VLM server: status dot, model picker (select for Ollama, text for cloud), enabled toggle, remove. */
-function VlmServerCard({ service, status, onChangeModel, onToggleEnabled, onRemove }: {
+type VlmServerCardProps = {
   service: VlmService;
   status?: ModelInfo;
   onChangeModel: (model: string) => void;
   onToggleEnabled: () => void;
   onRemove: () => void;
-}) {
+};
+
+/** One vision server: status dot, model picker, enabled toggle, remove. */
+function VlmServerCard({ service, status, onChangeModel, onToggleEnabled, onRemove }: VlmServerCardProps) {
   const [models, setModels] = useState<OllamaModel[]>([]);
   const [loading, setLoading] = useState(false);
+  const title = serverTitle(service);
 
   const load = useCallback(() => {
     if (service.provider !== 'ollama') return;
     setLoading(true);
     void engine.ollamaModels(service.host)
-      .then((res) => setModels(res.models.filter((m) => m.vision)))
+      .then((res) => setModels(res.models.filter((model) => model.vision)))
       .catch(() => setModels([]))
       .finally(() => setLoading(false));
   }, [service.provider, service.host]);
@@ -133,23 +99,24 @@ function VlmServerCard({ service, status, onChangeModel, onToggleEnabled, onRemo
   return (
     <div className="vlm-server-card">
       <div className="vlm-server-head">
-        <span className={`dot ${status ? (status.ready ? 'ok' : 'no') : ''}`} title={status?.detail} />
-        <span className="vlm-server-title">{serverTitle(service)}</span>
+        <span className={`dot ${status ? (status.ready ? 'ok' : 'no') : ''}`} aria-hidden="true" />
+        <span className="vlm-server-title">{title}</span>
+        <span className="sr-only">{status ? (status.ready ? 'Ready' : 'Unavailable') : 'Not checked yet'}</span>
       </div>
       {service.provider === 'ollama' ? (
         <div className="model-input-row">
-          <select aria-label="Model" value={service.model} onChange={(e) => onChangeModel(e.target.value)}>
-            {!models.some((m) => m.name === service.model) && service.model && (
+          <select aria-label={`Model for ${title}`} value={service.model} onChange={(e) => onChangeModel(e.target.value)}>
+            {!models.some((model) => model.name === service.model) && service.model && (
               <option value={service.model}>{service.model}</option>
             )}
-            {models.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+            {models.map((model) => <option key={model.name} value={model.name}>{model.name}</option>)}
           </select>
-          <button type="button" className="ghost small refresh-models-btn" disabled={loading} onClick={load} title="Refresh models">
+          <button type="button" className="ghost small refresh-models-btn" disabled={loading} onClick={load} aria-label={`Refresh models for ${title}`} title="Refresh models">
             {loading ? '…' : '↻'}
           </button>
         </div>
       ) : (
-        <CloudModelInput model={service.model} onCommit={onChangeModel} />
+        <CloudModelInput model={service.model} title={title} onCommit={onChangeModel} />
       )}
       {status?.detail && <p className="muted vlm-server-detail">{status.detail}</p>}
       <div className="vlm-server-foot">
@@ -157,9 +124,203 @@ function VlmServerCard({ service, status, onChangeModel, onToggleEnabled, onRemo
           <input type="checkbox" checked={service.enabled} onChange={onToggleEnabled} />
           Enabled
         </label>
-        <button type="button" className="ghost small" onClick={onRemove}>Remove</button>
+        <button type="button" className="ghost small" aria-label={`Remove ${title}`} onClick={onRemove}>Remove</button>
       </div>
     </div>
+  );
+}
+
+/** The add-a-provider form; local state so typing here never disturbs the saved settings. */
+function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
+  const [open, setOpen] = useState(false);
+  const [provider, setProvider] = useState<VlmProvider>('ollama');
+  const [host, setHost] = useState(DEFAULT_OLLAMA_HOST);
+  const [model, setModel] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [keyKind, setKeyKind] = useState('auto');
+  const [models, setModels] = useState<OllamaModel[]>([]);
+  const [online, setOnline] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async (targetHost?: string) => {
+    setLoading(true);
+    try {
+      const res = await engine.ollamaModels(targetHost);
+      setOnline(res.online);
+      setModels(res.models);
+    } catch {
+      setOnline(false);
+      setModels([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open && provider === 'ollama') void load(host);
+  }, [open, provider, host, load]);
+
+  const add = () => {
+    const trimmed = model.trim();
+    if (!trimmed) return;
+    onAdd({
+      id: `vlm-${Date.now()}`,
+      provider,
+      model: trimmed,
+      enabled: true,
+      ...(provider === 'ollama' ? { host } : { api_key: apiKey }),
+      ...(provider === 'anthropic' ? { key_kind: keyKind } : {}),
+    });
+    setOpen(false);
+    setModel('');
+    setApiKey('');
+    setKeyKind('auto');
+  };
+
+  if (!open) {
+    return <button type="button" className="ghost small settings-add" onClick={() => setOpen(true)}>+ Add server</button>;
+  }
+
+  return (
+    <div className="vlm-add-form">
+      <p className="vlm-add-title">Add a vision provider</p>
+      <label className="setting">
+        <span className="label">Type</span>
+        <select
+          aria-label="Provider type"
+          value={provider}
+          onChange={(e) => {
+            const next = e.target.value as VlmProvider;
+            setProvider(next);
+            setModel(VLM_PROVIDERS.find((item) => item.id === next)?.defaultModel || '');
+          }}
+        >
+          {VLM_PROVIDERS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </label>
+
+      {provider === 'ollama' ? (
+        <>
+          <label className="setting">
+            <span className="label">Host</span>
+            <input type="text" value={host} spellCheck={false} onChange={(e) => setHost(e.target.value)} />
+          </label>
+          <label className="setting">
+            <span className="label">Model</span>
+            <div className="model-input-row">
+              <select aria-label="Model for the new server" value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">Select a model…</option>
+                {models.filter((m) => m.vision).map((m) => (
+                  <option key={m.name} value={m.name}>{m.name}</option>
+                ))}
+              </select>
+              <button type="button" className="ghost small refresh-models-btn" disabled={loading} onClick={() => void load(host)} aria-label="Refresh models for the new server">
+                {loading ? '…' : '↻'}
+              </button>
+            </div>
+            {online === false && <span className="status-badge offline">○ Ollama offline at {host}</span>}
+          </label>
+        </>
+      ) : (
+        <>
+          <label className="setting">
+            <span className="label">API key</span>
+            <input type="password" value={apiKey} spellCheck={false} onChange={(e) => setApiKey(e.target.value)} />
+          </label>
+          {provider === 'anthropic' && (
+            <label className="setting">
+              <span className="label">Key kind</span>
+              <select value={keyKind} onChange={(e) => setKeyKind(e.target.value)}>
+                {KEY_KINDS.map((kind) => <option key={kind.id} value={kind.id}>{kind.name}</option>)}
+              </select>
+            </label>
+          )}
+          <label className="setting">
+            <span className="label">Model</span>
+            <input type="text" value={model} spellCheck={false} placeholder={VLM_PROVIDERS.find((p) => p.id === provider)?.defaultModel} onChange={(e) => setModel(e.target.value)} />
+          </label>
+        </>
+      )}
+
+      <div className="actions-row">
+        <button type="button" className="primary small" disabled={!model.trim()} onClick={add}>Add</button>
+        <button type="button" className="ghost small" onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+type UpdateInfo = { version: string; notes: string | null; date: string | null };
+type UpdateCardProps = {
+  info: UpdateInfo | null;
+  upToDate: boolean;
+  error: string | null;
+  checking: boolean;
+  installing: boolean;
+  progress: { done: number; total: number } | null;
+  version: string | null;
+  onCheck: () => void;
+  onInstall: () => void;
+};
+
+function UpdateCard({ info, upToDate, error, checking, installing, progress, version, onCheck, onInstall }: UpdateCardProps) {
+  const badge = checking
+    ? <span className="pill-badge checking">Checking…</span>
+    : info
+      ? <span className="pill-badge update-ready">Update available</span>
+      : upToDate
+        ? <span className="pill-badge up-to-date">Up to date</span>
+        : error
+          ? <span className="pill-badge error">Check failed</span>
+          : null;
+
+  return (
+    <section className="sidebar-card" aria-labelledby="settings-updates">
+      <h4 id="settings-updates">App updates</h4>
+      <div className="sidebar-card-header">
+        <div className="sidebar-brand">
+          <span className="sidebar-brand-name">Conrod</span>
+          {version && <span className="sidebar-brand-version">v{version}</span>}
+        </div>
+        {badge}
+      </div>
+      <div className="sidebar-update-body">
+        {info ? (
+          <div className="sidebar-update-alert">
+            <div className="sidebar-update-lead">
+              <strong>Version v{info.version} is ready</strong>
+              {info.date ? <span className="muted small"> · {info.date.slice(0, 10)}</span> : null}
+            </div>
+            {info.notes && (
+              <details className="sidebar-update-notes">
+                <summary>Release highlights</summary>
+                <div className="notes-text">{info.notes}</div>
+              </details>
+            )}
+            <button type="button" className="primary small full-width" disabled={installing} onClick={onInstall}>
+              {installing
+                ? progress && progress.total > 0
+                  ? `Downloading ${Math.round((progress.done / progress.total) * 100)}%…`
+                  : 'Installing update…'
+                : 'Install update and restart'}
+            </button>
+            <p className="sidebar-update-desc">Signed update, installed in place. Your library is untouched.</p>
+          </div>
+        ) : (
+          <p className="sidebar-update-desc">
+            {error ? `Could not check for updates: ${error}` : 'Checks the GitHub release for a signed update and installs it for you.'}
+          </p>
+        )}
+        <div className="sidebar-btn-row">
+          <button type="button" className="secondary small" disabled={checking || installing} onClick={onCheck}>
+            {checking ? 'Checking…' : 'Check for updates'}
+          </button>
+          <button type="button" className="sidebar-ext-link" onClick={() => void openUrl('https://github.com/kapsikkum/conrod/releases')}>
+            Releases ↗
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -174,57 +335,34 @@ type Props = {
   onModelsChanged?: () => void;
 };
 
-type SettingsTab = 'detection' | 'vlm' | 'metadata' | 'maintenance' | 'known';
-
-const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
-  { id: 'detection', label: 'Detection & Culling' },
-  { id: 'vlm', label: 'Vision & AI' },
-  { id: 'metadata', label: 'Metadata & Desktop' },
-  { id: 'maintenance', label: 'System & Maintenance' },
-  { id: 'known', label: 'Known Vehicles' },
-];
-
 /** Settings shared with the Python library; Save writes the whole block back. */
 export function Settings({ settings, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status }: Props) {
   const [draft, setDraft] = useState<SettingsMap>(settings);
   useEffect(() => setDraft(settings), [settings]);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
-  const [activeTab, setActiveTab] = useState<SettingsTab>('detection');
+
+  const [activeTab, setActiveTab] = useState<SettingsTabId>('culling');
+  const [query, setQuery] = useState('');
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const [knownCount, setKnownCount] = useState<number | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    void engine.known().then((rows) => {
-      if (active) setKnownCount(rows.length);
-    }).catch(() => {});
-    return () => { active = false; };
-  }, [activeTab]);
-
-  const isTabDirty = useCallback((tabId: SettingsTab): boolean => {
-    let keys: string[] = [];
-    if (tabId === 'detection') keys = GROUPS[0][1];
-    else if (tabId === 'vlm') keys = GROUPS[1][1];
-    else if (tabId === 'metadata') keys = GROUPS[2][1];
-    return keys.some((k) => draft[k] !== settings[k]);
-  }, [draft, settings]);
-
-  // App update: Tauri's signed updater reads the release's latest.json.
   const pending = useRef<Awaited<ReturnType<typeof check>> | null>(null);
-  const [updateInfo, setUpdateInfo] = useState<{ version: string; notes: string | null; date: string | null } | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [upToDate, setUpToDate] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<{ done: number; total: number } | null>(null);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+
   useEffect(() => {
     if (inTauri) void getVersion().then(setAppVersion);
   }, []);
 
-  // Ollama Models state, used by the "add VLM provider" form below.
-  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-  const [ollamaOnline, setOllamaOnline] = useState<boolean | null>(null);
-  const [ollamaLoading, setOllamaLoading] = useState(false);
+  const refreshKnown = useCallback(() => {
+    void engine.known().then((rows) => setKnownCount(rows.length)).catch(() => {});
+  }, []);
+
+  useEffect(() => { refreshKnown(); }, [catalogOpen, refreshKnown]);
 
   const checkForUpdates = useCallback(async (force = false) => {
     if (!inTauri) return;
@@ -251,9 +389,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
     }
   }, [toast, appVersion]);
 
-  useEffect(() => {
-    void checkForUpdates(false);
-  }, [checkForUpdates]);
+  useEffect(() => { void checkForUpdates(false); }, [checkForUpdates]);
 
   /** Download the signed bundle, let Tauri install it in place, then restart. */
   const handleInstallUpdate = () => void run(async () => {
@@ -275,19 +411,33 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
     }
   });
 
-  const fetchOllamaModels = useCallback(async (host?: string) => {
-    setOllamaLoading(true);
-    try {
-      const res = await engine.ollamaModels(host);
-      setOllamaOnline(res.online);
-      setOllamaModels(res.models);
-    } catch {
-      setOllamaOnline(false);
-      setOllamaModels([]);
-    } finally {
-      setOllamaLoading(false);
-    }
+  const changed = useMemo(() => dirtyKeys(draft, settings), [draft, settings]);
+  const tabsDirty = useMemo(() => dirtyTabs(draft, settings), [draft, settings]);
+  const changedCount = changed.length;
+  const dirtyTabsNamed = TABS.filter((tab) => tabsDirty[tab.id] > 0).map((tab) => tab.label);
+
+  const searching = query.trim().length > 0;
+  const results = useMemo(
+    () => (searching ? searchFields(query).filter((match) => draft[match.key] !== undefined) : []),
+    [searching, query, draft],
+  );
+  const resultGroups = SECTIONS
+    .map((section) => ({ section, matches: results.filter((match) => match.section === section.id) }))
+    .filter((group) => group.matches.length > 0);
+
+  const services = getVlmServices(draft);
+  const enabledServices = services.filter((service) => service.enabled).length;
+  const strategyName = FIELDS.vlm_strategy.options?.find((option) => option.id === String(draft.vlm_strategy ?? 'least_busy'))?.name ?? 'Least busy';
+  const overrides = useMemo(() => albumOverrideCounts(jobs, settings), [jobs, settings]);
+  const totalPhotos = jobs.reduce((sum, job) => sum + job.total, 0);
+
+  const setValue = useCallback((key: string, value: SettingValue) => {
+    setDraft((current) => ({ ...current, [key]: value }));
   }, []);
+
+  const setServices = (next: VlmService[]) => {
+    setDraft((current) => ({ ...current, vlm_services: next as unknown as SettingValue }));
+  };
 
   const save = () => void run(async () => {
     onSaved(await engine.saveSettings(draft));
@@ -295,504 +445,316 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
     onModelsChanged?.();
   });
 
-  // Add-VLM-provider form state.
-  const [showAddVlm, setShowAddVlm] = useState(false);
-  const [newProvider, setNewProvider] = useState<VlmProvider>('ollama');
-  const [newHost, setNewHost] = useState(DEFAULT_OLLAMA_HOST);
-  const [newModel, setNewModel] = useState('');
-  const [newApiKey, setNewApiKey] = useState('');
-  const [newKeyKind, setNewKeyKind] = useState('auto');
-
-  useEffect(() => {
-    if (showAddVlm && newProvider === 'ollama') void fetchOllamaModels(newHost);
-  }, [showAddVlm, newProvider, newHost, fetchOllamaModels]);
-
-  const addVlmService = () => {
-    if (!newModel.trim()) return;
-    const service: VlmService = {
-      id: `vlm-${Date.now()}`,
-      provider: newProvider,
-      model: newModel.trim(),
-      enabled: true,
-      ...(newProvider === 'ollama' ? { host: newHost } : { api_key: newApiKey }),
-      ...(newProvider === 'anthropic' ? { key_kind: newKeyKind } : {}),
-    };
-    setDraft((d) => ({ ...d, vlm_services: [...getVlmServices(d), service] as unknown as SettingValue }));
-    setShowAddVlm(false);
-    setNewModel('');
-    setNewApiKey('');
-    setNewKeyKind('auto');
-  };
-
-  const removeVlmService = (id: string) => {
-    setDraft((d) => ({ ...d, vlm_services: getVlmServices(d).filter((s) => s.id !== id) as unknown as SettingValue }));
-  };
-
-  /** Patches one VLM service and, when `autosave`, persists immediately (used for the model picker). */
-  const setVlmService = (id: string, patch: Partial<VlmService>, autosave = false) => {
-    const next = getVlmServices(draft).map((s) => (s.id === id ? { ...s, ...patch } : s));
-    const nextDraft = { ...draft, vlm_services: next as unknown as SettingValue };
-    setDraft(nextDraft);
-    if (autosave) void run(async () => { onSaved(await engine.saveSettings(nextDraft)); toast('Settings saved.', { tone: 'ok' }); onModelsChanged?.(); });
-  };
-
-  const toggleVlmServiceEnabled = (id: string) => {
-    setDraft((d) => ({
-      ...d,
-      vlm_services: getVlmServices(d).map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)) as unknown as SettingValue,
-    }));
-  };
+  const discard = () => setDraft(settings);
 
   const learn = () => void run(async () => {
     const out = await engine.trainTaste();
     toast(typeof out.n === 'number' ? `Learned from ${out.n} of your ratings.` : 'Learned from your ratings.', { tone: 'ok' });
   });
 
-  function Control({
-    name,
-    value,
-    onChange,
-  }: {
-    name: string;
-    value: SettingValue;
-    onChange: (v: SettingValue) => void;
-  }) {
-    if (typeof value === 'boolean') return <input type="checkbox" aria-label={labelOf(name)} checked={value} onChange={(e) => onChange(e.target.checked)} />;
-    if (typeof value === 'number') return <input type="number" step="any" aria-label={labelOf(name)} value={value} onChange={(e) => onChange(Number(e.target.value))} />;
-    return <input type={name.includes('api_key') ? 'password' : 'text'} aria-label={labelOf(name)} value={value} spellCheck={false} onChange={(e) => onChange(e.target.value)} />;
-  }
+  const openTab = (id: SettingsTabId) => {
+    setQuery('');
+    setActiveTab(id);
+  };
 
-  const totalPhotos = jobs.reduce((n, j) => n + j.total, 0);
+  const onTabKey = (e: ReactKeyboardEvent<HTMLElement>) => {
+    const ids = TABS.map((tab) => tab.id);
+    const at = ids.indexOf(activeTab);
+    let next = -1;
+    if (e.key === 'ArrowRight') next = (at + 1) % ids.length;
+    else if (e.key === 'ArrowLeft') next = (at - 1 + ids.length) % ids.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = ids.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    openTab(ids[next]);
+    document.getElementById(`settings-tab-${ids[next]}`)?.focus();
+  };
+
+  const saveBar = (
+    <footer className="settings-savebar">
+      <span className={`save-state${changedCount ? ' is-dirty' : ''}`} role="status" aria-live="polite">
+        <span className="save-dot" aria-hidden="true" />
+        {changedCount
+          ? <><b>{plural(changedCount, 'unsaved change', 'unsaved changes')}</b><span className="muted"> in {dirtyTabsNamed.join(', ')}</span></>
+          : 'All changes saved'}
+      </span>
+      <span className="spacer" />
+      <button type="button" className="ghost" disabled={!changedCount} onClick={discard}>Discard</button>
+      <button type="button" className="primary" disabled={!changedCount} onClick={save}>Save changes</button>
+    </footer>
+  );
+
+  if (catalogOpen) {
+    return (
+      <div className="screen settings-screen">
+        <div className="settings-catalog-view">
+          <div className="settings-catalog-bar">
+            <button type="button" className="ghost small" onClick={() => setCatalogOpen(false)}>← Back to settings</button>
+            <span className="muted small">{knownCount === null ? 'Known vehicles' : plural(knownCount, 'known vehicle')}</span>
+          </div>
+          <div className="settings-catalog-body">
+            <Known run={run} toast={toast} />
+          </div>
+        </div>
+        {saveBar}
+      </div>
+    );
+  }
 
   return (
     <div className="screen settings-screen">
-      <div className={`settings-layout ${activeTab === 'known' ? 'known-layout' : ''}`}>
-        <div className={`pane settings-main ${activeTab === 'known' ? 'known-pane' : ''}`}>
-          <h2>Settings</h2>
-          <p className="lede">Shared with your existing Conrod library. Defaults are what measured best on real frames.</p>
+      <div className="settings-page">
+        <header className="settings-head">
+          <div className="settings-title">
+            <h2>Settings</h2>
+            <p className="lede">Global defaults for every new scan.</p>
+          </div>
+          <div className="settings-find">
+            <input
+              type="search"
+              aria-label="Find a setting"
+              placeholder="Find a setting…"
+              value={query}
+              spellCheck={false}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
+            />
+            {query && (
+              <button type="button" className="ghost small settings-find-clear" aria-label="Clear the search" onClick={() => setQuery('')}>×</button>
+            )}
+          </div>
+        </header>
 
-          {/* Settings Navigation Tabs */}
-          <nav className="settings-tabs" role="tablist" aria-label="Settings categories">
-            {SETTINGS_TABS.map((t) => (
-              <button
-                key={t.id}
-                role="tab"
-                aria-selected={activeTab === t.id}
-                className={`settings-tab-btn ${activeTab === t.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(t.id)}
-              >
-                <span>{t.label}</span>
-                {isTabDirty(t.id) && <span className="tab-dirty-dot" title="Unsaved changes in this tab" />}
-              </button>
-            ))}
+        <div className="settings-scope-note">
+          <span className="settings-scope-icon" aria-hidden="true">◇</span>
+          <p>
+            <b>Every album can carry its own shoot type, blur strictness, burst gap, and whether it reads plates, race numbers and people.</b>{' '}
+            Where it does, the album's value wins. Saving here changes the defaults new scans start from; an album you have already scanned keeps what it was scanned with.
+          </p>
+        </div>
+
+        <div className="settings-main">
+          <nav className="settings-tabs" role="tablist" aria-label="Settings sections" onKeyDown={onTabKey}>
+            {TABS.map((tab) => {
+              const dirtyCount = tabsDirty[tab.id];
+              const selected = !searching && activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  id={`settings-tab-${tab.id}`}
+                  aria-selected={selected}
+                  aria-controls={selected ? `settings-panel-${tab.id}` : undefined}
+                  tabIndex={activeTab === tab.id ? 0 : -1}
+                  className={`settings-tab-btn${selected ? ' active' : ''}`}
+                  onClick={() => openTab(tab.id)}
+                >
+                  <span>{tab.label}</span>
+                  {dirtyCount > 0 && <span className="tab-dirty-dot" aria-hidden="true" title={`${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}`} />}
+                  {dirtyCount > 0 && <span className="sr-only">{dirtyCount} unsaved change{dirtyCount === 1 ? '' : 's'}</span>}
+                </button>
+              );
+            })}
           </nav>
 
-          {/* Tab 1: Detection & Culling */}
-          {activeTab === 'detection' && (
-            <div className="settings-tab-content">
-              <section className="setting-group">
-                <h3>Detection & Culling</h3>
-                {GROUPS[0][1].filter((k) => draft[k] !== undefined).map((k) => (
-                  k === 'blur_strictness' ? (
-                    <div className="setting" key={k}>
-                      <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
-                      <div
-                        className="segmented"
-                        role="radiogroup"
-                        aria-label={labelOf(k)}
-                        onKeyDown={(e) => {
-                          const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
-                          if (!step) return;
-                          e.preventDefault();
-                          const at = BLUR_STRICTNESS.findIndex((s) => s.id === String(draft[k]));
-                          const next = BLUR_STRICTNESS[(Math.max(at, 0) + step + BLUR_STRICTNESS.length) % BLUR_STRICTNESS.length];
-                          setDraft((d) => ({ ...d, [k]: next.id }));
-                          e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[BLUR_STRICTNESS.indexOf(next)]?.focus();
-                        }}
-                      >
-                        {BLUR_STRICTNESS.map((s, i) => (
-                          <button
-                            key={s.id}
-                            type="button"
-                            role="radio"
-                            aria-checked={String(draft[k]) === s.id}
-                            tabIndex={String(draft[k]) === s.id || (i === 0 && !BLUR_STRICTNESS.some((o) => o.id === String(draft[k]))) ? 0 : -1}
-                            className={`segmented-btn ${String(draft[k]) === s.id ? 'active' : ''}`}
-                            onClick={() => setDraft((d) => ({ ...d, [k]: s.id }))}
-                          >
-                            {s.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <label className="setting" key={k}>
-                      <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
-                      <Control
-                        name={k}
-                        value={draft[k]}
-                        onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
-                      />
-                    </label>
-                  )
-                ))}
-              </section>
-              <div className="actions-row">
-                <button className="primary" disabled={!dirty} onClick={save}>Save</button>
-                <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
-                <button className="ghost" title="Fit Conrod's star ratings to the ones you have given by hand." onClick={learn}>Learn from my ratings</button>
-                {dirty && <span className="muted">Unsaved changes</span>}
+          {searching ? (
+            <div className="settings-search" role="region" aria-label={`Settings matching ${query.trim()}`}>
+              <div className="settings-search-head">
+                <h3>{results.length ? `${plural(results.length, 'setting')} matching “${query.trim()}”` : `No settings match “${query.trim()}”`}</h3>
+                <button type="button" className="ghost small" onClick={() => setQuery('')}>Clear search</button>
               </div>
-            </div>
-          )}
-
-          {/* Tab 2: Vision & AI */}
-          {activeTab === 'vlm' && (
-            <div className="settings-tab-content">
-              <section className="setting-group">
-                <div className="vision-section-head">
-                  <h3>Vision providers</h3>
-                  <div className="segmented" role="radiogroup" aria-label="Strategy">
-                    {VLM_STRATEGIES.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={String(draft.vlm_strategy || 'least_busy') === s.id}
-                        className={`segmented-btn ${String(draft.vlm_strategy || 'least_busy') === s.id ? 'active' : ''}`}
-                        onClick={() => setDraft((d) => ({ ...d, vlm_strategy: s.id }))}
-                      >
-                        {s.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="vlm-server-grid">
-                  {getVlmServices(draft).map((s) => {
-                    const status = models.find((m) => m.file === 'vlm' && m.id === s.id);
-                    return (
-                      <VlmServerCard
-                        key={s.id}
-                        service={s}
-                        status={status}
-                        onChangeModel={(model) => setVlmService(s.id, { model }, true)}
-                        onToggleEnabled={() => toggleVlmServiceEnabled(s.id)}
-                        onRemove={() => removeVlmService(s.id)}
-                      />
-                    );
-                  })}
-                  {getVlmServices(draft).length === 0 && <p className="muted">No vision providers configured</p>}
-                </div>
-
-                {!showAddVlm ? (
-                  <button type="button" className="ghost small" onClick={() => setShowAddVlm(true)}>+ Add server</button>
-                ) : (
-                  <div className="vlm-add-form">
-                    <label className="setting">
-                      <span className="label">Type</span>
-                      <select
-                        aria-label="Provider type"
-                        value={newProvider}
-                        onChange={(e) => {
-                          const p = e.target.value as VlmProvider;
-                          setNewProvider(p);
-                          setNewModel(VLM_PROVIDERS.find((item) => item.id === p)?.defaultModel || '');
-                        }}
-                      >
-                        {VLM_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
-                    </label>
-
-                    {newProvider === 'ollama' ? (
-                      <>
-                        <label className="setting">
-                          <span className="label">Host</span>
-                          <input type="text" value={newHost} spellCheck={false} onChange={(e) => setNewHost(e.target.value)} />
-                        </label>
-                        <label className="setting">
-                          <span className="label">Model</span>
-                          <div className="model-input-row">
-                            <select aria-label="Model" value={newModel} onChange={(e) => setNewModel(e.target.value)}>
-                              <option value="">Select a model…</option>
-                              {ollamaModels.filter((m) => m.vision).map((m) => (
-                                <option key={m.name} value={m.name}>{m.name}</option>
-                              ))}
-                            </select>
-                            <button type="button" className="ghost small refresh-models-btn" disabled={ollamaLoading} onClick={() => void fetchOllamaModels(newHost)}>
-                              {ollamaLoading ? '…' : '↻'} Refresh
-                            </button>
-                          </div>
-                          {ollamaOnline === false && <span className="status-badge offline">○ Ollama offline at {newHost}</span>}
-                        </label>
-                      </>
-                    ) : (
-                      <>
-                        <label className="setting">
-                          <span className="label">API key</span>
-                          <input type="password" value={newApiKey} spellCheck={false} onChange={(e) => setNewApiKey(e.target.value)} />
-                        </label>
-                        {newProvider === 'anthropic' && (
-                          <label className="setting">
-                            <span className="label">Key kind</span>
-                            <select value={newKeyKind} onChange={(e) => setNewKeyKind(e.target.value)}>
-                              {KEY_KINDS.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
-                            </select>
-                          </label>
-                        )}
-                        <label className="setting">
-                          <span className="label">Model</span>
-                          <input type="text" value={newModel} spellCheck={false} placeholder={VLM_PROVIDERS.find((p) => p.id === newProvider)?.defaultModel} onChange={(e) => setNewModel(e.target.value)} />
-                        </label>
-                      </>
-                    )}
-
-                    <div className="actions-row">
-                      <button type="button" className="primary small" disabled={!newModel.trim()} onClick={addVlmService}>Add</button>
-                      <button type="button" className="ghost small" onClick={() => setShowAddVlm(false)}>Cancel</button>
-                    </div>
-                  </div>
-                )}
-              </section>
-
-              <section className="setting-group">
-                {draft.use_vlm !== undefined && (
-                  <label className="setting">
-                    <span><span className="label">{labelOf('use_vlm')}</span>{META.use_vlm?.[1] && <span className="hint">{META.use_vlm[1]}</span>}</span>
-                    <Control name="use_vlm" value={draft.use_vlm} onChange={(v) => setDraft((d) => ({ ...d, use_vlm: v }))} />
-                  </label>
-                )}
-                <details className="advanced-vlm-settings">
-                  <summary>Advanced</summary>
-                  {GROUPS[1][1].filter((k) => k !== 'use_vlm' && draft[k] !== undefined).map((k) => (
-                    <label className="setting" key={k}>
-                      <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
-                      <Control
-                        name={k}
-                        value={draft[k]}
-                        onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
-                      />
-                    </label>
-                  ))}
-                </details>
-              </section>
-              <div className="actions-row">
-                <button className="primary" disabled={!dirty} onClick={save}>Save</button>
-                <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
-                {dirty && <span className="muted">Unsaved changes</span>}
-              </div>
-
-              <section className="setting-group" style={{ marginTop: 24 }}>
-                <h3>Benchmark</h3>
-                <Benchmark run={run} toast={toast} settings={draft} status={status} />
-              </section>
-            </div>
-          )}
-
-          {/* Tab 3: Metadata & Desktop */}
-          {activeTab === 'metadata' && (
-            <div className="settings-tab-content">
-              <section className="setting-group">
-                <h3>Metadata & Desktop</h3>
-                {GROUPS[2][1].filter((k) => draft[k] !== undefined).map((k) => (
-                  <label className="setting" key={k}>
-                    <span><span className="label">{labelOf(k)}</span>{META[k]?.[1] && <span className="hint">{META[k]?.[1]}</span>}</span>
-                    <Control
-                      name={k}
-                      value={draft[k]}
-                      onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
+              {resultGroups.length === 0 ? (
+                <p className="settings-search-empty">Try “burst”, “plate”, “strictness” or “tray”.</p>
+              ) : resultGroups.map(({ section, matches }) => (
+                <section className="settings-section settings-search-group" key={section.id} aria-labelledby={`settings-search-${section.id}`}>
+                  <header className="settings-section-head">
+                    <h3 id={`settings-search-${section.id}`}>{section.title}</h3>
+                    <p className="section-hint">{tabById(section.tab)?.label}</p>
+                  </header>
+                  {matches.map((match) => (
+                    <SettingRow
+                      key={match.key}
+                      field={FIELDS[match.key]}
+                      value={draft[match.key]}
+                      changed={draft[match.key] !== settings[match.key]}
+                      onChange={(value) => setValue(match.key, value)}
                     />
-                  </label>
-                ))}
-              </section>
-              <div className="actions-row">
-                <button className="primary" disabled={!dirty} onClick={save}>Save</button>
-                <button className="ghost" disabled={!dirty} onClick={() => setDraft(settings)}>Discard changes</button>
-                {dirty && <span className="muted">Unsaved changes</span>}
-              </div>
+                  ))}
+                </section>
+              ))}
             </div>
-          )}
+          ) : (
+            <div
+              className="settings-tab-content"
+              role="tabpanel"
+              id={`settings-panel-${activeTab}`}
+              aria-labelledby={`settings-tab-${activeTab}`}
+              tabIndex={0}
+            >
+              {activeTab === 'culling' && SECTIONS.filter((section) => section.tab === 'culling').map((section) => (
+                <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue}>
+                  {section.id === 'culling' && (
+                    <div className="settings-action-row">
+                      <div>
+                        <b>Learn from my ratings</b>
+                        <p className="hint">Fit Conrod's star ratings to the ones you have given by hand.</p>
+                      </div>
+                      <button type="button" className="ghost small" onClick={learn}>Learn now</button>
+                    </div>
+                  )}
+                </SettingsSection>
+              ))}
 
-          {/* Tab 4: System & Maintenance */}
-          {activeTab === 'maintenance' && (
-            <div className="settings-tab-content">
-              <Maintenance />
-              {dirty && (
-                <div className="unsaved-floating-bar">
-                  <span>You have unsaved changes in your settings.</span>
-                  <div className="actions-row" style={{ marginTop: 0 }}>
-                    <button className="primary small" onClick={save}>Save</button>
-                    <button className="ghost small" onClick={() => setDraft(settings)}>Discard</button>
-                  </div>
-                </div>
+              {activeTab === 'identification' && (
+                <>
+                  {SECTIONS.filter((section) => section.tab === 'identification').map((section) => (
+                    section.id === 'vision-providers' ? (
+                      <section key={section.id} className="settings-section" aria-labelledby="settings-section-vision-providers">
+                        <header className="settings-section-head">
+                          <h3 id="settings-section-vision-providers">Vision providers</h3>
+                          <p className="section-hint">One or more servers that read make, model, colour and team. Work is spread across the ones that are on.</p>
+                        </header>
+                        <SettingRow
+                          field={FIELDS.vlm_strategy}
+                          value={draft.vlm_strategy ?? 'least_busy'}
+                          changed={draft.vlm_strategy !== settings.vlm_strategy}
+                          onChange={(value) => setValue('vlm_strategy', value)}
+                        />
+                        <div className="vlm-server-grid">
+                          {services.map((service) => {
+                            const serviceStatus = models.find((model) => model.file === 'vlm' && model.id === service.id);
+                            return (
+                              <VlmServerCard
+                                key={service.id}
+                                service={service}
+                                status={serviceStatus}
+                                onChangeModel={(model) => setServices(services.map((item) => (item.id === service.id ? { ...item, model } : item)))}
+                                onToggleEnabled={() => setServices(services.map((item) => (item.id === service.id ? { ...item, enabled: !item.enabled } : item)))}
+                                onRemove={() => setServices(services.filter((item) => item.id !== service.id))}
+                              />
+                            );
+                          })}
+                          {services.length === 0 && <p className="vlm-empty muted">No vision providers yet. Add a local Ollama server or a cloud key below.</p>}
+                        </div>
+                        <VlmAddForm onAdd={(service) => setServices([...services, service])} />
+                      </section>
+                    ) : (
+                      <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue} />
+                    )
+                  ))}
+
+                  <details className="settings-section settings-advanced">
+                    <summary>
+                      <span className="summary-title" role="heading" aria-level={3}>Model benchmark</span>
+                      <span className="summary-hint">Pick a sample, mark the truth and score vision models against it.</span>
+                    </summary>
+                    <div className="settings-advanced-body">
+                      <Benchmark run={run} toast={toast} settings={draft} status={status} />
+                    </div>
+                  </details>
+                </>
               )}
-            </div>
-          )}
 
-          {/* Tab 5: Known Vehicles */}
-          {activeTab === 'known' && (
-            <div className="settings-tab-content settings-known-tab">
-              <div className="known-tab-intro">
-                <h3>Known vehicles</h3>
-                <p className="muted">Vehicles identified across albums. Used to auto-fill details when the same car appears in a new shoot.</p>
-              </div>
-              <Known run={run} toast={toast} />
-              {dirty && (
-                <div className="unsaved-floating-bar">
-                  <span>You have unsaved changes in your settings.</span>
-                  <div className="actions-row" style={{ marginTop: 0 }}>
-                    <button className="primary small" onClick={save}>Save</button>
-                    <button className="ghost small" onClick={() => setDraft(settings)}>Discard</button>
-                  </div>
-                </div>
+              {activeTab === 'metadata' && SECTIONS.filter((section) => section.tab === 'metadata').map((section) => (
+                <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue} />
+              ))}
+
+              {activeTab === 'system' && (
+                <section className="settings-section settings-system" aria-labelledby="settings-system-head">
+                  <header className="settings-section-head">
+                    <h3 id="settings-system-head">Maintenance</h3>
+                    <p className="section-hint">Check the models this machine uses, clear cached previews, or reset the library. These actions never touch your original photographs.</p>
+                  </header>
+                  <Maintenance />
+                </section>
               )}
             </div>
           )}
         </div>
 
-        {/* Right Stats & Info Sidebar */}
-        <aside className="settings-sidebar">
-          {/* Software & Updates Card */}
-          <div className="sidebar-card update-card">
-            <div className="sidebar-card-header">
-              <div className="sidebar-brand">
-                <span className="sidebar-brand-name">Conrod</span>
-                {appVersion && <span className="sidebar-brand-version">v{appVersion}</span>}
-              </div>
-              {checkingUpdate ? (
-                <span className="pill-badge checking">Checking…</span>
-              ) : updateInfo ? (
-                <span className="pill-badge update-ready">Update available</span>
-              ) : upToDate ? (
-                <span className="pill-badge up-to-date">Up to date</span>
-              ) : updateError ? (
-                <span className="pill-badge error">Check failed</span>
-              ) : null}
-            </div>
+        <aside className="settings-sidebar" aria-label="Status and library">
+          <UpdateCard
+            info={updateInfo}
+            upToDate={upToDate}
+            error={updateError}
+            checking={checkingUpdate}
+            installing={installingUpdate}
+            progress={updateProgress}
+            version={appVersion}
+            onCheck={() => void checkForUpdates(true)}
+            onInstall={handleInstallUpdate}
+          />
 
-            <div className="sidebar-update-body">
-              {updateInfo ? (
-                <div className="sidebar-update-alert">
-                  <div className="sidebar-update-lead">
-                    <strong>Version v{updateInfo.version} is ready</strong>
-                    {updateInfo.date ? <span className="muted small"> · {updateInfo.date.slice(0, 10)}</span> : null}
-                  </div>
-                  {updateInfo.notes && (
-                    <details className="sidebar-update-notes">
-                      <summary>Release highlights</summary>
-                      <div className="notes-text">{updateInfo.notes}</div>
-                    </details>
-                  )}
-                  <button
-                    type="button"
-                    className="primary small full-width"
-                    disabled={installingUpdate}
-                    onClick={handleInstallUpdate}
-                  >
-                    {installingUpdate
-                      ? updateProgress && updateProgress.total > 0
-                        ? `Downloading ${Math.round((updateProgress.done / updateProgress.total) * 100)}%…`
-                        : 'Installing update…'
-                      : 'Install update & restart'}
-                  </button>
-                  <p className="sidebar-update-desc small">Signed update, installed in place. Your library is untouched.</p>
-                </div>
-              ) : updateError ? (
-                <p className="sidebar-update-desc">
-                  {updateError}. <button type="button" className="sidebar-ext-link" onClick={() => void openUrl('https://github.com/kapsikkum/conrod/releases')}>Download from GitHub ↗</button>
-                </p>
-              ) : (
-                <p className="sidebar-update-desc">
-                  Conrod checks the GitHub release for a signed update. It downloads and installs in place, then restarts.
-                </p>
-              )}
-
-              <div className="sidebar-btn-row">
-                <button
-                  type="button"
-                  className="secondary small"
-                  disabled={checkingUpdate || installingUpdate}
-                  onClick={() => void checkForUpdates(true)}
-                >
-                  {checkingUpdate ? 'Checking…' : 'Check for updates'}
-                </button>
-                <button
-                  type="button"
-                  className="sidebar-ext-link"
-                  onClick={() => void openUrl('https://github.com/kapsikkum/conrod/releases')}
-                >
-                  Releases ↗
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Library Overview Card */}
-          <div className="sidebar-card">
-            <h4>Library Overview</h4>
-            <div className="sidebar-stat-grid">
+          <section className="sidebar-card" aria-labelledby="settings-library">
+            <h4 id="settings-library">This library</h4>
+            <dl className="sidebar-stat-grid">
               <div className="sidebar-stat-item">
-                <span className="stat-label">Albums</span>
-                <span className="stat-value">{jobs.length}</span>
+                <dt className="stat-label">Albums</dt>
+                <dd className="stat-value">{jobs.length}</dd>
               </div>
               <div className="sidebar-stat-item">
-                <span className="stat-label">Photos</span>
-                <span className="stat-value">{totalPhotos.toLocaleString()}</span>
+                <dt className="stat-label">Photos</dt>
+                <dd className="stat-value">{totalPhotos.toLocaleString()}</dd>
               </div>
               <div className="sidebar-stat-item">
-                <span className="stat-label">Known Cars</span>
-                <span className="stat-value">{knownCount !== null ? knownCount.toLocaleString() : '—'}</span>
+                <dt className="stat-label">Known vehicles</dt>
+                <dd className="stat-value">{knownCount === null ? '—' : knownCount.toLocaleString()}</dd>
               </div>
-            </div>
-            {activeTab !== 'known' && (
-              <button
-                type="button"
-                className="ghost small sidebar-card-action"
-                onClick={() => setActiveTab('known')}
-              >
-                View Known Vehicles Catalog →
-              </button>
-            )}
-          </div>
+            </dl>
+            <button type="button" className="ghost small sidebar-card-action" onClick={() => setCatalogOpen(true)}>
+              Open known vehicles →
+            </button>
+          </section>
 
-          {/* Vision & AI Pipeline Card */}
-          <div className="sidebar-card">
-            <h4>Vision & AI Pipeline</h4>
+          <section className="sidebar-card" aria-labelledby="settings-overrides">
+            <h4 id="settings-overrides">Album overrides</h4>
+            <p className="sidebar-card-note">Albums whose own value differs from these defaults.</p>
+            <ul className="override-list">
+              {overrides.map((override) => (
+                <li className="override-row" key={override.key}>
+                  <span>{override.label}</span>
+                  <span className={`override-count${override.count ? '' : ' is-default'}`}>
+                    {override.count ? plural(override.count, 'album') : 'defaults'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="sidebar-card" aria-labelledby="settings-models">
+            <h4 id="settings-models">Models</h4>
             <div className="sidebar-meta-list">
               <div className="sidebar-meta-row">
-                <span className="meta-key">Providers</span>
-                <span className="meta-val">
-                  {getVlmServices(draft).filter((s) => s.enabled).length} / {getVlmServices(draft).length} enabled
-                </span>
+                <span className="meta-key">Vision providers</span>
+                <span className="meta-val">{enabledServices} of {services.length} on</span>
               </div>
               <div className="sidebar-meta-row">
-                <span className="meta-key">Strategy</span>
-                <span className="meta-val">
-                  {VLM_STRATEGIES.find((s) => s.id === draft.vlm_strategy)?.name ?? 'Least busy'}
-                </span>
+                <span className="meta-key">Load balancing</span>
+                <span className="meta-val">{strategyName}</span>
               </div>
             </div>
-          </div>
-
-          {/* Local ML Models Card */}
-          {models.length > 0 && (
-            <div className="sidebar-card">
-              <h4>Local ML Models</h4>
-              <div className="sidebar-meta-list">
-                {models.map((m) => (
-                  <div className="sidebar-meta-row" key={m.name}>
-                    <span className="meta-key truncate" title={m.name}>
-                      <span className={`dot ${m.ready ? 'ok' : 'no'}`} />
-                      {m.name}
-                    </span>
-                    <span className="meta-val small">{m.ready ? 'Ready' : 'Unavailable'}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            {models.length > 0 && (
+              <>
+                <h5 className="sidebar-subhead">On this machine</h5>
+                <div className="sidebar-meta-list">
+                  {models.map((model) => (
+                    <div className="sidebar-meta-row" key={model.name}>
+                      <span className="meta-key truncate" title={model.name}>
+                        <span className={`dot ${model.ready ? 'ok' : 'no'}`} aria-hidden="true" />
+                        {model.name}
+                      </span>
+                      <span className="meta-val small">{model.ready ? 'Ready' : 'Unavailable'}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
         </aside>
       </div>
+      {saveBar}
     </div>
   );
 }
