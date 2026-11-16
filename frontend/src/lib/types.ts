@@ -18,6 +18,8 @@ export type Frame = {
   /** Expression across the frame's faces, 0..1; null without the models. */
   eye_open_min?: number | null;
   smile_max?: number | null;
+  /** Learned taste, 0..1: a sort signal inside a burst, never a pick. Null until `taste_rank` runs. */
+  taste?: number | null;
   /** Rodeo/equestrian only: how much the animal is rearing under its rider. */
   buck_score?: number | null;
 };
@@ -41,7 +43,7 @@ export type Detection = {
 };
 export type Task = { id: number; label: string; detail: string; state: string; done: number; total: number; elapsed?: number; eta: number | null; error: string | null };
 export type Status = { revision?: number; tasks: Task[]; log: string[]; activeJob: number | null; operations: string[] };
-export type Review = { frames: Frame[]; detections: Detection[] };
+export type Review = { frames: Frame[]; detections: Detection[]; tasteHead?: boolean };
 
 export type SettingValue = string | number | boolean;
 export type Settings = Record<string, SettingValue>;
@@ -58,7 +60,7 @@ export const REGIONS = ['vehicle', 'person', 'face', 'eye'] as const;
 export type Region = (typeof REGIONS)[number];
 export type Page = 'Library' | 'Scan' | 'Review' | 'Train' | 'Known vehicles' | 'Settings';
 export type View = 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook';
-export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick';
+export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick' | 'taste';
 export type Facet = { kind: import('./facets.mjs').FacetKind; value: string };
 export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean; scanProfile?: string; blurStrictness?: string; burstGap?: number } | { jobId: number };
 export type MarkValues = { stars?: number | null; rejected?: boolean; picked?: boolean };

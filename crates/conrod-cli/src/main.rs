@@ -86,6 +86,13 @@ fn main() {
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
+            // What a background operation ended up doing lives in its task's
+            // detail; a headless run is useless without it.
+            for t in desktop.hub.snapshot() {
+                if !t.detail.is_empty() {
+                    eprintln!("{}: {}", t.label, t.detail);
+                }
+            }
             if let Some(t) = desktop
                 .hub
                 .snapshot()

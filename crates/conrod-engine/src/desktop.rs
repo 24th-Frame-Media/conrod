@@ -323,6 +323,7 @@ impl Desktop {
             Command::Rescore(a) => crate::rescore::rescore(self, a.job_id),
             Command::Rescan(a) => crate::rescore::rescan(self, a.job_id),
             Command::PickKeepers(a) => crate::passes::pick_keepers(self, a.job_id),
+            Command::TasteRank(a) => crate::taste::taste_rank(self, a.job_id, a.force),
             Command::Group(a) => crate::passes::group(self, a.job_id),
             Command::Regroup(a) => self.regroup(a.job_id),
             Command::BulkEdit(a) => crate::edits::bulk_edit(self, &a),
@@ -518,7 +519,7 @@ impl Desktop {
         let db = lock(&self.reader);
         // Only what the UI reads: `SELECT *` was 17 MB and 0.8 s for 4,808
         // frames, 3.6 MB of it the raw sharpness `features`.
-        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score FROM images i WHERE job_id=? ORDER BY path",[job])?;
+        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste FROM images i WHERE job_id=? ORDER BY path",[job])?;
         let mut detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
         let known: Vec<(Value, Vec<f32>)> = rows(&db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
             .into_iter()
@@ -565,7 +566,7 @@ impl Desktop {
             }
             detection.as_object_mut().map(|d| d.remove("embedding"));
         }
-        Ok(json!({"frames":frames,"detections":detections}))
+        Ok(json!({"frames":frames,"detections":detections,"tasteHead":crate::taste::available()}))
     }
 
     fn mark(&self, a: &MarkArgs) -> Result<Value> {
@@ -819,6 +820,14 @@ impl Desktop {
                             std::thread::sleep(std::time::Duration::from_millis(100));
                         }
                     }
+                }
+                // The learned taste order comes last, after the pick it sits
+                // beside: without a head file it is skipped without a word.
+                if final_status == "done" {
+                    if let Some(p) = &desktop.progress() {
+                        p.phase("pick");
+                    }
+                    crate::taste::after_scan(&desktop, job);
                 }
             }
             let db = lock(&desktop.db);
