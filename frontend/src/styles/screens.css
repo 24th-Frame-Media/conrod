@@ -1826,7 +1826,7 @@ dialog.viewer {
 .pipe-link.flow { background: linear-gradient(90deg, var(--scan) 50%, transparent 50%) 0 0 / 8px 1px; animation: link-flow .5s linear infinite; }
 .pipe-link.flow::after { border-left-color: var(--scan); }
 @keyframes link-flow { to { background-position: 8px 0; } }
-.pipe-node { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; text-align: left; padding: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); }
+.pipe-node { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; text-align: left; padding: 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); }
 .pipe-node:hover:not(:disabled) { border-color: var(--line-hover); background: var(--surface-3); }
 .pipe-node:disabled { opacity: .45; cursor: default; }
 .pipe-node.pending { color: var(--text-mute); }
@@ -1834,12 +1834,13 @@ dialog.viewer {
 .pipe-node.open { background: var(--surface-3); border-color: var(--text-dim); }
 .pipe-node.jam { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(227, 168, 58, .3); }
 .pn-head { display: flex; align-items: center; gap: 8px; width: 100%; }
-.pn-head b { font-weight: 500; color: var(--text); }
+.pn-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--text); }
+.pipe-node.jam .pn-head { padding-right: 18px; }
 .pipe-node.pending .pn-head b { color: var(--text-dim); }
 .pn-state { flex: none; width: 16px; height: 16px; display: grid; place-items: center; color: var(--good); }
 .pn-state i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-mute); opacity: .6; }
 .pipe-node.active .pn-state i { background: var(--scan); opacity: 1; animation: pulse 1.4s ease-in-out infinite; }
-.pn-jam { margin-left: auto; font-size: 10.5px; font-weight: 500; color: var(--accent); border: 1px solid rgba(227, 168, 58, .4); border-radius: 5px; padding: 0 6px; line-height: 1.5; }
+.pn-jam { position: absolute; top: 9px; right: 9px; display: flex; color: var(--accent); line-height: 1; }
 .pn-model { width: 100%; font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pn-device { align-self: flex-start; }
 .pn-workers { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; font-size: 12px; }

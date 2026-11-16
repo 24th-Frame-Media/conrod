@@ -34,8 +34,12 @@ function Node({ stage, status, jam, queued, open, workers, running, onToggle }: 
           {status === 'done' ? <Icon name="check" size={13} /> : <i />}
         </span>
         <b>{stage.label}</b>
-        {jam && <span className="pn-jam">Bottleneck</span>}
       </span>
+      {jam && (
+        <span className="pn-jam" role="img" aria-label="Bottleneck: this step is holding up the pipeline" title="Bottleneck: the step most frames are waiting on">
+          <Icon name="hourglass" size={13} />
+        </span>
+      )}
       <span className="pn-model" title={stage.model}>{off ? 'Not used for this shoot' : stage.model || '…'}</span>
       {!off && <span className="tag pn-device">{stage.device || '…'}</span>}
       {!off && (

@@ -2,7 +2,7 @@ import { PipelineView } from '../components/PipelineView';
 import { WorkerPanel } from '../components/WorkerPanel';
 import { Empty, Icon } from '../components/basics';
 import { asset } from '../lib/api';
-import { etaLabel, formatRate, orderStages, overallEta, overallFraction, stageStatus, summaryLine } from '../lib/scan.mjs';
+import { etaLabel, etaRemaining, formatRate, orderStages, overallEta, overallFraction, stageStatus, summaryLine } from '../lib/scan.mjs';
 import type { Job, ScanFound, ScanRecentFrame, Settings } from '../lib/types';
 import type { Runner } from '../state/hooks';
 import type { ScanLive } from '../state/useScanProgress';
@@ -64,7 +64,8 @@ export function ScanScreen({ job, live, running, paused, run, onSettingsSaved, o
   const total = stages[0]?.total || p?.total || job.total;
   const frac = p ? (state === 'done' ? 1 : overallFraction(stages, p.overall)) : 0;
   const pct = Math.round(frac * 100);
-  const eta = p ? overallEta(stages, p.overall) : null;
+  const smoothed = live ? etaRemaining(live.history) : null;
+  const eta = smoothed ?? (p ? overallEta(stages, p.overall) : null);
   const rate = formatRate(p?.rate_per_s);
   const doneNow = state === 'done';
   return (

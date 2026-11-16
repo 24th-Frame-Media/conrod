@@ -18,6 +18,7 @@ const PATHS = {
   eye: 'M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z M12 14.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z',
   sliders: 'M4 7h9 M17 7h3 M4 17h3 M11 17h9 M15 4.5v5 M9 14.5v5',
   undo: 'M9 14L4 9l5-5 M4 9h10.5a5.5 5.5 0 010 11H11',
+  hourglass: 'M7 4h10 M7 20h10 M8 4v1c0 3.5 4 4 4 7s-4 3.5-4 7v1 M16 4v1c0 3.5-4 4-4 7s4 3.5 4 7v1',
 } as const;
 export type IconName = keyof typeof PATHS;
 
