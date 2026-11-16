@@ -10,19 +10,36 @@ export type StackView = Stack<Frame> & { title: string; subtitle: string; photoW
 
 const PAD = 20, GAP = 18, MIN_W = 230, LAYER_INSET = 8, CAPTION_H = 38, EXPANDED_H = 250;
 
-type CardProps = { stack: StackView; selected: boolean; open: boolean; left: number; top: number; width: number; height: number; onToggle: (stack: StackView) => void };
+type CardProps = {
+  stack: StackView; selected: boolean; open: boolean;
+  /** Frames in the burst when its lead is the engine's unaccepted suggestion. */
+  suggestion?: number;
+  left: number; top: number; width: number; height: number;
+  onToggle: (stack: StackView) => void;
+  onPick?: (id: number) => void;
+};
 
-const StackCard = memo(function StackCard({ stack, selected, open, left, top, width, height, onToggle }: CardProps) {
+const StackCard = memo(function StackCard({ stack, selected, open, suggestion, left, top, width, height, onToggle, onPick }: CardProps) {
   const { lead } = stack;
   const count = stack.frames.length;
+  const suggested = suggestion != null && !lead.picked;
   return (
-    <article className={`burst-stack${open ? ' open' : ''}${selected ? ' selected' : ''}`} role="listitem" aria-current={selected || undefined}
+    <article className={`burst-stack${open ? ' open' : ''}${selected ? ' selected' : ''}${suggested ? ' suggested' : ''}`} role="listitem" aria-current={selected || undefined}
       style={{ left, top, width, height }} onClick={() => onToggle(stack)}>
       <div className="burst-layers" style={{ '--layers': Math.min(count, 4) } as CSSProperties}>
         <LoadableImage src={asset(lead.thumb_path)} alt={stack.title} />
         <StarPill frame={lead} />
         {count > 1 || stack.total > count ? <span className="stack-count" title={stack.total > count ? `${count} of ${stack.total} frames match the filter` : `${count} frames`}>{stack.total > count ? `${count}/${stack.total}` : count}</span> : null}
-        {stack.keepers.length > 0 && <KeeperMark label={lead.picked ? 'Keeper, picked by you' : 'Keeper, the engine\u2019s best of the burst'} />}
+        {suggested ? (
+          <button type="button" className="suggest"
+            aria-label={`Keep ${stack.title}, the suggested keeper of its burst`}
+            title={`Suggested keeper: the engine ranks this frame best of ${suggestion ?? count} frames in its burst. Click to keep it.`}
+            onClick={(e) => { e.stopPropagation(); onPick?.(lead.id); }}>
+            <KeeperMark inline /><span>Suggested</span>
+          </button>
+        ) : stack.keepers.length > 0 ? (
+          <KeeperMark label={lead.picked ? 'Keeper, picked by you' : 'Keeper, the engine\u2019s best of the burst'} />
+        ) : null}
       </div>
       <div className="burst-caption">
         <b>{stack.title}</b>
@@ -36,9 +53,10 @@ const StackCard = memo(function StackCard({ stack, selected, open, left, top, wi
  * Shared renderer for grouped-photo grids (burst, duplicate or vehicle stacks). Windowed: only the rows near the
  * viewport are mounted, so a 3 000-frame shoot costs what a 50-frame one does. The open stack's strip sits under its row.
  */
-export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeperIds, culled, onToggle, onSelect, onOpen, ariaLabel, empty }: {
+export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeperIds, suggestions, culled, onToggle, onSelect, onOpen, onPick, ariaLabel, empty }: {
   stacks: StackView[]; selectedKey: string | null; selectedId: number | null; expandedKey: string | null; keeperIds: ReadonlySet<number>;
-  culled: (frame: Frame) => boolean; onToggle: (stack: StackView) => void; onSelect: (id: number) => void; onOpen: () => void;
+  suggestions?: Map<number, number>;
+  culled: (frame: Frame) => boolean; onToggle: (stack: StackView) => void; onSelect: (id: number) => void; onOpen: () => void; onPick?: (id: number) => void;
   ariaLabel: string; empty: ReactNode;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
@@ -82,8 +100,8 @@ export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeper
       <div className="burst-grid-inner" ref={inner} role="list" aria-label={ariaLabel} style={{ height: layout.height }}>
         {items.map((stack, n) => {
           const i = first * layout.cols + n;
-          return <StackCard key={stack.key} stack={stack} selected={stack.key === selectedKey} open={stack.key === expandedKey}
-            left={(i % layout.cols) * (width + GAP)} top={layout.rowTop(Math.floor(i / layout.cols))} width={width} height={cardH} onToggle={onToggle} />;
+          return <StackCard key={stack.key} stack={stack} selected={stack.key === selectedKey} open={stack.key === expandedKey} suggestion={suggestions?.get(stack.lead.id)}
+            left={(i % layout.cols) * (width + GAP)} top={layout.rowTop(Math.floor(i / layout.cols))} width={width} height={cardH} onToggle={onToggle} onPick={onPick} />;
         })}
         {showStrip && openStack && (
           <div className="burst-expanded" style={{ top: layout.expandedTop, height: EXPANDED_H }}>

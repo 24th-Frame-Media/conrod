@@ -5,7 +5,7 @@ import { Inspector } from '../components/Inspector';
 import { PhotoGrid } from '../components/PhotoGrid';
 import { StackGrid, type StackView } from '../components/StackGrid';
 import { burstRankMap, decisionOf, defaultFilters, filename, vehicleGroups, type FrameFacts } from '../lib/review';
-import { buildStacks, makeStack, nextUndecided, stepFlat, stepInStack, stepRow, stepStack, type Stack } from '../lib/stacks.mjs';
+import { buildStacks, makeStack, nextUndecided, stepFlat, stepInStack, stepRow, stepStack, suggestionSizes, type Stack } from '../lib/stacks.mjs';
 import { tasteStacks } from '../lib/taste.mjs';
 import { albumSetting } from '../lib/album.mjs';
 import { call, engine } from '../lib/api';
@@ -150,6 +150,9 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
 
   // The one filtered model: every stack below is built from `frames`, the list the toolbar already narrowed.
   const ranks = useMemo(() => burstRankMap(review.frames, keepers), [review.frames, keepers]);
+  // Whole-album, like `keepers`: a filter must not change which frame a burst suggests.
+  const suggestions = useMemo(() => suggestionSizes(review.frames, facts), [review.frames, facts]);
+  const acceptSuggestion = (id: number) => { void rv.mark({ picked: true }, id); };
   const burstStacks = useMemo(() => {
     const stacks = buildStacks(frames.filter((f) => f.status === 'done'), { facts, keepers, all: review.frames }).map((s) => describe(s, facts, ranks));
     // "Taste": highest inside each burst first, bursts by the taste of their lead.
@@ -685,12 +688,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       <div className="review-main">
         <Facets preset={currentProfile} facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
         {stacked
-          ? <StackGrid stacks={shown} selectedKey={selectedKey} selectedId={selected} expandedKey={expandedKey} keeperIds={keepers}
-              culled={(f) => Boolean(facts.get(f.id)?.cull)} onToggle={toggleStack} onSelect={rv.setSelected} onOpen={openViewer}
+          ? <StackGrid stacks={shown} selectedKey={selectedKey} selectedId={selected} expandedKey={expandedKey} keeperIds={keepers} suggestions={suggestions}
+              culled={(f) => Boolean(facts.get(f.id)?.cull)} onToggle={toggleStack} onSelect={rv.setSelected} onOpen={openViewer} onPick={acceptSuggestion}
               ariaLabel={groupingNow === 'dupes' ? 'Duplicate stacks' : groupingNow === 'vehicles' ? 'Vehicle stacks' : 'Burst stacks'}
               empty={emptyState} />
-          : <PhotoGrid frames={frames} facts={facts} ranks={ranks} keepers={keepers} selected={selected} onSelect={rv.setSelected} onOpen={openViewer} onCols={setCols}
-              onReject={(id, rejected) => void rv.mark({ rejected }, id)} empty={emptyState} />}
+          : <PhotoGrid frames={frames} facts={facts} ranks={ranks} keepers={keepers} suggestions={suggestions} selected={selected} onSelect={rv.setSelected} onOpen={openViewer} onCols={setCols}
+              onReject={(id, rejected) => void rv.mark({ rejected }, id)} onPick={acceptSuggestion} empty={emptyState} />}
         <Inspector frame={frame} detections={frame ? facts.get(frame.id)?.dets ?? [] : []} allDetections={review.detections} allFrames={review.frames} known={known} scanning={scanning} kind={kind}
           onMark={(values) => void rv.mark(values)} onOpen={openViewer} onEdit={onEdit} />
       </div>
