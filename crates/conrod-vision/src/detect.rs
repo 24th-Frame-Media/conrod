@@ -27,15 +27,31 @@ pub const PETS: [usize; 2] = [15, 16];
 /// zebra, giraffe. Wildlife shows up in any kind of album.
 pub const ANIMALS: [usize; 10] = [14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
 
+/// The words a detection is labelled with: real COCO names, so an animal is never
+/// called a vehicle in the facets. Anything the app does not name is a vehicle,
+/// which is what every non-person, non-animal class in COCO is used for here.
 pub fn class_name(id: usize) -> &'static str {
     match id {
         0 => "person",
+        1 => "bicycle",
         2 => "car",
         3 => "motorcycle",
+        4 => "airplane",
         5 => "bus",
+        6 => "train",
         7 => "truck",
+        8 => "boat",
+        14 => "bird",
         15 => "cat",
         16 => "dog",
+        17 => "horse",
+        18 => "sheep",
+        19 => "cow",
+        20 => "elephant",
+        21 => "bear",
+        22 => "zebra",
+        23 => "giraffe",
+        32 => "sports ball",
         _ => "vehicle",
     }
 }
@@ -372,4 +388,22 @@ pub fn expand_box(b: [f64; 4], width: usize, height: usize, options: &DetectOpti
         (b[2] + px).min(w),
         (b[3] + py).min(h),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{class_name, ANIMALS};
+
+    #[test]
+    fn animals_are_named_not_called_vehicles() {
+        for id in ANIMALS {
+            assert_ne!(class_name(id), "vehicle", "COCO {id} is an animal");
+        }
+        assert_eq!(class_name(19), "cow");
+        assert_eq!(class_name(17), "horse");
+        assert_eq!(class_name(0), "person");
+        assert_eq!(class_name(2), "car");
+        assert_eq!(class_name(32), "sports ball");
+        assert_eq!(class_name(70), "vehicle", "an unnamed class still reads as a vehicle");
+    }
 }
