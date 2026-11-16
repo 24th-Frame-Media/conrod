@@ -19,6 +19,8 @@ const PATHS = {
   sliders: 'M4 7h9 M17 7h3 M4 17h3 M11 17h9 M15 4.5v5 M9 14.5v5',
   undo: 'M9 14L4 9l5-5 M4 9h10.5a5.5 5.5 0 010 11H11',
   hourglass: 'M7 4h10 M7 20h10 M8 4v1c0 3.5 4 4 4 7s-4 3.5-4 7v1 M16 4v1c0 3.5-4 4-4 7s4 3.5 4 7v1',
+  sun: 'M12 16.5a4.5 4.5 0 100-9 4.5 4.5 0 000 9z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4',
+  moon: 'M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z',
 } as const;
 export type IconName = keyof typeof PATHS;
 

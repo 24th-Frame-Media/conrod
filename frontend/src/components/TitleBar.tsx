@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getCurrentWindow, type Window } from '@tauri-apps/api/window';
 import { inTauri, mocked } from '../lib/api';
 import { etaText, pct, plural } from '../lib/format';
+import { applyTheme, storedTheme } from '../lib/theme.mjs';
 import type { Job, ModelInfo, Page, Status } from '../lib/types';
 import { profileLabel } from '../lib/types';
 import { Icon, Mark } from './basics';
@@ -145,6 +146,7 @@ type Props = {
 export function TitleBar({ page, setPage, jobs, models, status, profile, actions, popoverOpen }: Props) {
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const photos = jobs.reduce((n, j) => n + j.total, 0);
+  const [theme, setTheme] = useState(storedTheme);
   // The Scan tab exists only while a scan runs, or while its screen is open (to read the summary).
   const tabs = status.activeJob != null || page === 'Scan' ? [TABS[0], SCAN_TAB, ...TABS.slice(1)] : TABS;
   return (
@@ -164,6 +166,15 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, actions
       <div className="stats" data-tauri-drag-region>
         <span><b>{plural(jobs.length, 'album')}</b></span><span><b>{photos.toLocaleString()}</b> photos</span>
       </div>
+      <button
+        type="button"
+        className="theme-toggle"
+        title={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
+        aria-label={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
+        onClick={() => setTheme(applyTheme(theme === 'dark' ? 'light' : 'dark'))}
+      >
+        <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
+      </button>
       <StatusPill status={status} jobs={jobs} models={models} actions={actions} defaultOpen={popoverOpen} />
       <WindowControls />
       {active && active.total > 0 && <i className="topbar-progress" style={{ width: `${pct(active.done, active.total)}%` }} />}
