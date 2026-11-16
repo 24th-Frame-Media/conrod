@@ -43,3 +43,12 @@ Conrod is free and open source (non-commercial), so research-licensed weights
   larger box > rating > quality > sharpness > earlier frame (exact order decided by the
   K1/K2 ablation, not by hand).
 - Presets decide which features apply (no smile for motorsport; no lead room for portraits).
+
+Implemented (see `passes::Candidate::key`): stars > not culled > rating band > clean
+exposure > rodeo buck > fewer cut-off sides > larger box > framing bucket > eyes open >
+smile > exact rating > quality > sharpness > earlier frame > earlier row. The keys that
+were pairwise margins before (framing, eyes, smile, buck) are 0.10 buckets so the order
+is total; the keys that were already exact stay exact (a size bucket lost a motorsport
+pick in the readiness A/B). Lead room is `Motion::AxisDeg` from
+`streaks::background_pan`: a panned frame gives the line the subject travels on, and the
+lead term measures the room along it without guessing which way the car went.

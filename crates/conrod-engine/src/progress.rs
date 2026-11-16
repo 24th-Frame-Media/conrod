@@ -224,6 +224,7 @@ impl Progress {
         self.lane(pool, index, pool, IDLE, None, None, None);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lane(
         &self,
         pool: &'static str,
