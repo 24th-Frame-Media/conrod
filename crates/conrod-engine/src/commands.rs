@@ -304,6 +304,17 @@ pub struct RegionArgs {
     pub region: Region,
 }
 
+/// `provider_models`: ask a provider which models its key can call.
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderModelsArgs {
+    pub provider: String,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub api_key: String,
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct OllamaModelsArgs {
     #[serde(default)]
@@ -356,6 +367,7 @@ pub enum Command {
     DeleteJob(JobArgs),
     Identify(JobArgs),
     Identified(JobArgs),
+    ProviderModels(ProviderModelsArgs),
     Write(WriteArgs),
     CancelOperation(KeyArgs),
     InstallModels {},
