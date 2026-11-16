@@ -155,6 +155,102 @@ pub fn rows(conn: &Connection, sql: &str, args: impl rusqlite::Params) -> Result
     Ok(result)
 }
 
+/// `rows`, minus the fields that are null or empty.
+///
+/// A review payload repeats every key on every row, and more than a third of
+/// this table's fields are empty; the UI reads an absent key as null, so the
+/// empty ones cost bytes on the wire and `JSON.parse` time for nothing.
+pub fn rows_compact(
+    conn: &Connection,
+    sql: &str,
+    args: impl rusqlite::Params,
+) -> Result<Vec<Value>> {
+    let mut stmt = conn.prepare(sql).map_err(err)?;
+    let names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+    let result = stmt
+        .query_map(args, |row| {
+            let mut item = Map::new();
+            for (i, name) in names.iter().enumerate() {
+                use rusqlite::types::ValueRef;
+                let value = match row.get_ref(i)? {
+                    ValueRef::Null => continue,
+                    ValueRef::Integer(n) => json!(n),
+                    ValueRef::Real(n) => json!(n),
+                    ValueRef::Text(s) => {
+                        if s.is_empty() {
+                            continue;
+                        }
+                        Value::String(String::from_utf8_lossy(s).into_owned())
+                    }
+                    ValueRef::Blob(_) => continue,
+                };
+                item.insert(name.clone(), value);
+            }
+            Ok(Value::Object(item))
+        })
+        .map_err(err)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(err)?;
+    Ok(result)
+}
+
+/// Everything the Review screen opens with: the album's frames and detections.
+///
+/// Only what the UI reads: `SELECT *` was 17 MB and 0.8 s for 4,808 frames,
+/// 3.6 MB of it the raw sharpness `features`. Detections carrying an identity
+/// embedding are matched against the known vehicles and people here, and the
+/// embedding itself never leaves this function.
+pub fn review_payload(db: &Connection, job: i64) -> Result<Value> {
+    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score FROM images i WHERE job_id=? ORDER BY path",[job])?;
+    let mut detections = rows_compact(db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
+    let known: Vec<(Value, Vec<f32>)> = rows(db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
+        .into_iter()
+        .filter_map(|row| similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector)))
+        .collect();
+    let people: Vec<(Value, Vec<f32>)> =
+        rows(db, "SELECT name,country,embedding FROM known_people", [])?
+            .into_iter()
+            .filter_map(|row| {
+                similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector))
+            })
+            .collect();
+    for detection in &mut detections {
+        if let Some(vector) = detection["embedding"].as_str().and_then(similarity::unpack) {
+            let is_face = detection["region_type"].as_str() == Some("face");
+            let candidates = if is_face { &people } else { &known };
+            // SFace faces match at its own threshold; an older DINOv2 one
+            // must be near-identical.
+            let threshold = if is_face && vector.len() == conrod_vision::faces::IDENTITY_DIM {
+                f64::from(conrod_vision::faces::SAME_PERSON)
+            } else if is_face {
+                0.97
+            } else {
+                conrod_core::grouping::SAME_CAR
+            };
+            let best = candidates
+                .iter()
+                .filter(|(_, candidate)| candidate.len() == vector.len())
+                .filter_map(|(item, candidate)| {
+                    let score = similarity::nearness(&vector, candidate);
+                    (f64::from(score) >= threshold).then_some((score, item))
+                })
+                .max_by(|a, b| a.0.total_cmp(&b.0));
+            if let Some((score, item)) = best {
+                let mut item = item.clone();
+                item.as_object_mut().map(|v| v.remove("embedding"));
+                item["similarity"] = json!((score * 1000.0).round() / 1000.0);
+                detection[if is_face {
+                    "known_person_match"
+                } else {
+                    "known_match"
+                }] = item;
+            }
+        }
+        detection.as_object_mut().map(|d| d.remove("embedding"));
+    }
+    Ok(json!({"frames":frames,"detections":detections}))
+}
+
 impl Desktop {
     pub fn open(root: PathBuf) -> Result<Arc<Self>> {
         let hub = TaskHub::new();
@@ -515,57 +611,7 @@ impl Desktop {
     }
 
     fn review(&self, job: i64) -> Result<Value> {
-        let db = lock(&self.reader);
-        // Only what the UI reads: `SELECT *` was 17 MB and 0.8 s for 4,808
-        // frames, 3.6 MB of it the raw sharpness `features`.
-        let frames = rows(&db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score FROM images i WHERE job_id=? ORDER BY path",[job])?;
-        let mut detections = rows(&db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
-        let known: Vec<(Value, Vec<f32>)> = rows(&db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
-            .into_iter()
-            .filter_map(|row| similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector)))
-            .collect();
-        let people: Vec<(Value, Vec<f32>)> =
-            rows(&db, "SELECT name,country,embedding FROM known_people", [])?
-                .into_iter()
-                .filter_map(|row| {
-                    similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector))
-                })
-                .collect();
-        for detection in &mut detections {
-            if let Some(vector) = detection["embedding"].as_str().and_then(similarity::unpack) {
-                let is_face = detection["region_type"].as_str() == Some("face");
-                let candidates = if is_face { &people } else { &known };
-                // SFace faces match at its own threshold; an older DINOv2 one
-                // must be near-identical.
-                let threshold = if is_face && vector.len() == conrod_vision::faces::IDENTITY_DIM {
-                    f64::from(conrod_vision::faces::SAME_PERSON)
-                } else if is_face {
-                    0.97
-                } else {
-                    conrod_core::grouping::SAME_CAR
-                };
-                let best = candidates
-                    .iter()
-                    .filter(|(_, candidate)| candidate.len() == vector.len())
-                    .filter_map(|(item, candidate)| {
-                        let score = similarity::nearness(&vector, candidate);
-                        (f64::from(score) >= threshold).then_some((score, item))
-                    })
-                    .max_by(|a, b| a.0.total_cmp(&b.0));
-                if let Some((score, item)) = best {
-                    let mut item = item.clone();
-                    item.as_object_mut().map(|v| v.remove("embedding"));
-                    item["similarity"] = json!((score * 1000.0).round() / 1000.0);
-                    detection[if is_face {
-                        "known_person_match"
-                    } else {
-                        "known_match"
-                    }] = item;
-                }
-            }
-            detection.as_object_mut().map(|d| d.remove("embedding"));
-        }
-        Ok(json!({"frames":frames,"detections":detections}))
+        review_payload(&lock(&self.reader), job)
     }
 
     fn mark(&self, a: &MarkArgs) -> Result<Value> {
@@ -1511,5 +1557,66 @@ mod tests {
 
         drop(desktop);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The real album the user opens (default `~/.conrod/conrod.db`, job 106:
+    /// 3,061 frames and 41,779 detections), read-only. Measures the SQL read,
+    /// the payload build and the JSON encode -- the three parts between the
+    /// click and the grid.
+    ///
+    /// `cargo test -p conrod-engine --release review_payload_speed -- --ignored --nocapture`
+    /// (override with `CONROD_REVIEW_DB` / `CONROD_REVIEW_JOB`).
+    #[test]
+    #[ignore]
+    fn review_payload_speed() {
+        use rusqlite::OpenFlags;
+        use std::time::Instant;
+        let path = std::env::var("CONROD_REVIEW_DB")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| conrod_store::db_path());
+        if !path.exists() {
+            eprintln!("no album database at {}; skipping", path.display());
+            return;
+        }
+        let job: i64 = std::env::var("CONROD_REVIEW_JOB")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(106);
+        let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("open the album read-only");
+        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score FROM images i WHERE job_id=? ORDER BY path";
+        const DET_SQL: &str = "SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id";
+
+        let mut sql = f64::MAX;
+        let mut payload = f64::MAX;
+        let mut encode = f64::MAX;
+        let mut bytes = 0;
+        let mut counted = (0, 0);
+        for _ in 0..3 {
+            let t = Instant::now();
+            let frames = rows(&db, FRAME_SQL, [job]).unwrap();
+            let detections = rows(&db, DET_SQL, [job]).unwrap();
+            sql = sql.min(t.elapsed().as_secs_f64());
+            counted = (frames.len(), detections.len());
+            drop(frames);
+
+            let t = Instant::now();
+            let value = review_payload(&db, job).unwrap();
+            payload = payload.min(t.elapsed().as_secs_f64());
+
+            let t = Instant::now();
+            bytes = serde_json::to_string(&value).unwrap().len();
+            encode = encode.min(t.elapsed().as_secs_f64());
+        }
+        println!(
+            "review job {job}: {} frames, {} detections; sql {sql:.3} s, payload {payload:.3} s, json {encode:.3} s, {} MB",
+            counted.0,
+            counted.1,
+            bytes / (1024 * 1024)
+        );
+        assert!(
+            payload < 1.0,
+            "the review payload takes {payload:.2} s (target under 1 s)"
+        );
     }
 }
