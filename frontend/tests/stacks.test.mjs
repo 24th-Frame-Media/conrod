@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildStacks, decisionOf, keeperIds, keepersOf, nearestVisible, nextUndecided, reviewOrder,
-  scrollTopFor, stackLayout, stepFlat, stepInStack, stepRow, stepStack, suggestionSizes, visibleRows,
+  scrollTopFor, softBursts, stackLayout, stepFlat, stepInStack, stepRow, stepStack, suggestionSizes, visibleRows,
 } from '../src/lib/stacks.mjs';
 
 const f = (id, burst, extra = {}) => ({ id, path: `D:\\IMG_${String(id).padStart(4, '0')}.CR3`, burst_key: burst, rejected: 0, picked: 0, manual_stars: null, rating: 0.5, ...extra });
@@ -35,6 +35,15 @@ test('keeperIds works burst by burst over the whole album, so a filter cannot ch
   assert.deepEqual([...keeperIds(frames, facts)].sort(), [2, 5]);
   const marked = frames.map((x) => (x.id === 4 ? { ...x, picked: 1 } : x));
   assert.deepEqual([...keeperIds(marked, facts)].sort(), [4, 5]);
+});
+
+test('a burst with nothing above two stars has no keeper, and a fair frame or a hand star settles it', () => {
+  const soft = [f(1, 9, { rating: 0.66 }), f(2, 9, { rating: 0.67 })];
+  assert.deepEqual(softBursts(soft, factsOf()).get(9), { size: 2, best: 2 }, 'best of two stars: no keeper');
+  assert.equal(softBursts([f(1, 9, { rating: 0.66 }), f(2, 9, { rating: 0.75 })], factsOf()).size, 0, 'one fair frame is enough to pick from');
+  assert.equal(softBursts(soft, factsOf({ 1: { pick: true } })).size, 0, 'a keeper removes the note');
+  assert.equal(softBursts([f(1, 9, { rating: 0.4, manual_stars: 3 }), f(2, 9, { rating: 0.4 })], factsOf()).size, 0, 'your own three stars count');
+  assert.equal(softBursts([f(1, null, { rating: 0.4 })], factsOf()).size, 0, 'a lone frame is not a burst');
 });
 
 test('a suggestion carries the size of the burst it heads, and stops being a suggestion once you pick', () => {

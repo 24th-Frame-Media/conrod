@@ -1,6 +1,6 @@
 // Pure Review logic: stacks, the one keeper concept, keyboard navigation targets and virtual-grid layout.
 // Everything here works on plain frames and a `facts` map ({cull, pick} per frame id), so it runs under node tests.
-import { filename } from '../review.mjs';
+import { filename, frameStars } from '../review.mjs';
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const natural = (a, b) => filename(a.path ?? '').localeCompare(filename(b.path ?? ''), undefined, { numeric: true }) || a.id - b.id;
@@ -34,6 +34,31 @@ export function suggestionSizes(frames, facts) {
   }
   return out;
 }
+
+/**
+ * Bursts where nothing is worth keeping: every frame is below three stars and the engine picked none.
+ * Keyed by burst key, valued with the burst's size and its best star rating, so the grid can say
+ * "No keeper" instead of leaving an unexplained gap where a green suggestion would be.
+ *
+ * Mirrors `conrod_vision::sharpness::KEEPER_MIN_RATING` (three stars): the engine has no keeper below it.
+ */
+export function softBursts(frames, facts) {
+  const out = new Map();
+  for (const group of groupBy(frames, (f) => groupKeyOf(f)).values()) {
+    const key = group[0].burst_key;
+    if (key == null || group.length < 2) continue;
+    if (keepersOf(group, facts).length) continue;
+    const live = group.filter((f) => decisionOf(f, facts.get(f.id)) !== 'rejected');
+    if (!live.length) continue;
+    const best = live.reduce((n, f) => Math.max(n, frameStars(f)), 0);
+    if (best >= KEEPER_STARS) continue;
+    out.set(key, { size: group.length, best });
+  }
+  return out;
+}
+
+/** The star rating a burst must reach for the engine to keep a frame of it. Mirrors the Rust constant. */
+export const KEEPER_STARS = 3;
 
 /** Stack key for a frame: its burst (or dupe set); a frame with no group is its own stack. */
 export function groupKeyOf(frame, dupes = false) {

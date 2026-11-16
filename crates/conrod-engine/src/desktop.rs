@@ -1459,7 +1459,7 @@ mod tests {
         }
         let (weak, strong) = (
             lib.detection(f1, "vehicle", 0.3),
-            lib.detection(f2, "vehicle", 0.7),
+            lib.detection(f2, "vehicle", 0.86),
         );
         // The frame rating would favour the first; the subjects favour the second.
         lib.sql("UPDATE images SET rating=0.9 WHERE id=?", [f1]);
@@ -1495,7 +1495,7 @@ mod tests {
                 "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
                 params![f64::from(i) * 0.2, image],
             );
-            let detection = lib.detection(image, "vehicle", 0.5);
+            let detection = lib.detection(image, "vehicle", 0.8);
             let scale = (0.02 + 0.04 * f64::from(i)).sqrt();
             let (w, h) = (6000.0 * scale, 4000.0 * scale);
             lib.sql(

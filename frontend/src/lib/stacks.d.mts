@@ -11,6 +11,10 @@ export function decisionOf(frame: StackFrame, fact: StackFact | undefined): Deci
 export function keepersOf<F extends StackFrame>(group: F[], facts: Facts): F[];
 /** Burst size behind each suggested (unaccepted) keeper, by frame id. */
 export function suggestionSizes(frames: StackFrame[], facts: Facts): Map<number, number>;
+/** The star rating a burst must reach for the engine to keep one of its frames. */
+export const KEEPER_STARS: number;
+/** Bursts with no keeper because every frame is below `KEEPER_STARS`, keyed by burst key. */
+export function softBursts(frames: StackFrame[], facts: Facts): Map<number, { size: number; best: number }>;
 export function groupKeyOf(frame: StackFrame, dupes?: boolean): string;
 export function keeperIds(frames: StackFrame[], facts: Facts): Set<number>;
 export function leadOf<F extends StackFrame>(frames: F[], keepers: F[], facts: Facts): F;
