@@ -564,6 +564,23 @@ fn pan_consistency(subject: &Plane) -> Option<f64> {
     scores.first().copied()
 }
 
+/// The score a frame with no detected subject is rated by.
+///
+/// A detail shot is judged on its in-focus area: the sharp bit against a
+/// deliberately blurred background is the picture. A pan is the exception -- its
+/// whole point is the cap on how much of the frame is sharp, and the car's own
+/// crisp detail (which `focal` finds) must not lift it back over that cap.
+pub fn subjectless_score(whole: &Sharpness, focal: Option<f64>) -> Option<f64> {
+    let base = whole.measured.then_some(whole.score);
+    if whole.panning {
+        return base;
+    }
+    match (base, focal) {
+        (Some(base), Some(focal)) => Some(base.max(focal)),
+        (base, focal) => base.or(focal),
+    }
+}
+
 /// The frame's in-focus area: how sharp its sharpest real region is.
 ///
 /// A frame with no subject is often a deliberate detail -- a badge or a gear
@@ -1058,6 +1075,33 @@ mod tests {
             3,
             "a car filling a third of a streaked frame is a three, got {}",
             measured.score
+        );
+    }
+
+    #[test]
+    fn a_pan_is_rated_by_its_cap_not_by_its_sharpest_detail() {
+        let (frame, bbox) = pan_frame(960, false);
+        let whole = measure(&frame, Some(bbox), None);
+        assert!(whole.panning, "the smeared background marks it a pan");
+        let focal = focal_score(&frame).expect("the car itself carries detail");
+        assert!(
+            focal > whole.score,
+            "the car is sharper than the cap: {focal} vs {}",
+            whole.score
+        );
+        assert_eq!(
+            subjectless_score(&whole, Some(focal)),
+            Some(whole.score),
+            "taking the sharpest detail would undo the pan cap"
+        );
+        // A detail shot with no pan is still judged on its in-focus area.
+        let shot = detail_shot(768, 0.06, 3);
+        let measured = measure(&shot, None, None);
+        assert!(!measured.panning);
+        let focal = focal_score(&shot).expect("measurable tiles");
+        assert_eq!(
+            subjectless_score(&measured, Some(focal)),
+            Some(measured.score.max(focal))
         );
     }
 

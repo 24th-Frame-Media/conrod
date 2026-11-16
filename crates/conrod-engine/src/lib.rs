@@ -797,27 +797,34 @@ pub fn cull_frame(
         let focus = sharpness::measure(&grey, None, None);
         let measured = focus.measured.then_some(focus.score);
         if subjects.is_empty() {
-            // Nothing to judge: rate the frame on its in-focus area, so a sharp
-            // detail against a deliberately blurred background is not "blurred".
-            //
-            // Flat subject matter -- an empty wall, a worktop, a ceiling -- has
-            // too little texture for either tile ratio, and a sharp interior
-            // frame reads as soft. The edge blur of the frame's sharpest
-            // direction asks only whether any edge is sharp, which is the same
-            // question `focal_score` asks of the tiles.
-            let edges = conrod_vision::edgeblur::measure(&grey, None);
-            let edge = sharpness::rating_from_blur(
-                conrod_vision::edgeblur::at_reference(edges.sigma_best, fw.max(fh)),
-                sharpness::BlurStrictness::parse(&strictness),
-            );
-            let mut score = f64::NEG_INFINITY;
-            for v in [measured, sharpness::focal_score(&grey), edge]
-                .into_iter()
-                .flatten()
-            {
-                score = score.max(v);
-            }
-            (score > f64::NEG_INFINITY).then_some(score)
+            // A pan is rated on the picture, and its cap is the whole point: the
+            // car is sharp, the frame around it is not, and "how much of the frame
+            // is sharp" decides the stars. The detail-shot rescue must not undo
+            // that -- the car's own sharp detail is exactly what focal_score finds.
+            let focal = sharpness::focal_score(&grey);
+            let rescue = if focus.panning {
+                sharpness::subjectless_score(&focus, None)
+            } else {
+                // Nothing to judge: rate the frame on its in-focus area, so a sharp
+                // detail against a deliberately blurred background is not "blurred".
+                //
+                // Flat subject matter -- an empty wall, a worktop, a ceiling -- has
+                // too little texture for either tile ratio, and a sharp interior
+                // frame reads as soft. The edge blur of the frame's sharpest
+                // direction asks only whether any edge is sharp, which is the same
+                // question `focal_score` asks of the tiles.
+                let edges = conrod_vision::edgeblur::measure(&grey, None);
+                let edge = sharpness::rating_from_blur(
+                    conrod_vision::edgeblur::at_reference(edges.sigma_best, fw.max(fh)),
+                    sharpness::BlurStrictness::parse(&strictness),
+                );
+                let mut score = sharpness::subjectless_score(&focus, focal);
+                if let Some(edge) = edge {
+                    score = Some(score.map_or(edge, |s| s.max(edge)));
+                }
+                score
+            };
+            rescue
         } else {
             measured
         }
