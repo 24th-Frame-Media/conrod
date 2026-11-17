@@ -13,7 +13,7 @@ with a nonzero exit code if a task fails.
 | bootstrap | none | settings, jobs, models, status |
 | health | none | Model rows plus VLM availability; Ollama model lookup has a four-second timeout |
 | status | none | revision, tasks, log, activeJob, operations |
-| jobs | none | Albums, counts, folder-name fallback for unnamed albums |
+| jobs | none | Albums with total/done frame counts and hidden `copies`, folder-name fallback for unnamed albums |
 | review | jobId | frames and detections |
 | scan | root?, jobId?, label?, profile?, recursive=true, stage="cull" | New/resumed jobId; stage index, cull, all, or identify (existing job required) |
 | pause / resume_scan / stop | none | Control current cull; return status |
@@ -31,6 +31,8 @@ with a nonzero exit code if a task fails.
 | rescore | jobId | operation; apply learned/current scoring to stored features, preserving hand ratings |
 | rescan | jobId | operation; re-read every photo and re-measure sharpness inside the stored boxes, preserving all hand edits |
 | pick_keepers | jobId | Best subject per car per pass |
+| collapse_copies | jobId | operation; hide the extra imports of one shot (same time, size and sampled bytes) as `copy_of`; bursts, picks, counts and writes ignore them |
+| restore_copies | jobId | operation; show every hidden copy again, then regroup |
 | taste_rank | jobId, force? | operation; score each frame's cached preview with the learned taste head into `images.taste` (skips scored frames unless `force`); `head: false` when no head is installed |
 | group / regroup | jobId | operation; embeddings, groups and consensus |
 | rename_job | jobId, label? | Trim label; blank/null restores folder name |

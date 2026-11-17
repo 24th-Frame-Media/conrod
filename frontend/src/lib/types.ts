@@ -1,4 +1,4 @@
-export type Job = { id: number; label: string; root: string; status: string; total: number; done: number; created_at: number; scan_profile?: string; include_people?: boolean; settings_json?: string | null; burst_gap?: number };
+export type Job = { id: number; label: string; root: string; status: string; total: number; done: number; copies?: number; created_at: number; scan_profile?: string; include_people?: boolean; settings_json?: string | null; burst_gap?: number };
 export type Frame = {
   id: number; path: string; status: string; thumb_path: string | null; preview_path: string | null;
   width: number; height: number; rating: number | null; manual_stars: number | null; rejected: number; picked: number;

@@ -117,7 +117,7 @@ pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
                     COALESCE(SUM(CASE WHEN d.rejected=1 THEN 1 END),0) AS rejected,
                     COALESCE(SUM(CASE WHEN d.reviewed=1 THEN 1 END),0) AS reviewed,
                     COALESCE(SUM(CASE WHEN {VEHICLE} AND _needs_review(d.number_conf,d.reviewed,d.rejected,d.uncertain,?2)=1 THEN 1 END),0) AS to_review
-               FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1"
+               FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(i.copy_of,0)=0"
         ),
         params![job, threshold],
     )?);
@@ -127,13 +127,13 @@ pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
                 COALESCE(SUM(CASE WHEN status='done' THEN 1 END),0) AS scanned,
                 COALESCE(SUM(CASE WHEN written_at IS NOT NULL THEN 1 END),0) AS written,
                 COALESCE(SUM(CASE WHEN status='error' THEN 1 END),0) AS errors
-           FROM images WHERE job_id=?",
+           FROM images WHERE job_id=? AND COALESCE(copy_of,0)=0",
         [job],
     )?);
     // Resolve race numbers through this album's entry list.
     let numbers: Vec<Value> = rows(
         &db,
-        &format!("SELECT d.number AS number, COUNT(*) AS frames FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {VEHICLE} AND d.number IS NOT NULL AND d.rejected=0 GROUP BY d.number ORDER BY frames DESC, d.number"),
+        &format!("SELECT d.number AS number, COUNT(*) AS frames FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {VEHICLE} AND d.number IS NOT NULL AND d.rejected=0 AND COALESCE(i.copy_of,0)=0 GROUP BY d.number ORDER BY frames DESC, d.number"),
         [job],
     )?
     .into_iter()
@@ -144,12 +144,12 @@ pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
     .collect();
     let plates = rows(
         &db,
-        &format!("SELECT d.plate AS plate, COUNT(*) AS frames FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {VEHICLE} AND d.plate IS NOT NULL AND d.rejected=0 GROUP BY d.plate ORDER BY frames DESC, d.plate"),
+        &format!("SELECT d.plate AS plate, COUNT(*) AS frames FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {VEHICLE} AND d.plate IS NOT NULL AND d.rejected=0 AND COALESCE(i.copy_of,0)=0 GROUP BY d.plate ORDER BY frames DESC, d.plate"),
         [job],
     )?;
     let by_region: Map<String, Value> = rows(
         &db,
-        "SELECT COALESCE(d.region_type,'vehicle') AS region, COUNT(*) AS n FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? GROUP BY region",
+        "SELECT COALESCE(d.region_type,'vehicle') AS region, COUNT(*) AS n FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 GROUP BY region",
         [job],
     )?
     .into_iter()
@@ -186,7 +186,7 @@ pub fn cover(d: &Desktop, job: i64) -> Result<Value> {
     if is_motorsport {
         if let Some(path) = candidates(
             &format!(
-                "SELECT d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND d.crop_path IS NOT NULL AND d.rejected=0 AND {VEHICLE} ORDER BY d.conf * (d.x2-d.x1) * (d.y2-d.y1) * (1 + COALESCE(d.sharpness,0)) DESC LIMIT 20"
+                "SELECT d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND d.crop_path IS NOT NULL AND d.rejected=0 AND COALESCE(i.copy_of,0)=0 AND {VEHICLE} ORDER BY d.conf * (d.x2-d.x1) * (d.y2-d.y1) * (1 + COALESCE(d.sharpness,0)) DESC LIMIT 20"
             ),
             "crop_path",
         )? {
@@ -194,7 +194,7 @@ pub fn cover(d: &Desktop, job: i64) -> Result<Value> {
         }
     }
     if let Some(path) = candidates(
-        "SELECT thumb_path FROM images WHERE job_id=? AND thumb_path IS NOT NULL AND rejected=0 ORDER BY COALESCE(stars*0.2, rating, 0) DESC, id LIMIT 20",
+        "SELECT thumb_path FROM images WHERE job_id=? AND thumb_path IS NOT NULL AND rejected=0 AND COALESCE(copy_of,0)=0 ORDER BY COALESCE(stars*0.2, rating, 0) DESC, id LIMIT 20",
         "thumb_path",
     )? {
         return Ok(json!({"path": path, "source": "thumb"}));
@@ -208,7 +208,7 @@ pub fn filling(d: &std::sync::Arc<Desktop>, job: i64) -> Result<Value> {
     if d.scanning() || !lock(&d.operations).is_empty() {
         return Ok(d.status());
     }
-    let todo = rows(&lock(&d.reader), "SELECT id,path FROM images WHERE job_id=? AND thumb_path IS NULL AND error IS NULL ORDER BY id", [job])?;
+    let todo = rows(&lock(&d.reader), "SELECT id,path FROM images WHERE job_id=? AND thumb_path IS NULL AND error IS NULL AND COALESCE(copy_of,0)=0 ORDER BY id", [job])?;
     if todo.is_empty() {
         return Ok(d.status());
     }

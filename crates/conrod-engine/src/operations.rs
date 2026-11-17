@@ -346,7 +346,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             task.detail(format!("Prepared {faces} faces for name suggestions"));
             return Ok(());
         }
-        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND {ML_ELIGIBLE} ORDER BY i.id,d.id"), [job])?;
+        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {ML_ELIGIBLE} ORDER BY i.id,d.id"), [job])?;
         if pending.is_empty() {
             crate::passes::embed_faces_missing(d, job, stop, task)?;
             task.detail("No kept subjects need identification");
@@ -585,7 +585,7 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
         }
         let images = rows(
             &lock(&d.db),
-            "SELECT * FROM images WHERE job_id=? AND status='done' ORDER BY id",
+            "SELECT * FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 ORDER BY id",
             [job],
         )?;
         let mut writer = MetadataWriter::new(exiftool());

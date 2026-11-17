@@ -160,6 +160,10 @@ struct Key {
     by_hand: i64,
     /// A frame no rule culled beats one that was culled.
     unculled: i64,
+    /// A rated subject that clears the keeper bar beats a frame with no
+    /// subject: that frame is rated on its sharpest patch, a different
+    /// measure, and is usually a shot the detector missed.
+    subject: i64,
     /// Rating in the candidate's band (the wider of the two kinds).
     rating_band: i64,
     /// A clean exposure beats a clipped one; never a cull.
@@ -200,8 +204,9 @@ struct Key {
 impl Candidate {
     /// The whole keeper order in one tuple; the doc comment on [`Key`] lists
     /// the fields in the order they dominate. Readiness decided the order:
-    /// stars, no cull, the rating band, a clean exposure and the subject's size
-    /// before composition, because framing above size cost three cases' pick
+    /// stars, no cull, whether a rated subject is there at all, the rating
+    /// band, a clean exposure and the subject's size before composition,
+    /// because framing above size cost three cases' pick
     /// rates (motorsport 46.7 -> 33.3, car meet 67 -> 33.3, portrait 42.9 ->
     /// 35.7). Framing, eyes and the smile then refine same-size, same-band
     /// frames; a cut-off subject has already lost at `cut_sides`.
@@ -213,6 +218,7 @@ impl Candidate {
         Key {
             by_hand: self.by_hand,
             unculled: i64::from(!self.culled),
+            subject: i64::from(!self.on_frame && self.score >= conrod_vision::sharpness::KEEPER_MIN_RATING),
             rating_band: bucket(Some(self.score), band_width),
             bright: i64::from(self.bright),
             buck: if r.buck { bucket(self.buck, BUCK_BUCKET) } else { 0 },
@@ -289,7 +295,7 @@ pub fn pick_of_pass(
     };
     let found = rows(
         conn,
-        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.set_id, i.dark_frame, i.exposure_verdict, i.eye_open_min, i.smile_max, i.buck_score, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL ORDER BY i.id, d.id",
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.set_id, i.dark_frame, i.exposure_verdict, i.eye_open_min, i.smile_max, i.buck_score, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL AND COALESCE(i.copy_of,0)=0 ORDER BY i.id, d.id",
         params![job, crate::EYES_CLOSED],
     )?;
     // Which optional keys rank is the preset's decision; read it from the album
@@ -458,7 +464,7 @@ pub fn pick_of_pass(
     // burst's ungrouped unit, rated by the frame.
     let spare = rows(
         conn,
-        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness,set_id,dark_frame,exposure_verdict,eye_open_min,smile_max,buck_score FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 ORDER BY id",
+        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness,set_id,dark_frame,exposure_verdict,eye_open_min,smile_max,buck_score FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 ORDER BY id",
         [job],
     )?;
     for r in &spare {
@@ -495,8 +501,19 @@ pub fn pick_of_pass(
     }
     // Earlier frame first, so an exact tie keeps it, as a re-run always has.
     units.sort_by_key(|(_, c)| (c.frame, c.row));
+    let mut seen: HashSet<(i64, Option<i64>)> = HashSet::new();
     let mut best: HashMap<(i64, Option<i64>), Candidate> = HashMap::new();
     for (unit, candidate) in units {
+        seen.insert(unit);
+        // A burst whose best frame is still below three stars has no keeper.
+        // Proposing the least-bad soft frame of a bad set is worse than saying
+        // nothing: the photographer asked for a pick only when there is one.
+        // A hand star is the photographer's own word, so it always counts. Such
+        // a frame never enters the fold, or it would win the ranking and be
+        // dropped, hiding a bar-clearing frame of the same unit.
+        if candidate.by_hand < 3 && candidate.score < conrod_vision::sharpness::KEEPER_MIN_RATING {
+            continue;
+        }
         if best
             .get(&unit)
             .is_none_or(|held| candidate.beats(held, &ranking))
@@ -504,15 +521,27 @@ pub fn pick_of_pass(
             best.insert(unit, candidate);
         }
     }
+    // A frame with no subject sits in the burst's ungrouped unit, so once the
+    // detections are grouped it would get a pick of its own beside the car's.
+    // The car's is the keeper: the other is the shot the detector missed.
+    let grouped: HashSet<i64> = best
+        .iter()
+        .filter(|((_, group), candidate)| group.is_some() && !candidate.on_frame)
+        .map(|((burst, _), _)| *burst)
+        .collect();
+    let missed: HashSet<(i64, Option<i64>)> = best
+        .iter()
+        .filter(|((burst, group), candidate)| {
+            group.is_none() && candidate.on_frame && grouped.contains(burst)
+        })
+        .map(|(unit, _)| *unit)
+        .collect();
+    for unit in &missed {
+        best.remove(unit);
+    }
+    let passes = seen.len().saturating_sub(missed.len());
     let (mut picks, mut frame_picks): (Vec<i64>, Vec<i64>) = (Vec::new(), Vec::new());
     for candidate in best.values() {
-        // A burst whose best frame is still below three stars has no keeper.
-        // Proposing the least-bad soft frame of a bad set is worse than saying
-        // nothing: the photographer asked for a pick only when there is one.
-        // A hand star is the photographer's own word, so it always counts.
-        if candidate.by_hand < 3 && candidate.score < conrod_vision::sharpness::KEEPER_MIN_RATING {
-            continue;
-        }
         if candidate.on_frame {
             frame_picks.push(candidate.row);
         } else {
@@ -537,11 +566,11 @@ pub fn pick_of_pass(
     }
     tx.commit().map_err(err)?;
     Ok(json!({
-        "passes": best.len(),
+        "passes": passes,
         "picks": picks.len() + frame_picks.len(),
         // Bursts where nothing cleared the keeper bar: the UI says "no keeper"
         // instead of showing a green suggestion on the least-bad frame.
-        "unpicked": best.len().saturating_sub(picks.len() + frame_picks.len()),
+        "unpicked": passes.saturating_sub(picks.len() + frame_picks.len()),
         "considered": found.len()
     }))
 }
@@ -591,6 +620,39 @@ pub fn group(d: &Arc<Desktop>, job: i64) -> Result<Value> {
     })
 }
 
+/// The action: hide the extra imports of one frame, as a background operation.
+/// Nothing on disk is touched; the copies are marked `copy_of` and ignored by
+/// bursts, picks, counts and XMP writes.
+pub fn collapse_copies(d: &Arc<Desktop>, job: i64) -> Result<Value> {
+    require_job(d, job)?;
+    if !d.status()["activeJob"].is_null() {
+        return Err("A scan is running. Stop it first.".into());
+    }
+    launch(d, job, "Collapsing copies", move |d, stop, task| {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        crate::copies::collapse(d, job, stop, task)?;
+        Ok(())
+    })
+}
+
+/// The action: show the copies `collapse_copies` hid again, as a background
+/// operation. The album is regrouped from all of its frames.
+pub fn restore_copies(d: &Arc<Desktop>, job: i64) -> Result<Value> {
+    require_job(d, job)?;
+    if !d.status()["activeJob"].is_null() {
+        return Err("A scan is running. Stop it first.".into());
+    }
+    launch(d, job, "Restoring copies", move |d, stop, task| {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        crate::copies::restore(d, job, task)?;
+        Ok(())
+    })
+}
+
 /// The action: turn people on or off for an album. On, for a motorsport album
 /// that skipped faces, finds the faces and eyes of the people already stored
 /// as a background operation; off only saves the flag (the rows stay, hidden
@@ -634,7 +696,7 @@ fn find_people(
 ) -> Result<()> {
     let people = rows(
         &lock(&d.reader),
-        "SELECT d.image_id, i.path, d.x1, d.y1, d.x2, d.y2 FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.rejected,0)=0 AND d.region_type='person' AND NOT EXISTS (SELECT 1 FROM detections f WHERE f.image_id=i.id AND f.region_type IN ('face','eye')) ORDER BY i.id, d.id",
+        "SELECT d.image_id, i.path, d.x1, d.y1, d.x2, d.y2 FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 AND d.region_type='person' AND NOT EXISTS (SELECT 1 FROM detections f WHERE f.image_id=i.id AND f.region_type IN ('face','eye')) ORDER BY i.id, d.id",
         [job],
     )?;
     let mut frames: BTreeMap<i64, (String, Vec<[f64; 4]>)> = BTreeMap::new();
@@ -738,7 +800,7 @@ fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
 fn embed_missing(d: &Desktop, job: i64, stop: &AtomicBool, task: &Task) -> Result<usize> {
     let todo = rows(
         &lock(&d.reader),
-        &format!("SELECT d.id, d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {ML_ELIGIBLE} AND d.crop_path IS NOT NULL AND (d.embedding IS NULL OR d.embedding='') AND COALESCE(d.region_type,'vehicle')='vehicle' ORDER BY d.id"),
+        &format!("SELECT d.id, d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {ML_ELIGIBLE} AND d.crop_path IS NOT NULL AND (d.embedding IS NULL OR d.embedding='') AND COALESCE(d.region_type,'vehicle')='vehicle' AND COALESCE(i.copy_of,0)=0 ORDER BY d.id"),
         [job],
     )?;
     if todo.is_empty() {
@@ -791,7 +853,7 @@ fn embed_missing(d: &Desktop, job: i64, stop: &AtomicBool, task: &Task) -> Resul
 pub(crate) fn near_duplicates(d: &Desktop, job: i64, stop: &AtomicBool) -> Result<usize> {
     let todo = rows(
         &lock(&d.reader),
-        "SELECT id, thumb_path FROM images WHERE job_id=? AND phash IS NULL AND thumb_path IS NOT NULL",
+        "SELECT id, thumb_path FROM images WHERE job_id=? AND phash IS NULL AND thumb_path IS NOT NULL AND COALESCE(copy_of,0)=0",
         [job],
     )?;
     // Opening and hashing a thumbnail is decode-bound: the rows are independent,
@@ -822,12 +884,12 @@ pub(crate) fn near_duplicates(d: &Desktop, job: i64, stop: &AtomicBool) -> Resul
     }
     let frames = rows(
         &lock(&d.reader),
-        "SELECT id, phash, burst_key, taken_at FROM images WHERE job_id=? AND phash IS NOT NULL AND status='done' AND rejected=0",
+        "SELECT id, phash, burst_key, taken_at FROM images WHERE job_id=? AND phash IS NOT NULL AND status='done' AND rejected=0 AND COALESCE(copy_of,0)=0",
         [job],
     )?;
     let looks = rows(
         &lock(&d.reader),
-        "SELECT d.image_id, d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.embedding IS NOT NULL AND d.embedding!=''",
+        "SELECT d.image_id, d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.embedding IS NOT NULL AND d.embedding!='' AND COALESCE(i.copy_of,0)=0",
         [job],
     )?;
     let mut by_image: HashMap<i64, Vec<Vec<f32>>> = HashMap::new();
@@ -878,7 +940,7 @@ pub(crate) fn embed_faces_missing(
 ) -> Result<usize> {
     let todo: Vec<Value> = rows(
         &lock(&d.reader),
-        &format!("SELECT d.id,d.x1,d.y1,d.x2,d.y2,i.path,d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'')='face' ORDER BY i.id,d.id"),
+        &format!("SELECT d.id,d.x1,d.y1,d.x2,d.y2,i.path,d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'')='face' AND COALESCE(i.copy_of,0)=0 ORDER BY i.id,d.id"),
         [job],
     )?
     .into_iter()
@@ -995,7 +1057,7 @@ pub(crate) fn embed_faces_missing(
 fn cluster_people(d: &Desktop, job: i64) -> Result<()> {
     let faces: Vec<(i64, Vec<f32>)> = rows(
         &lock(&d.reader),
-        "SELECT d.id,d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'')='face' AND COALESCE(d.rejected,0)=0 ORDER BY i.id,d.id",
+        "SELECT d.id,d.embedding FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'')='face' AND COALESCE(d.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 ORDER BY i.id,d.id",
         [job],
     )?
     .into_iter()
@@ -1069,7 +1131,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
     let sql = format!(
         "SELECT d.id, d.cls, d.attributes, d.colour_hex, d.plate, d.number, d.embedding, i.id AS image_id, i.burst_key \
          FROM detections d JOIN images i ON i.id=d.image_id \
-         WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'vehicle')='vehicle' \
+         WHERE i.job_id=? AND {ML_ELIGIBLE} AND COALESCE(d.region_type,'vehicle')='vehicle' AND COALESCE(i.copy_of,0)=0 \
          ORDER BY i.id, d.id"
     );
     let found = rows(&lock(&d.reader), &sql, [job])?;
@@ -1763,7 +1825,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mixed_pass_keeps_one_frame_per_unit_and_never_none() {
+    fn a_mixed_pass_keeps_the_rated_subject_grouped_or_not() {
         let lib = Lib::new("pick-mixed");
         let (f1, f2, f3) = (
             lib.frame("1.jpg", Some(1)),
@@ -1778,13 +1840,13 @@ mod tests {
         lib.run("pick_keepers", json!({"jobId": lib.job}))
             .unwrap();
         assert_eq!(
-            frame_picks(&lib),
-            vec![f2],
-            "before grouping the whole burst is one unit, and the best rating wins"
+            picks(&lib),
+            vec![a],
+            "before grouping the whole burst is one unit, and the subject that clears the bar wins over the frame with none"
         );
-        assert!(picks(&lib).is_empty());
-        // Grouping makes the subject-less frame a unit of its own: one pick
-        // each, neither pass nor frame left without a keeper.
+        assert!(frame_picks(&lib).is_empty());
+        // Grouping puts the subject-less frame in a unit of its own, and it
+        // still gets no second keeper beside the car's.
         lib.sql(
             "UPDATE detections SET group_key=7 WHERE id IN(?,?)",
             params![a, c],
@@ -1792,7 +1854,74 @@ mod tests {
         lib.run("pick_keepers", json!({"jobId": lib.job}))
             .unwrap();
         assert_eq!(picks(&lib), vec![a]);
+        assert!(frame_picks(&lib).is_empty());
+    }
+
+    #[test]
+    fn a_rated_subject_beats_a_sharper_looking_frame_with_no_subject() {
+        let lib = Lib::new("pick-subject");
+        let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
+        let car = lib.detection(f1, "vehicle", 0.94);
+        lib.sql("UPDATE images SET rating=1.0 WHERE id=?", [f2]);
+        lib.run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![car],
+            "the detected subject wins although the missed frame measures sharper"
+        );
+        assert_eq!(
+            frame_picks(&lib),
+            Vec::<i64>::new(),
+            "the frame with no subject is not a second keeper"
+        );
+    }
+
+    #[test]
+    fn a_frame_with_no_subject_still_wins_over_soft_subjects() {
+        let lib = Lib::new("pick-soft-subject");
+        let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
+        let _soft = lib.detection(f1, "vehicle", 0.60);
+        lib.sql("UPDATE images SET rating=0.95 WHERE id=?", [f2]);
+        lib.run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
         assert_eq!(frame_picks(&lib), vec![f2]);
+        assert_eq!(
+            picks(&lib),
+            Vec::<i64>::new(),
+            "a subject below the bar leaves the missed frame the keeper"
+        );
+    }
+
+    #[test]
+    fn a_low_hand_star_does_not_cancel_the_keeper() {
+        let lib = Lib::new("pick-low-star");
+        let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
+        let soft = lib.detection(f1, "vehicle", 0.60);
+        let sharp = lib.detection(f2, "vehicle", 0.95);
+        lib.sql("UPDATE detections SET stars=2 WHERE id=?", [soft]);
+        lib.run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![sharp],
+            "the starred-but-soft frame never hides the bar-clearing one"
+        );
+    }
+
+    #[test]
+    fn a_missed_frame_gets_no_second_pick_beside_a_grouped_car() {
+        let lib = Lib::new("pick-missed-grouped");
+        let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
+        let car = lib.detection(f1, "vehicle", 0.94);
+        lib.sql("UPDATE detections SET group_key=7 WHERE id=?", [car]);
+        lib.sql("UPDATE images SET rating=1.0 WHERE id=?", [f2]);
+        let out = lib
+            .run("pick_keepers", json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(picks(&lib), vec![car], "the car's frame is the one keeper");
+        assert_eq!(frame_picks(&lib), Vec::<i64>::new());
+        assert_eq!(out["passes"].as_i64(), Some(1));
     }
 
     #[test]

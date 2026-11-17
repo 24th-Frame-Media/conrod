@@ -111,7 +111,7 @@ fn rank(d: &Desktop, job: i64, force: bool, stop: &AtomicBool, task: &Task) -> R
     let head = models::find(models::TASTE_HEAD)
         .ok_or_else(|| format!("missing {}", models::TASTE_HEAD))?;
     let sql = format!(
-        "SELECT id, preview_path, thumb_path FROM images WHERE job_id=? AND status='done'{} ORDER BY id",
+        "SELECT id, preview_path, thumb_path FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0{} ORDER BY id",
         if force { "" } else { " AND taste IS NULL" }
     );
     let frames = rows(&lock(&d.reader), &sql, [job])?;

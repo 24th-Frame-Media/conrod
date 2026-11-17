@@ -31,6 +31,7 @@ pub mod analyze;
 pub mod bench;
 pub mod catalog;
 pub mod commands;
+pub mod copies;
 pub mod desktop;
 pub mod edits;
 pub mod housekeeping;

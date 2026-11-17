@@ -197,6 +197,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // (the stack's smallest image id). See bursts::near_dupes.
     ("images", "phash", "INTEGER"),
     ("images", "dupe_key", "INTEGER"),
+    // Another frame this one is a byte-identical copy of; the copy is hidden
+    // from bursts, picks, counts and XMP writes (see `copies.rs`).
+    ("images", "copy_of", "INTEGER"),
     ("detections", "features", "TEXT"),
     ("detections", "heuristic", "REAL"),
     ("detections", "region_type", "TEXT DEFAULT 'vehicle'"),

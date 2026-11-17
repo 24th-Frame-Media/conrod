@@ -2,7 +2,7 @@ import { useRun } from '../state/hooks';
 import { asset, call } from '../lib/api';
 import { useEffect, useState } from 'react';
 import { Confirm, Empty } from '../components/basics';
-import { coverTint, etaText, jobState, pct, plural, shortDate } from '../lib/format';
+import { coverTint, etaText, hiddenCopies, jobState, pct, plural, shortDate } from '../lib/format';
 import { overallEta, overallFraction } from '../lib/scan.mjs';
 import type { ScanLive } from '../state/useScanProgress';
 import { profileParent, type Job, type ModelInfo } from '../lib/types';
@@ -40,7 +40,7 @@ function JobCard({ job, scanning, active, live, onOpen, onIdentify, onResume, on
       <div className="name" title={job.root}>{job.label}</div>
       <div className="sub">{active
         ? `Scanning · ${fraction}%${stageLabel ? ` · ${stageLabel}` : ''}${eta ? ` · ${eta}` : ''}`
-        : `${job.done.toLocaleString()} / ${job.total.toLocaleString()} photos · ${shortDate(job.created_at)}`}</div>
+        : `${job.done.toLocaleString()} / ${job.total.toLocaleString()} photos${hiddenCopies(job.copies)} · ${shortDate(job.created_at)}`}</div>
       {profileParent(job.scan_profile ?? '') === 'motorsport' && (
         <label className="sub" onClick={(e) => e.stopPropagation()}>
           <input type="checkbox" checked={Boolean(job.include_people)} onChange={onToggleIncludePeople} /> Includes people
