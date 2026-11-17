@@ -283,25 +283,43 @@ fn same_moment(anchor: Option<[f64; 4]>, subject: Option<[f64; 4]>) -> bool {
 /// main subject's framing changes. Input is in time order. Keys are dense from
 /// 1 and never shared across bursts.
 pub fn split_moments(frames: &[MomentFrame]) -> Vec<i64> {
-    // Per burst: the open moment's anchor subject and its key.
-    let mut open: HashMap<i64, (Option<[f64; 4]>, i64)> = HashMap::new();
-    let mut previous_pan: HashMap<i64, bool> = HashMap::new();
+    /// The moment currently open in one burst.
+    struct Open {
+        /// The first frame's subject box: what a static frame is compared to.
+        anchor: Option<[f64; 4]>,
+        key: i64,
+        /// A pan has been seen in this moment. Pans are one continuous action:
+        /// the car crossing the frame, and the frames the detector missed in the
+        /// middle of it, do not start a new moment.
+        pan: bool,
+    }
+    let mut open: HashMap<i64, Open> = HashMap::new();
     let mut moments: i64 = 0;
     frames
         .iter()
-        .map(|frame| {
-            let was_pan = previous_pan.insert(frame.burst, frame.panning).unwrap_or(false);
-            // A pan continues the moment it started in, however far the car has
-            // travelled: panning is one action, and a cut ends it naturally
-            // because the next frame is not a pan.
-            let continues = frame.panning && was_pan;
-            match open.get(&frame.burst) {
-                Some(&(anchor, key)) if continues || same_moment(anchor, frame.subject) => key,
-                _ => {
-                    moments += 1;
-                    open.insert(frame.burst, (frame.subject, moments));
-                    moments
-                }
+        .map(|frame| match open.get_mut(&frame.burst) {
+            // A pan frame always continues the moment it is in, however far the
+            // car has travelled.
+            Some(o) if frame.panning => {
+                o.pan = true;
+                o.key
+            }
+            // Inside a pan, a frame with no box is a detector miss, not a cut:
+            // the car was still crossing. A frame *with* a box is still compared,
+            // so a genuinely different scene can start a new moment.
+            Some(o) if o.pan && frame.subject.is_none() => o.key,
+            Some(o) if same_moment(o.anchor, frame.subject) => o.key,
+            _ => {
+                moments += 1;
+                open.insert(
+                    frame.burst,
+                    Open {
+                        anchor: frame.subject,
+                        key: moments,
+                        pan: frame.panning,
+                    },
+                );
+                moments
             }
         })
         .collect()
@@ -555,6 +573,31 @@ mod moment_tests {
         assert!((5..=7).contains(&moments), "{keys:?}");
         assert!(keys.windows(2).all(|w| w[0] <= w[1]), "{keys:?}");
         assert_eq!(keys[0], 1);
+    }
+
+    #[test]
+    fn a_pan_survives_the_frames_the_detector_missed() {
+        // The real sequence: eight panning frames, two the detector missed, a
+        // panning frame again, then three more misses. One action, one moment.
+        let mut frames: Vec<_> = (0..8)
+            .map(|i| pan_mf(1, boxed(0.25 + 0.05 * f64::from(i), 0.5, 0.12)))
+            .collect();
+        frames.push(mf(1, None));
+        frames.push(mf(1, None));
+        frames.push(pan_mf(1, boxed(0.6, 0.5, 0.2)));
+        frames.extend((0..3).map(|_| mf(1, None)));
+        let keys = split_moments(&frames);
+        assert_eq!(keys, vec![1; frames.len()], "{keys:?}");
+    }
+
+    #[test]
+    fn a_frame_with_no_box_outside_a_pan_still_splits() {
+        let frames = vec![
+            mf(1, boxed(0.3, 0.5, 0.1)),
+            mf(1, None),
+            mf(1, boxed(0.3, 0.5, 0.1)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 2, 3]);
     }
 
     #[test]
