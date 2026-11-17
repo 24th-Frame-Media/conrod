@@ -3,6 +3,7 @@
 //! in `tests/`.
 
 pub mod colour;
+pub mod composition;
 pub mod detect;
 pub mod edgeblur;
 pub mod exposure;

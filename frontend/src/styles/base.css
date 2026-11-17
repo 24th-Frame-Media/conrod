@@ -107,6 +107,9 @@ button.small { padding: 4px 12px; font-size: 12px; }
 }
 .tag.vlm { color: var(--text-dim); }
 .tag.manual { color: var(--good); border-color: rgba(76, 195, 138, .3); }
+/* Composition labels: green for a good call, amber for one worth a second look, default for the middle. */
+.tag.good { color: var(--good); border-color: color-mix(in srgb, var(--good) 32%, transparent); }
+.tag.warn { color: var(--warn2); border-color: color-mix(in srgb, var(--warn2) 36%, transparent); }
 .tag.suggested { color: var(--text-mute); border-style: dashed; }
 .det-model-suggested { opacity: .78; }
 .fact.team { color: var(--text-dim); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }

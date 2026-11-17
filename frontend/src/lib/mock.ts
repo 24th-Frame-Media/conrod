@@ -21,6 +21,7 @@ const CARS: [string, string, string, string, string, string, number][] = [
   ['BMW', 'M4 GT3', 'darkorange', 'Walkinshaw', '7', 'BMW777', 280],
 ];
 const W = 6000, H = 4000;
+const COMP_MODES = ['centre', 'thirds', 'phi'] as const;
 
 /** A landscape with a car in it, as a data URI; car box is x 0.5±s/2, y .40-.74 of the frame. */
 function scene(hue: number, cx: number, s: number, paint: string, w: number, h: number): string {
@@ -48,10 +49,16 @@ function makeDb(): Db {
     const id = 1000 + i, rating = soft ? 0.6 + ((i * 7) % 6) / 100 : 0.5 + ((i * 37) % 48) / 100;
     const cx = 0.38 + ((i * 13) % 25) / 100, s = 0.5 + ((i * 7) % 20) / 100;
     const read = i % 4 !== 3;
+    // Composition: frame 0 opens with a busy background on a pan, frame 3 is the clean pan the strip marks.
+    const clutter = i === 3 ? 0.18 : i % 3 === 0 ? 0.85 + ((i * 11) % 9) / 100 : 0.4 + ((i * 17) % 24) / 100;
     frames.push({
       id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > count - 4 ? 'pending' : 'done',
       thumb_path: scene(hue, cx, s, colour, 420, 280), preview_path: null, width: W, height: H, rating,
       manual_stars: soft ? null : i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, picked: i % 17 === 5 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
+      comp_placement: 0.52 + ((i * 23) % 42) / 100, comp_mode: COMP_MODES[i % 3],
+      comp_balance_x: ((i * 13 + 15) % 40 - 20) / 100, comp_balance_y: ((i * 19 + 10) % 40 - 20) / 100,
+      comp_symmetry: ((i * 29) % 80) / 100, comp_clutter: clutter,
+      comp_lines: i % 5, comp_subject_share: 0.18 + ((i * 13) % 45) / 100,
     });
     dets.push({
       id: 5000 + i, image_id: id, cls: 'car', x1: (cx - s / 2) * W, y1: 0.38 * H, x2: (cx + s / 2) * W, y2: 0.74 * H,
@@ -318,6 +325,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       }
       return out(null);
     }
+    case 'composition': return out({ jobId: (a.jobId as number | undefined) ?? null });
     case 'mark': {
       const f = db.frames.find((x) => x.id === a.imageId);
       if (f) {

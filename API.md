@@ -33,6 +33,7 @@ with a nonzero exit code if a task fails.
 | pick_keepers | jobId | Best subject per car per pass |
 | focus_points | jobId | operation; read the camera's autofocus area from each RAW, rate frames with no subject inside it, then regroup |
 | redetect | jobId | operation; run the detector at a one-off 0.25 confidence and 2% box over the frames with no subject, then regroup |
+| composition | jobId | operation; measure placement, balance, symmetry, background clutter and leading lines for every frame |
 | collapse_copies | jobId | operation; hide the extra imports of one shot (same time, size and sampled bytes) as `copy_of`; bursts, picks, counts and writes ignore them |
 | restore_copies | jobId | operation; show every hidden copy again, then regroup |
 | taste_rank | jobId, force? | operation; score each frame's cached preview with the learned taste head into `images.taste` (skips scored frames unless `force`); `head: false` when no head is installed |

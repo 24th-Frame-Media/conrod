@@ -8,7 +8,9 @@ import { KeeperMark, StarPill } from './Stars';
 
 export type StackView = Stack<Frame> & { title: string; subtitle: string; photoWord?: string; ranks?: Map<number, number> };
 
-const PAD = 20, GAP = 18, MIN_W = 230, LAYER_INSET = 8, CAPTION_H = 38, EXPANDED_H = 250;
+const PAD = 20, GAP = 18, MIN_W = 230, LAYER_INSET = 8, CAPTION_H = 38;
+/** Tall enough for the strip's composition chips (up to three labels plus the cleanest-background marker). */
+const EXPANDED_H = 290;
 
 type CardProps = {
   stack: StackView; selected: boolean; open: boolean;
@@ -126,6 +128,7 @@ export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeper
               selectedId={selectedId}
               culled={culled}
               rankOf={(frame) => openStack.ranks?.get(frame.id)}
+              composition
               onSelect={onSelect}
               onOpen={onOpen}
             />
