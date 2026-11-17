@@ -244,10 +244,61 @@ pub fn collect(frames: &[Frame]) -> Vec<Burst> {
     out
 }
 
-/// A moment's main subject may grow or shrink by at most this area factor, either way, from the moment's first frame.
-pub const MOMENT_SCALE_RATIO: f64 = 1.6;
-/// The subject's centre may move at most this fraction of the frame diagonal from the moment's first frame.
-pub const MOMENT_SHIFT: f64 = 0.25;
+/// Between two neighbouring boxed frames of a burst, the main subject's box may
+/// grow or shrink by at most this area factor, either way, and stay one moment.
+/// A car approaching or receding changes by ~1.2x a frame and never gets near
+/// it; a different car or a turn to the crowd jumps by more.
+pub const MOMENT_SCALE_RATIO: f64 = 3.0;
+/// ...and its centre may move at most this fraction of the frame diagonal.
+pub const MOMENT_SHIFT: f64 = 0.30;
+/// Both limits are this much looser between two panning frames: the car is
+/// *meant* to cross the frame.
+pub const MOMENT_PAN_LEEWAY: f64 = 1.5;
+/// A box smaller than this share of the frame is a speck (a marshal, a far car
+/// the detector flickers on), not a subject: it counts as a missed frame.
+pub const MOMENT_MIN_AREA: f64 = 0.005;
+/// A pause this long (seconds) between two frames of a burst is a gap in the
+/// shooting: the next frame starts a new moment if the picture also changed.
+pub const MOMENT_PAUSE: f64 = 0.8;
+/// After a pause, the whole frame's colour layout (see [`Look`]) is "not
+/// visually similar" past this distance (0 identical .. 1 disjoint). It is the
+/// 99.5th percentile of the distance between frames under 0.2 s apart, so a
+/// scene that is still the same almost never reads as changed.
+pub const MOMENT_SCENE_DISTANCE: f64 = 0.26;
+/// After a pause, two vehicles are different cars past this subject-livery
+/// distance: the 99th percentile for one car seen a second apart (blur, angle).
+pub const MOMENT_PAUSE_SUBJECT_DISTANCE: f64 = 0.45;
+/// Without a pause, neighbouring vehicles are a *clearly* different car only
+/// past this livery distance. Measured on a 6,912-frame track album: one car
+/// frame to frame reaches 0.42 at the 99.5th percentile, because a second car
+/// entering the box and a pan both move the histogram, and a split costs the
+/// photographer a stack. Two different liveries measure 0.9 or more.
+pub const MOMENT_SUBJECT_DISTANCE: f64 = 0.50;
+
+/// Bins of [`Look::scene`].
+pub const LOOK_SCENE_BINS: usize = 28;
+/// Bins of [`Look::subject`].
+pub const LOOK_SUBJECT_BINS: usize = 15;
+
+/// What a frame looks like: two small colour histograms, each quantised to
+/// 0..=255 and summing to about 255 (`conrod_vision::look` measures them from
+/// the cached thumbnail).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Look {
+    /// The whole frame's colour layout.
+    pub scene: [u8; LOOK_SCENE_BINS],
+    /// The main subject's livery; `None` when the frame has no subject box.
+    pub subject: Option<[u8; LOOK_SUBJECT_BINS]>,
+    /// The main subject is a vehicle: liveries only tell cars apart.
+    pub vehicle: bool,
+}
+
+/// How different two histograms are: 0 identical, 1 disjoint (one minus their
+/// intersection).
+pub fn look_distance(a: &[u8], b: &[u8]) -> f64 {
+    let shared: u32 = a.iter().zip(b).map(|(&x, &y)| u32::from(x.min(y))).sum();
+    (1.0 - f64::from(shared) / 255.0).clamp(0.0, 1.0)
+}
 
 /// One frame as the moment splitter sees it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -255,80 +306,143 @@ pub struct MomentFrame {
     pub burst: i64,
     /// Seconds since the epoch; `None` when the file carries no time.
     pub taken: Option<f64>,
+    /// What the frame looks like, when its thumbnail could be measured.
+    pub look: Option<Look>,
     /// The main subject's box as fractions of the frame: (x1, y1, x2, y2).
     pub subject: Option<[f64; 4]>,
     /// The frame was taken as a pan. A pan is one continuous action: the car is
-    /// *meant* to cross the frame, so its box travelling does not start a new
-    /// moment the way a cut does.
+    /// *meant* to cross the frame, so between two pan frames its box may travel
+    /// further before it counts as a cut.
     pub panning: bool,
 }
 
-fn same_moment(anchor: Option<[f64; 4]>, subject: Option<[f64; 4]>) -> bool {
-    match (anchor, subject) {
-        (None, None) => true,
-        (Some(a), Some(b)) => {
-            let area = |[x1, y1, x2, y2]: [f64; 4]| (x2 - x1).abs() * (y2 - y1).abs();
-            let centre = |[x1, y1, x2, y2]: [f64; 4]| ((x1 + x2) / 2.0, (y1 + y2) / 2.0);
-            let (fa, fb) = (area(a), area(b));
-            let scale_ok = fa.max(fb) <= MOMENT_SCALE_RATIO * fa.min(fb);
-            let ((ax, ay), (bx, by)) = (centre(a), centre(b));
-            let shift = (ax - bx).hypot(ay - by) / std::f64::consts::SQRT_2;
-            scale_ok && shift <= MOMENT_SHIFT
-        }
-        _ => false,
-    }
+fn box_area([x1, y1, x2, y2]: [f64; 4]) -> f64 {
+    (x2 - x1).abs() * (y2 - y1).abs()
 }
 
-/// A new group key per frame, splitting each burst into moments where the
-/// main subject's framing changes. Input is in time order. Keys are dense from
-/// 1 and never shared across bursts.
-pub fn split_moments(frames: &[MomentFrame]) -> Vec<i64> {
-    /// The moment currently open in one burst.
-    struct Open {
-        /// The first frame's subject box: what a static frame is compared to.
-        anchor: Option<[f64; 4]>,
-        key: i64,
-        /// A pan has been seen in this moment. Pans are one continuous action:
-        /// the car crossing the frame, and the frames the detector missed in the
-        /// middle of it, do not start a new moment.
-        pan: bool,
+/// Are two boxes of neighbouring frames plausibly the same subject? `leeway`
+/// widens both limits (1.0 normally, [`MOMENT_PAN_LEEWAY`] between pans).
+fn continues(previous: [f64; 4], next: [f64; 4], leeway: f64) -> bool {
+    let centre = |[x1, y1, x2, y2]: [f64; 4]| ((x1 + x2) / 2.0, (y1 + y2) / 2.0);
+    let (fa, fb) = (box_area(previous), box_area(next));
+    let scale_ok = fa.max(fb) <= MOMENT_SCALE_RATIO * leeway * fa.min(fb);
+    let ((ax, ay), (bx, by)) = (centre(previous), centre(next));
+    let shift = (ax - bx).hypot(ay - by) / std::f64::consts::SQRT_2;
+    scale_ok && shift <= MOMENT_SHIFT * leeway
+}
+
+/// The moment currently open in one burst, as [`split_moments`] tracks it.
+struct Open {
+    key: i64,
+    /// The last boxed frame's subject: what the next boxed frame is compared to.
+    last: Option<[f64; 4]>,
+    /// That frame's look (its livery is compared the same way).
+    last_look: Option<Look>,
+    /// That frame was a pan.
+    pan: bool,
+    /// The previous frame of the burst, boxed or not: when it was taken and
+    /// how its scene looked, for the pause test.
+    taken: Option<f64>,
+    scene: Option<[u8; LOOK_SCENE_BINS]>,
+}
+
+/// Two vehicles' liveries, when both frames have one.
+fn livery_distance(a: Option<Look>, b: Option<Look>) -> Option<f64> {
+    let (a, b) = (a?, b?);
+    if !(a.vehicle && b.vehicle) {
+        return None;
     }
+    Some(look_distance(&a.subject?, &b.subject?))
+}
+
+/// Does this frame belong to the moment `open` holds?
+fn belongs(open: &Open, frame: &MomentFrame, subject: Option<[f64; 4]>) -> bool {
+    // A pause AND a picture that is not visually similar: the whole frame's
+    // colours moved on, or the vehicle's livery is not the previous one's.
+    if let (Some(before), Some(now)) = (open.taken, frame.taken) {
+        if now - before > MOMENT_PAUSE {
+            let scene = open.scene.zip(frame.look.map(|l| l.scene));
+            if scene.is_some_and(|(a, b)| look_distance(&a, &b) > MOMENT_SCENE_DISTANCE) {
+                return false;
+            }
+            if subject.is_some()
+                && livery_distance(open.last_look, frame.look)
+                    .is_some_and(|d| d > MOMENT_PAUSE_SUBJECT_DISTANCE)
+            {
+                return false;
+            }
+        }
+    }
+    let (Some(next), Some(previous)) = (subject, open.last) else {
+        return true;
+    };
+    let leeway = if open.pan && frame.panning {
+        MOMENT_PAN_LEEWAY
+    } else {
+        1.0
+    };
+    // The box jumped between neighbours, or the car is clearly not the same one.
+    continues(previous, next, leeway)
+        && livery_distance(open.last_look, frame.look).is_none_or(|d| d <= MOMENT_SUBJECT_DISTANCE)
+}
+
+/// A new group key per frame, splitting each time burst into moments only where
+/// the picture cuts to something else. Input is in time order. Keys are dense
+/// from 1 and never shared across bursts.
+///
+/// A burst of shooting is one moment unless the frame in hand cuts from the
+/// moment before it, in any of three ways:
+///
+/// * **the box jumps**: it is more than [`MOMENT_SCALE_RATIO`] times the size
+///   or [`MOMENT_SHIFT`] of the diagonal away from the *previous* boxed frame
+///   (see [`continues`]). Comparing with the previous frame, not the first,
+///   means a car that approaches, recedes or crosses never splits by drifting;
+/// * **a pause and a new picture**: more than [`MOMENT_PAUSE`] seconds since
+///   the previous frame, and either the whole frame's colours have moved on
+///   ([`MOMENT_SCENE_DISTANCE`]) or the vehicle's livery has
+///   ([`MOMENT_PAUSE_SUBJECT_DISTANCE`]);
+/// * **a clearly different car**: the livery of the boxed vehicle is further
+///   than [`MOMENT_SUBJECT_DISTANCE`] from the previous boxed vehicle's.
+///
+/// A frame with no box (a detector miss) and a speck of a box
+/// ([`MOMENT_MIN_AREA`]) never cut on the box. A frame with no [`Look`] is
+/// never cut on looks.
+pub fn split_moments(frames: &[MomentFrame]) -> Vec<i64> {
     let mut open: HashMap<i64, Open> = HashMap::new();
     let mut moments: i64 = 0;
     frames
         .iter()
-        .map(|frame| match open.get_mut(&frame.burst) {
-            // A pan continues a moment that is already a pan, or one that so far
-            // holds only frames with no box: the detector missing the car at the
-            // start of a pass is not evidence of another moment.
-            Some(o) if frame.panning && (o.pan || o.anchor.is_none()) => {
-                o.pan = true;
-                o.key
-            }
-            // Inside a pan, a frame with no box is a detector miss, not a cut:
-            // the car was still crossing. A frame *with* a box is still compared,
-            // so a genuinely different scene can start a new moment.
-            Some(o) if o.pan && frame.subject.is_none() => o.key,
-            // A pan that starts on this moment's framing joins it. One framed
-            // elsewhere is not the same action, so it starts a moment of its own.
-            Some(o) if same_moment(o.anchor, frame.subject) => {
-                if frame.panning {
-                    o.pan = true;
+        .map(|frame| {
+            let subject = frame.subject.filter(|&b| box_area(b) >= MOMENT_MIN_AREA);
+            let scene = frame.look.map(|l| l.scene);
+            let joined = open.get_mut(&frame.burst).and_then(|o| {
+                if !belongs(o, frame, subject) {
+                    return None;
                 }
-                o.key
-            }
-            _ => {
+                if subject.is_some() {
+                    o.last = subject;
+                    o.last_look = frame.look;
+                    o.pan = frame.panning;
+                }
+                o.taken = frame.taken;
+                o.scene = scene;
+                Some(o.key)
+            });
+            joined.unwrap_or_else(|| {
                 moments += 1;
                 open.insert(
                     frame.burst,
                     Open {
-                        anchor: frame.subject,
                         key: moments,
+                        last: subject,
+                        last_look: subject.and(frame.look),
                         pan: frame.panning,
+                        taken: frame.taken,
+                        scene,
                     },
                 );
                 moments
-            }
+            })
         })
         .collect()
 }
@@ -553,9 +667,38 @@ mod moment_tests {
         MomentFrame {
             burst,
             taken: None,
+            look: None,
             subject,
             panning: false,
         }
+    }
+
+    /// A frame taken at `taken` seconds, with a look: the scene and the
+    /// subject's livery each concentrated in one bin (a vehicle).
+    fn shot(
+        taken: f64,
+        subject: Option<[f64; 4]>,
+        scene: usize,
+        livery: [u8; LOOK_SUBJECT_BINS],
+    ) -> MomentFrame {
+        let mut layout = [0u8; LOOK_SCENE_BINS];
+        layout[scene] = 255;
+        MomentFrame {
+            taken: Some(taken),
+            look: Some(Look {
+                scene: layout,
+                subject: Some(livery),
+                vehicle: true,
+            }),
+            ..mf(1, subject)
+        }
+    }
+
+    /// A livery that is all one bin.
+    fn colour(bin: usize) -> [u8; LOOK_SUBJECT_BINS] {
+        let mut l = [0u8; LOOK_SUBJECT_BINS];
+        l[bin] = 255;
+        l
     }
 
     fn pan_mf(burst: i64, subject: Option<[f64; 4]>) -> MomentFrame {
@@ -572,15 +715,172 @@ mod moment_tests {
     }
 
     #[test]
-    fn a_car_growing_from_two_to_thirty_percent_becomes_a_few_moments() {
+    fn a_car_growing_from_two_to_thirty_percent_stays_one_moment() {
         let frames: Vec<_> = (0..20)
             .map(|i| mf(1, boxed(0.5, 0.5, 0.02 + 0.28 * f64::from(i) / 19.0)))
             .collect();
-        let keys = split_moments(&frames);
-        let moments = *keys.iter().max().unwrap();
-        assert!((5..=7).contains(&moments), "{keys:?}");
-        assert!(keys.windows(2).all(|w| w[0] <= w[1]), "{keys:?}");
-        assert_eq!(keys[0], 1);
+        assert_eq!(split_moments(&frames), vec![1; 20]);
+    }
+
+    #[test]
+    fn an_approaching_car_growing_threefold_over_twelve_frames_stays_one_moment() {
+        // 0.04 -> 0.12 of the frame while drifting a quarter of the way across:
+        // far from the first frame, close to the one before it.
+        let frames: Vec<_> = (0..12)
+            .map(|i| {
+                let t = f64::from(i) / 11.0;
+                mf(1, boxed(0.3 + 0.25 * t, 0.5, 0.04 * 3.0_f64.powf(t)))
+            })
+            .collect();
+        assert_eq!(split_moments(&frames), vec![1; 12]);
+    }
+
+    #[test]
+    fn detector_misses_between_boxed_frames_of_one_car_stay_one_moment() {
+        let mut frames = vec![mf(1, boxed(0.4, 0.5, 0.1)), mf(1, None), mf(1, None)];
+        frames.push(mf(1, boxed(0.42, 0.5, 0.11)));
+        frames.push(mf(1, None));
+        frames.push(mf(1, boxed(0.44, 0.5, 0.12)));
+        assert_eq!(split_moments(&frames), vec![1; 6]);
+    }
+
+    #[test]
+    fn two_different_cars_back_to_back_split_at_the_cut() {
+        // Car A leaves large at the right edge; car B enters small at the left.
+        let mut frames: Vec<_> = (0..4)
+            .map(|i| mf(1, boxed(0.6 + 0.08 * f64::from(i), 0.5, 0.2)))
+            .collect();
+        frames.extend((0..4).map(|i| mf(1, boxed(0.15 + 0.03 * f64::from(i), 0.5, 0.03))));
+        assert_eq!(split_moments(&frames), vec![1, 1, 1, 1, 2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn a_cut_to_a_different_car_with_misses_between_still_splits() {
+        let mut frames = vec![mf(1, boxed(0.8, 0.5, 0.2)), mf(1, None), mf(1, None)];
+        frames.push(mf(1, boxed(0.2, 0.5, 0.03)));
+        frames.push(mf(1, boxed(0.22, 0.5, 0.035)));
+        assert_eq!(split_moments(&frames), vec![1, 1, 1, 2, 2]);
+    }
+
+    #[test]
+    fn a_pan_followed_by_a_different_static_car_splits() {
+        let mut frames: Vec<_> = (0..6)
+            .map(|i| pan_mf(1, boxed(0.2 + 0.1 * f64::from(i), 0.5, 0.1)))
+            .collect();
+        frames.extend((0..3).map(|_| mf(1, boxed(0.2, 0.2, 0.01))));
+        assert_eq!(split_moments(&frames), vec![1, 1, 1, 1, 1, 1, 2, 2, 2]);
+    }
+
+    #[test]
+    fn look_distance_is_zero_for_the_same_histogram_and_one_for_disjoint_ones() {
+        assert_eq!(look_distance(&colour(2), &colour(2)), 0.0);
+        assert_eq!(look_distance(&colour(2), &colour(9)), 1.0);
+    }
+
+    #[test]
+    fn two_cars_of_different_colour_in_the_same_spot_back_to_back_split() {
+        // No jump in the box at all: only the livery changes.
+        let frames: Vec<_> = (0..8)
+            .map(|i| {
+                let car = if i < 4 { 0 } else { 6 };
+                shot(f64::from(i) * 0.13, boxed(0.5, 0.5, 0.1), 3, colour(car))
+            })
+            .collect();
+        assert_eq!(split_moments(&frames), vec![1, 1, 1, 1, 2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn one_car_whose_livery_wobbles_a_little_stays_one_moment() {
+        let mut wobble = colour(0);
+        wobble[0] = 180;
+        wobble[1] = 75;
+        let frames = [
+            shot(0.0, boxed(0.5, 0.5, 0.1), 3, colour(0)),
+            shot(0.13, boxed(0.5, 0.5, 0.1), 3, wobble),
+            shot(0.26, boxed(0.5, 0.5, 0.1), 3, colour(0)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 1, 1]);
+    }
+
+    #[test]
+    fn a_pause_with_the_same_look_stays_one_moment() {
+        let frames = [
+            shot(0.0, boxed(0.5, 0.5, 0.1), 3, colour(0)),
+            shot(0.13, boxed(0.5, 0.5, 0.1), 3, colour(0)),
+            shot(1.5, boxed(0.52, 0.5, 0.11), 3, colour(0)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 1, 1]);
+    }
+
+    #[test]
+    fn a_pause_and_a_different_scene_splits_even_with_no_box() {
+        let frames = [
+            shot(0.0, boxed(0.5, 0.5, 0.1), 3, colour(0)),
+            shot(0.13, boxed(0.5, 0.5, 0.1), 3, colour(0)),
+            MomentFrame {
+                subject: None,
+                ..shot(1.5, None, 20, colour(0))
+            },
+            MomentFrame {
+                subject: None,
+                ..shot(1.63, None, 20, colour(0))
+            },
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 1, 2, 2]);
+    }
+
+    #[test]
+    fn a_pause_and_a_different_livery_splits_on_the_same_scene() {
+        let frames = [
+            shot(0.0, boxed(0.5, 0.5, 0.1), 3, colour(0)),
+            shot(1.2, boxed(0.5, 0.5, 0.1), 3, colour(7)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 2]);
+    }
+
+    #[test]
+    fn a_short_gap_with_a_different_scene_is_not_a_pause() {
+        let frames = [
+            shot(0.0, boxed(0.5, 0.5, 0.1), 3, colour(0)),
+            shot(0.5, boxed(0.5, 0.5, 0.1), 20, colour(0)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 1]);
+    }
+
+    #[test]
+    fn a_pause_with_no_look_to_compare_never_splits() {
+        let frames = [
+            MomentFrame {
+                taken: Some(0.0),
+                ..mf(1, boxed(0.5, 0.5, 0.1))
+            },
+            MomentFrame {
+                taken: Some(2.0),
+                ..mf(1, boxed(0.5, 0.5, 0.1))
+            },
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 1]);
+    }
+
+    #[test]
+    fn a_person_is_never_compared_by_livery() {
+        let mut marshal = shot(0.13, boxed(0.5, 0.5, 0.1), 3, colour(8));
+        if let Some(look) = marshal.look.as_mut() {
+            look.vehicle = false;
+        }
+        let frames = [shot(0.0, boxed(0.5, 0.5, 0.1), 3, colour(0)), marshal];
+        assert_eq!(split_moments(&frames), vec![1, 1]);
+    }
+
+    #[test]
+    fn a_speck_of_a_box_is_a_miss_not_a_cut() {
+        // A marshal the detector flickers on while the car is out of the box.
+        let frames = [
+            mf(1, boxed(0.5, 0.5, 0.1)),
+            mf(1, boxed(0.1, 0.9, 0.001)),
+            mf(1, boxed(0.52, 0.5, 0.11)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 1, 1]);
     }
 
     #[test]
@@ -599,13 +899,13 @@ mod moment_tests {
     }
 
     #[test]
-    fn a_frame_with_no_box_outside_a_pan_still_splits() {
+    fn a_frame_with_no_box_outside_a_pan_is_still_a_miss_not_a_cut() {
         let frames = vec![
             mf(1, boxed(0.3, 0.5, 0.1)),
             mf(1, None),
             mf(1, boxed(0.3, 0.5, 0.1)),
         ];
-        assert_eq!(split_moments(&frames), vec![1, 2, 3]);
+        assert_eq!(split_moments(&frames), vec![1, 1, 1]);
     }
 
     #[test]
@@ -616,12 +916,10 @@ mod moment_tests {
             .map(|i| pan_mf(1, boxed(0.2 + 0.05 * f64::from(i), 0.5, 0.1)))
             .collect();
         assert_eq!(split_moments(&frames), vec![1; 12]);
-        // A pan followed by a static frame starts a new moment: the action ended.
+        // A static frame right where the pan ended is the same car: one moment.
         let mut frames = frames;
-        frames.push(mf(1, boxed(0.9, 0.5, 0.1)));
-        let keys = split_moments(&frames);
-        assert_eq!(keys[11], 1);
-        assert_eq!(keys[12], 2);
+        frames.push(mf(1, boxed(0.8, 0.5, 0.1)));
+        assert_eq!(split_moments(&frames), vec![1; 13]);
     }
 
     #[test]
@@ -685,7 +983,7 @@ mod moment_tests {
     }
 
     #[test]
-    fn subjects_that_appear_or_vanish_split_but_none_throughout_stays_one() {
+    fn subjects_that_appear_or_vanish_never_split_and_none_throughout_stays_one() {
         let frames = [
             mf(1, None),
             mf(1, None),
@@ -693,7 +991,7 @@ mod moment_tests {
             mf(1, boxed(0.5, 0.5, 0.1)),
             mf(1, boxed(0.5, 0.5, 0.1)),
         ];
-        assert_eq!(split_moments(&frames), vec![1, 1, 1, 2, 2]);
+        assert_eq!(split_moments(&frames), vec![1; 5]);
         let none: Vec<_> = (0..6).map(|_| mf(1, None)).collect();
         assert_eq!(split_moments(&none), vec![1; 6]);
     }

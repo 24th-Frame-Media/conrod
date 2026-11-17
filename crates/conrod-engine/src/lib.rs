@@ -36,6 +36,7 @@ pub mod desktop;
 pub mod edits;
 pub mod housekeeping;
 pub mod library;
+mod looks;
 pub mod operations;
 pub mod passes;
 pub mod progress;

@@ -430,6 +430,8 @@ impl Desktop {
             Command::Rescore(a) => crate::rescore::rescore(self, a.job_id),
             Command::Rescan(a) => crate::rescore::rescan(self, a.job_id),
             Command::PickKeepers(a) => crate::passes::pick_keepers(self, a.job_id),
+            Command::FocusPoints(a) => crate::passes::focus_points(self, a.job_id),
+            Command::Redetect(a) => crate::passes::redetect(self, a.job_id),
             Command::CollapseCopies(a) => crate::passes::collapse_copies(self, a.job_id),
             Command::RestoreCopies(a) => crate::passes::restore_copies(self, a.job_id),
             Command::TasteRank(a) => crate::taste::taste_rank(self, a.job_id, a.force),
@@ -850,7 +852,7 @@ impl Desktop {
             },
             move |result| match result {
                 Ok(frame) => {
-                    if let Err(e) = desktop.persist_frame(job, &frame, &settings) {
+                    if let Err(e) = desktop.persist_frame(job, &frame, &settings, true) {
                         desktop.hub.start("Saving scan result", 0).fail(e);
                     }
                 }
@@ -957,7 +959,15 @@ impl Desktop {
         Ok(json!({"jobId":job}))
     }
 
-    fn persist_frame(&self, job: i64, f: &FrameResult, settings: &Settings) -> Result<()> {
+    /// Save one scanned frame. `report` tells the scan screen, which a one-off
+    /// pass such as a re-detect must not: its counts are not a scan's.
+    pub(crate) fn persist_frame(
+        &self,
+        job: i64,
+        f: &FrameResult,
+        settings: &Settings,
+        report: bool,
+    ) -> Result<()> {
         let image: i64 = self
             .db
             .lock()
@@ -982,7 +992,9 @@ impl Desktop {
         let rating = f.rating;
         tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=? WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,image]).map_err(err)?;
         tx.commit().map_err(err)?;
-        self.report_frame(image, &thumb, f, settings);
+        if report {
+            self.report_frame(image, &thumb, f, settings);
+        }
         Ok(())
     }
 
@@ -1071,9 +1083,12 @@ impl Desktop {
             std::collections::HashMap::new();
         // Frames taken as a pan: one continuous action, so their moments merge.
         let mut pans: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        // Images whose largest subject is a vehicle: only liveries of vehicles
+        // tell one car from another.
+        let mut vehicles: std::collections::HashSet<i64> = std::collections::HashSet::new();
         for d in rows(
             &db,
-            "SELECT d.image_id AS image,d.x1,d.y1,d.x2,d.y2,d.panning AS pan FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
+            "SELECT d.image_id AS image,d.x1,d.y1,d.x2,d.y2,d.panning AS pan,COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
             [job],
         )? {
             let bbox = ["x1", "y1", "x2", "y2"].map(|k| d[k].as_f64().unwrap_or_default());
@@ -1084,8 +1099,50 @@ impl Desktop {
             }
             if main.get(&image).is_none_or(|&(seen, _)| area > seen) {
                 main.insert(image, (area, bbox));
+                if d["region"].as_str() == Some("vehicle") {
+                    vehicles.insert(image);
+                } else {
+                    vehicles.remove(&image);
+                }
             }
         }
+        // Each image's main subject as fractions of the frame.
+        let fractions: std::collections::HashMap<i64, [f64; 4]> = images
+            .iter()
+            .filter_map(|v| {
+                let id = v["id"].as_i64()?;
+                let (w, h) = (v["width"].as_f64()?, v["height"].as_f64()?);
+                let &(_, [x1, y1, x2, y2]) = main.get(&id)?;
+                (w > 0.0 && h > 0.0).then_some((id, [x1 / w, y1 / h, x2 / w, y2 / h]))
+            })
+            .collect();
+        // A frame the detector missed but the camera focused: the AF box (already
+        // fractions of the upright frame) is the moment's anchor, so such a frame
+        // stays in its car's moment instead of standing beside it. Only a frame
+        // with no usable detection box falls back to it. The looks below keep to
+        // detection boxes on purpose: an AF-only frame's livery is still the
+        // car, but measuring a look from a box the detector never confirmed is a
+        // larger change than this needs.
+        let mut af_boxes: std::collections::HashMap<i64, [f64; 4]> =
+            std::collections::HashMap::new();
+        for v in rows(
+            &db,
+            "SELECT id,af_x1,af_y1,af_x2,af_y2 FROM images WHERE job_id=? AND af_x1 IS NOT NULL",
+            [job],
+        )? {
+            let (Some(id), Some(x1), Some(y1), Some(x2), Some(y2)) = (
+                v["id"].as_i64(),
+                v["af_x1"].as_f64(),
+                v["af_y1"].as_f64(),
+                v["af_x2"].as_f64(),
+                v["af_y2"].as_f64(),
+            ) else {
+                continue;
+            };
+            af_boxes.insert(id, [x1, y1, x2, y2]);
+        }
+        // What each frame looks like, measured from its thumbnail once and kept.
+        let looks = crate::looks::load(&db, job, &fractions)?;
         let mut order: Vec<usize> = (0..frames.len()).collect();
         order.sort_by(|&a, &b| {
             frames[a]
@@ -1103,11 +1160,15 @@ impl Desktop {
                     (Some(&(_, [x1, y1, x2, y2])), Some(w), Some(h)) if w > 0.0 && h > 0.0 => {
                         Some([x1 / w, y1 / h, x2 / w, y2 / h])
                     }
-                    _ => None,
+                    _ => af_boxes.get(&id).copied(),
                 };
                 conrod_core::bursts::MomentFrame {
                     burst: i64::from(frames[i].burst),
                     taken: frames[i].taken,
+                    look: looks.get(&id).map(|look| conrod_core::bursts::Look {
+                        vehicle: vehicles.contains(&id),
+                        ..*look
+                    }),
                     subject,
                     panning: pans.contains(&id),
                 }
@@ -1137,9 +1198,10 @@ impl Desktop {
         for (i, frame) in frames.iter().enumerate() {
             let set = sets[i];
             tx.execute(
-                "UPDATE images SET burst_key=?,set_id=?,set_kind=? WHERE job_id=? AND path=?",
+                "UPDATE images SET burst_key=?,time_burst=?,set_id=?,set_kind=? WHERE job_id=? AND path=?",
                 params![
                     key[i],
+                    i64::from(frame.burst),
                     set.map(|(id, _)| id),
                     set.map(|(_, kind)| set_kind_name(kind)),
                     job,
@@ -1151,7 +1213,7 @@ impl Desktop {
         // A hidden copy keeps no key of its own: nothing may see it as a burst
         // or moment member, even if it is shown again before the next regroup.
         tx.execute(
-            "UPDATE images SET burst_key=NULL,set_id=NULL,set_kind=NULL WHERE job_id=? AND COALESCE(copy_of,0)<>0",
+            "UPDATE images SET burst_key=NULL,time_burst=NULL,set_id=NULL,set_kind=NULL WHERE job_id=? AND COALESCE(copy_of,0)<>0",
             [job],
         )
         .map_err(err)?;
@@ -1314,6 +1376,37 @@ mod tests {
             ),
             1,
             "the cull exemption lets the bracket's best frame win"
+        );
+    }
+
+    #[test]
+    fn a_time_burst_is_the_frames_shot_within_the_gap_per_camera() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("time-burst");
+        let (a, b, c) = (
+            lib.frame("1.jpg", None),
+            lib.frame("2.jpg", None),
+            lib.frame("3.jpg", None),
+        );
+        for (taken, image) in [(100.0, a), (100.2, b), (105.0, c)] {
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                params![taken, image],
+            );
+            lib.detection(image, "vehicle", 0.6);
+        }
+        lib.d().regroup(lib.job).unwrap();
+        let time = |id: i64| -> Option<i64> {
+            lib.one("SELECT time_burst FROM images WHERE id=?", [id])
+        };
+        assert!(time(a).is_some(), "a regrouped frame has a time burst");
+        assert_eq!(time(a), time(b), "0.2 s apart is one time burst");
+        assert_ne!(
+            time(a),
+            time(c),
+            "5 s later is another time burst: {:?} vs {:?}",
+            time(a),
+            time(c)
         );
     }
 
@@ -1499,10 +1592,11 @@ mod tests {
     }
 
     #[test]
-    fn regroup_splits_a_burst_whose_subject_grows_and_picks_once_per_moment() {
+    fn regroup_splits_a_burst_where_the_subject_cuts_and_picks_once_per_moment() {
         use crate::testkit::Lib;
         let lib = Lib::new("regroup-moments");
-        // Eight frames, a second apart, in one burst; the car grows from 2% to 30% of the frame.
+        // Eight frames, 0.2 s apart, in one burst: four of a car centred in the
+        // frame, then four of another far off to one side -- a cut, not a drift.
         for i in 0..8 {
             let image = lib.frame(&format!("{i}.jpg"), None);
             lib.sql(
@@ -1510,17 +1604,12 @@ mod tests {
                 params![f64::from(i) * 0.2, image],
             );
             let detection = lib.detection(image, "vehicle", 0.8);
-            let scale = (0.02 + 0.04 * f64::from(i)).sqrt();
+            let scale = 0.1_f64.sqrt();
             let (w, h) = (6000.0 * scale, 4000.0 * scale);
+            let (cx, cy) = if i < 4 { (3000.0, 2000.0) } else { (800.0, 3200.0) };
             lib.sql(
                 "UPDATE detections SET x1=?,y1=?,x2=?,y2=? WHERE id=?",
-                params![
-                    3000.0 - w / 2.0,
-                    2000.0 - h / 2.0,
-                    3000.0 + w / 2.0,
-                    2000.0 + h / 2.0,
-                    detection
-                ],
+                params![cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0, detection],
             );
         }
         lib.d().regroup(lib.job).unwrap();
@@ -1528,10 +1617,7 @@ mod tests {
             "SELECT count(DISTINCT burst_key) FROM images WHERE job_id=?",
             [lib.job],
         );
-        assert!(
-            keys > 1,
-            "a growing subject must split the burst, got {keys} key(s)"
-        );
+        assert_eq!(keys, 2, "a cut must split the burst in two");
         let picks: i64 = lib.one("SELECT count(*) FROM detections WHERE burst_pick=1", []);
         assert_eq!(picks, keys, "one pick per burst_key");
         let one_each: i64 = lib.one(
@@ -1539,6 +1625,55 @@ mod tests {
             [],
         );
         assert_eq!(one_each, keys, "every key gets exactly one pick");
+    }
+
+    #[test]
+    fn the_camera_focus_area_keeps_a_missed_frame_in_its_cars_moment() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("regroup-af");
+        // One burst: car A centred, a frame the detector missed, then car B far
+        // off to one side. The missed frame's AF box sits where B is, which is
+        // what the camera focused on.
+        let a = lib.frame("a.jpg", None);
+        let bare = lib.frame("bare.jpg", None);
+        let b = lib.frame("b.jpg", None);
+        for (taken, image) in [(0.0, a), (0.2, bare), (0.4, b)] {
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                params![taken, image],
+            );
+        }
+        lib.detection(a, "vehicle", 0.8);
+        lib.detection(b, "vehicle", 0.8);
+        lib.sql(
+            "UPDATE detections SET x1=3600,y1=2400,x2=4800,y2=3200 WHERE image_id=?",
+            [b],
+        );
+        lib.sql(
+            "UPDATE images SET af_x1=0.6,af_y1=0.6,af_x2=0.8,af_y2=0.8 WHERE id=?",
+            [bare],
+        );
+
+        lib.d().regroup(lib.job).unwrap();
+        let key = |image: i64| -> i64 {
+            lib.one("SELECT burst_key FROM images WHERE id=?", [image])
+        };
+        assert_ne!(key(a), key(b), "two cars, two moments");
+        assert_eq!(
+            key(bare),
+            key(b),
+            "the AF box anchors the missed frame to the car it focused on"
+        );
+
+        // Without the AF box the missed frame has no subject to be anchored by:
+        // it joins the moment open before it, and B's car stands apart from it.
+        lib.sql(
+            "UPDATE images SET af_x1=NULL,af_y1=NULL,af_x2=NULL,af_y2=NULL WHERE id=?",
+            [bare],
+        );
+        lib.d().regroup(lib.job).unwrap();
+        assert_eq!(key(bare), key(a), "a box-less frame joins the open moment");
+        assert_ne!(key(bare), key(b), "and stays apart from the car it was of");
     }
 
     #[test]
