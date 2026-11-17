@@ -3,13 +3,18 @@ import { useRun } from '../state/hooks';
 import { FilePick, Icon, Portal, useBackdropClose } from '../components/basics';
 import { ShootTypeSelect } from '../components/ShootTypeSelect';
 import { StrictnessSlider } from '../components/StrictnessSlider';
+import { GroupingFields, groupingOf, type GroupingValues } from '../components/GroupingFields';
 import { call, chooseFolder } from '../lib/api';
 import { filename } from '../lib/review';
 import { profileParent, type ScanArgs, type Settings, type Status } from '../lib/types';
 
 export type ScanDraft = { root: string; label: string };
-/** What the sheet remembers for next time (and what the new album copies): shoot type, strictness, burst gap. */
-export type ImportDefaults = { scan_profile: string; blur_strictness?: string; burst_gap: number };
+/** What the sheet remembers for next time (and what the new album copies): shoot type, strictness, burst gap, stacking. */
+export type ImportDefaults = {
+  scan_profile: string; blur_strictness?: string; burst_gap: number;
+  grouping_stacks: boolean; grouping_sensitivity: string; grouping_pause: number;
+  grouping_keep_pans: boolean; grouping_focus_anchor: boolean;
+};
 type Props = {
   draft: ScanDraft; setDraft: (d: ScanDraft) => void; profile: string; setProfile: (p: string) => void;
   settings: Settings; status: Status; busy: boolean;
@@ -27,6 +32,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const [strictness, setStrictness] = useState('moderate');
   const [strictnessTouched, setStrictnessTouched] = useState(false);
   const [burstGap, setBurstGap] = useState(String(DEFAULT_GAP));
+  const [grouping, setGrouping] = useState<GroupingValues>(groupingOf(settings));
   const [readPlates, setReadPlates] = useState(true);
   const [readNumbers, setReadNumbers] = useState(true);
   const [includePeople, setIncludePeople] = useState(false);
@@ -36,6 +42,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
     setStrictness(typeof settings.blur_strictness === 'string' ? settings.blur_strictness : 'moderate');
     setStrictnessTouched(false);
     setBurstGap(String(Number(settings.burst_gap) > 0 ? settings.burst_gap : DEFAULT_GAP));
+    setGrouping(groupingOf(settings));
     setReadPlates(settings.read_plates !== false);
     setReadNumbers(settings.read_numbers !== false);
     setEntries('');
@@ -56,7 +63,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const start = () => {
     onStart(
       { root: draft.root.trim(), label: draft.label.trim() || filename(draft.root), profile, recursive, stage: 'all', readPlates: vehicles && readPlates, readNumbers: vehicles && readNumbers, includePeople: parent === 'motorsport' && includePeople },
-      { scan_profile: profile, blur_strictness: strictnessTouched ? strictness : undefined, burst_gap: gapOk ? gap : DEFAULT_GAP },
+      { scan_profile: profile, blur_strictness: strictnessTouched ? strictness : undefined, burst_gap: gapOk ? gap : DEFAULT_GAP, ...grouping },
     );
     onClose();
   };
@@ -106,6 +113,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
               <label htmlFor="import-gap"><b>Burst gap</b><small>Frames closer together than this share a burst. Changing it later regroups instantly.</small></label>
               <span className="import-gap-input"><input id="import-gap" type="number" min={0.1} max={60} step={0.1} value={burstGap} aria-invalid={!gapOk} onChange={(e) => setBurstGap(e.target.value)} /><span className="muted">s</span></span>
             </div>
+            <GroupingFields value={grouping} onChange={(patch) => setGrouping((current) => ({ ...current, ...patch }))} idPrefix="import" />
             {vehicles && (
               <div className="field-row import-entries"><FilePick label="Entry list CSV…" accept=".csv,text/csv" onFile={(file) => void run(async () => { const result = await call<{ count: number }>('import_entries', { csv: await file.text() }); setEntries(`${result.count} entries loaded`); })} /><span className="muted">{entries}</span></div>
             )}

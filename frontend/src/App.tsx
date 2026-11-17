@@ -82,7 +82,11 @@ export function App() {
       // The sheet's choices belong to this album: they travel with the scan and
       // land in its job settings. Global defaults are only changed from Settings.
       const scan: ScanArgs = defaults
-        ? { ...args, scanProfile: defaults.scan_profile, blurStrictness: defaults.blur_strictness, burstGap: defaults.burst_gap }
+        ? {
+            ...args, scanProfile: defaults.scan_profile, blurStrictness: defaults.blur_strictness, burstGap: defaults.burst_gap,
+            groupingStacks: defaults.grouping_stacks, groupingSensitivity: defaults.grouping_sensitivity, groupingPause: defaults.grouping_pause,
+            groupingKeepPans: defaults.grouping_keep_pans, groupingFocusAnchor: defaults.grouping_focus_anchor,
+          }
         : args;
       const { jobId: id } = await engine.scan(scan);
       await eng.refreshJobs();
@@ -114,12 +118,13 @@ export function App() {
 
   useHotkeys({
     page: view, viewerOpen: viewer, rejected: () => reviewVerbs.current.rejected(), picked: () => reviewVerbs.current.picked(),
-    stepFrame: (d) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepFrame(d)),
+    stepFrame: (d, repeat) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepFrame(d, repeat)),
     stepBurst: (d) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepBurst(d)),
     nextBurst: (d) => reviewVerbs.current.nextBurst(d),
     nextUndecided: () => reviewVerbs.current.nextUndecided(),
     enter: () => reviewVerbs.current.enter(),
     mark: (values) => reviewVerbs.current.mark(values),
+    stackAction: (mode) => reviewVerbs.current.stackAction(mode),
     undo: () => reviewVerbs.current.undo(),
     redo: () => reviewVerbs.current.redo(),
     openViewer: () => { if (rv.frame) { setViewer(true); reviewVerbs.current.setView('loupe'); } },

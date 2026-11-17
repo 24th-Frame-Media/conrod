@@ -17,10 +17,9 @@ test('a well-framed frame earns every good label, in a stable order', () => {
   assert.deepEqual(ids(frame), ['placement', 'balance', 'clutter', 'symmetry', 'lines']);
 });
 
-test('a busy pan reads as off the grid, heavy on both axes and cluttered', () => {
+test('a busy pan reads as heavy on both axes and cluttered, with no placement chip', () => {
   const pan = { id: 2, comp_placement: 0.31, comp_mode: 'phi', comp_balance_x: -0.4, comp_balance_y: 0.5, comp_clutter: 0.9, comp_symmetry: 0.2, comp_lines: 5, comp_subject_share: 0.12 };
   assert.deepEqual(compositionLabels(pan), [
-    { id: 'placement', text: 'Off the grid', tone: 'warn' },
     { id: 'balance-x', text: 'Heavy left', tone: 'ok' },
     { id: 'balance-y', text: 'Bottom heavy', tone: 'ok' },
     { id: 'clutter', text: 'Busy background', tone: 'warn' },
@@ -28,11 +27,18 @@ test('a busy pan reads as off the grid, heavy on both axes and cluttered', () =>
   ]);
 });
 
-test('placement thresholds and modes: 0.75 and 0.4 are inside their band', () => {
+test('placement: below 0.5 says nothing, 0.55 is ok, 0.8 is good', () => {
+  assert.deepEqual(texts({ id: 1, comp_placement: 0.2, comp_mode: 'thirds' }), []);
+  assert.deepEqual(texts({ id: 1, comp_placement: 0.49, comp_mode: 'thirds' }), []);
+  assert.deepEqual(texts({ id: 1, comp_placement: 0.55, comp_mode: 'thirds' }), ['Thirds (ok)']);
+  assert.deepEqual(texts({ id: 1, comp_placement: 0.8, comp_mode: 'thirds' }), ['Thirds (good)']);
+});
+
+test('placement thresholds and modes: 0.75 and 0.5 are inside their band', () => {
   assert.deepEqual(texts({ id: 1, comp_placement: 0.75, comp_mode: 'centre' }), ['Centre (good)']);
   assert.deepEqual(texts({ id: 1, comp_placement: 0.74, comp_mode: 'centre' }), ['Centre (ok)']);
-  assert.deepEqual(texts({ id: 1, comp_placement: 0.4, comp_mode: 'phi' }), ['Golden ratio (ok)']);
-  assert.deepEqual(texts({ id: 1, comp_placement: 0.39, comp_mode: 'phi' }), ['Off the grid (warn)']);
+  assert.deepEqual(texts({ id: 1, comp_placement: 0.5, comp_mode: 'phi' }), ['Golden ratio (ok)']);
+  assert.deepEqual(texts({ id: 1, comp_placement: 0.49, comp_mode: 'phi' }), []);
   assert.deepEqual(texts({ id: 1, comp_placement: 0.9 }), ['Well placed (good)']);
   assert.deepEqual(texts({ id: 1, comp_placement: 0.5 }), ['Framing average (ok)']);
   assert.deepEqual(texts({ id: 1, comp_mode: 'thirds' }), []);

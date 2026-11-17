@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { applyDecision } from '../lib/decisions.mjs';
 import type { MarkValues, Page } from '../lib/types';
 
 export type Hotkeys = {
@@ -8,7 +9,7 @@ export type Hotkeys = {
   rejected: () => boolean;
   picked: () => boolean;
   /** Left/right (and j/k): move within the current burst, clamped at its edges (flat view: one frame). */
-  stepFrame: (delta: number) => void;
+  stepFrame: (delta: number, repeat?: boolean) => void;
   /** Up/down: jump to the previous/next burst, landing on its lead (flat view: one row). */
   stepBurst: (delta: number) => void;
   /** Tab / Shift+Tab: done with this burst, go to the next (previous) one. */
@@ -18,6 +19,8 @@ export type Hotkeys = {
   /** Enter: expand the stack in place, or open the loupe. */
   enter: () => void;
   mark: (values: MarkValues) => void;
+  /** B / Shift+B while culling: decide the whole stack around the focused frame. */
+  stackAction: (mode: 'keep' | 'cull') => void;
   /** Ctrl+Z / Ctrl+Shift+Z while culling: undo (redo) the last decision. */
   undo: () => void;
   redo: () => void;
@@ -55,16 +58,19 @@ export function useHotkeys(keys: Hotkeys) {
       if (k === '?') { e.preventDefault(); h.toggleHelp(); return; }
       if (h.page !== 'Review' && h.page !== 'Train') return;
       if (k === 'tab' && h.page === 'Review' && !target?.closest?.('.toolbar')) { e.preventDefault(); h.nextBurst(e.shiftKey ? -1 : 1); return; }
-      if (k === 'arrowright' || k === 'j') { e.preventDefault(); h.stepFrame(1); }
-      else if (k === 'arrowleft' || k === 'k') { e.preventDefault(); h.stepFrame(-1); }
+      if (k === 'arrowright' || k === 'j') { e.preventDefault(); h.stepFrame(1, e.repeat); }
+      else if (k === 'arrowleft' || k === 'k') { e.preventDefault(); h.stepFrame(-1, e.repeat); }
       else if (k === 'arrowdown') { e.preventDefault(); h.stepBurst(1); }
       else if (k === 'arrowup') { e.preventDefault(); h.stepBurst(-1); }
-      else if (k === 'b') h.toggleBoxes();
+      else if (k === 'b' && h.page !== 'Review') h.toggleBoxes();
       else if (h.page === 'Review') {
+        // A modal owns its own keys; the pills and the toolbar are the way to decide while one is open.
+        if (document.querySelector('dialog[open]')) return;
         if (/^[0-5]$/.test(k)) { e.preventDefault(); h.mark({ stars: Number(k) }); }
-        else if (k === 'x' || k === 'delete') h.mark(h.rejected() ? { rejected: false } : { rejected: true });
-        else if (k === 'p') h.mark(h.picked() ? { picked: false } : { picked: true, rejected: false });
-        else if (k === 'u') h.mark({ stars: null, rejected: false, picked: false });
+        else if (k === 'x' || k === 'delete') h.mark(applyDecision(null, 'cull'));
+        else if (k === 'p') h.mark(applyDecision(null, 'keep'));
+        else if (k === 'u') h.mark({ ...applyDecision(null, 'clear'), stars: null });
+        else if (k === 'b') { e.preventDefault(); h.stackAction(e.shiftKey ? 'cull' : 'keep'); }
         else if (k === 'n') h.nextUndecided();
         else if (k === 'enter' && !inChrome) { e.preventDefault(); h.enter(); }
         else if (k === ' ' && !document.querySelector('dialog[open]') && !inChrome) { e.preventDefault(); h.openViewer(); }

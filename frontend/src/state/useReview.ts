@@ -113,36 +113,50 @@ export function useReview(jobId: number | null, run: Runner) {
   /** The changes this visit can step back through, newest last; a new mark clears the redo side. */
   const past = useRef<UndoEntry[]>([]);
   const future = useRef<UndoEntry[]>([]);
-  const apply = useCallback((id: number, values: MarkValues) => run(async () => {
-    await engine.mark(id, values);
-    setReview((r) => patchReview(r, id, values));
+  /** One engine call per frame, then one local patch for the whole list: a burst decision costs n marks, not n reloads. */
+  const applyMany = useCallback((changes: { id: number; values: MarkValues }[]) => run(async () => {
+    for (const change of changes) await engine.mark(change.id, change.values);
+    setReview((r) => changes.reduce((next, change) => patchReview(next, change.id, change.values), r));
   }), [run]);
+
+  /**
+   * One undo step for any number of frames. The previous state of each frame is captured here, because the engine's
+   * per-photo `mark` has no batch endpoint; undo replays every captured restore in one go.
+   */
+  const markMany = useCallback((changes: { id: number; values: MarkValues }[]) => {
+    if (!changes.length) return Promise.resolve(undefined);
+    const entries = changes.map((change) => ({
+      id: change.id,
+      restore: capture(review.frames.find((f) => f.id === change.id) ?? null, change.values),
+      after: change.values,
+    }));
+    past.current = record(past.current, { id: entries[0].id, changes: entries });
+    future.current = [];
+    return applyMany(changes);
+  }, [review.frames, applyMany]);
 
   const mark = useCallback((values: MarkValues, id: number | null = selected) => {
     if (id == null) return Promise.resolve(undefined);
-    const frame = review.frames.find((f) => f.id === id) ?? null;
-    past.current = record(past.current, { id, restore: capture(frame, values), after: values });
-    future.current = [];
-    return apply(id, values);
-  }, [selected, review.frames, apply]);
+    return markMany([{ id, values }]);
+  }, [selected, markMany]);
 
-  /** Undo one decision; returns the frame it changed, so the view can go back to it. */
+  /** Undo one decision (a single mark or a whole stack action); returns the frame the view can go back to. */
   const undo = useCallback((): number | null => {
     const step = undoHistory(past.current, future.current);
     if (!step) return null;
     ({ past: past.current, future: future.current } = step);
-    void apply(step.entry.id, step.entry.restore);
+    void applyMany(step.entry.changes.map((change) => ({ id: change.id, values: change.restore })));
     return step.entry.id;
-  }, [apply]);
+  }, [applyMany]);
 
   const redo = useCallback((): number | null => {
     const step = redoHistory(past.current, future.current);
     if (!step) return null;
     ({ past: past.current, future: future.current } = step);
-    void apply(step.entry.id, step.entry.after);
+    void applyMany(step.entry.changes.map((change) => ({ id: change.id, values: change.after })));
     return step.entry.id;
-  }, [apply]);
+  }, [applyMany]);
 
-  return { review, refresh, loading, selected, setSelected, filters, patchFilters, grouping, setGrouping, expanded, setExpanded, facts, facets, keepers, frames, frame, step, mark, undo, redo };
+  return { review, refresh, loading, selected, setSelected, filters, patchFilters, grouping, setGrouping, expanded, setExpanded, facts, facets, keepers, frames, frame, step, mark, markMany, undo, redo };
 }
 export type ReviewModel = ReturnType<typeof useReview>;

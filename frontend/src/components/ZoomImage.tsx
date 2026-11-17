@@ -1,5 +1,6 @@
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { boxOf, plateBoxOf } from '../lib/review';
+import { afBox } from '../lib/viewer.mjs';
 import { ZoomPanImage, type ZoomPanRef } from './Media';
 import { getCategory, type CategoryFilter } from './DetectionsTable';
 import type { Detection, Frame } from '../lib/types';
@@ -72,12 +73,36 @@ export const ZoomImage = forwardRef<ZoomImageHandle, Props>(function ZoomImage(
   }), [focusBoxes, focusIndex]);
 
   const ratio = frame.width && frame.height ? frame.width / frame.height : 3 / 2;
+  const af = afBox(frame);
+
+  // One click target for the whole photo: a press on a box selects that detection, then either way the click
+  // toggles zoom at the point. Only a non-drag press reaches here, so panning never toggles.
+  const surfaceClick = (x: number, y: number, target: HTMLElement | null) => {
+    const boxEl = target?.closest<HTMLElement>('.box[data-det]');
+    const id = boxEl ? Number(boxEl.dataset.det) : null;
+    if (id != null && Number.isFinite(id)) onSelectDet?.(id === selectedDetId ? null : id);
+    setFocusIndex(null);
+    zoomRef.current?.toggleZoom(x, y);
+  };
 
   return (
     <div className="stage-inner" style={{ '--ar': ratio } as CSSProperties}>
-      <ZoomPanImage ref={zoomRef} src={src} alt={alt}>
+      <ZoomPanImage ref={zoomRef} src={src} alt={alt} onSurfaceClick={surfaceClick}>
         {showBoxes && (
           <div className="overlay">
+            {af && (
+              <div
+                className="box box-af"
+                style={{
+                  left: `${af[0] * 100}%`,
+                  top: `${af[1] * 100}%`,
+                  width: `${(af[2] - af[0]) * 100}%`,
+                  height: `${(af[3] - af[1]) * 100}%`,
+                }}
+              >
+                <span className="box-label label-af">AF</span>
+              </div>
+            )}
             {visibleBoxes.map((d) => {
               const b = boxOf(d, frame);
               if (!b) return null;
@@ -88,6 +113,7 @@ export const ZoomImage = forwardRef<ZoomImageHandle, Props>(function ZoomImage(
               return (
                 <div
                   key={d.id}
+                  data-det={d.id}
                   className={`box box-${cat}${d.panning ? ' pan' : ''}${isSelected ? ' active-box' : ''}${isHovered ? ' hovered' : ''}`}
                   style={{
                     left: `${b[0] * 100}%`,
@@ -96,7 +122,6 @@ export const ZoomImage = forwardRef<ZoomImageHandle, Props>(function ZoomImage(
                     height: `${(b[3] - b[1]) * 100}%`,
                     pointerEvents: 'auto',
                   }}
-                  onClick={(e) => { e.stopPropagation(); onSelectDet?.(isSelected ? null : d.id); }}
                   onMouseEnter={() => onHoverDet?.(d.id)}
                   onMouseLeave={() => onHoverDet?.(null)}
                 >

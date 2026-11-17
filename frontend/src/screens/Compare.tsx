@@ -92,6 +92,7 @@ export function Compare({ rv, run, showBoxes, onToggleBoxes, right, activePane, 
           selectedId={filmBase?.id ?? null}
           culled={(f) => frameExcluded(f, rv.facts.get(f.id)?.dets ?? [])}
           onSelect={onPickFilmstrip}
+          onDecide={(id, values) => void rv.mark(values, id)}
         />
       )}
       <button className="ghost small compare-close" autoFocus onClick={onClose}>Close</button>
