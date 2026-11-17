@@ -23,6 +23,7 @@ use conrod_core::{
     tasks::Task,
 };
 use conrod_vision::sharpness;
+use rayon::prelude::*;
 use rusqlite::params;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -236,6 +237,99 @@ fn remeasure_pixels(
         }
     });
     Ok(unread.into_inner())
+}
+
+/// Measure the focus inside each missed frame's AF box, and keep it in
+/// `images.af_sharpness`.
+///
+/// A frame the detector found nothing in has no subject box to measure; the
+/// camera's autofocus area is a real subject box. Its edge blur is read on the
+/// upright preview's native luma, exactly as `cull_frame` measures a detected
+/// subject, and rated with the album's effective strictness. Only frames with
+/// no detection rows at all are touched: a frame whose subject is known already
+/// has the better box.
+///
+/// Returns `(measured, unread)`: how many frames took a score, and how many
+/// could not be read (moved or deleted originals). A frame it cannot read keeps
+/// the score it already had -- the old score of that same AF box is still a
+/// better answer than none -- while a box that measures to nothing is NULLed.
+pub(crate) fn measure_af_frames(
+    d: &Desktop,
+    job: i64,
+    cfg: &Settings,
+    task: &Task,
+) -> Result<(usize, usize)> {
+    let found = rows(
+        &lock(&d.reader),
+        "SELECT id,path,af_x1,af_y1,af_x2,af_y2 FROM images WHERE job_id=? \
+         AND status='done' AND COALESCE(copy_of,0)=0 AND af_x1 IS NOT NULL \
+         AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_id=images.id) ORDER BY id",
+        [job],
+    )?;
+    let total = found.len() as u64;
+    task.progress(0, total);
+    task.detail(format!("Measuring {total} missed frames inside the focus area"));
+    let strictness = cfg.effective_blur();
+    let done = AtomicUsize::new(0);
+    let results: Vec<(i64, Result<Option<f64>>)> = found
+        .par_iter()
+        .map(|row| {
+            let id = row["id"].as_i64().unwrap_or_default();
+            let path = std::path::Path::new(row["path"].as_str().unwrap_or_default());
+            let area = ["af_x1", "af_y1", "af_x2", "af_y2"]
+                .map(|key| row[key].as_f64().unwrap_or_default());
+            let result = af_rating(path, area, &strictness);
+            let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+            task.progress(n as u64, total);
+            (id, result)
+        })
+        .collect();
+    let db = lock(&d.db);
+    let tx = db.unchecked_transaction().map_err(err)?;
+    let (mut measured, mut unread) = (0, 0);
+    for (id, result) in &results {
+        match result {
+            Ok(Some(score)) => {
+                measured += 1;
+                tx.execute(
+                    "UPDATE images SET af_sharpness=? WHERE id=?",
+                    params![score, id],
+                )
+                .map_err(err)?;
+            }
+            Ok(None) => {
+                tx.execute("UPDATE images SET af_sharpness=NULL WHERE id=?", [id])
+                    .map_err(err)?;
+            }
+            Err(_) => unread += 1,
+        }
+    }
+    tx.commit().map_err(err)?;
+    Ok((measured, unread))
+}
+
+/// One AF box's edge-blur rating, on the upright preview's native luma. The box
+/// is fractions of the upright frame, the space `af::read` returns.
+fn af_rating(
+    path: &std::path::Path,
+    area: [f64; 4],
+    strictness: &str,
+) -> Result<Option<f64>> {
+    let frame = conrod_io::raw::read(path)?;
+    let image = conrod_vision::imageops::Rgb::decode_jpeg(&frame.preview, 1)?
+        .orient(frame.orientation);
+    let grey = image.to_gray();
+    let (fw, fh) = (grey.width, grey.height);
+    let px = |at: usize, edge: usize| (area[at].clamp(0.0, 1.0) * edge as f64) as usize;
+    let region = [px(0, fw), px(1, fh), px(2, fw).min(fw), px(3, fh).min(fh)];
+    if region[2] <= region[0] + 8 || region[3] <= region[1] + 8 {
+        return Ok(None);
+    }
+    let blur = conrod_vision::edgeblur::measure(&grey, Some(region));
+    Ok(sharpness::rating_from_blur(
+        blur.sigma_worst_at_reference(fw.max(fh)),
+        sharpness::BlurStrictness::parse(strictness),
+    ))
 }
 
 /// What `cull_frame` would have measured for one frame.
@@ -981,5 +1075,66 @@ mod tests {
         );
         let cull: String = lib.one("SELECT cull_reason FROM detections WHERE id=?", [left]);
         assert_eq!(cull, "", "an open eye keeps its clean sheet");
+    }
+
+    #[test]
+    fn a_missed_frame_is_measured_inside_its_af_box_and_a_detected_one_is_not() {
+        let lib = Lib::new("af-measure");
+        // A readable fixture: deterministic value noise at several block
+        // scales, so edges run in every direction (as a real subject's do) and
+        // the native-pixel sigma, normalised to the 6000 px reference the way
+        // `cull_frame` does it, reads as sharp.
+        let (w, h) = (2400usize, 1600usize);
+        let hash = |x: usize, y: usize| {
+            let mut v = (x as u32).wrapping_mul(0x9E37_79B9) ^ (y as u32).wrapping_mul(0x85EB_CA6B);
+            v ^= v >> 13;
+            v = v.wrapping_mul(0xC2B2_AE35);
+            v ^ (v >> 16)
+        };
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let mut level = 0.0f64;
+                for (block, amp) in [(16usize, 90.0), (8, 60.0), (4, 40.0), (2, 25.0)] {
+                    let n = hash(x / block, y / block) % 256;
+                    level += amp * (f64::from(n) / 255.0 - 0.5);
+                }
+                let v = (128.0 + level).clamp(0.0, 255.0) as u8;
+                data.extend([v, v, v]);
+            }
+        }
+        crate::desktop::save_jpeg(
+            &conrod_vision::imageops::Rgb::new(w, h, data),
+            &lib.root.join("af.jpg"),
+        )
+        .unwrap();
+        let bare = lib.frame("af.jpg", None);
+        lib.sql(
+            "UPDATE images SET af_x1=0.25,af_y1=0.25,af_x2=0.75,af_y2=0.75 WHERE id=?",
+            [bare],
+        );
+        // A frame with a detection already has a better box: left alone.
+        let seen = lib.frame("seen.jpg", None);
+        lib.detection(seen, "vehicle", 0.9);
+        lib.sql(
+            "UPDATE images SET af_x1=0.25,af_y1=0.25,af_x2=0.75,af_y2=0.75 WHERE id=?",
+            [seen],
+        );
+        // A stored box whose original is gone cannot be read.
+        let gone = lib.frame("gone.jpg", None);
+        lib.sql(
+            "UPDATE images SET af_x1=0.25,af_y1=0.25,af_x2=0.75,af_y2=0.75 WHERE id=?",
+            [gone],
+        );
+
+        let task = lib.d().hub.start("Measuring", 0);
+        let (measured, unread) = measure_af_frames(lib.d(), lib.job, &cfg(), &task).unwrap();
+        task.finish();
+
+        assert_eq!((measured, unread), (1, 1));
+        let score: Option<f64> = lib.one("SELECT af_sharpness FROM images WHERE id=?", [bare]);
+        assert!(score.is_some_and(|s| s > 0.5), "a sharp AF box: {score:?}");
+        let kept: Option<f64> = lib.one("SELECT af_sharpness FROM images WHERE id=?", [seen]);
+        assert_eq!(kept, None, "a detected frame is never AF-measured");
     }
 }

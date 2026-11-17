@@ -11,6 +11,7 @@ pub mod faces;
 pub mod framing;
 pub mod imageops;
 pub mod level;
+pub mod look;
 pub mod ocr;
 pub mod plates;
 pub mod quality;

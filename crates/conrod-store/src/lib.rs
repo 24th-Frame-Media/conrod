@@ -140,6 +140,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // Which body shot it and which burst it belongs to -- see conrod-core::bursts.
     ("images", "camera", "TEXT"),
     ("images", "burst_key", "INTEGER"),
+    // The time burst a frame belongs to: frames shot within the album's burst
+    // gap of each other, per camera. `burst_key` holds the moment inside it.
+    ("images", "time_burst", "INTEGER"),
     ("images", "taken_at", "REAL"),
     // Measured on the crop, not the frame, so a panning shot is not marked
     // down for the blur that makes it good.
@@ -190,6 +193,16 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // area rescues it: what the frame reads as when the detector missed the
     // subject. See `bare_frame`.
     ("images", "sharpness_whole", "REAL"),
+    // The camera's autofocus area, as fractions of the upright frame (see
+    // conrod_io::af). A real subject box on a frame the detector missed.
+    ("images", "af_x1", "REAL"),
+    ("images", "af_y1", "REAL"),
+    ("images", "af_x2", "REAL"),
+    ("images", "af_y2", "REAL"),
+    ("images", "af_mode", "INTEGER"),
+    // The edge-blur rating measured inside that box: what a missed frame is
+    // rated on before either whole-frame rule can speak.
+    ("images", "af_sharpness", "REAL"),
     // How much of a panning frame is sharp, 0..1: the frame rating's cap.
     ("images", "pan_share", "REAL"),
     ("images", "rating", "REAL"),
@@ -206,6 +219,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // Another frame this one is a byte-identical copy of; the copy is hidden
     // from bursts, picks, counts and XMP writes (see `copies.rs`).
     ("images", "copy_of", "INTEGER"),
+    // What the frame looks like, as hex (see `conrod_vision::look`): two colour
+    // histograms read from the thumbnail, which the moment splitter compares.
+    ("images", "look", "TEXT"),
     ("detections", "features", "TEXT"),
     ("detections", "heuristic", "REAL"),
     ("detections", "region_type", "TEXT DEFAULT 'vehicle'"),

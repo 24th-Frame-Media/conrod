@@ -393,6 +393,12 @@ pub enum Command {
     Rescore(JobArgs),
     Rescan(JobArgs),
     PickKeepers(JobArgs),
+    /// Read the camera's autofocus area for every RAW of the album, then rate
+    /// and group the frames the detector missed by it.
+    FocusPoints(JobArgs),
+    /// Run the detector again over the frames it found nothing in, at a one-off
+    /// lower bar, for the subjects it missed.
+    Redetect(JobArgs),
     /// Hide the extra imports of one shot (the same frame under two or three
     /// names) from bursts, picks, counts and writes.
     CollapseCopies(JobArgs),

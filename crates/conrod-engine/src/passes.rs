@@ -575,35 +575,56 @@ pub fn pick_of_pass(
     }))
 }
 
-/// A frame with no subject in a burst where other frames have one is a shot the
-/// detector missed, not a detail shot: rating it on its sharpest patch gave
-/// almost every such frame a perfect score. Those take the whole frame's score;
-/// every other subject-less frame keeps its in-focus-area score.
+/// A frame with no subject in a time burst where other frames have one is a shot
+/// the detector missed, not a detail shot: rating it on its sharpest patch gave
+/// almost every such frame a perfect score. A run of missed frames forms its own
+/// moment (`burst_key`), so the time burst is what ties them back to the frames
+/// the detector did see. Those take the whole frame's score; every other
+/// subject-less frame keeps its in-focus-area score.
 ///
-/// Returns how many frames took the whole-frame score.
+/// The camera's own autofocus area outranks both rules: it says where the
+/// subject is, so a frame the detector missed but the camera focused is rated
+/// on the edge blur inside that box (`af_sharpness`) rather than on the whole
+/// frame. Precedence, in order: `af_sharpness`, the time-burst rule
+/// (`sharpness_whole`), the frame's own `sharpness`.
+///
+/// Returns how many frames took either subject-aware score.
 pub(crate) fn rate_missed_frames(conn: &Connection, job: i64) -> Result<usize> {
-    // Another visible image of the same burst whose subject says the detector
-    // was looking at something: a hidden copy is not a burst mate.
+    // Another visible frame of the same time burst whose subject says the
+    // detector was looking at something: a hidden copy is not a burst mate.
+    // `burst_key` is only the moment inside the time burst, and a run of
+    // box-less frames gets a moment of its own. Where either frame has no
+    // `time_burst` yet (not regrouped since it existed) both fall back to the
+    // moment: a time-burst number never meets a moment number.
     const MISSED: &str = "images.burst_key IS NOT NULL AND images.sharpness_whole IS NOT NULL \
          AND EXISTS (SELECT 1 FROM images o JOIN detections d ON d.image_id=o.id \
-                     WHERE o.job_id=images.job_id AND o.burst_key=images.burst_key \
+                     WHERE o.job_id=images.job_id \
+                       AND CASE WHEN o.time_burst IS NOT NULL AND images.time_burst IS NOT NULL \
+                                THEN o.time_burst=images.time_burst \
+                                ELSE o.burst_key=images.burst_key END \
                        AND o.id<>images.id AND COALESCE(o.copy_of,0)=0 \
                        AND COALESCE(d.region_type,'vehicle') IN ('vehicle','person'))";
     // A measured frame the detector found nothing in.
     const BARE: &str = "WHERE images.job_id=?1 AND images.status='done' \
-         AND images.sharpness IS NOT NULL AND COALESCE(images.copy_of,0)=0 \
+         AND (images.sharpness IS NOT NULL OR images.af_sharpness IS NOT NULL) \
+         AND COALESCE(images.copy_of,0)=0 \
          AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_id=images.id)";
     let missed: i64 = conn
         .query_row(
-            &format!("SELECT count(*) FROM images {BARE} AND {MISSED}"),
+            &format!(
+                "SELECT count(*) FROM images {BARE} \
+                 AND (images.af_sharpness IS NOT NULL OR {MISSED})"
+            ),
             [job],
             |r| r.get(0),
         )
         .map_err(err)?;
     conn.execute(
         &format!(
-            "UPDATE images SET rating=CASE WHEN {MISSED} THEN images.sharpness_whole \
-             ELSE images.sharpness END {BARE}"
+            "UPDATE images SET rating=CASE \
+                 WHEN images.af_sharpness IS NOT NULL THEN images.af_sharpness \
+                 WHEN {MISSED} THEN images.sharpness_whole \
+                 ELSE images.sharpness END {BARE}"
         ),
         [job],
     )
@@ -637,6 +658,313 @@ pub fn pick_keepers(d: &Desktop, job: i64) -> Result<Value> {
             Err(e)
         }
     }
+}
+
+/// The action: read the camera's autofocus area for every RAW of the album,
+/// store it per frame, then put the frames the detector missed back on their
+/// car: measure the focus inside the AF box, re-rate them and regroup so a
+/// missed frame sits in its car's moment. One press fixes an existing album.
+pub fn focus_points(d: &Arc<Desktop>, job: i64) -> Result<Value> {
+    require_job(d, job)?;
+    let cfg = settings(d, job)?;
+    launch(d, job, "Reading focus points", move |d, stop, task| {
+        let exiftool = exiftool_path()?;
+        // The visible frames of the album; only RAW carries maker AF tags.
+        let images = rows(
+            &lock(&d.reader),
+            "SELECT id,path,width,height FROM images WHERE job_id=? AND status='done' \
+             AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 ORDER BY id",
+            [job],
+        )?;
+        let raws: Vec<(i64, std::path::PathBuf, u32, u32)> = images
+            .iter()
+            .filter_map(|v| {
+                let path = std::path::PathBuf::from(v["path"].as_str()?);
+                let raw = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "cr3" | "cr2"));
+                raw.then(|| {
+                    (
+                        v["id"].as_i64().unwrap_or_default(),
+                        path,
+                        v["width"].as_u64().unwrap_or_default() as u32,
+                        v["height"].as_u64().unwrap_or_default() as u32,
+                    )
+                })
+            })
+            .collect();
+        // `af::read` needs each frame's upright size and EXIF orientation: the
+        // AF tags are in sensor order and the box cannot be turned upright
+        // without it. The database has the size but no orientation, and
+        // `raw::read` is the only public source for it; it reads each file's
+        // preview bytes, so rayon reads them in parallel.
+        task.detail(format!("Reading {} RAW files", raws.len()));
+        task.progress(0, raws.len() as u64);
+        let frames: HashMap<_, _> = raws
+            .par_iter()
+            .map(|(_, path, w, h)| {
+                let orientation = conrod_io::raw::read(path).map_or(1, |f| f.orientation);
+                (path.clone(), (*w, *h, orientation))
+            })
+            .collect();
+        let (mut with_point, mut without) = (0usize, 0usize);
+        let mut read = 0usize;
+        for chunk in raws.chunks(200) {
+            if stop.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let paths: Vec<_> = chunk.iter().map(|(_, path, _, _)| path.clone()).collect();
+            let areas = conrod_io::af::read(&paths, &exiftool, &frames);
+            let stored: Vec<(i64, Option<conrod_io::af::AfArea>)> = chunk
+                .iter()
+                .zip(areas)
+                .map(|((id, _, _, _), (_, area))| {
+                    if area.is_some() {
+                        with_point += 1;
+                    } else {
+                        without += 1;
+                    }
+                    (*id, area)
+                })
+                .collect();
+            store_af(&lock(&d.db), job, &stored)?;
+            read += chunk.len();
+            task.progress(read as u64, raws.len() as u64);
+            task.detail(format!(
+                "Reading focus points: {read}/{} RAW, {with_point} with a focus point",
+                raws.len()
+            ));
+        }
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        // The frames the detector missed but the camera focused: measure the
+        // focus inside the AF box, rate them by it, then group them beside the
+        // frame of their car. In this order, because each step reads the one
+        // before: a rating needs a measurement, and the regroup needs the rating
+        // for its keeper.
+        let (measured, unmeasured) =
+            crate::rescore::measure_af_frames(d, job, &cfg, task)?;
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let rated = crate::passes::rate_missed_frames(&lock(&d.db), job)?;
+        let counts = d.regroup(job)?;
+        task.detail(format!(
+            "{with_point} frames with a focus point, {read} read, {without} without · \
+             {measured} missed frames measured inside the focus area ({unmeasured} unread) · \
+             {rated} missed frames rated on it · {} bursts · {} moments · {} keepers",
+            counts["bursts"], counts["moments"], counts["keepers"]
+        ));
+        Ok(())
+    })
+}
+
+/// Where the ExifTool `af::read` spawns lives. The app's own install first
+/// (`models::exiftool`, which checks the bundled `resources/exiftool` and
+/// `~/.conrod/tools/exiftool`), then the data directory's `bin`, then PATH.
+pub(crate) fn exiftool_path() -> Result<std::path::PathBuf> {
+    if let Some(path) = models::exiftool() {
+        return Ok(path);
+    }
+    let data = conrod_core::settings::data_root();
+    for dir in [data.join("bin"), data.join("tools"), data.join("tools/exiftool")] {
+        for name in ["exiftool.exe", "exiftool(-k).exe", "exiftool"] {
+            let path = dir.join(name);
+            if path.is_file() {
+                return Ok(path);
+            }
+        }
+    }
+    let found = std::process::Command::new("exiftool")
+        .arg("-ver")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if found {
+        return Ok("exiftool".into());
+    }
+    Err(format!(
+        "ExifTool not found. Install it from Setup, or put exiftool on PATH (looked in {}).",
+        data.join("bin").display()
+    ))
+}
+
+/// Keep each frame's AF box, or clear it, in one transaction. Split out of the
+/// pass so the write is testable without ExifTool: a second run with the same
+/// rows rewrites the same values, and a frame that reads no AF area is NULLed
+/// rather than left with an older box.
+pub(crate) fn store_af(
+    conn: &Connection,
+    job: i64,
+    rows: &[(i64, Option<conrod_io::af::AfArea>)],
+) -> Result<()> {
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    for (image, area) in rows {
+        match area {
+            Some(a) => tx.execute(
+                "UPDATE images SET af_x1=?,af_y1=?,af_x2=?,af_y2=?,af_mode=? \
+                 WHERE id=? AND job_id=?",
+                params![a.x1, a.y1, a.x2, a.y2, a.mode.map(i64::from), image, job],
+            ),
+            None => tx.execute(
+                "UPDATE images SET af_x1=NULL,af_y1=NULL,af_x2=NULL,af_y2=NULL,af_mode=NULL \
+                 WHERE id=? AND job_id=?",
+                params![image, job],
+            ),
+        }
+        .map_err(err)?;
+    }
+    tx.commit().map_err(err)
+}
+
+/// The frames `redetect` may look at: visible, scanned, and with no subject
+/// row at all. Split out so the eligibility is testable on its own.
+const REDETECT_ELIGIBLE: &str = "SELECT id,path FROM images WHERE job_id=? AND status='done' \
+     AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 \
+     AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_id=images.id) ORDER BY id";
+
+fn frames_to_redetect(conn: &Connection, job: i64) -> Result<Vec<Value>> {
+    rows(conn, REDETECT_ELIGIBLE, [job])
+}
+
+/// The action: run the detector again over the frames it found nothing in, at
+/// a one-off lower bar (0.25 confidence, a 2% box), then re-rate and regroup.
+/// Only a frame where it finds something is written, through the scan's own
+/// `persist_frame`, so a detection row is exactly what a scan would have made.
+/// The album's stored settings, and every global default, stay untouched.
+pub fn redetect(d: &Arc<Desktop>, job: i64) -> Result<Value> {
+    require_job(d, job)?;
+    let cfg = settings(d, job)?;
+    launch(d, job, "Finding missed subjects", move |d, stop, task| {
+        let frames = frames_to_redetect(&lock(&d.reader), job)?;
+        if frames.is_empty() {
+            task.detail("Every frame already has a subject");
+            return Ok(());
+        }
+        let mut low = cfg.clone();
+        low.detect_conf = low.detect_conf.min(0.25);
+        low.min_box_fraction = low.min_box_fraction.min(0.02);
+        let profile = ScanProfile::parse(&low.scan_profile);
+        crate::setup::ensure(&d.hub, stop, crate::setup::SCAN)?;
+        let lanes = usize::try_from(low.cull_workers())
+            .unwrap_or(1)
+            .clamp(1, 16)
+            .min(frames.len());
+        let mut detectors = Vec::with_capacity(lanes);
+        for _ in 0..lanes {
+            let detector = conrod_vision::detect::Detector::load(
+                &crate::detector_model(),
+                conrod_vision::detect::Device::Auto,
+            )?;
+            detectors.push(std::sync::Mutex::new(detector));
+        }
+        // Faces and expression are extras: a frame with no detection has no
+        // person box to put them in, so a failure here never fails the pass.
+        let faces = ShootPreset::parse(&low.scan_profile)
+            .wants_faces(low.include_people)
+            .then(|| crate::load_faces().ok().map(std::sync::Mutex::new))
+            .flatten();
+        let expression = faces.is_some().then(crate::load_expression).flatten();
+        let models: HashMap<_, _> = ["vehicle", "person", "face", "eye"]
+            .into_iter()
+            .filter_map(|region| crate::load_region_model(region).map(|m| (region.to_string(), m)))
+            .collect();
+        let quality = low
+            .use_quality_score
+            .then(|| {
+                let path = models::expected(models::QUALITY);
+                path.is_file()
+                    .then(|| conrod_vision::quality::QualityModel::load(&path, true).ok())
+                    .flatten()
+                    .map(std::sync::Mutex::new)
+            })
+            .flatten();
+        let total = frames.len() as u64;
+        task.progress(0, total);
+        task.detail(format!(
+            "{total} frames without a subject · a one-off 0.25 confidence and 2% box for this pass only"
+        ));
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let done = std::sync::atomic::AtomicUsize::new(0);
+        let inserted = std::sync::atomic::AtomicUsize::new(0);
+        let empty = std::sync::atomic::AtomicUsize::new(0);
+        let unread = std::sync::atomic::AtomicUsize::new(0);
+        let failed = std::sync::atomic::AtomicUsize::new(0);
+        let first_error = std::sync::Mutex::new(None::<String>);
+        std::thread::scope(|scope| {
+            for lane in 0..lanes {
+                let detector = &detectors[lane];
+                let (frames, low, profile, models, faces, expression, quality) =
+                    (&frames, &low, profile, &models, &faces, &expression, &quality);
+                let (next, done, inserted, empty, unread, failed) =
+                    (&next, &done, &inserted, &empty, &unread, &failed);
+                let first_error = &first_error;
+                let (task, stop) = (task, stop);
+                scope.spawn(move || loop {
+                    let n = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(frame) = frames.get(n) else { break };
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let path = std::path::Path::new(frame["path"].as_str().unwrap_or_default());
+                    match crate::cull_frame(
+                        path, detector, low, profile, models, faces.as_ref(),
+                        expression.as_ref(), quality.as_ref(), |_| {},
+                    ) {
+                        Ok(result) if result.subjects.is_empty() => {
+                            empty.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Ok(result) => {
+                            // The scan's own write, so a row found here is
+                            // exactly the row a scan would have stored. It is
+                            // kept quiet: these frames are not a scan's feed.
+                            match d.persist_frame(job, &result, low, false) {
+                                Ok(()) => {
+                                    inserted.fetch_add(1, Ordering::Relaxed);
+                                }
+                                Err(e) => {
+                                    failed.fetch_add(1, Ordering::Relaxed);
+                                    let mut slot = first_error.lock().unwrap();
+                                    if slot.is_none() {
+                                        *slot = Some(e);
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            unread.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    task.progress(done.fetch_add(1, Ordering::Relaxed) as u64 + 1, total);
+                });
+            }
+        });
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let (empty, unread, failed, inserted) = (
+            empty.load(Ordering::Relaxed),
+            unread.load(Ordering::Relaxed),
+            failed.load(Ordering::Relaxed),
+            inserted.load(Ordering::Relaxed),
+        );
+        let why = std::sync::Mutex::into_inner(first_error)
+            .unwrap_or_default()
+            .map_or(String::new(), |e| format!(" · first save error: {e}"));
+        let rated = rate_missed_frames(&lock(&d.db), job)?;
+        let counts = d.regroup(job)?;
+        task.detail(format!(
+            "{inserted} frames found a subject at the one-off lower bar ({empty} still none, {unread} unread, {failed} unsaved) · \
+             {rated} missed frames re-rated · {} bursts · {} moments · {} keepers{why}",
+            counts["bursts"],
+            counts["moments"],
+            counts["keepers"]
+        ));
+        Ok(())
+    })
 }
 
 /// The action: sort an album into one pile per car, as a background operation.
@@ -2204,5 +2532,337 @@ mod tests {
         assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
         let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare2]);
         assert_eq!(rating, 1.0, "no whole-frame score: sharpness stands");
+    }
+
+    #[test]
+    fn a_missed_frame_in_its_own_moment_takes_the_whole_frame_when_its_time_burst_has_a_car() {
+        let lib = Lib::new("missed-time-burst");
+        // The car's moment and the bare frame's are different; they share the
+        // time burst that the frames were actually shot in.
+        let car = lib.frame("car.jpg", Some(1));
+        let bare = lib.frame("bare.jpg", Some(2));
+        lib.detection(car, "vehicle", 0.9);
+        lib.sql(
+            "UPDATE images SET time_burst=10 WHERE id IN (?,?)",
+            params![car, bare],
+        );
+        lib.sql(
+            "UPDATE images SET sharpness=1.0,rating=1.0,sharpness_whole=0.66 WHERE id=?",
+            [bare],
+        );
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare]);
+        assert_eq!(
+            rating, 0.66,
+            "a run of missed frames is its own moment of one time burst"
+        );
+    }
+
+    #[test]
+    fn a_bare_frame_in_another_time_burst_keeps_its_score() {
+        let lib = Lib::new("missed-other-time-burst");
+        let car = lib.frame("car.jpg", Some(1));
+        let bare = lib.frame("bare.jpg", Some(2));
+        lib.detection(car, "vehicle", 0.9);
+        lib.sql("UPDATE images SET time_burst=10 WHERE id=?", [car]);
+        lib.sql("UPDATE images SET time_burst=11 WHERE id=?", [bare]);
+        lib.sql(
+            "UPDATE images SET sharpness=1.0,rating=1.0,sharpness_whole=0.66 WHERE id=?",
+            [bare],
+        );
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare]);
+        assert_eq!(rating, 1.0, "a car shot 5 s earlier says nothing about it");
+    }
+
+    #[test]
+    fn without_a_time_burst_the_moment_decides() {
+        // Same moment: the missed frame takes the whole frame.
+        let lib = Lib::new("moment-same");
+        let car = lib.frame("car.jpg", Some(1));
+        let bare = lib.frame("bare.jpg", Some(1));
+        lib.detection(car, "vehicle", 0.9);
+        lib.sql(
+            "UPDATE images SET sharpness=1.0,rating=1.0,sharpness_whole=0.66 WHERE id=?",
+            [bare],
+        );
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
+            0.66
+        );
+
+        // Another moment: it keeps its score.
+        let lib = Lib::new("moment-other");
+        let car = lib.frame("car.jpg", Some(1));
+        let bare = lib.frame("bare.jpg", Some(2));
+        lib.detection(car, "vehicle", 0.9);
+        lib.sql(
+            "UPDATE images SET sharpness=1.0,rating=1.0,sharpness_whole=0.66 WHERE id=?",
+            [bare],
+        );
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
+            1.0
+        );
+    }
+
+    fn af_box(x: f64) -> conrod_io::af::AfArea {
+        conrod_io::af::AfArea {
+            x1: x,
+            y1: x,
+            x2: x + 0.1,
+            y2: x + 0.1,
+            mode: Some(9),
+        }
+    }
+
+    #[test]
+    fn the_focus_point_write_stores_clears_and_is_scoped_to_the_album() {
+        let lib = Lib::new("af-store");
+        let (with, without) = (lib.frame("1.cr3", None), lib.frame("2.cr3", None));
+
+        store_af(&lib.db(), lib.job, &[(with, Some(af_box(0.2))), (without, None)])
+            .unwrap();
+        let stored: (f64, f64, f64, f64, i64) = lib.db().query_row(
+            "SELECT af_x1,af_y1,af_x2,af_y2,af_mode FROM images WHERE id=?",
+            [with],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap();
+        assert!((stored.0 - 0.2).abs() < 1e-9, "{stored:?}");
+        assert!((stored.4 as f64 - 9.0).abs() < 1e-9, "{stored:?}");
+        let none: Option<f64> = lib.one("SELECT af_x1 FROM images WHERE id=?", [without]);
+        assert_eq!(none, None);
+
+        // A second run with the same answer rewrites the same values.
+        store_af(&lib.db(), lib.job, &[(with, Some(af_box(0.2)))]).unwrap();
+        let again: f64 = lib.one("SELECT af_x1 FROM images WHERE id=?", [with]);
+        assert!((again - 0.2).abs() < 1e-9);
+
+        // A frame that now reads no area is cleared, not left with the old box.
+        store_af(&lib.db(), lib.job, &[(with, None)]).unwrap();
+        let cleared: Option<f64> = lib.one("SELECT af_x1 FROM images WHERE id=?", [with]);
+        assert_eq!(cleared, None);
+
+        // Another album's id cannot write these rows.
+        store_af(&lib.db(), lib.job + 1, &[(with, Some(af_box(0.7)))]).unwrap();
+        let untouched: Option<f64> = lib.one("SELECT af_x1 FROM images WHERE id=?", [with]);
+        assert_eq!(untouched, None);
+    }
+
+    #[test]
+    fn the_focus_area_rates_a_missed_frame_before_the_time_burst() {
+        let lib = Lib::new("missed-af");
+        let bare = lib.frame("bare.jpg", Some(1));
+        let car = lib.frame("car.jpg", Some(1));
+        lib.detection(car, "vehicle", 0.9);
+        lib.sql(
+            "UPDATE images SET sharpness=1.0,rating=1.0,sharpness_whole=0.66 WHERE id=?",
+            [bare],
+        );
+
+        // Without an AF box the old time-burst rule speaks.
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
+        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]), 0.66);
+
+        // The camera's box outranks the whole frame, even in a burst with a car.
+        lib.sql(
+            "UPDATE images SET af_x1=0.4,af_y1=0.4,af_x2=0.6,af_y2=0.6,af_sharpness=0.42 WHERE id=?",
+            [bare],
+        );
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
+        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]), 0.42);
+
+        // The AF score alone is enough: no burst mate, no whole-frame score.
+        lib.sql(
+            "UPDATE images SET burst_key=2,rating=1.0,sharpness_whole=NULL WHERE id=?",
+            [bare],
+        );
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
+        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]), 0.42);
+
+        // Without the AF score it is a detail shot again: sharpness stands.
+        lib.sql("UPDATE images SET af_sharpness=NULL,rating=1.0 WHERE id=?", [bare]);
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
+        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]), 1.0);
+    }
+
+    #[test]
+    fn redetect_only_looks_at_visible_frames_with_no_subject() {
+        let lib = Lib::new("redetect-eligible");
+        let car = lib.frame("car.cr3", Some(1));
+        let bare = lib.frame("bare.cr3", Some(1));
+        let rejected = lib.frame("no.cr3", Some(2));
+        let hidden = lib.frame("copy.cr3", Some(3));
+        lib.detection(car, "vehicle", 0.9);
+        lib.sql("UPDATE images SET rejected=1 WHERE id=?", [rejected]);
+        lib.sql("UPDATE images SET copy_of=? WHERE id=?", params![bare, hidden]);
+
+        let ids: Vec<i64> = frames_to_redetect(&lib.db(), lib.job)
+            .unwrap()
+            .iter()
+            .map(|v| v["id"].as_i64().unwrap())
+            .collect();
+        assert_eq!(ids, vec![bare]);
+    }
+
+    /// The real detector, when this machine has it. A frame whose file is gone is
+    /// skipped, a readable frame the detector finds nothing in stays without a
+    /// row, and the pass still finishes: the one-off bar is a hint, never a
+    /// reason for the album operation to fail.
+    #[test]
+    fn redetect_skips_an_unreadable_frame_and_writes_nothing_it_did_not_find() {
+        if !crate::detector_model().is_file() {
+            eprintln!("no local detector model; the redetect run is untested here");
+            return;
+        }
+        let lib = Lib::new("redetect-run");
+        // Flat grey: nothing for the detector to find at any confidence.
+        let (w, h) = (640usize, 480usize);
+        crate::desktop::save_jpeg(
+            &conrod_vision::imageops::Rgb::new(w, h, vec![128; w * h * 3]),
+            &lib.root.join("blank.jpg"),
+        )
+        .unwrap();
+        lib.frame("blank.jpg", None);
+        lib.frame("gone.jpg", None);
+
+        let out = lib.run("redetect", json!({"jobId": lib.job})).unwrap();
+        assert!(out["operation"]
+            .as_str()
+            .unwrap()
+            .starts_with("Finding missed subjects"));
+        lib.wait_idle();
+
+        let task = lib.task("Finding missed subjects");
+        assert_eq!(task["state"], "done", "{task}");
+        let detail = task["detail"].as_str().unwrap_or_default();
+        assert!(detail.contains("0 frames found a subject"), "{detail}");
+        assert!(detail.contains("1 still none"), "{detail}");
+        assert!(detail.contains("1 unread"), "{detail}");
+        assert_eq!(
+            lib.one::<i64>("SELECT count(*) FROM detections", []),
+            0,
+            "nothing found means nothing written"
+        );
+    }
+
+    /// A real R7 frame from the Bathurst 1000 shoot: the whole `focus_points`
+    /// action against a temp album, reading the D: original (never writing it).
+    /// Ignored because it needs this machine's ExifTool and read-only originals.
+    #[test]
+    #[ignore = "reads a real CR3 from the D: originals with this machine's exiftool"]
+    fn real_focus_points_stores_the_cameras_box() {
+        let file = std::path::PathBuf::from(
+            r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-08_Thursday\20261008_B1000_4692.CR3",
+        );
+        if !file.is_file() || exiftool_path().is_err() {
+            eprintln!("skipping: {} or ExifTool is missing", file.display());
+            return;
+        }
+        let lib = Lib::new("af-real");
+        let orientation = conrod_io::raw::read(&file).unwrap().orientation;
+        let (w, h) = if matches!(orientation, 6 | 8) {
+            (4640, 6960)
+        } else {
+            (6960, 4640)
+        };
+        // A scanned frame of the temp album pointing at the original.
+        let image = {
+            let db = lib.db();
+            db.execute(
+                "INSERT INTO images(job_id,path,status,width,height) VALUES(?,?,'done',?,?)",
+                params![lib.job, file.to_string_lossy(), w, h],
+            )
+            .unwrap();
+            db.last_insert_rowid()
+        };
+
+        lib.run("focus_points", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+        let task = lib.task("Reading focus points");
+        assert_eq!(task["state"], "done", "{task}");
+        assert!(
+            task["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("1 frames with a focus point, 1 read, 0 without"),
+            "{task}"
+        );
+        let stored: (f64, f64, f64, f64) = lib.db().query_row(
+            "SELECT af_x1,af_y1,af_x2,af_y2 FROM images WHERE id=?",
+            [image],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+        assert!(
+            stored.2 > stored.0 && stored.3 > stored.1,
+            "an empty AF box: {stored:?}"
+        );
+        assert!(
+            (0.05..=0.75).contains(&((stored.0 + stored.2) / 2.0)),
+            "x outside the car: {stored:?}"
+        );
+        assert!(
+            (0.3..=0.75).contains(&((stored.1 + stored.3) / 2.0)),
+            "y outside the car: {stored:?}"
+        );
+
+        // The same frame at the one-off lower bar: the detector finds the car
+        // and the row lands through the scan's own persist path.
+        if crate::detector_model().is_file() {
+            lib.run("redetect", json!({"jobId": lib.job})).unwrap();
+            lib.wait_idle();
+            let task = lib.task("Finding missed subjects");
+            assert_eq!(task["state"], "done", "{task}");
+            assert!(
+                lib.one::<i64>("SELECT count(*) FROM detections", []) >= 1,
+                "the car was found at 0.25: {task}"
+            );
+        } else {
+            eprintln!("no local detector model; the re-detect half is untested");
+        }
+    }
+
+    /// How long the orientation read costs on real frames: `af::read` needs each
+    /// RAW's EXIF orientation, and `raw::read` is the only public source, so it
+    /// costs the preview bytes. Ignored because it needs the read-only originals.
+    #[test]
+    #[ignore = "reads real CR3s from the D: originals"]
+    fn real_orientation_read_time() {
+        use std::time::Instant;
+        let dir = std::path::Path::new(
+            r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-08_Thursday",
+        );
+        if !dir.is_dir() {
+            eprintln!("skipping: {} is missing", dir.display());
+            return;
+        }
+        let all: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("cr3"))
+            })
+            .collect();
+        let sample: Vec<_> = all.iter().take(64).collect();
+        let started = Instant::now();
+        let read: Vec<_> = sample
+            .par_iter()
+            .map(|path| conrod_io::raw::read(path).map(|f| f.orientation))
+            .collect();
+        let elapsed = started.elapsed();
+        let ok = read.iter().filter(|r| r.is_ok()).count();
+        println!(
+            "orientation read: {ok}/{} frames in {elapsed:?}; at that rate {} frames take {:?}",
+            sample.len(),
+            all.len(),
+            elapsed * (all.len() as u32) / sample.len().max(1) as u32
+        );
+        assert!(ok > 0);
     }
 }
