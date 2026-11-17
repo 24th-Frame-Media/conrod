@@ -98,11 +98,29 @@
 
 /* ── review ── */
 .review { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.toolbar { display: flex; align-items: center; flex-wrap: wrap; row-gap: 8px; gap: 10px; padding: 10px 18px; flex: none; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; row-gap: 8px; gap: 8px; padding: 10px 18px; flex: none; background: var(--surface); border-bottom: 1px solid var(--line-soft); }
 .toolbar .tabs.sub button { padding: 6px 11px; font-size: 13px; white-space: nowrap; }
-.toolbar select { padding: 6px 8px; font-size: 12.5px; max-width: 200px; cursor: pointer; }
-.toolbar #search { width: 220px; padding: 6px 10px; }
-.toolbar .icon { padding: 6px 9px; display: grid; place-items: center; }
+/* One control height for every box in the bar, so the row reads as a single line. */
+.toolbar select,
+.toolbar #search,
+.toolbar .pill.scan-type,
+.toolbar .menu-trigger,
+.toolbar .split-main,
+.toolbar .split-toggle,
+.toolbar .icon {
+  height: 32px;
+  box-sizing: border-box;
+}
+.toolbar select { padding: 0 8px; font-size: 12.5px; max-width: 200px; cursor: pointer; }
+.toolbar #search { width: 200px; padding: 0 10px; }
+.toolbar .pill.scan-type { display: inline-flex; font-size: 12.5px; padding: 0 10px; }
+.toolbar .menu-trigger { padding: 0 11px; }
+.toolbar .split-button > .split-main { padding: 0 13px; font-size: 13px; }
+.toolbar .split-button > .split-toggle { padding: 0 8px; }
+.toolbar .icon { padding: 0; width: 32px; display: grid; place-items: center; }
+/* The actions keep together when the bar has to wrap, so the help icon never
+   drops onto a row of its own, and sit at the right edge on a wide window. */
+.toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
 
 /* split button */
 .split-button { display: inline-flex; align-items: stretch; border-radius: 8px; overflow: hidden; vertical-align: middle; }

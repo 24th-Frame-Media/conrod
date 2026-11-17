@@ -646,7 +646,6 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           <button
             type="button"
             className="pill scan-type clickable"
-            style={{ alignSelf: 'center' }}
             title={`Preset: ${profileLabel(currentProfile)} (Click to change shoot preset or detection options)`}
             onClick={() => setShootSettingsOpen(true)}
           >
@@ -669,20 +668,21 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         <select aria-label="Photo order" value={!review.tasteHead && filters.sort === 'taste' ? 'frame' : filters.sort} onChange={(e) => patchFilters({ sort: e.target.value as typeof filters.sort })}>
           <option value="frame">Filename order</option><option value="best">Highest rated first</option><option value="worst">Lowest rated first</option><option value="pick">Keepers first</option>{review.tasteHead && <option value="taste">Taste (learned)</option>}
         </select>
-        <div className="spacer" />
-        <MenuDropdown
-          splitAction={primaryStep}
-          items={actionItems}
-          title="Workflow actions"
-          align="right"
-        />
-        <MenuDropdown
-          label="Manage shoot"
-          variant="ghost"
-          items={manageItems}
-          align="right"
-        />
-        <button className="ghost icon" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={onHelp}><Icon name="keyboard" /></button>
+        <div className="toolbar-actions">
+          <MenuDropdown
+            splitAction={primaryStep}
+            items={actionItems}
+            title="Workflow actions"
+            align="right"
+          />
+          <MenuDropdown
+            label="Manage shoot"
+            variant="ghost"
+            items={manageItems}
+            align="right"
+          />
+          <button className="ghost icon" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={onHelp}><Icon name="keyboard" /></button>
+        </div>
       </div>
       <PipelineStepper job={currentJob} scanning={scanning} identified={!eligible || review.detections.some((d) => d.reviewed)} identifying={identifying} written={false} />
       <ShootSettingsModal
