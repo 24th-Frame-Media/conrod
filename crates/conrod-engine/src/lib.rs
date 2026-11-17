@@ -733,20 +733,13 @@ pub fn cull_frame(
             // (its edge floor is region-relative), and asking it unasked demoted
             // a crisp frame from 1.000 to 0.797.
             let worst = if tile < 0.80 { blur.worst } else { blur.whole };
-            if let Some(score) = sharpness::rating_from_blur(
-                worst,
-                sharpness::BlurStrictness::parse(&strictness),
-            ) {
-                // A second opinion: a subject smeared along the frame's motion
-                // can leave too few measurable edges in that direction for the
-                // edge census (a blurred car against a sharp banner read 0.98),
-                // while the tiles still see the smear. Take the tile score when
-                // it is clearly lower; a flat but sharp body reads high on both.
-                focus.score = if !focus.uncertain && tile < score - 0.10 {
-                    tile
-                } else {
-                    score
-                };
+            if let Some(score) =
+                sharpness::rating_from_blur(worst, sharpness::BlurStrictness::parse(&strictness))
+            {
+                // The tile score is not used to overrule this one: it is measured
+                // on the downscaled crop, so it is not comparable with the native
+                // edge census. It only decides whether the centre was consulted.
+                focus.score = score;
             }
         }
         let edges = framing::assess(Some(det.bbox), fw as i64, fh as i64);

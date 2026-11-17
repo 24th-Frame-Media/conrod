@@ -100,14 +100,8 @@ fn main() -> Result<(), String> {
     let subject = blur.and_then(|b| {
         let tile = m.score;
         let worst = if tile < 0.80 { b.worst } else { b.whole };
-        let edge =
-            sharpness::rating_from_blur(worst, sharpness::BlurStrictness::parse(&strictness))?;
-        // As the engine: a clearly lower tile score overrules the edge census.
-        Some(if !m.uncertain && tile < edge - 0.10 {
-            tile
-        } else {
-            edge
-        })
+        // As the engine: the tile score only decides whether the centre was used.
+        sharpness::rating_from_blur(worst, sharpness::BlurStrictness::parse(&strictness))
     });
     // What the scan / re-score stores for a frame with no detected subject: the
     // same `bare_frame` the engine uses, so the numbers cannot drift apart.
