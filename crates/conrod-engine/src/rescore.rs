@@ -211,20 +211,21 @@ fn remeasure_pixels(
                 let path = std::path::Path::new(image["path"].as_str().unwrap_or_default());
                 let empty = Vec::new();
                 match measure_frame(path, by_image.get(&id).unwrap_or(&empty), cfg, pan_ok) {
-                    Ok((found, whole)) => {
+                    Ok(m) => {
                         let db = lock(&d.db);
-                        for (det, m) in found {
+                        for (det, focus) in m.subjects {
                             let _ = db.execute(
                                 "UPDATE detections SET features=?,heuristic=?,panning=?,sharp_end=? WHERE id=?",
-                                params![serde_json::to_string(&m.features).unwrap_or_default(), m.heuristic, m.panning, m.sharp_end, det],
+                                params![serde_json::to_string(&focus.features).unwrap_or_default(), focus.heuristic, focus.panning, focus.sharp_end, det],
                             );
                         }
-                        if let Some(whole) = whole {
-                            let _ = db.execute(
-                                "UPDATE images SET sharpness=? WHERE id=?",
-                                params![whole, id],
-                            );
-                        }
+                        // Written even when empty: a frame that is no longer a
+                        // pan must not keep its old share, nor a frame that
+                        // gained a subject its old whole-frame score.
+                        let _ = db.execute(
+                            "UPDATE images SET sharpness=COALESCE(?,sharpness),sharpness_whole=?,pan_share=? WHERE id=?",
+                            params![m.sharpness, m.whole_raw, m.pan_share, id],
+                        );
                     }
                     Err(_) => {
                         unread.fetch_add(1, Ordering::Relaxed);
@@ -237,7 +238,18 @@ fn remeasure_pixels(
     Ok(unread.into_inner())
 }
 
-type Measures = (Vec<(i64, sharpness::Sharpness)>, Option<f64>);
+/// What `cull_frame` would have measured for one frame.
+struct Measures {
+    /// Each stored subject and its fresh measure.
+    subjects: Vec<(i64, sharpness::Sharpness)>,
+    /// The score `images.sharpness` takes: a bare frame's rescued score, else
+    /// the measured whole frame.
+    sharpness: Option<f64>,
+    /// The bare frame's raw whole-frame score; `None` when it has subjects.
+    whole_raw: Option<f64>,
+    /// How much of a panning frame is sharp; `None` when it is not a pan.
+    pan_share: Option<f64>,
+}
 
 /// What `cull_frame` would have measured for each stored subject of one frame
 /// (subject id, measure), and for the frame as a whole.
@@ -258,6 +270,7 @@ fn measure_frame(
     let grey = image.to_gray();
     let (fw, fh) = (image.width, image.height);
     let mut out = Vec::new();
+    let mut panning = false;
     for s in subjects {
         let c = |k: &str| s[k].as_f64().unwrap_or_default();
         let bbox = [c("x1"), c("y1"), c("x2"), c("y2")];
@@ -320,18 +333,33 @@ fn measure_frame(
             // As the scan stores it: without a model the hand-built score is the score.
             let mut focus = focus;
             focus.heuristic = focus.score;
+            if focus.panning
+                && matches!(s["region"].as_str().unwrap_or("vehicle"), "vehicle" | "person")
+            {
+                panning = true;
+            }
             out.push((s["id"].as_i64().unwrap_or_default(), focus));
         }
     }
-    let whole = sharpness::measure(&grey, None, None);
-    // As `cull_frame` rates a subject-less frame: on its in-focus area, except a
-    // pan, which the cap already rated and whose sharp car must not lift it back.
-    let whole = if subjects.is_empty() {
-        sharpness::subjectless_score(&whole, sharpness::focal_score(&grey))
+    // A frame with no subject is rated by the same function the scan uses, so
+    // the two cannot disagree; one with subjects keeps the plain measured
+    // whole-frame score it always had.
+    let (sharpness, whole_raw) = if subjects.is_empty() {
+        let bare = crate::bare_frame(&grey, &cfg.effective_blur());
+        (bare.score, bare.whole)
     } else {
-        whole.measured.then_some(whole.score)
+        let whole = sharpness::measure(&grey, None, None);
+        (whole.measured.then_some(whole.score), None)
     };
-    Ok((out, whole))
+    let pan_share = panning
+        .then(|| sharpness::frame_sharp_share(&grey))
+        .flatten();
+    Ok(Measures {
+        subjects: out,
+        sharpness,
+        whole_raw,
+        pan_share,
+    })
 }
 
 /// A frame's subjects' ratings, for the rating of the frame itself.
@@ -341,6 +369,10 @@ struct Frame {
     best: HashMap<String, f64>,
     /// Person and vehicle box areas, for the main subject.
     boxes: Vec<(Subject, f64)>,
+    /// The stored sharp share of a panning frame, for the frame rating's cap.
+    pan_share: Option<f64>,
+    /// Whether any vehicle or person of the frame is a held pan.
+    panning: bool,
 }
 
 fn write(d: &Desktop, batch: &[(i64, Outcome)]) -> Result<()> {
@@ -382,7 +414,7 @@ pub(crate) fn run(
     let profile = ScanProfile::parse(&cfg.scan_profile);
     let found = rows(
         &lock(&d.reader),
-        "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.features, d.heuristic, d.panning, d.rating, i.width, i.height, i.sharpness AS whole FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.id",
+        "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.features, d.heuristic, d.panning, d.rating, i.width, i.height, i.sharpness AS whole, i.pan_share FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.id",
         [job],
     )?;
     let total = found.len() as u64;
@@ -400,6 +432,10 @@ pub(crate) fn run(
             .entry(row["image_id"].as_i64().unwrap_or_default())
             .or_default();
         frame.whole = row["whole"].as_f64();
+        frame.pan_share = row["pan_share"].as_f64();
+        if matches!(region, "vehicle" | "person") && row["panning"].as_i64() == Some(1) {
+            frame.panning = true;
+        }
         let kind = match region {
             "person" => Some(Subject::Person),
             "vehicle" => Some(Subject::Vehicle),
@@ -458,15 +494,6 @@ pub(crate) fn run(
     write(d, &batch)?;
 
     // The frame's own rating, from the subject the profile rates it by.
-    // A frame the detector found nothing in has no subject to rate it: its own
-    // in-focus area is the rating, and `remeasure_pixels` has just refreshed
-    // that. Without this pass a subject-less pan keeps whatever rating the scan
-    // gave it, however the measure has changed since.
-    let bare = rows(
-        &lock(&d.reader),
-        "SELECT i.id,i.sharpness FROM images i WHERE i.job_id=?1 AND i.status='done' AND NOT EXISTS(SELECT 1 FROM detections d WHERE d.image_id=i.id)",
-        [job],
-    )?;
     {
         let db = lock(&d.db);
         let tx = db.unchecked_transaction().map_err(err)?;
@@ -480,23 +507,23 @@ pub(crate) fn run(
                     kind => frame.best.get(region_name(*kind)).copied(),
                 })
                 .unwrap_or(0.0);
+            // The frame's rating says how the picture reads; a pan's is capped
+            // by how much of the frame is sharp. The subjects keep their own
+            // ratings, which is what picks the keeper.
+            let rating = crate::pan_capped(rating, frame.panning, frame.pan_share);
             tx.execute(
                 "UPDATE images SET rating=? WHERE id=?",
                 params![rating, image],
             )
             .map_err(err)?;
         }
-        for row in &bare {
-            let Some(score) = row["sharpness"].as_f64() else {
-                continue;
-            };
-            tx.execute(
-                "UPDATE images SET rating=? WHERE id=?",
-                params![score, row["id"].as_i64().unwrap_or_default()],
-            )
-            .map_err(err)?;
-        }
         tx.commit().map_err(err)?;
+        // A frame the detector found nothing in has no subject to rate it: in a
+        // burst where the other frames have one it is a shot the detector
+        // missed, and takes its whole-frame score rather than the almost
+        // always-perfect score of its sharpest patch; alone, its in-focus area
+        // is the rating, which `remeasure_pixels` has just refreshed.
+        crate::passes::rate_missed_frames(&db, job)?;
     }
     // The stars have moved, so the keeper of a pass may have moved with them.
     let picked = pick_of_pass(
@@ -543,6 +570,46 @@ mod tests {
         let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare]);
         assert!((rating - 0.66).abs() < 1e-9, "rating {rating}");
         assert_eq!(lib.task("Re-scoring")["state"], "done");
+    }
+
+    #[test]
+    fn a_pan_frame_rating_is_capped_by_the_stored_share() {
+        let lib = Lib::new("rescore-pan-cap");
+        let frame = lib.frame("pan.jpg", Some(1));
+        let car = lib.detection(frame, "vehicle", 0.95);
+        // A stored heuristic so the subject is re-rated, a pan flag so the frame
+        // is capped, and a share the scan would have stored for a small car.
+        with_features(&lib, car, 0.95, 0.1);
+        lib.sql("UPDATE detections SET panning=1,rating=0.95 WHERE id=?", [car]);
+        lib.sql(
+            "UPDATE images SET sharpness=0.95,rating=0.95,pan_share=0.1 WHERE id=?",
+            [frame],
+        );
+
+        lib.run("rescore", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [frame]);
+        assert!(
+            rating <= sharpness::pan_share_cap(0.1) + 1e-9,
+            "the frame rating is capped by the pan's sharp share: {rating}"
+        );
+        let subject: f64 = lib.one("SELECT rating FROM detections WHERE id=?", [car]);
+        assert_eq!(
+            subject, 0.95,
+            "the detection keeps the car's own rating: the keeper of the burst is chosen on it"
+        );
+
+        // The same frame not held as a pan keeps its subject's rating.
+        lib.sql("UPDATE detections SET panning=0 WHERE id=?", [car]);
+        lib.sql("UPDATE images SET rating=0.95 WHERE id=?", [frame]);
+        lib.run("rescore", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [frame]);
+        assert!(
+            (rating - 0.95).abs() < 1e-9,
+            "a still frame is not capped: {rating}"
+        );
     }
 
     fn stored<'a>(region: &'a str, heuristic: f64, features: &'a [f64]) -> Stored<'a> {

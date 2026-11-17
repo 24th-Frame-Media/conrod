@@ -107,7 +107,8 @@ pub struct PresetPolicy {
     pub ball: bool,
     pub faces_default: bool,
     pub pan_allowed: bool,
-    /// "strict", "moderate" or "lenient"; a default for later wiring.
+    /// "critical", "strict", "moderate" or "lenient"; a default for later
+    /// wiring.
     pub default_blur: &'static str,
     pub group: GroupUnit,
     pub vlm: VlmTargets,
@@ -499,6 +500,7 @@ impl ShootPreset {
                 .vehicles()
                 .no_faces()
                 .pan()
+                .blur("critical")
                 .vlm(VlmTargets::RACE),
             ShootPreset::MotorsportBurnouts => PresetPolicy::new(Motorsport)
                 .vehicles()
@@ -510,6 +512,7 @@ impl ShootPreset {
                 .vehicles()
                 .no_faces()
                 .pan()
+                .blur("critical")
                 .min_box(0.7)
                 .vlm(VlmTargets::CREW),
             ShootPreset::MotorsportRally => PresetPolicy::new(Motorsport)
@@ -981,12 +984,29 @@ mod tests {
     }
 
     #[test]
+    fn track_presets_default_to_critical_blur() {
+        assert_eq!(ShootPreset::Motorsport.default_blur_strictness(), "critical");
+        assert_eq!(
+            ShootPreset::MotorsportTrack.default_blur_strictness(),
+            "critical"
+        );
+        // Unchanged: burnouts and rallies stay lenient.
+        assert_eq!(ShootPreset::MotorsportBurnouts.default_blur_strictness(), "lenient");
+        assert_eq!(ShootPreset::MotorsportRally.default_blur_strictness(), "lenient");
+        // Unchanged: MotorsportMeet sets no blur of its own, so it keeps moderate.
+        assert_eq!(ShootPreset::MotorsportMeet.default_blur_strictness(), "moderate");
+    }
+
+    #[test]
     fn every_policy_is_internally_consistent() {
         for preset in ShootPreset::ALL {
             let p = preset.policy();
             assert_eq!(p.profile, preset.profile(), "{preset:?}");
             assert!(p.min_box_factor > 0.0 && p.min_box_factor <= 1.0, "{preset:?}");
-            assert!(matches!(p.default_blur, "strict" | "moderate" | "lenient"), "{preset:?}");
+            assert!(
+                matches!(p.default_blur, "critical" | "strict" | "moderate" | "lenient"),
+                "{preset:?}"
+            );
             assert!(!preset.label().is_empty(), "{preset:?}");
             assert!(!preset.prompt_context().is_empty(), "{preset:?}");
             // A preset with no people never needs faces, and every animal

@@ -186,6 +186,12 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("known_vehicles", "country", "TEXT"),
     ("known_vehicles", "embedding", "TEXT"),
     ("images", "sharpness", "REAL"),
+    // The whole frame's score of a subject-less frame, before the in-focus
+    // area rescues it: what the frame reads as when the detector missed the
+    // subject. See `bare_frame`.
+    ("images", "sharpness_whole", "REAL"),
+    // How much of a panning frame is sharp, 0..1: the frame rating's cap.
+    ("images", "pan_share", "REAL"),
     ("images", "rating", "REAL"),
     ("images", "rating_verdict", "TEXT"),
     ("images", "stars", "INTEGER"),

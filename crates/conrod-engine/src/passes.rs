@@ -575,6 +575,42 @@ pub fn pick_of_pass(
     }))
 }
 
+/// A frame with no subject in a burst where other frames have one is a shot the
+/// detector missed, not a detail shot: rating it on its sharpest patch gave
+/// almost every such frame a perfect score. Those take the whole frame's score;
+/// every other subject-less frame keeps its in-focus-area score.
+///
+/// Returns how many frames took the whole-frame score.
+pub(crate) fn rate_missed_frames(conn: &Connection, job: i64) -> Result<usize> {
+    // Another visible image of the same burst whose subject says the detector
+    // was looking at something: a hidden copy is not a burst mate.
+    const MISSED: &str = "images.burst_key IS NOT NULL AND images.sharpness_whole IS NOT NULL \
+         AND EXISTS (SELECT 1 FROM images o JOIN detections d ON d.image_id=o.id \
+                     WHERE o.job_id=images.job_id AND o.burst_key=images.burst_key \
+                       AND o.id<>images.id AND COALESCE(o.copy_of,0)=0 \
+                       AND COALESCE(d.region_type,'vehicle') IN ('vehicle','person'))";
+    // A measured frame the detector found nothing in.
+    const BARE: &str = "WHERE images.job_id=?1 AND images.status='done' \
+         AND images.sharpness IS NOT NULL AND COALESCE(images.copy_of,0)=0 \
+         AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_id=images.id)";
+    let missed: i64 = conn
+        .query_row(
+            &format!("SELECT count(*) FROM images {BARE} AND {MISSED}"),
+            [job],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    conn.execute(
+        &format!(
+            "UPDATE images SET rating=CASE WHEN {MISSED} THEN images.sharpness_whole \
+             ELSE images.sharpness END {BARE}"
+        ),
+        [job],
+    )
+    .map_err(err)?;
+    Ok(missed as usize)
+}
+
 /// The action: run the pick and report it as a task.
 pub fn pick_keepers(d: &Desktop, job: i64) -> Result<Value> {
     require_job(d, job)?;
@@ -2098,5 +2134,75 @@ mod tests {
         assert!(crate::eyes_closed([Some(0.1), None]));
         assert!(!crate::eyes_closed([Some(0.1), Some(0.9)]));
         assert!(!crate::eyes_closed([None, None]));
+    }
+
+    #[test]
+    fn a_bare_frame_in_a_burst_with_a_subject_is_rated_on_the_whole_frame() {
+        let lib = Lib::new("missed");
+        let bare = lib.frame("bare.jpg", Some(1));
+        let car = lib.frame("car.jpg", Some(1));
+        lib.detection(car, "vehicle", 0.9);
+        lib.sql(
+            "UPDATE images SET sharpness=1.0,rating=1.0,sharpness_whole=0.66 WHERE id=?",
+            [bare],
+        );
+
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare]);
+        assert_eq!(rating, 0.66, "a missed shot is rated on the whole frame");
+
+        // Alone in its burst it is a detail shot: its in-focus area stands.
+        lib.sql("UPDATE images SET burst_key=2,rating=1.0 WHERE id=?", [bare]);
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare]);
+        assert_eq!(rating, 1.0, "no burst mate with a subject: sharpness stands");
+
+        // Moved back beside the car, it is a missed frame again.
+        lib.sql("UPDATE images SET burst_key=1 WHERE id=?", [bare]);
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare]);
+        assert_eq!(rating, 0.66);
+    }
+
+    #[test]
+    fn a_bare_frame_keeps_its_sharpness_without_a_visible_burst_mate() {
+        let lib = Lib::new("missed-bare");
+        // A burst of bare frames only: each keeps its own in-focus score.
+        let a = lib.frame("a.jpg", Some(1));
+        let b = lib.frame("b.jpg", Some(1));
+        lib.sql(
+            "UPDATE images SET sharpness=0.9,rating=0.9,sharpness_whole=0.4 WHERE id=?",
+            [a],
+        );
+        lib.sql(
+            "UPDATE images SET sharpness=0.7,rating=0.7,sharpness_whole=0.3 WHERE id=?",
+            [b],
+        );
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
+        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [a]), 0.9);
+        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [b]), 0.7);
+
+        // A hidden copy is not a visible burst mate.
+        let bare = lib.frame("bare.jpg", Some(2));
+        let original = lib.frame("original.jpg", Some(2));
+        let copy = lib.frame("copy.jpg", Some(2));
+        lib.detection(copy, "vehicle", 0.9);
+        lib.sql("UPDATE images SET copy_of=? WHERE id=?", params![original, copy]);
+        lib.sql(
+            "UPDATE images SET sharpness=1.0,rating=1.0,sharpness_whole=0.66 WHERE id=?",
+            [bare],
+        );
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare]);
+        assert_eq!(rating, 1.0, "only a hidden copy has the detection");
+
+        // Without a stored whole-frame score there is nothing to fall back to.
+        let bare2 = lib.frame("bare2.jpg", Some(3));
+        let mate = lib.frame("mate.jpg", Some(3));
+        lib.detection(mate, "vehicle", 0.9);
+        lib.sql("UPDATE images SET sharpness=1.0,rating=1.0 WHERE id=?", [bare2]);
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
+        let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare2]);
+        assert_eq!(rating, 1.0, "no whole-frame score: sharpness stands");
     }
 }
