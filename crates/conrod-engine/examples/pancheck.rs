@@ -93,7 +93,28 @@ fn main() -> Result<(), String> {
     let grey = image.to_gray();
     let long = grey.width.max(grey.height);
     let m = sharpness::measure(&grey, bbox, None);
+    // The tile score a re-score computes: on the padded, downscaled crop, not on
+    // the preview, so it is a different number from `m.score`.
+    let crop_measure = bbox.map(|b| {
+        let opts = conrod_vision::detect::DetectOptions {
+            crop_padding: settings.crop_padding,
+            dominant_subject_fraction: settings.dominant_subject_fraction,
+            ..Default::default()
+        };
+        let crop_box = conrod_vision::detect::expand_box(b, image.width, image.height, &opts);
+        let crop = conrod_engine::cut(&image, crop_box, &settings);
+        let scale = crop.width as f64 / (crop_box[2] - crop_box[0]);
+        let inner = [
+            (b[0] - crop_box[0]) * scale,
+            (b[1] - crop_box[1]) * scale,
+            (b[2] - crop_box[0]) * scale,
+            (b[3] - crop_box[1]) * scale,
+        ];
+        sharpness::measure(&crop.to_gray(), Some(inner), None)
+    });
     let n = |v: Option<f64>| v.unwrap_or(f64::NAN);
+    let (crop_tile, crop_uncertain) =
+        crop_measure.map_or((f64::NAN, false), |c| (c.score, c.uncertain));
     // What the edge-blur score is built from, exactly as `cull_frame` and a
     // re-score build it: the worse of the whole box and its centre 60%.
     let blur = bbox.map(|b| conrod_engine::subject_blur(&grey, b, long));
@@ -125,10 +146,12 @@ fn main() -> Result<(), String> {
     };
     let blur_line = match &blur {
         Some(blur) => format!(
-            " · sigma whole {:.3} · sigma centre {:.3} · tile {:.3} · uncertain {}{}",
+            " · sigma whole {:.3} · sigma centre {:.3} · tile {:.3} · crop tile {:.3} (uncertain {}) · uncertain {}{}",
             blur.whole,
             blur.centre,
             m.score,
+            crop_tile,
+            crop_uncertain,
             m.uncertain,
             af_blur.map_or(String::new(), |a| format!(
                 " · sigma af {:.3} ({:.3})",
@@ -146,12 +169,40 @@ fn main() -> Result<(), String> {
         ),
         None => String::new(),
     };
+    // Per-direction edge sigmas (analysis pixels): a direction with no measurable
+    // edges is where a smeared subject's edges vanished.
+    let dirs_line = bbox.map_or(String::new(), |b| {
+        let px = |v: f64, e: usize| (v.max(0.0) as usize).min(e);
+        let rect = |r: [f64; 4]| {
+            [
+                px(r[0], grey.width),
+                px(r[1], grey.height),
+                px(r[2], grey.width),
+                px(r[3], grey.height),
+            ]
+        };
+        let fmt = |e: conrod_vision::edgeblur::EdgeBlur| {
+            format!(
+                "[{:.2},{:.2},{:.2},{:.2}] n{}",
+                e.dirs[0], e.dirs[1], e.dirs[2], e.dirs[3], e.edges
+            )
+        };
+        let whole = fmt(conrod_vision::edgeblur::measure(&grey, Some(rect(b))));
+        let c = [
+            b[0] + 0.2 * (b[2] - b[0]),
+            b[1] + 0.2 * (b[3] - b[1]),
+            b[2] - 0.2 * (b[2] - b[0]),
+            b[3] - 0.2 * (b[3] - b[1]),
+        ];
+        let centre = fmt(conrod_vision::edgeblur::measure(&grey, Some(rect(c))));
+        format!(" · dirs whole {whole} · centre {centre}")
+    });
     // How much of the frame is sharp, and what a pan's frame rating is capped at
     // by it, whatever this frame's own subject is.
     let share = sharpness::frame_sharp_share(&grey);
     let cap = share.map(sharpness::pan_share_cap);
     println!(
-        "{needle}: stored rating {rating:.3} · stored subject {:.3} · now score {:.3}{blur_line} · background {:.3} · panning {} · sharp end {} · share {:.2} · box {bbox:?} · frame share {:.3} · cap {:.3}{bare_line}",
+        "{needle}: stored rating {rating:.3} · stored subject {:.3} · now score {:.3}{blur_line} · background {:.3} · panning {} · sharp end {} · share {:.2} · box {bbox:?} · frame share {:.3} · cap {:.3}{bare_line}{dirs_line}",
         n(stored_det),
         n(now),
         m.background,

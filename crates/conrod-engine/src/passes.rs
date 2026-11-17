@@ -42,6 +42,23 @@ pub(crate) fn region_name(kind: Subject) -> &'static str {
 /// better, so the subject's prominence decides between them.
 const RATING_BAND: f64 = 0.03;
 
+/// A frame whose crop-tile score is below this share of its unit's best is the
+/// blurred frame of the burst. Measured at scan on the same padded crop for
+/// every frame, so it compares like with like; the edge census works on native
+/// pixels and a sharp banner in the box can keep a smeared car looking sharp
+/// (B1000_4218: tile 0.377 against its burst's 0.742, edge rating 0.857).
+const SOFT_TILE_SHARE: f64 = 0.70;
+
+/// ... and which is also below this absolute tile score: a plain but sharp
+/// subject (a smooth body panel) reads low on tiles by nature, and it must not
+/// lose to a busier frame for that alone.
+const SOFT_TILE_FLOOR: f64 = 0.55;
+
+/// The subject must fill at least this share of the frame for its tile score to
+/// mean anything: a distant car is a few percent of the frame, and the padded
+/// crop's tiles then read the tarmac around it.
+const SOFT_TILE_MIN_AREA: f64 = 0.02;
+
 /// The same band for a face or an eye. Their score is an edge-blur estimate,
 /// not the tile ratio the band was measured on: a hundredth of it is a real
 /// difference between two portraits, and the keeper must follow it.
@@ -108,6 +125,17 @@ fn bucket(value: Option<f64>, width: f64) -> i64 {
     }
 }
 
+/// The crop-tile score a scan stored as `features[0]`, if the row has features.
+/// It is the same measurement for every frame (the padded crop, resized to the
+/// album's crop limits), which is why it can rank one frame of a burst against
+/// another when the native-pixel edge census cannot.
+fn tile_of(r: &Value) -> Option<f64> {
+    r["features"]
+        .as_str()
+        .and_then(|s| serde_json::from_str::<Vec<f64>>(s).ok())
+        .and_then(|f| f.first().copied())
+}
+
 /// One candidate for the keeper of a unit: a subject, or a frame with no
 /// subject the profile rates.
 struct Candidate {
@@ -138,6 +166,14 @@ struct Candidate {
     smile: Option<f64>,
     /// Rodeo: how much the animal is rearing under its rider, 0..1.
     buck: Option<f64>,
+    /// The crop's tile score at scan time (`features[0]`). Every frame is cut
+    /// and measured the same way, so it is comparable within one unit; the
+    /// native-pixel edge census is not (a sharp banner in the box can hide a
+    /// smeared car).
+    tile: Option<f64>,
+    /// 1 unless the tile score is far below the unit's best: the blurred frame
+    /// of the burst. Set after all candidates are known.
+    soft: i64,
 }
 
 /// Which of the optional keys this preset ranks on.
@@ -168,6 +204,12 @@ struct Key {
     rating_band: i64,
     /// A clean exposure beats a clipped one; never a cull.
     bright: i64,
+    /// A frame whose crop-tile score is not far below its unit's best. This is
+    /// the check a sharp background in the detection box cannot pass: a car
+    /// smeared along its motion keeps the edge census sharp, but its own crop
+    /// reads soft. It sits under the rating band and exposure, so it only takes
+    /// over the keys that used to break a rating tie: size and composition.
+    soft: i64,
     /// Rodeo/equestrian only.
     buck: i64,
     /// Fewer frame edges run the subject off -- negated, so fewer wins. This
@@ -221,6 +263,7 @@ impl Candidate {
             subject: i64::from(!self.on_frame && self.score >= conrod_vision::sharpness::KEEPER_MIN_RATING),
             rating_band: bucket(Some(self.score), band_width),
             bright: i64::from(self.bright),
+            soft: self.soft,
             buck: if r.buck { bucket(self.buck, BUCK_BUCKET) } else { 0 },
             cut_sides: -i64::from(self.sides),
             framing: if r.framing {
@@ -295,7 +338,7 @@ pub fn pick_of_pass(
     };
     let found = rows(
         conn,
-        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.set_id, i.dark_frame, i.exposure_verdict, i.eye_open_min, i.smile_max, i.buck_score, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL AND COALESCE(i.copy_of,0)=0 ORDER BY i.id, d.id",
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, d.features, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.set_id, i.dark_frame, i.exposure_verdict, i.eye_open_min, i.smile_max, i.buck_score, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL AND COALESCE(i.copy_of,0)=0 ORDER BY i.id, d.id",
         params![job, crate::EYES_CLOSED],
     )?;
     // Which optional keys rank is the preset's decision; read it from the album
@@ -456,6 +499,8 @@ pub fn pick_of_pass(
                 } else {
                     RATING_BAND
                 },
+                tile: tile_of(r),
+                soft: 1,
             },
         ));
         marked.insert(image);
@@ -496,8 +541,32 @@ pub fn pick_of_pass(
                 smile: r["smile_max"].as_f64(),
                 buck: r["buck_score"].as_f64(),
                 band: RATING_BAND,
+                tile: None,
+                soft: 1,
             },
         ));
+    }
+    // The blurred frame of a burst has a crop-tile score far below the best in
+    // its unit, even when the edge census in its detection box was fooled by a
+    // sharp background (a car smeared along its motion sits in front of a sharp
+    // banner). Set the flag once every candidate of the unit is known.
+    let mut unit_best: HashMap<(i64, Option<i64>), f64> = HashMap::new();
+    for (unit, c) in &units {
+        if let Some(tile) = c.tile {
+            let best = unit_best.entry(*unit).or_insert(tile);
+            *best = best.max(tile);
+        }
+    }
+    for (unit, c) in &mut units {
+        if let (Some(tile), Some(best)) = (c.tile, unit_best.get(unit).copied()) {
+            if c.area >= SOFT_TILE_MIN_AREA
+                && best > 0.0
+                && tile < SOFT_TILE_SHARE * best
+                && tile < SOFT_TILE_FLOOR
+            {
+                c.soft = 0;
+            }
+        }
     }
     // Earlier frame first, so an exact tie keeps it, as a re-run always has.
     units.sort_by_key(|(_, c)| (c.frame, c.row));
@@ -1779,6 +1848,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_frame_whose_own_crop_reads_soft_loses_inside_its_rating_band() {
+        let lib = Lib::new("pick-tile");
+        let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
+        let blurred = lib.detection(f1, "vehicle", 0.86);
+        let sharp = lib.detection(f2, "vehicle", 0.86);
+        // Equal ratings, so the bigger subject would normally win.
+        place(&lib, blurred, [400.0, 400.0, 4200.0, 3200.0]);
+        place(&lib, sharp, [1500.0, 1200.0, 3600.0, 2900.0]);
+        // The scan's own crop-tile score: `features[0]`.
+        lib.sql(
+            "UPDATE detections SET features=? WHERE id=?",
+            params![json!([0.38, 0.1]).to_string(), blurred],
+        );
+        lib.sql(
+            "UPDATE detections SET features=? WHERE id=?",
+            params![json!([0.74, 0.5]).to_string(), sharp],
+        );
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![sharp],
+            "the blurred frame's own crop is far below the burst's best, so its bigger box must not keep it"
+        );
+        // Within 70% of the best, the tile score says nothing and size decides.
+        lib.sql(
+            "UPDATE detections SET features=? WHERE id=?",
+            params![json!([0.70, 0.1]).to_string(), blurred],
+        );
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(
+            picks(&lib),
+            vec![blurred],
+            "a tile score inside the share is not a blur verdict"
+        );
+    }
+
     /// A candidate with the plainest possible everything, for the key-ladder
     /// tests: one frame, no cull, a mid rating, an average-sized subject.
     fn plain(frame: i64) -> Candidate {
@@ -1799,6 +1905,8 @@ mod tests {
             eyes: None,
             smile: None,
             buck: None,
+            tile: None,
+            soft: 1,
         }
     }
 

@@ -219,7 +219,8 @@ fn cut_gray(grey: &Gray, crop_box: [f64; 4], settings: &Settings, has_model: boo
 
 /// detect.py's `cut`: native resolution, resized only to keep the longest
 /// edge within the crop limits.
-fn cut(frame: &Rgb, crop_box: [f64; 4], settings: &Settings) -> Rgb {
+#[doc(hidden)]
+pub fn cut(frame: &Rgb, crop_box: [f64; 4], settings: &Settings) -> Rgb {
     let [x1, y1, x2, y2] = crop_box.map(|v| v as usize);
     let crop = frame.crop(x1, y1, x2, y2);
     let longest = crop.width.max(crop.height) as f64;
