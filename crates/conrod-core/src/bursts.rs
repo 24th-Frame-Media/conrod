@@ -298,9 +298,10 @@ pub fn split_moments(frames: &[MomentFrame]) -> Vec<i64> {
     frames
         .iter()
         .map(|frame| match open.get_mut(&frame.burst) {
-            // A pan frame always continues the moment it is in, however far the
-            // car has travelled.
-            Some(o) if frame.panning => {
+            // A pan continues a moment that is already a pan, or one that so far
+            // holds only frames with no box: the detector missing the car at the
+            // start of a pass is not evidence of another moment.
+            Some(o) if frame.panning && (o.pan || o.anchor.is_none()) => {
                 o.pan = true;
                 o.key
             }
@@ -308,7 +309,14 @@ pub fn split_moments(frames: &[MomentFrame]) -> Vec<i64> {
             // the car was still crossing. A frame *with* a box is still compared,
             // so a genuinely different scene can start a new moment.
             Some(o) if o.pan && frame.subject.is_none() => o.key,
-            Some(o) if same_moment(o.anchor, frame.subject) => o.key,
+            // A pan that starts on this moment's framing joins it. One framed
+            // elsewhere is not the same action, so it starts a moment of its own.
+            Some(o) if same_moment(o.anchor, frame.subject) => {
+                if frame.panning {
+                    o.pan = true;
+                }
+                o.key
+            }
             _ => {
                 moments += 1;
                 open.insert(
@@ -614,6 +622,41 @@ mod moment_tests {
         let keys = split_moments(&frames);
         assert_eq!(keys[11], 1);
         assert_eq!(keys[12], 2);
+    }
+
+    #[test]
+    fn a_pan_does_not_join_a_static_moment_framed_elsewhere() {
+        // A pan beginning on another car must not swallow the static moment:
+        // the box is both far smaller and far across the frame.
+        let frames = [
+            mf(1, boxed(0.2, 0.2, 0.05)),
+            pan_mf(1, boxed(0.75, 0.7, 0.30)),
+            pan_mf(1, boxed(0.8, 0.7, 0.30)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 2, 2]);
+    }
+
+    #[test]
+    fn a_pan_joins_the_box_less_frames_before_it() {
+        // The detector missed the car until the pan got going: the early frames
+        // hold no framing to disagree with, so the pan continues that moment.
+        let frames = [
+            mf(1, None),
+            mf(1, None),
+            pan_mf(1, boxed(0.5, 0.5, 0.1)),
+            pan_mf(1, boxed(0.8, 0.5, 0.1)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn a_pan_that_starts_on_the_same_framing_joins_the_static_moment() {
+        let frames = [
+            mf(1, boxed(0.3, 0.5, 0.1)),
+            pan_mf(1, boxed(0.3, 0.5, 0.1)),
+            pan_mf(1, boxed(0.9, 0.5, 0.1)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 1, 1]);
     }
 
     #[test]
