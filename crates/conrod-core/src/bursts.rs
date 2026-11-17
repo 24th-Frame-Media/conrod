@@ -275,6 +275,107 @@ pub const MOMENT_PAUSE_SUBJECT_DISTANCE: f64 = 0.45;
 /// photographer a stack. Two different liveries measure 0.9 or more.
 pub const MOMENT_SUBJECT_DISTANCE: f64 = 0.50;
 
+/// The sensitivity ladder's words, least to most splitting. [`sensitivity_word`]
+/// is the one place they are recognised, so the settings screen's choice and a
+/// scan sheet's choice take the same path.
+pub const SENSITIVITY_WORDS: [&str; 4] = ["off", "gentle", "normal", "eager"];
+
+/// The stored form of a sensitivity word: trimmed, lower-cased, and `normal`
+/// for anything the ladder does not know.
+pub fn sensitivity_word(word: &str) -> String {
+    let word = word.trim().to_ascii_lowercase();
+    if SENSITIVITY_WORDS.contains(&word.as_str()) {
+        word
+    } else {
+        "normal".to_string()
+    }
+}
+
+/// The pause threshold a cut honours: clamped to 0..=10 seconds, where 0
+/// disables the pause cut. What a scan stores for `grouping_pause`, too.
+pub fn clamped_pause(pause: f64) -> f64 {
+    pause.clamp(0.0, 10.0)
+}
+
+/// The thresholds a time burst is split by, as the album chose them.
+///
+/// The default is today's behaviour: the constants above. An album moves along
+/// one ladder rather than holding eight separate numbers:
+///
+/// * `off` -- a time burst is one stack, whatever happens inside it;
+/// * `gentle` -- every cut threshold 1.5x looser, so a scale change or a box
+///   jump that `normal` splits stays one moment;
+/// * `normal` -- the constants above, the behaviour every older album had;
+/// * `eager` -- every cut threshold 0.7x tighter (about 1/1.4), so a burst of
+///   look-alikes stacks less;
+///
+/// `pause` and `pan_leeway` are not on the ladder: they are their own album
+/// settings and come from the arguments, not the word.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MomentRules {
+    /// Whether a time burst is split at all. `false` is the `off` rung: one
+    /// stack per burst.
+    pub split: bool,
+    pub scale_ratio: f64,
+    pub shift: f64,
+    pub pan_leeway: f64,
+    pub pause: f64,
+    pub scene_distance: f64,
+    pub pause_subject_distance: f64,
+    pub subject_distance: f64,
+}
+
+impl Default for MomentRules {
+    fn default() -> Self {
+        MomentRules {
+            split: true,
+            scale_ratio: MOMENT_SCALE_RATIO,
+            shift: MOMENT_SHIFT,
+            pan_leeway: MOMENT_PAN_LEEWAY,
+            pause: MOMENT_PAUSE,
+            scene_distance: MOMENT_SCENE_DISTANCE,
+            pause_subject_distance: MOMENT_PAUSE_SUBJECT_DISTANCE,
+            subject_distance: MOMENT_SUBJECT_DISTANCE,
+        }
+    }
+}
+
+impl MomentRules {
+    /// The rules an album's sensitivity word asks for. `pause` is clamped to
+    /// 0..=10 seconds (0 disables the pause cut); `keep_pans` off makes a pan
+    /// box compare like any other. An unknown word is `normal`.
+    pub fn from_sensitivity(word: &str, pause: f64, keep_pans: bool) -> MomentRules {
+        let default = MomentRules::default();
+        // The ladder is one multiplier on every cut threshold; `off` has none.
+        let loosen = match sensitivity_word(word).as_str() {
+            "off" => None,
+            "gentle" => Some(1.5),
+            "eager" => Some(0.7),
+            _ => Some(1.0),
+        };
+        let pause = clamped_pause(pause);
+        let pan_leeway = if keep_pans { MOMENT_PAN_LEEWAY } else { 1.0 };
+        let Some(loosen) = loosen else {
+            return MomentRules {
+                split: false,
+                pause,
+                pan_leeway,
+                ..default
+            };
+        };
+        MomentRules {
+            split: true,
+            scale_ratio: default.scale_ratio * loosen,
+            shift: default.shift * loosen,
+            pan_leeway,
+            pause,
+            scene_distance: default.scene_distance * loosen,
+            pause_subject_distance: default.pause_subject_distance * loosen,
+            subject_distance: default.subject_distance * loosen,
+        }
+    }
+}
+
 /// Bins of [`Look::scene`].
 pub const LOOK_SCENE_BINS: usize = 28;
 /// Bins of [`Look::subject`].
@@ -321,14 +422,15 @@ fn box_area([x1, y1, x2, y2]: [f64; 4]) -> f64 {
 }
 
 /// Are two boxes of neighbouring frames plausibly the same subject? `leeway`
-/// widens both limits (1.0 normally, [`MOMENT_PAN_LEEWAY`] between pans).
-fn continues(previous: [f64; 4], next: [f64; 4], leeway: f64) -> bool {
+/// widens both limits (1.0 normally, [`MOMENT_PAN_LEEWAY`] between pans), and
+/// `rules` holds the album's own scale ratio and shift.
+fn continues(previous: [f64; 4], next: [f64; 4], leeway: f64, rules: &MomentRules) -> bool {
     let centre = |[x1, y1, x2, y2]: [f64; 4]| ((x1 + x2) / 2.0, (y1 + y2) / 2.0);
     let (fa, fb) = (box_area(previous), box_area(next));
-    let scale_ok = fa.max(fb) <= MOMENT_SCALE_RATIO * leeway * fa.min(fb);
+    let scale_ok = fa.max(fb) <= rules.scale_ratio * leeway * fa.min(fb);
     let ((ax, ay), (bx, by)) = (centre(previous), centre(next));
     let shift = (ax - bx).hypot(ay - by) / std::f64::consts::SQRT_2;
-    scale_ok && shift <= MOMENT_SHIFT * leeway
+    scale_ok && shift <= rules.shift * leeway
 }
 
 /// The moment currently open in one burst, as [`split_moments`] tracks it.
@@ -356,18 +458,24 @@ fn livery_distance(a: Option<Look>, b: Option<Look>) -> Option<f64> {
 }
 
 /// Does this frame belong to the moment `open` holds?
-fn belongs(open: &Open, frame: &MomentFrame, subject: Option<[f64; 4]>) -> bool {
+fn belongs(
+    open: &Open,
+    frame: &MomentFrame,
+    subject: Option<[f64; 4]>,
+    rules: &MomentRules,
+) -> bool {
     // A pause AND a picture that is not visually similar: the whole frame's
-    // colours moved on, or the vehicle's livery is not the previous one's.
+    // colours moved on, or the vehicle's livery is not the previous one's. A
+    // pause of zero is the album turning the pause cut off.
     if let (Some(before), Some(now)) = (open.taken, frame.taken) {
-        if now - before > MOMENT_PAUSE {
+        if rules.pause > 0.0 && now - before > rules.pause {
             let scene = open.scene.zip(frame.look.map(|l| l.scene));
-            if scene.is_some_and(|(a, b)| look_distance(&a, &b) > MOMENT_SCENE_DISTANCE) {
+            if scene.is_some_and(|(a, b)| look_distance(&a, &b) > rules.scene_distance) {
                 return false;
             }
             if subject.is_some()
                 && livery_distance(open.last_look, frame.look)
-                    .is_some_and(|d| d > MOMENT_PAUSE_SUBJECT_DISTANCE)
+                    .is_some_and(|d| d > rules.pause_subject_distance)
             {
                 return false;
             }
@@ -377,18 +485,20 @@ fn belongs(open: &Open, frame: &MomentFrame, subject: Option<[f64; 4]>) -> bool 
         return true;
     };
     let leeway = if open.pan && frame.panning {
-        MOMENT_PAN_LEEWAY
+        rules.pan_leeway
     } else {
         1.0
     };
     // The box jumped between neighbours, or the car is clearly not the same one.
-    continues(previous, next, leeway)
-        && livery_distance(open.last_look, frame.look).is_none_or(|d| d <= MOMENT_SUBJECT_DISTANCE)
+    continues(previous, next, leeway, rules)
+        && livery_distance(open.last_look, frame.look)
+            .is_none_or(|d| d <= rules.subject_distance)
 }
 
 /// A new group key per frame, splitting each time burst into moments only where
-/// the picture cuts to something else. Input is in time order. Keys are dense
-/// from 1 and never shared across bursts.
+/// the picture cuts to something else, with today's thresholds
+/// ([`MomentRules::default()`]). Input is in time order. Keys are dense from 1
+/// and never shared across bursts.
 ///
 /// A burst of shooting is one moment unless the frame in hand cuts from the
 /// moment before it, in any of three ways:
@@ -408,6 +518,27 @@ fn belongs(open: &Open, frame: &MomentFrame, subject: Option<[f64; 4]>) -> bool 
 /// ([`MOMENT_MIN_AREA`]) never cut on the box. A frame with no [`Look`] is
 /// never cut on looks.
 pub fn split_moments(frames: &[MomentFrame]) -> Vec<i64> {
+    split_moments_with(frames, &MomentRules::default())
+}
+
+/// [`split_moments`], with the album's own thresholds. `rules.split` off makes
+/// a time burst one stack: every frame of it gets the burst's key, numbered
+/// densely in the order the bursts first appear, the same numbering space as
+/// a split run.
+pub fn split_moments_with(frames: &[MomentFrame], rules: &MomentRules) -> Vec<i64> {
+    if !rules.split {
+        let mut keys: HashMap<i64, i64> = HashMap::new();
+        let mut next: i64 = 0;
+        return frames
+            .iter()
+            .map(|frame| {
+                *keys.entry(frame.burst).or_insert_with(|| {
+                    next += 1;
+                    next
+                })
+            })
+            .collect();
+    }
     let mut open: HashMap<i64, Open> = HashMap::new();
     let mut moments: i64 = 0;
     frames
@@ -416,7 +547,7 @@ pub fn split_moments(frames: &[MomentFrame]) -> Vec<i64> {
             let subject = frame.subject.filter(|&b| box_area(b) >= MOMENT_MIN_AREA);
             let scene = frame.look.map(|l| l.scene);
             let joined = open.get_mut(&frame.burst).and_then(|o| {
-                if !belongs(o, frame, subject) {
+                if !belongs(o, frame, subject, rules) {
                     return None;
                 }
                 if subject.is_some() {
@@ -994,5 +1125,124 @@ mod moment_tests {
         assert_eq!(split_moments(&frames), vec![1; 5]);
         let none: Vec<_> = (0..6).map(|_| mf(1, None)).collect();
         assert_eq!(split_moments(&none), vec![1; 6]);
+    }
+
+    #[test]
+    fn the_sensitivity_ladder_moves_every_threshold_the_right_way() {
+        let normal = MomentRules::from_sensitivity("normal", MOMENT_PAUSE, true);
+        assert_eq!(normal, MomentRules::default(), "normal is today's behaviour");
+        assert!(
+            !MomentRules::from_sensitivity("off", MOMENT_PAUSE, true).split,
+            "off never cuts a burst"
+        );
+        let gentle = MomentRules::from_sensitivity("gentle", MOMENT_PAUSE, true);
+        let eager = MomentRules::from_sensitivity("eager", MOMENT_PAUSE, true);
+        for (word, rules, factor) in [("gentle", gentle, 1.5), ("eager", eager, 0.7)] {
+            assert_eq!(rules.scale_ratio, normal.scale_ratio * factor, "{word} scale");
+            assert_eq!(rules.shift, normal.shift * factor, "{word} shift");
+            assert_eq!(
+                rules.scene_distance,
+                normal.scene_distance * factor,
+                "{word} scene"
+            );
+            assert_eq!(
+                rules.pause_subject_distance,
+                normal.pause_subject_distance * factor,
+                "{word} paused subject"
+            );
+            assert_eq!(
+                rules.subject_distance,
+                normal.subject_distance * factor,
+                "{word} subject"
+            );
+            assert_eq!(rules.pause, MOMENT_PAUSE, "{word} takes the album's pause");
+            assert_eq!(rules.pan_leeway, MOMENT_PAN_LEEWAY, "{word} keeps pans");
+        }
+        assert!(
+            gentle.shift > normal.shift && eager.shift < normal.shift,
+            "gentle loosens, eager tightens"
+        );
+        assert_eq!(
+            MomentRules::from_sensitivity("normal", MOMENT_PAUSE, false).pan_leeway,
+            1.0,
+            "keep_pans off compares a pan like any other box"
+        );
+        assert_eq!(
+            MomentRules::from_sensitivity("loud", MOMENT_PAUSE, true),
+            normal,
+            "an unknown word is normal"
+        );
+        assert_eq!(sensitivity_word("  EAGER "), "eager", "trimmed and lower-cased");
+        assert_eq!(sensitivity_word("gentle"), "gentle");
+        assert_eq!(clamped_pause(-2.0), 0.0);
+        assert_eq!(clamped_pause(0.0), 0.0, "zero disables, not the default");
+        assert_eq!(clamped_pause(2.5), 2.5);
+        assert_eq!(clamped_pause(11.0), 10.0);
+        assert_eq!(
+            MomentRules::from_sensitivity("normal", -1.0, true).pause,
+            0.0,
+            "a pause is clamped to 0..=10"
+        );
+        assert_eq!(
+            MomentRules::from_sensitivity("normal", 99.0, true).pause,
+            10.0
+        );
+    }
+
+    #[test]
+    fn splitting_off_makes_a_whole_time_burst_one_stack() {
+        // Two very different cars back to back in one burst, then a second burst.
+        let mut frames: Vec<_> = (0..4)
+            .map(|i| mf(1, boxed(0.6 + 0.08 * f64::from(i), 0.5, 0.2)))
+            .collect();
+        frames.extend((0..4).map(|i| mf(1, boxed(0.15 + 0.03 * f64::from(i), 0.5, 0.03))));
+        frames.push(mf(2, boxed(0.5, 0.5, 0.1)));
+        assert_eq!(
+            split_moments(&frames),
+            vec![1, 1, 1, 1, 2, 2, 2, 2, 3],
+            "normal cuts at the different car"
+        );
+        let off = MomentRules::from_sensitivity("off", MOMENT_PAUSE, true);
+        assert_eq!(
+            split_moments_with(&frames, &off),
+            vec![1, 1, 1, 1, 1, 1, 1, 1, 2],
+            "off is one key per burst, densely numbered"
+        );
+    }
+
+    #[test]
+    fn gentle_keeps_a_pair_together_that_normal_splits() {
+        // Same size box, its centre 0.55 of the frame further right: a shift of
+        // 0.39, past normal's 0.30 and inside gentle's 0.45.
+        let frames = [mf(1, boxed(0.25, 0.5, 0.1)), mf(1, boxed(0.8, 0.5, 0.1))];
+        assert_eq!(split_moments(&frames), vec![1, 2], "normal cuts");
+        let gentle = MomentRules::from_sensitivity("gentle", MOMENT_PAUSE, true);
+        assert_eq!(split_moments_with(&frames, &gentle), vec![1, 1], "gentle keeps it");
+    }
+
+    #[test]
+    fn eager_splits_a_pair_that_normal_keeps() {
+        // A shift of 0.25: inside normal's 0.30, past eager's 0.21.
+        let frames = [mf(1, boxed(0.3, 0.5, 0.1)), mf(1, boxed(0.65, 0.5, 0.1))];
+        assert_eq!(split_moments(&frames), vec![1, 1], "normal keeps it");
+        let eager = MomentRules::from_sensitivity("eager", MOMENT_PAUSE, true);
+        assert_eq!(split_moments_with(&frames, &eager), vec![1, 2], "eager cuts");
+    }
+
+    #[test]
+    fn a_pause_of_zero_turns_the_pause_cut_off() {
+        // Five seconds apart and a different scene: a pause, under the default.
+        let frames = [
+            shot(0.0, boxed(0.5, 0.5, 0.1), 3, colour(0)),
+            shot(5.0, boxed(0.5, 0.5, 0.1), 20, colour(0)),
+        ];
+        assert_eq!(split_moments(&frames), vec![1, 2], "a pause with a new scene cuts");
+        let no_pause = MomentRules::from_sensitivity("normal", 0.0, true);
+        assert_eq!(no_pause.pause, 0.0);
+        assert_eq!(
+            split_moments_with(&frames, &no_pause),
+            vec![1, 1],
+            "no pause cut: the same box and livery stay one moment"
+        );
     }
 }

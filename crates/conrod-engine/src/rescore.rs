@@ -396,23 +396,27 @@ fn measure_frame(
                 (bbox[3] - crop_box[1]) * scale,
             ];
             let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), None);
-            // As `cull_frame` scores a subject: the edge-blur estimate inside
-            // the stored box on native pixels; the tile score stays the fallback
-            // and still supplies the pan flag and the features.
-            let region = [
-                (bbox[0].max(0.0) as usize).min(fw),
-                (bbox[1].max(0.0) as usize).min(fh),
-                (bbox[2].max(0.0) as usize).min(fw),
-                (bbox[3].max(0.0) as usize).min(fh),
-            ];
-            let blur = conrod_vision::edgeblur::measure(&grey, Some(region));
-            if let Some(score) =
-                sharpness::rating_from_blur(
-                    blur.sigma_worst_at_reference(fw.max(fh)),
-                    sharpness::BlurStrictness::parse(&cfg.effective_blur()),
-                )
-            {
-                focus.score = score;
+            // As `cull_frame` scores a subject: the edge-blur estimate on native
+            // pixels, the worse of the whole box and the box's centre 60%, so a
+            // sharp background in the margins cannot vouch for a blurred body.
+            // The tile score stays the fallback and still supplies the pan flag
+            // and the features.
+            let tile = focus.score;
+            let blur = crate::subject_blur(&grey, bbox, fw.max(fh));
+            // As `cull_frame`: the centre only when the tiles suspect softness.
+            let worst = if tile < 0.80 { blur.worst } else { blur.whole };
+            if let Some(score) = sharpness::rating_from_blur(
+                worst,
+                sharpness::BlurStrictness::parse(&cfg.effective_blur()),
+            ) {
+                // As `cull_frame`: a smear the edge census cannot see (too few
+                // edges in the motion direction) still shows on the tiles, so a
+                // clearly lower tile score is taken.
+                focus.score = if !focus.uncertain && tile < score - 0.10 {
+                    tile
+                } else {
+                    score
+                };
             }
             // As `cull_frame` decides it: the subject not a blur miss, a
             // streaked background, and a preset that expects pans.

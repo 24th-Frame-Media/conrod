@@ -15,7 +15,7 @@ with a nonzero exit code if a task fails.
 | status | none | revision, tasks, log, activeJob, operations |
 | jobs | none | Albums with total/done frame counts and hidden `copies`, folder-name fallback for unnamed albums |
 | review | jobId | frames and detections |
-| scan | root?, jobId?, label?, profile?, recursive=true, stage="cull" | New/resumed jobId; stage index, cull, all, or identify (existing job required) |
+| scan | root?, jobId?, label?, profile?, recursive=true, stage="cull", blurStrictness?, burstGap?, groupingSensitivity?, groupingPause?, groupingKeepPans?, groupingFocusAnchor?, groupingStacks? | New/resumed jobId; stage index, cull, all, or identify (existing job required). The sheet's choices are stored on the new album only; a grouping word is normalised to off/gentle/normal/eager and a pause to 0–10 |
 | pause / resume_scan / stop | none | Control current cull; return status |
 | identify | jobId | operation; readers, grouping consensus and registry seeding |
 | write | jobId, dryRun=false, embedInRaw=false | operation; dry run logs proposed keywords without changing files or written timestamps |
@@ -72,6 +72,22 @@ existing UI records. `sponsors` is an array of strings. Null clears a field; omi
 leaves it alone. rejected/bystander are booleans; reviewed defaults to true.
 Edit stars 1–5 sets a hand rating; 0/null restores automatic rating. `mark` deliberately
 allows manual zero. Numbers retain digits, plates are normalized, sponsor lists are deduplicated.
+
+## Grouping settings
+
+`update_job_settings` (`jobId`, `patch`) and `save_settings` take these album
+fields, in snake_case like every settings key. Each defaults to the behaviour an
+album had before it existed, so an older `settings_json` keeps grouping exactly
+as it did. A change to any of them regroups the album in place, like a burst gap.
+
+| Key | Default | Meaning |
+|---|---|---|
+| burst_gap | 1.5 | Seconds between two frames of one camera that still belong to one burst |
+| grouping_sensitivity | "normal" | How eagerly a time burst is split into moments: "off" is one stack per burst, "gentle" moves every cut threshold 1.5x looser, "normal" is the measured default, "eager" moves them 0.7x tighter (about 1/1.4). An unknown word reads as "normal" |
+| grouping_pause | 0.8 | Seconds between two frames that count as a pause: the next frame starts a new moment if the picture also changed. Clamped to 0..10 when used; 0 disables the pause cut |
+| grouping_keep_pans | true | `false` compares a panning frame's box like any other, instead of allowing it to travel further |
+| grouping_focus_anchor | true | `false` leaves a frame the detector missed with no subject, rather than anchoring it on the camera's focus area (`af_*`) |
+| grouping_stacks | true | `false` gives every frame a stack of its own (dense keys, in moment order, and stable across regroups) and suggests no keeper: a "best of stack" pick would mark every frame, which says nothing |
 
 ## Events and previews
 

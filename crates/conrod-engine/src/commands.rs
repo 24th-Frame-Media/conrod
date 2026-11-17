@@ -104,6 +104,19 @@ pub struct ScanArgs {
     pub blur_strictness: Option<String>,
     /// Burst gap in seconds for a new album.
     pub burst_gap: Option<f64>,
+    /// Grouping for a new album: every frame its own stack, no keeper.
+    #[serde(default)]
+    pub grouping_stacks: Option<bool>,
+    /// Grouping for a new album: "off", "gentle", "normal" or "eager".
+    #[serde(default)]
+    pub grouping_sensitivity: Option<String>,
+    /// Grouping for a new album: seconds that count as a pause (0 disables it).
+    #[serde(default)]
+    pub grouping_pause: Option<f64>,
+    #[serde(default)]
+    pub grouping_keep_pans: Option<bool>,
+    #[serde(default)]
+    pub grouping_focus_anchor: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -490,6 +503,48 @@ mod tests {
             (scan.read_plates, scan.read_numbers),
             (Some(false), Some(true))
         );
+    }
+
+    #[test]
+    fn a_scan_carries_the_sheets_grouping_choices_in_camel_case() {
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({
+                "root": "C:\\\\Photos",
+                "groupingStacks": false,
+                "groupingSensitivity": "eager",
+                "groupingPause": 0.0,
+                "groupingKeepPans": false,
+                "groupingFocusAnchor": false,
+            }),
+        ) else {
+            panic!()
+        };
+        assert_eq!(scan.grouping_stacks, Some(false));
+        assert_eq!(scan.grouping_sensitivity.as_deref(), Some("eager"));
+        assert_eq!(scan.grouping_pause, Some(0.0));
+        assert_eq!(scan.grouping_keep_pans, Some(false));
+        assert_eq!(scan.grouping_focus_anchor, Some(false));
+
+        // The sheet may send none of them: absent is None, not a default.
+        let Ok(Command::Scan(scan)) =
+            Command::parse("scan", json!({"root": "C:\\\\Photos", "groupingSensitivity": "off"}))
+        else {
+            panic!()
+        };
+        assert_eq!(scan.grouping_sensitivity.as_deref(), Some("off"));
+        assert_eq!(scan.grouping_stacks, None);
+        assert_eq!(scan.grouping_pause, None);
+        assert_eq!(scan.grouping_keep_pans, None);
+        assert_eq!(scan.grouping_focus_anchor, None);
+        // Settings keys are snake_case on the wire only as JSON patch keys; a
+        // scan takes the camelCase arg names.
+        let Ok(Command::Scan(scan)) =
+            Command::parse("scan", json!({"root": "C:\\\\Photos", "grouping_pause": 1.0}))
+        else {
+            panic!()
+        };
+        assert_eq!(scan.grouping_pause, None);
     }
 
     #[test]

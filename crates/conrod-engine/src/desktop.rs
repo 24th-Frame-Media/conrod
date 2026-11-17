@@ -201,7 +201,7 @@ pub fn rows_compact(
 /// embedding are matched against the known vehicles and people here, and the
 /// embedding itself never leaves this function.
 pub fn review_payload(db: &Connection, job: i64) -> Result<Value> {
-    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path",[job])?;
+    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2 FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path",[job])?;
     let mut detections = rows_compact(db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY d.image_id,d.id",[job])?;
     let known: Vec<(Value, Vec<f32>)> = rows(db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
         .into_iter()
@@ -328,6 +328,11 @@ impl Desktop {
             scan_profile: None,
             blur_strictness: None,
             burst_gap: None,
+            grouping_stacks: None,
+            grouping_sensitivity: None,
+            grouping_pause: None,
+            grouping_keep_pans: None,
+            grouping_focus_anchor: None,
         })
         .map(|_| ())
     }
@@ -440,7 +445,26 @@ impl Desktop {
             Command::Regroup(a) => self.regroup(a.job_id),
             Command::BulkEdit(a) => crate::edits::bulk_edit(self, &a),
             Command::RenameJob(a) => crate::library::rename_job(self, &a),
-            Command::UpdateJobSettings(a) => crate::library::update_job_settings(self, &a),
+            Command::UpdateJobSettings(a) => {
+                // A burst gap or preset is what the library regroups on; a
+                // grouping choice needs the same, and it lives here so the
+                // album on screen changes as the control does.
+                const LIBRARY_REGROUPS: [&str; 2] = ["burst_gap", "scan_profile"];
+                const GROUPING: [&str; 5] = [
+                    "grouping_sensitivity",
+                    "grouping_pause",
+                    "grouping_keep_pans",
+                    "grouping_focus_anchor",
+                    "grouping_stacks",
+                ];
+                let groupings = a.patch.keys().any(|k| GROUPING.contains(&k.as_str()));
+                let already = a.patch.keys().any(|k| LIBRARY_REGROUPS.contains(&k.as_str()));
+                let out = crate::library::update_job_settings(self, &a)?;
+                if groupings && !already && !self.scanning() {
+                    let _ = self.regroup(a.job_id);
+                }
+                Ok(out)
+            }
             Command::SetIncludePeople(a) => {
                 crate::passes::set_include_people(self, a.job_id, a.value)
             }
@@ -788,6 +812,24 @@ impl Desktop {
                 }
                 settings.burst_gap = gap;
             }
+            // The grouping sheet's choices go through the same normalisers the
+            // settings loader and regroup use: an unknown word is "normal", and
+            // a pause is clamped to the 0..=10 the cut honours (0 disables it).
+            if let Some(stacks) = a.grouping_stacks {
+                settings.grouping_stacks = stacks;
+            }
+            if let Some(word) = a.grouping_sensitivity.as_deref() {
+                settings.grouping_sensitivity = conrod_core::bursts::sensitivity_word(word);
+            }
+            if let Some(pause) = a.grouping_pause {
+                settings.grouping_pause = conrod_core::bursts::clamped_pause(pause);
+            }
+            if let Some(keep) = a.grouping_keep_pans {
+                settings.grouping_keep_pans = keep;
+            }
+            if let Some(anchor) = a.grouping_focus_anchor {
+                settings.grouping_focus_anchor = anchor;
+            }
             settings.extra.insert(
                 "native_scan_stage".into(),
                 json!(match a.stage {
@@ -1059,6 +1101,13 @@ impl Desktop {
         let cfg = crate::operations::settings(self, job)?;
         let profile = ScanProfile::parse(&cfg.scan_profile);
         let gap = burst_gap(cfg.burst_gap);
+        // What this album's stacking rules are: the sensitivity ladder plus its
+        // own pause and pan choices.
+        let rules = conrod_core::bursts::MomentRules::from_sensitivity(
+            &cfg.grouping_sensitivity,
+            cfg.grouping_pause,
+            cfg.grouping_keep_pans,
+        );
         let db = lock(&self.db);
         let images = rows(
             &db,
@@ -1119,8 +1168,9 @@ impl Desktop {
             .collect();
         // A frame the detector missed but the camera focused: the AF box (already
         // fractions of the upright frame) is the moment's anchor, so such a frame
-        // stays in its car's moment instead of standing beside it. Only a frame
-        // with no usable detection box falls back to it. The looks below keep to
+        // stays in its car's moment instead of standing beside it, unless the
+        // album turned `grouping_focus_anchor` off. Only a frame with no usable
+        // detection box falls back to it. The looks below keep to
         // detection boxes on purpose: an AF-only frame's livery is still the
         // car, but measuring a look from a box the detector never confirmed is a
         // larger change than this needs.
@@ -1161,7 +1211,10 @@ impl Desktop {
                     (Some(&(_, [x1, y1, x2, y2])), Some(w), Some(h)) if w > 0.0 && h > 0.0 => {
                         Some([x1 / w, y1 / h, x2 / w, y2 / h])
                     }
-                    _ => af_boxes.get(&id).copied(),
+                    // The album can turn the focus-area anchor off, leaving a
+                    // frame the detector missed with no subject at all.
+                    _ if cfg.grouping_focus_anchor => af_boxes.get(&id).copied(),
+                    _ => None,
                 };
                 conrod_core::bursts::MomentFrame {
                     burst: i64::from(frames[i].burst),
@@ -1175,11 +1228,9 @@ impl Desktop {
                 }
             })
             .collect();
+        let moment_keys = conrod_core::bursts::split_moments_with(&moment_frames, &rules);
         let mut key = vec![0; frames.len()];
-        for (&i, moment) in order
-            .iter()
-            .zip(conrod_core::bursts::split_moments(&moment_frames))
-        {
+        for (&i, moment) in order.iter().zip(moment_keys) {
             key[i] = moment;
         }
         // A bracket, focus stack or interval is one stack in every preset: the
@@ -1187,6 +1238,15 @@ impl Desktop {
         for (i, set) in sets.iter().enumerate() {
             if let Some((first, _)) = set {
                 key[i] = SET_KEY_BASE + first;
+            }
+        }
+        if !cfg.grouping_stacks {
+            // Stacking turned off for this album: every frame is its own stack,
+            // even a bracket's. The key is the frame's place in the order the
+            // moments are numbered (time, then path), so it is dense from 1 and
+            // the same on every run for the same album.
+            for (position, &i) in order.iter().enumerate() {
+                key[i] = position as i64 + 1;
             }
         }
         let bursts = frames
@@ -1223,16 +1283,31 @@ impl Desktop {
         // shot the detector missed: rate it on the whole frame before the
         // keepers below are picked on the ratings.
         crate::passes::rate_missed_frames(&db, job)?;
-        // The same rule the identify stage uses, so the keeper regroup leaves
-        // is the one a later pick would choose anyway.
-        let picks = crate::passes::pick_of_pass(
-            &db,
-            job,
-            profile,
-            cfg.include_people,
-            cfg.use_quality_score,
-        )?;
-        let keepers = picks["picks"].as_u64().unwrap_or_default();
+        let keepers = if cfg.grouping_stacks {
+            // The same rule the identify stage uses, so the keeper regroup
+            // leaves is the one a later pick would choose anyway.
+            let picks = crate::passes::pick_of_pass(
+                &db,
+                job,
+                profile,
+                cfg.include_people,
+                cfg.use_quality_score,
+            )?;
+            picks["picks"].as_u64().unwrap_or_default()
+        } else {
+            // Stacking is off: every frame is its own stack, so "best of the
+            // stack" would mark every frame as a keeper, which tells the
+            // photographer nothing. Suggest none, and take back the picks a
+            // regroup made while stacking was still on.
+            db.execute(
+                "UPDATE detections SET burst_pick=0 WHERE image_id IN (SELECT id FROM images WHERE job_id=?)",
+                [job],
+            )
+            .map_err(err)?;
+            db.execute("UPDATE images SET burst_pick=0 WHERE job_id=?", [job])
+                .map_err(err)?;
+            0
+        };
         task.detail(format!("{bursts} bursts · {moments} moments · {keepers} keepers"));
         if let Some(progress) = self.progress() {
             progress.add_found(|found| {
@@ -1523,6 +1598,79 @@ mod tests {
     }
 
     #[test]
+    fn a_new_album_takes_the_sheets_grouping_choices_and_normalises_them() {
+        let root = std::env::temp_dir().join(format!(
+            "conrod-grouping-sheet-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.jpg"), b"x").unwrap();
+        let desktop = Desktop::open(root.clone()).unwrap();
+
+        let out = desktop
+            .dispatch(
+                "scan",
+                json!({
+                    "root": root.to_string_lossy(),
+                    "label": "Grouping album",
+                    "stage": "index",
+                    "groupingSensitivity": " EAGER ",
+                    "groupingPause": 25.0,
+                    "groupingKeepPans": false,
+                    "groupingFocusAnchor": false,
+                    "groupingStacks": false,
+                }),
+            )
+            .unwrap();
+        let job = out["jobId"].as_i64().unwrap();
+
+        let settings = crate::operations::settings(&desktop, job).unwrap();
+        assert_eq!(
+            settings.grouping_sensitivity, "eager",
+            "the word is normalised the way the cut reads it"
+        );
+        assert_eq!(
+            settings.grouping_pause, 10.0,
+            "a pause is clamped to the 0..=10 the cut honours"
+        );
+        assert!(!settings.grouping_keep_pans);
+        assert!(!settings.grouping_focus_anchor);
+        assert!(!settings.grouping_stacks);
+        // The album stores them, so a later load keeps the sheet's choices.
+        let stored: String = lock(&desktop.db)
+            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let map: Map<String, Value> = serde_json::from_str(&stored).unwrap();
+        assert_eq!(map["grouping_sensitivity"], "eager");
+        assert_eq!(map["grouping_pause"], 10.0);
+        assert_eq!(map["grouping_stacks"], false);
+
+        // A sheet that sends none of them leaves today's behaviour.
+        let plain_root = root.join("plain");
+        std::fs::create_dir_all(&plain_root).unwrap();
+        std::fs::write(plain_root.join("b.jpg"), b"x").unwrap();
+        let plain = desktop
+            .dispatch(
+                "scan",
+                json!({"root": plain_root.to_string_lossy(), "stage": "index"}),
+            )
+            .unwrap();
+        let plain =
+            crate::operations::settings(&desktop, plain["jobId"].as_i64().unwrap()).unwrap();
+        assert_eq!(plain.grouping_sensitivity, "normal");
+        assert_eq!(plain.grouping_pause, conrod_core::bursts::MOMENT_PAUSE);
+        assert!(plain.grouping_keep_pans);
+        assert!(plain.grouping_focus_anchor);
+        assert!(plain.grouping_stacks);
+        drop(desktop);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn delete_all_known_removes_every_vehicle() {
         let root =
             std::env::temp_dir().join(format!("conrod-known-{}-{}", std::process::id(), now()));
@@ -1629,6 +1777,124 @@ mod tests {
     }
 
     #[test]
+    fn regroup_uses_the_albums_own_grouping_sensitivity() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("regroup-sensitivity");
+        // One time burst, 0.2 s apart: four frames of a car centred in the
+        // frame, then four of another far off to one side -- a cut.
+        for i in 0..8 {
+            let image = lib.frame(&format!("{i}.jpg"), None);
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                params![f64::from(i) * 0.2, image],
+            );
+            let detection = lib.detection(image, "vehicle", 0.8);
+            let scale = 0.1_f64.sqrt();
+            let (w, h) = (6000.0 * scale, 4000.0 * scale);
+            let (cx, cy) = if i < 4 { (3000.0, 2000.0) } else { (800.0, 3200.0) };
+            lib.sql(
+                "UPDATE detections SET x1=?,y1=?,x2=?,y2=? WHERE id=?",
+                params![cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0, detection],
+            );
+        }
+        let keys = |lib: &Lib| -> i64 {
+            lib.one(
+                "SELECT count(DISTINCT burst_key) FROM images WHERE job_id=?",
+                [lib.job],
+            )
+        };
+        let choose = |lib: &Lib, word: &str| {
+            lib.run(
+                "update_job_settings",
+                json!({"jobId": lib.job, "patch": {"grouping_sensitivity": word}}),
+            )
+            .unwrap();
+        };
+        choose(&lib, "eager");
+        lib.d().regroup(lib.job).unwrap();
+        assert_eq!(keys(&lib), 2, "eager splits the burst at the other car");
+        choose(&lib, "off");
+        lib.d().regroup(lib.job).unwrap();
+        assert_eq!(keys(&lib), 1, "off stacks the whole time burst");
+        let stored: String = lib.one("SELECT settings_json FROM jobs WHERE id=?", [lib.job]);
+        assert!(
+            stored.contains("\"grouping_sensitivity\":\"off\""),
+            "the album stores its own choice: {stored}"
+        );
+    }
+
+    #[test]
+    fn turning_stacking_off_gives_every_frame_its_own_stack_and_no_keeper() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("regroup-no-stacks");
+        // Three frames a half second apart: one time burst, one moment.
+        let mut frames = Vec::new();
+        for i in 0..3 {
+            let image = lib.frame(&format!("{i}.jpg"), None);
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                params![f64::from(i) * 0.5, image],
+            );
+            lib.detection(image, "vehicle", 0.8);
+            frames.push(image);
+        }
+        let keys = || -> Vec<i64> {
+            frames
+                .iter()
+                .map(|&image| lib.one("SELECT burst_key FROM images WHERE id=?", [image]))
+                .collect()
+        };
+        let stacks = |on: bool| {
+            lib.run(
+                "update_job_settings",
+                json!({"jobId": lib.job, "patch": {"grouping_stacks": on}}),
+            )
+            .unwrap();
+        };
+        stacks(false);
+        let counts = lib.d().regroup(lib.job).unwrap();
+        let off = keys();
+        assert_eq!(counts["moments"], 3, "every frame is its own stack: {counts}");
+        assert_eq!(
+            off,
+            vec![1, 2, 3],
+            "dense keys in the order the moments are numbered"
+        );
+        assert_eq!(
+            lib.one::<i64>("SELECT count(*) FROM detections WHERE burst_pick=1", []),
+            0,
+            "no keeper is suggested when nothing is stacked"
+        );
+        assert_eq!(
+            lib.one::<i64>(
+                "SELECT count(*) FROM images WHERE job_id=? AND COALESCE(burst_pick,0)<>0",
+                [lib.job]
+            ),
+            0
+        );
+        // The same album regrouped again numbers the same frames the same way.
+        lib.d().regroup(lib.job).unwrap();
+        assert_eq!(keys(), off, "the keys are deterministic");
+        // Stacking back on: one stack, and a keeper.
+        stacks(true);
+        let counts = lib.d().regroup(lib.job).unwrap();
+        assert_eq!(counts["moments"], 1, "{counts}");
+        assert_eq!(
+            lib.one::<i64>(
+                "SELECT count(DISTINCT burst_key) FROM images WHERE job_id=?",
+                [lib.job]
+            ),
+            1
+        );
+        assert!(counts["keepers"].as_u64().unwrap() >= 1, "{counts}");
+        assert_eq!(
+            lib.one::<i64>("SELECT count(*) FROM detections WHERE burst_pick=1", []),
+            1,
+            "one stack, one keeper"
+        );
+    }
+
+    #[test]
     fn the_camera_focus_area_keeps_a_missed_frame_in_its_cars_moment() {
         use crate::testkit::Lib;
         let lib = Lib::new("regroup-af");
@@ -1675,6 +1941,83 @@ mod tests {
         lib.d().regroup(lib.job).unwrap();
         assert_eq!(key(bare), key(a), "a box-less frame joins the open moment");
         assert_ne!(key(bare), key(b), "and stays apart from the car it was of");
+    }
+
+    #[test]
+    fn the_albums_focus_anchor_choice_decides_where_a_missed_frame_goes() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("regroup-af-off");
+        let a = lib.frame("a.jpg", None);
+        let bare = lib.frame("bare.jpg", None);
+        let b = lib.frame("b.jpg", None);
+        for (taken, image) in [(0.0, a), (0.2, bare), (0.4, b)] {
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                params![taken, image],
+            );
+        }
+        lib.detection(a, "vehicle", 0.8);
+        lib.detection(b, "vehicle", 0.8);
+        lib.sql(
+            "UPDATE detections SET x1=3600,y1=2400,x2=4800,y2=3200 WHERE image_id=?",
+            [b],
+        );
+        lib.sql(
+            "UPDATE images SET af_x1=0.6,af_y1=0.6,af_x2=0.8,af_y2=0.8 WHERE id=?",
+            [bare],
+        );
+        lib.run(
+            "update_job_settings",
+            json!({"jobId": lib.job, "patch": {"grouping_focus_anchor": false}}),
+        )
+        .unwrap();
+        lib.d().regroup(lib.job).unwrap();
+        let key = |image: i64| -> i64 {
+            lib.one("SELECT burst_key FROM images WHERE id=?", [image])
+        };
+        assert_eq!(
+            key(bare),
+            key(a),
+            "anchor off: the missed frame has no subject and joins the open moment"
+        );
+        assert_ne!(
+            key(bare),
+            key(b),
+            "and is not anchored to the car the camera focused on"
+        );
+    }
+
+    #[test]
+    fn the_review_payload_carries_the_camera_focus_box() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("review-af");
+        let focused = lib.frame("focused.jpg", None);
+        let bare = lib.frame("bare.jpg", None);
+        lib.sql(
+            "UPDATE images SET af_x1=0.05,af_y1=0.1,af_x2=0.45,af_y2=0.55 WHERE id=?",
+            [focused],
+        );
+
+        let review = lib.run("review", json!({"jobId": lib.job})).unwrap();
+        let frames = review["frames"].as_array().unwrap();
+        let shown = |id: i64| {
+            frames
+                .iter()
+                .find(|frame| frame["id"].as_i64() == Some(id))
+                .unwrap_or_else(|| panic!("frame {id} is in the payload: {review}"))
+        };
+        let box_ = shown(focused);
+        assert_eq!(box_["af_x1"].as_f64(), Some(0.05));
+        assert_eq!(box_["af_y1"].as_f64(), Some(0.1));
+        assert_eq!(box_["af_x2"].as_f64(), Some(0.45));
+        assert_eq!(box_["af_y2"].as_f64(), Some(0.55));
+        let none = shown(bare);
+        for column in ["af_x1", "af_y1", "af_x2", "af_y2"] {
+            assert!(
+                none[column].is_null(),
+                "a frame the camera's focus area was not read for has no {column}: {none}"
+            );
+        }
     }
 
     #[test]
@@ -1834,7 +2177,7 @@ mod tests {
             .unwrap_or(106);
         let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .expect("open the album read-only");
-        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path";
+        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2 FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path";
         const DET_SQL: &str = "SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY d.image_id,d.id";
 
         let mut sql = f64::MAX;

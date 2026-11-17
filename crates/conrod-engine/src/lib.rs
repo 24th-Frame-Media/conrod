@@ -571,6 +571,67 @@ pub fn bare_frame(grey: &Gray, strictness: &str) -> BareFrame {
     BareFrame { score, whole }
 }
 
+/// What a subject's edge blur reads, in native pixels at
+/// [`conrod_vision::edgeblur::REFERENCE_EDGE`].
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct SubjectBlur {
+    /// The whole detector box.
+    pub whole: f64,
+    /// The box's centre 60% (20%..80% on each axis); NaN when too small to
+    /// measure.
+    pub centre: f64,
+    /// The worse of the two, which is what a subject's score is derived from.
+    pub worst: f64,
+}
+
+/// What a subject is scored on: its edge blur, in native pixels at
+/// [`conrod_vision::edgeblur::REFERENCE_EDGE`], taken as the worse of the whole
+/// detector box and the box's centre 60% (20%..80% of the box on each axis,
+/// clamped to the frame).
+///
+/// The subject's body sits at the centre of its box; a sharp wall, road or
+/// crowd behind the subject sits in the box's margins. Reading only the whole
+/// box lets that background vouch for a blurred subject (a heavily blurred car
+/// against a sharp sponsor banner measured 0.98 that way), so the centre is
+/// measured too and the larger sigma -- the worse of the two -- is the answer.
+/// This can only lower a subject whose centre is blurred: the centre of a sharp
+/// subject is sharp too, so the subject is never penalised for the margin it
+/// happens to sit against. A centre too small to measure (NaN, or a region that
+/// clamps empty) keeps the whole-box value.
+#[doc(hidden)]
+pub fn subject_blur(grey: &Gray, bbox: [f64; 4], long_edge: usize) -> SubjectBlur {
+    let (fw, fh) = (grey.width, grey.height);
+    let px = |v: f64, edge: usize| (v.max(0.0) as usize).min(edge);
+    let (x0, y0) = (px(bbox[0], fw), px(bbox[1], fh));
+    let (x1, y1) = (px(bbox[2], fw).max(x0), px(bbox[3], fh).max(y0));
+    let between = |a: usize, b: usize, t: f64| a + ((b - a) as f64 * t) as usize;
+    let whole = conrod_vision::edgeblur::measure(grey, Some([x0, y0, x1, y1]))
+        .sigma_worst_at_reference(long_edge);
+    let centre = conrod_vision::edgeblur::measure(
+        grey,
+        Some([
+            between(x0, x1, 0.2),
+            between(y0, y1, 0.2),
+            between(x0, x1, 0.8),
+            between(y0, y1, 0.8),
+        ]),
+    )
+    .sigma_worst_at_reference(long_edge);
+    // `f64::max` ignores a NaN, so the centre keeps the whole-box value when it
+    // could not be measured, and an unmeasured whole box leaves the centre.
+    let worst = if centre.is_nan() {
+        whole
+    } else {
+        whole.max(centre)
+    };
+    SubjectBlur {
+        whole,
+        centre,
+        worst,
+    }
+}
+
 /// A pan's frame rating says how the picture reads: capped by how much of the
 /// frame is sharp. The subjects keep their own ratings, which is what picks the
 /// keeper of a burst.
@@ -658,25 +719,34 @@ pub fn cull_frame(
             (det.bbox[3] - cy) * scale,
         ];
         let mut focus = sharpness::measure(&crop_grey, Some(inner), models.get(kind));
-        // The subject's score is the edge-blur estimate inside the detector box
-        // on native pixels; the tile measure above still supplies background,
+        // The subject's score is the edge-blur estimate on native pixels, taken
+        // as the worse of its whole box and the box's centre 60%: a sharp wall
+        // or banner behind the subject sits in the margins and must not vouch
+        // for a blurred body. The tile measure above still supplies background,
         // bands, features and the held-pan flag. A loaded learned model keeps
         // priority, and an unmeasurable box keeps the tile score.
         if !focus.learned {
-            let region = [
-                (det.bbox[0].max(0.0) as usize).min(fw),
-                (det.bbox[1].max(0.0) as usize).min(fh),
-                (det.bbox[2].max(0.0) as usize).min(fw),
-                (det.bbox[3].max(0.0) as usize).min(fh),
-            ];
-            let blur = conrod_vision::edgeblur::measure(&grey, Some(region));
-            if let Some(score) =
-                sharpness::rating_from_blur(
-                    blur.sigma_worst_at_reference(fw.max(fh)),
-                    sharpness::BlurStrictness::parse(&strictness),
-                )
-            {
-                focus.score = score;
+            let tile = focus.score;
+            let blur = subject_blur(&grey, det.bbox, fw.max(fh));
+            // The centre is consulted only when the tiles already suspect
+            // softness: a texture-poor but sharp body reads soft at the centre
+            // (its edge floor is region-relative), and asking it unasked demoted
+            // a crisp frame from 1.000 to 0.797.
+            let worst = if tile < 0.80 { blur.worst } else { blur.whole };
+            if let Some(score) = sharpness::rating_from_blur(
+                worst,
+                sharpness::BlurStrictness::parse(&strictness),
+            ) {
+                // A second opinion: a subject smeared along the frame's motion
+                // can leave too few measurable edges in that direction for the
+                // edge census (a blurred car against a sharp banner read 0.98),
+                // while the tiles still see the smear. Take the tile score when
+                // it is clearly lower; a flat but sharp body reads high on both.
+                focus.score = if !focus.uncertain && tile < score - 0.10 {
+                    tile
+                } else {
+                    score
+                };
             }
         }
         let edges = framing::assess(Some(det.bbox), fw as i64, fh as i64);
@@ -1438,6 +1508,155 @@ mod tests {
         assert_eq!(
             frame_rating(ScanProfile::Portrait, false, &people, None),
             0.99
+        );
+    }
+
+    /// The frame the two subject-blur tests share.
+    const SUBJECT_FRAME: (usize, usize) = (4000, 1800);
+    const CAR_BOX: [f64; 4] = [1000.0, 400.0, 2600.0, 1400.0];
+    const CAR: [usize; 4] = [1100, 450, 2500, 1350];
+
+    /// Hash-driven two-level blocks of `cell` px: edges lie far apart, which is
+    /// the one pattern `edgeblur` reads honestly. A fine periodic checkerboard
+    /// is not: the re-blur barely attenuates a pattern that repeats every 16 px,
+    /// so the ratio reads it as blurred.
+    fn blocks(w: usize, h: usize, cell: usize, lo: f32, hi: f32, seed: usize) -> Vec<f32> {
+        (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                let on = hash(x / cell + seed, y / cell) % 2 == 0;
+                if on {
+                    hi
+                } else {
+                    lo
+                }
+            })
+            .collect()
+    }
+
+    /// A separable box blur of radius `r`, edge-clamped, sliding window.
+    fn box_blur(src: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> {
+        let win = (2 * r + 1) as f32;
+        let mut tmp = vec![0f32; w * h];
+        for y in 0..h {
+            let row = &src[y * w..(y + 1) * w];
+            let mut acc: f32 = (0..=r).map(|i| row[i.min(w - 1)]).sum::<f32>()
+                + (1..=r).map(|_| row[0]).sum::<f32>();
+            for x in 0..w {
+                tmp[y * w + x] = acc / win;
+                acc += row[(x + r + 1).min(w - 1)] - row[x.saturating_sub(r)];
+            }
+        }
+        let mut out = vec![0f32; w * h];
+        for x in 0..w {
+            let mut acc: f32 = (0..=r)
+                .map(|i| tmp[i.min(h - 1) * w + x])
+                .sum::<f32>()
+                + (1..=r).map(|_| tmp[x]).sum::<f32>();
+            for y in 0..h {
+                out[y * w + x] = acc / win;
+                acc += tmp[(y + r + 1).min(h - 1) * w + x] - tmp[y.saturating_sub(r) * w + x];
+            }
+        }
+        out
+    }
+
+    /// The frame the two subject-blur tests share: a bright sharp background
+    /// with a dark car of coarse blocks in the middle of `CAR_BOX`, its own
+    /// 1400x900 rectangle inside the detection box so the margins are
+    /// background. `bg_blur`/`car_blur` are box-blur passes (radius 4, about
+    /// 2.6 px of sigma per pass).
+    fn subject_frame(bg_blur: usize, car_blur: usize) -> Gray {
+        let (w, h) = SUBJECT_FRAME;
+        let mut data = blocks(w, h, 32, 25.0, 235.0, 1);
+        for _ in 0..bg_blur {
+            data = box_blur(&data, w, h, 4);
+        }
+        let [x0, y0, x1, y1] = CAR;
+        let (cw, ch) = (x1 - x0, y1 - y0);
+        let mut car = blocks(cw, ch, 60, 12.0, 112.0, 2);
+        for _ in 0..car_blur {
+            car = box_blur(&car, cw, ch, 4);
+        }
+        for y in 0..ch {
+            for x in 0..cw {
+                data[(y0 + y) * w + x0 + x] = car[y * cw + x];
+            }
+        }
+        Gray::new(
+            w,
+            h,
+            data.iter()
+                .map(|v| v.round().clamp(0.0, 255.0) as u8)
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn a_blurred_subject_is_not_rescued_by_a_sharp_background_in_its_box() {
+        let strict = sharpness::BlurStrictness::Strict;
+        let long = SUBJECT_FRAME.0.max(SUBJECT_FRAME.1);
+        let frame = subject_frame(0, 3);
+        // The old reading, inside the whole box: the sharp banner in the
+        // margins is what it sees, so a heavily blurred car passes as sharp.
+        let whole = conrod_vision::edgeblur::measure(&frame, Some([1000, 400, 2600, 1400]))
+            .sigma_worst_at_reference(long);
+        let old = sharpness::rating_from_blur(whole, strict).unwrap();
+        assert!(
+            sharpness::stars_for(old) >= 4,
+            "the sharp background should read sharp on its own: sigma {whole:.3} -> {old:.3}"
+        );
+        // The worse of the box and its centre sees the car.
+        let blur = subject_blur(&frame, CAR_BOX, long);
+        assert!(
+            blur.centre.is_finite() && blur.centre > blur.whole,
+            "the centre must be the blurred part: whole {:.3}, centre {:.3}",
+            blur.whole,
+            blur.centre
+        );
+        let score = sharpness::rating_from_blur(blur.worst, strict).unwrap();
+        assert!(
+            score < sharpness::KEEPER_MIN_RATING,
+            "a blurred subject must not be a keeper: sigma {:.3} -> {score:.3}",
+            blur.worst
+        );
+        // The same frame with a sharp car: the change is not a blanket penalty.
+        let sharp = subject_blur(&subject_frame(0, 0), CAR_BOX, long);
+        let score = sharpness::rating_from_blur(sharp.worst, strict).unwrap();
+        assert!(
+            sharpness::stars_for(score) >= 4,
+            "a sharp car on the same background stays above four stars: sigma {:.3} -> {score:.3}",
+            sharp.worst
+        );
+    }
+
+    #[test]
+    fn a_sharp_subject_over_a_blurred_background_stays_sharp() {
+        let strict = sharpness::BlurStrictness::Strict;
+        let long = SUBJECT_FRAME.0.max(SUBJECT_FRAME.1);
+        let frame = subject_frame(2, 0);
+        // The margins really are blurred and still measurable: a strip of the
+        // box outside the car measures as a blur miss.
+        let strip = conrod_vision::edgeblur::measure(&frame, Some([1000, 400, 1100, 1400]))
+            .sigma_worst_at_reference(long);
+        let margin = sharpness::rating_from_blur(strip, strict).unwrap();
+        assert!(
+            margin < sharpness::KEEPER_MIN_RATING,
+            "the background in the margins should read blurred: sigma {strip:.3} -> {margin:.3}"
+        );
+        // The centre is the sharp subject, so the worse of the two stays sharp.
+        let blur = subject_blur(&frame, CAR_BOX, long);
+        let centre = sharpness::rating_from_blur(blur.centre, strict).unwrap();
+        assert!(
+            sharpness::stars_for(centre) >= 4,
+            "the centre must read sharp on its own: sigma {:.3} -> {centre:.3}",
+            blur.centre
+        );
+        let score = sharpness::rating_from_blur(blur.worst, strict).unwrap();
+        assert!(
+            sharpness::stars_for(score) >= 4,
+            "a sharp subject over a blurred background stays above four stars: sigma {:.3} -> {score:.3}",
+            blur.worst
         );
     }
 }
