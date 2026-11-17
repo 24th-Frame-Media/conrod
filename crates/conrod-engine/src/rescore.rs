@@ -173,7 +173,7 @@ fn remeasure_pixels(
 ) -> Result<usize> {
     let images = rows(
         &lock(&d.reader),
-        "SELECT id, path FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 ORDER BY id",
+        "SELECT id, path, af_x1, af_y1, af_x2, af_y2 FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 ORDER BY id",
         [job],
     )?;
     let subjects = rows(
@@ -211,7 +211,13 @@ fn remeasure_pixels(
                 let id = image["id"].as_i64().unwrap_or_default();
                 let path = std::path::Path::new(image["path"].as_str().unwrap_or_default());
                 let empty = Vec::new();
-                match measure_frame(path, by_image.get(&id).unwrap_or(&empty), cfg, pan_ok) {
+                match measure_frame(
+                    path,
+                    by_image.get(&id).unwrap_or(&empty),
+                    af_box(image),
+                    cfg,
+                    pan_ok,
+                ) {
                     Ok(m) => {
                         let db = lock(&d.db);
                         for (det, focus) in m.subjects {
@@ -246,8 +252,9 @@ fn remeasure_pixels(
 /// camera's autofocus area is a real subject box. Its edge blur is read on the
 /// upright preview's native luma, exactly as `cull_frame` measures a detected
 /// subject, and rated with the album's effective strictness. Only frames with
-/// no detection rows at all are touched: a frame whose subject is known already
-/// has the better box.
+/// no detection rows at all are touched: this score is the subject-less
+/// rescue, while a detected subject's AF box is read at a re-score
+/// (`measure_frame`).
 ///
 /// Returns `(measured, unread)`: how many frames took a score, and how many
 /// could not be read (moved or deleted originals). A frame it cannot read keeps
@@ -345,11 +352,33 @@ struct Measures {
     pan_share: Option<f64>,
 }
 
+/// A frame's stored autofocus area, as fractions of the upright frame (the
+/// space `conrod_io::af::read` returns); `None` when it has no box or only part
+/// of one.
+fn af_box(row: &Value) -> Option<[f64; 4]> {
+    let c = |k: &str| row[k].as_f64();
+    Some([c("af_x1")?, c("af_y1")?, c("af_x2")?, c("af_y2")?])
+}
+
+/// Does `subject` contain the centre of `af`? Both are frame pixels.
+fn holds_middle(subject: [f64; 4], af: [f64; 4]) -> bool {
+    let (cx, cy) = ((af[0] + af[2]) / 2.0, (af[1] + af[3]) / 2.0);
+    cx >= subject[0] && cx <= subject[2] && cy >= subject[1] && cy <= subject[3]
+}
+
 /// What `cull_frame` would have measured for each stored subject of one frame
 /// (subject id, measure), and for the frame as a whole.
+///
+/// `af` is the frame's AF box in fractions: when its centre lies inside a
+/// subject's detection box, that subject is measured inside the AF box -- the
+/// camera's own word on where the subject is -- rather than inside the
+/// detection box. `cull_frame` cannot make that call: it runs at scan time,
+/// before `focus_points` has read any AF box, so an existing album only sees
+/// the rule when it is re-scored.
 fn measure_frame(
     path: &std::path::Path,
     subjects: &[&Value],
+    af: Option<[f64; 4]>,
     cfg: &Settings,
     pan_ok: bool,
 ) -> Result<Measures> {
@@ -363,6 +392,16 @@ fn measure_frame(
     };
     let grey = image.to_gray();
     let (fw, fh) = (image.width, image.height);
+    // The AF box is fractions of the upright frame; the edge census works in
+    // the preview's pixels.
+    let af_px = af.map(|[x1, y1, x2, y2]| {
+        [
+            x1 * fw as f64,
+            y1 * fh as f64,
+            x2 * fw as f64,
+            y2 * fh as f64,
+        ]
+    });
     let mut out = Vec::new();
     let mut panning = false;
     for s in subjects {
@@ -401,17 +440,33 @@ fn measure_frame(
             // sharp background in the margins cannot vouch for a blurred body.
             // The tile score stays the fallback and still supplies the pan flag
             // and the features.
-            let tile = focus.score;
-            let blur = crate::subject_blur(&grey, bbox, fw.max(fh));
-            // As `cull_frame`: the centre only when the tiles suspect softness.
-            let worst = if tile < 0.80 { blur.worst } else { blur.whole };
-            if let Some(score) = sharpness::rating_from_blur(
-                worst,
-                sharpness::BlurStrictness::parse(&cfg.effective_blur()),
-            ) {
-                // As `cull_frame`: the crop's tile score only decides whether the
-                // centre was consulted; it never overrules the edge census.
-                focus.score = score;
+            //
+            // The camera's focus area is the better subject box when it sits on
+            // this subject: its whole-box edge blur is then the score, with no
+            // centre-60% gate (the AF box is already the subject, and the
+            // detection box's margins are exactly what let a sharp background
+            // vouch for a smeared car).
+            if let Some(af) = af_px.filter(|af| holds_middle(bbox, *af)) {
+                let blur = crate::subject_blur(&grey, af, fw.max(fh));
+                if let Some(score) = sharpness::rating_from_blur(
+                    blur.whole,
+                    sharpness::BlurStrictness::parse(&cfg.effective_blur()),
+                ) {
+                    focus.score = score;
+                }
+            } else {
+                let tile = focus.score;
+                let blur = crate::subject_blur(&grey, bbox, fw.max(fh));
+                // As `cull_frame`: the centre only when the tiles suspect softness.
+                let worst = if tile < 0.80 { blur.worst } else { blur.whole };
+                if let Some(score) = sharpness::rating_from_blur(
+                    worst,
+                    sharpness::BlurStrictness::parse(&cfg.effective_blur()),
+                ) {
+                    // As `cull_frame`: the crop's tile score only decides whether
+                    // the centre was consulted; it never overrules the edge census.
+                    focus.score = score;
+                }
             }
             // As `cull_frame` decides it: the subject not a blur miss, a
             // streaked background, and a preset that expects pans.
@@ -1135,5 +1190,205 @@ mod tests {
         assert!(score.is_some_and(|s| s > 0.5), "a sharp AF box: {score:?}");
         let kept: Option<f64> = lib.one("SELECT af_sharpness FROM images WHERE id=?", [seen]);
         assert_eq!(kept, None, "a detected frame is never AF-measured");
+    }
+
+    /// A readable fixture: deterministic value noise at several block scales, so
+    /// edges run in every direction (as a real subject's do), with one rectangle
+    /// box-blurred so its edge census reads as a smeared subject while the rest
+    /// of the frame stays sharp. `blurred` is in pixels; an empty rect blurs
+    /// nothing.
+    fn noise_data(w: usize, h: usize, blurred: [usize; 4]) -> Vec<u8> {
+        let hash = |x: usize, y: usize| {
+            let mut v = (x as u32).wrapping_mul(0x9E37_79B9) ^ (y as u32).wrapping_mul(0x85EB_CA6B);
+            v ^= v >> 13;
+            v = v.wrapping_mul(0xC2B2_AE35);
+            v ^ (v >> 16)
+        };
+        let mut grey = Vec::with_capacity(w * h);
+        for y in 0..h {
+            for x in 0..w {
+                let mut level = 0.0f64;
+                for (block, amp) in [(16usize, 90.0), (8, 60.0), (4, 40.0), (2, 25.0)] {
+                    let n = hash(x / block, y / block) % 256;
+                    level += amp * (f64::from(n) / 255.0 - 0.5);
+                }
+                grey.push((128.0 + level).clamp(0.0, 255.0) as u8);
+            }
+        }
+        // A 5x5 box blur over the rectangle: a defocused, smeared subject.
+        let [x0, y0, x1, y1] = blurred;
+        let src = grey.clone();
+        for y in y0..y1.min(h) {
+            for x in x0..x1.min(w) {
+                let (mut sum, mut n) = (0u32, 0u32);
+                for dy in -2i32..=2 {
+                    for dx in -2i32..=2 {
+                        let sx = (x as i32 + dx).clamp(0, w as i32 - 1) as usize;
+                        let sy = (y as i32 + dy).clamp(0, h as i32 - 1) as usize;
+                        sum += u32::from(src[sy * w + sx]);
+                        n += 1;
+                    }
+                }
+                grey[y * w + x] = (sum / n) as u8;
+            }
+        }
+        grey.iter().flat_map(|&v| [v, v, v]).collect()
+    }
+
+    /// The pixels an AF box's fractions cover, as the engine reads them.
+    fn af_pixels(area: [f64; 4], w: usize, h: usize) -> [usize; 4] {
+        [
+            (area[0] * w as f64) as usize,
+            (area[1] * h as f64) as usize,
+            (area[2] * w as f64) as usize,
+            (area[3] * h as f64) as usize,
+        ]
+    }
+
+    /// What a re-score measures for one AF box: the whole-box edge blur, rated
+    /// with the album's own strictness.
+    fn af_score(lib: &Lib, name: &str, area: [f64; 4]) -> f64 {
+        let frame = conrod_io::raw::read(&lib.root.join(name)).unwrap();
+        let image = conrod_vision::imageops::Rgb::decode_jpeg(&frame.preview, 1)
+            .unwrap()
+            .orient(frame.orientation);
+        let grey = image.to_gray();
+        let (fw, fh) = (grey.width, grey.height);
+        let rect = [
+            area[0] * fw as f64,
+            area[1] * fh as f64,
+            area[2] * fw as f64,
+            area[3] * fh as f64,
+        ];
+        let blur = crate::subject_blur(&grey, rect, fw.max(fh));
+        let strictness = settings(lib.d(), lib.job).unwrap().effective_blur();
+        sharpness::rating_from_blur(blur.whole, sharpness::BlurStrictness::parse(&strictness))
+            .expect("the AF box measures")
+    }
+
+    fn save_frame(lib: &Lib, name: &str, w: usize, h: usize, data: &[u8]) {
+        crate::desktop::save_jpeg(
+            &conrod_vision::imageops::Rgb::new(w, h, data.to_vec()),
+            &lib.root.join(name),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_detected_subject_is_scored_inside_the_af_box_that_sits_on_it() {
+        let lib = Lib::new("af-subject");
+        let (w, h) = (2400usize, 1600usize);
+        // The blurred patch sits in the detection box's margins, so the
+        // detection-box measure would read the sharp noise around it.
+        let af = [0.72, 0.62, 0.84, 0.74];
+        let data = noise_data(w, h, af_pixels(af, w, h));
+        save_frame(&lib, "af.jpg", w, h, &data);
+        save_frame(&lib, "plain.jpg", w, h, &data);
+        let framed = lib.frame("af.jpg", Some(1));
+        let plain = lib.frame("plain.jpg", Some(1));
+        let (with_af, control) = (
+            lib.detection(framed, "vehicle", 0.95),
+            lib.detection(plain, "vehicle", 0.95),
+        );
+        for det in [with_af, control] {
+            lib.sql(
+                "UPDATE detections SET x1=200,y1=200,x2=2200,y2=1400,heuristic=0.95 WHERE id=?",
+                [det],
+            );
+        }
+        lib.sql(
+            "UPDATE images SET af_x1=?,af_y1=?,af_x2=?,af_y2=? WHERE id=?",
+            params![af[0], af[1], af[2], af[3], framed],
+        );
+
+        lib.run("rescore", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+
+        let af_rating: f64 = lib.one("SELECT rating FROM detections WHERE id=?", [with_af]);
+        let control_rating: f64 = lib.one("SELECT rating FROM detections WHERE id=?", [control]);
+        let expected = af_score(&lib, "af.jpg", af);
+        assert!(
+            (af_rating - expected).abs() < 1e-9,
+            "the stored rating follows the AF box: {af_rating} vs {expected}"
+        );
+        assert!(
+            expected < sharpness::KEEPER_MIN_RATING,
+            "the fixture's AF box is the worse measure: {expected}"
+        );
+        assert!(
+            control_rating >= sharpness::KEEPER_MIN_RATING && control_rating > expected + 0.05,
+            "the same pixels scored on the detection box would have kept their stars: {control_rating} vs {expected}"
+        );
+    }
+
+    #[test]
+    fn an_af_box_off_the_subject_is_ignored() {
+        let lib = Lib::new("af-off");
+        let (w, h) = (2400usize, 1600usize);
+        // Top-left, while the car sits well inside the frame: the AF centre is
+        // outside its detection box, so it says nothing about this subject.
+        let af = [0.02, 0.02, 0.10, 0.10];
+        let data = noise_data(w, h, af_pixels(af, w, h));
+        save_frame(&lib, "af.jpg", w, h, &data);
+        save_frame(&lib, "plain.jpg", w, h, &data);
+        let framed = lib.frame("af.jpg", Some(1));
+        let plain = lib.frame("plain.jpg", Some(1));
+        let (with_af, control) = (
+            lib.detection(framed, "vehicle", 0.95),
+            lib.detection(plain, "vehicle", 0.95),
+        );
+        for det in [with_af, control] {
+            lib.sql(
+                "UPDATE detections SET x1=400,y1=400,x2=2000,y2=1200,heuristic=0.95 WHERE id=?",
+                [det],
+            );
+        }
+        lib.sql(
+            "UPDATE images SET af_x1=?,af_y1=?,af_x2=?,af_y2=? WHERE id=?",
+            params![af[0], af[1], af[2], af[3], framed],
+        );
+
+        lib.run("rescore", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+
+        let af_rating: f64 = lib.one("SELECT rating FROM detections WHERE id=?", [with_af]);
+        let control_rating: f64 = lib.one("SELECT rating FROM detections WHERE id=?", [control]);
+        assert_eq!(
+            af_rating, control_rating,
+            "an AF box whose centre is off the subject changes nothing"
+        );
+        assert!(
+            af_rating >= sharpness::KEEPER_MIN_RATING,
+            "the detection box is still what the subject is scored on: {af_rating}"
+        );
+    }
+
+    #[test]
+    fn a_frame_without_an_af_box_keeps_the_detection_box_measure() {
+        let lib = Lib::new("af-none");
+        let (w, h) = (2400usize, 1600usize);
+        let data = noise_data(w, h, [0; 4]);
+        save_frame(&lib, "plain.jpg", w, h, &data);
+        let frame = lib.frame("plain.jpg", Some(1));
+        let car = lib.detection(frame, "vehicle", 0.95);
+        lib.sql(
+            "UPDATE detections SET x1=400,y1=400,x2=2000,y2=1200,heuristic=0.95 WHERE id=?",
+            [car],
+        );
+
+        lib.run("rescore", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+        let rating: f64 = lib.one("SELECT rating FROM detections WHERE id=?", [car]);
+        assert!(
+            rating >= sharpness::KEEPER_MIN_RATING,
+            "no AF box: the detection box is measured as before: {rating}"
+        );
+        let af: Option<f64> = lib.one("SELECT af_x1 FROM images WHERE id=?", [frame]);
+        assert_eq!(af, None, "nothing invented an AF box");
+        // A second re-score of the same pixels keeps the same number.
+        lib.run("rescore", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+        let again: f64 = lib.one("SELECT rating FROM detections WHERE id=?", [car]);
+        assert_eq!(again, rating);
     }
 }

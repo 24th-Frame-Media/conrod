@@ -660,21 +660,30 @@ pub fn pick_keepers(d: &Desktop, job: i64) -> Result<Value> {
     }
 }
 
-/// The action: read the camera's autofocus area for every RAW of the album,
-/// store it per frame, then put the frames the detector missed back on their
-/// car: measure the focus inside the AF box, re-rate them and regroup so a
+/// The action: read the camera's autofocus area for every visible RAW of the
+/// album, store it per frame, then put the frames the detector missed back on
+/// their car: measure the focus inside the AF box, re-rate them and regroup so a
 /// missed frame sits in its car's moment. One press fixes an existing album.
+///
+/// Every visible frame without an AF box is read, detected or not: the box is
+/// the most reliable subject box a frame has, so a re-score measures a detected
+/// subject inside it when it sits on the subject (see `rescore`'s
+/// `measure_frame`). The pass is resumable: the query takes
+/// only frames whose `af_x1` is still NULL, so an interrupted run picks up where
+/// it stopped and a second run only fills the gaps. That matters because a full
+/// album is a long read: 6,912 frames take about 13 minutes.
 pub fn focus_points(d: &Arc<Desktop>, job: i64) -> Result<Value> {
     require_job(d, job)?;
     let cfg = settings(d, job)?;
     launch(d, job, "Reading focus points", move |d, stop, task| {
         let exiftool = exiftool_path()?;
-        // The visible frames of the album; only RAW carries maker AF tags.
+        // The visible frames of the album that have no AF box yet; only RAW
+        // carries maker AF tags.
         let images = rows(
             &lock(&d.reader),
             "SELECT id,path,width,height FROM images WHERE job_id=? AND status='done' \
              AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 \
-             AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_id=images.id) ORDER BY id",
+             AND af_x1 IS NULL ORDER BY id",
             [job],
         )?;
         let raws: Vec<(i64, std::path::PathBuf, u32, u32)> = images
@@ -698,23 +707,30 @@ pub fn focus_points(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         // `af::read` needs each frame's upright size and EXIF orientation: the
         // AF tags are in sensor order and the box cannot be turned upright
         // without it. The database has the size but no orientation, and
-        // `raw::read` is the only public source for it; it reads each file's
-        // preview bytes, so rayon reads them in parallel.
-        task.detail(format!("Reading {} RAW files", raws.len()));
+        // `raw::read` is the only public source for it. Read once per chunk, in
+        // parallel, and only for the frames that chunk reads, so the work stays
+        // bounded by what has been stored and a stopped run leaves nothing read
+        // twice.
+        task.detail(format!(
+            "Reading {} RAW files for the camera's focus area · a full read of 6,912 frames \
+             takes about 13 minutes, and an interrupted run resumes at the frames still \
+             without one",
+            raws.len()
+        ));
         task.progress(0, raws.len() as u64);
-        let frames: HashMap<_, _> = raws
-            .par_iter()
-            .map(|(_, path, w, h)| {
-                let orientation = conrod_io::raw::read(path).map_or(1, |f| f.orientation);
-                (path.clone(), (*w, *h, orientation))
-            })
-            .collect();
         let (mut with_point, mut without) = (0usize, 0usize);
         let mut read = 0usize;
-        for chunk in raws.chunks(200) {
+        for chunk in raws.chunks(100) {
             if stop.load(Ordering::Relaxed) {
                 return Ok(());
             }
+            let frames: HashMap<_, _> = chunk
+                .par_iter()
+                .map(|(_, path, w, h)| {
+                    let orientation = conrod_io::raw::read(path).map_or(1, |f| f.orientation);
+                    (path.clone(), (*w, *h, orientation))
+                })
+                .collect();
             let paths: Vec<_> = chunk.iter().map(|(_, path, _, _)| path.clone()).collect();
             let areas = conrod_io::af::read(&paths, &exiftool, &frames);
             let stored: Vec<(i64, Option<conrod_io::af::AfArea>)> = chunk
