@@ -366,13 +366,25 @@ fn holds_middle(subject: [f64; 4], af: [f64; 4]) -> bool {
     cx >= subject[0] && cx <= subject[2] && cy >= subject[1] && cy <= subject[3]
 }
 
+/// The focus area is a second opinion on a subject's sharpness, never a veto
+/// against the detection box: it may lower the score (on a motion-smeared car
+/// it reads worse) but it may not raise it, because it can also land on a sharp
+/// corner of a subject the detection box found soft.
+#[doc(hidden)]
+pub fn second_opinion(detection: Option<f64>, af: Option<f64>) -> Option<f64> {
+    match (detection, af) {
+        (Some(detection), Some(af)) => Some(detection.min(af)),
+        (detection, af) => detection.or(af),
+    }
+}
+
 /// What `cull_frame` would have measured for each stored subject of one frame
 /// (subject id, measure), and for the frame as a whole.
 ///
 /// `af` is the frame's AF box in fractions: when its centre lies inside a
-/// subject's detection box, that subject is measured inside the AF box -- the
-/// camera's own word on where the subject is -- rather than inside the
-/// detection box. `cull_frame` cannot make that call: it runs at scan time,
+/// subject's detection box, the AF box is a second opinion on that subject's
+/// sharpness -- the camera's own word on where the subject is -- and can only
+/// lower the score. `cull_frame` cannot make that call: it runs at scan time,
 /// before `focus_points` has read any AF box, so an existing album only sees
 /// the rule when it is re-scored.
 fn measure_frame(
@@ -439,34 +451,30 @@ fn measure_frame(
             // pixels, the worse of the whole box and the box's centre 60%, so a
             // sharp background in the margins cannot vouch for a blurred body.
             // The tile score stays the fallback and still supplies the pan flag
-            // and the features.
-            //
+            // and the features. As in `cull_frame`, the crop's tile score only
+            // decides whether the centre was consulted; it never overrules the
+            // edge census.
+            let tile = focus.score;
+            let blur = crate::subject_blur(&grey, bbox, fw.max(fh));
+            let worst = if tile < 0.80 { blur.worst } else { blur.whole };
+            let strictness = sharpness::BlurStrictness::parse(&cfg.effective_blur());
+            let detection = sharpness::rating_from_blur(worst, strictness);
             // The camera's focus area is the better subject box when it sits on
-            // this subject: its whole-box edge blur is then the score, with no
-            // centre-60% gate (the AF box is already the subject, and the
-            // detection box's margins are exactly what let a sharp background
-            // vouch for a smeared car).
-            if let Some(af) = af_px.filter(|af| holds_middle(bbox, *af)) {
-                let blur = crate::subject_blur(&grey, af, fw.max(fh));
-                if let Some(score) = sharpness::rating_from_blur(
-                    blur.whole,
-                    sharpness::BlurStrictness::parse(&cfg.effective_blur()),
-                ) {
-                    focus.score = score;
-                }
-            } else {
-                let tile = focus.score;
-                let blur = crate::subject_blur(&grey, bbox, fw.max(fh));
-                // As `cull_frame`: the centre only when the tiles suspect softness.
-                let worst = if tile < 0.80 { blur.worst } else { blur.whole };
-                if let Some(score) = sharpness::rating_from_blur(
-                    worst,
-                    sharpness::BlurStrictness::parse(&cfg.effective_blur()),
-                ) {
-                    // As `cull_frame`: the crop's tile score only decides whether
-                    // the centre was consulted; it never overrules the edge census.
-                    focus.score = score;
-                }
+            // this subject: its whole-box edge blur needs no centre-60% gate
+            // (the AF box is already the subject, and the detection box's
+            // margins are exactly what let a sharp background vouch for a
+            // smeared car). It is a second opinion only: on a heavily blurred
+            // car it reads worse and lowers the score, but it can also read
+            // sharper than the detection box, and must not vouch for a frame the
+            // detection box found soft (B1000_4218 read 0.984 that way).
+            let af = af_px
+                .filter(|af| holds_middle(bbox, *af))
+                .and_then(|af| {
+                    let blur = crate::subject_blur(&grey, af, fw.max(fh));
+                    sharpness::rating_from_blur(blur.whole, strictness)
+                });
+            if let Some(score) = second_opinion(detection, af) {
+                focus.score = score;
             }
             // As `cull_frame` decides it: the subject not a blur miss, a
             // streaked background, and a preset that expects pans.
@@ -1319,6 +1327,18 @@ mod tests {
             control_rating >= sharpness::KEEPER_MIN_RATING && control_rating > expected + 0.05,
             "the same pixels scored on the detection box would have kept their stars: {control_rating} vs {expected}"
         );
+    }
+
+    #[test]
+    fn the_focus_area_is_a_second_opinion_and_can_only_lower_a_score() {
+        // A smeared car: the AF box reads worse, and that is the score.
+        assert_eq!(second_opinion(Some(0.92), Some(0.77)), Some(0.77));
+        // The AF box landed on a sharp corner of a soft subject: no rescue.
+        assert_eq!(second_opinion(Some(0.86), Some(0.98)), Some(0.86));
+        // One measure only.
+        assert_eq!(second_opinion(Some(0.86), None), Some(0.86));
+        assert_eq!(second_opinion(None, Some(0.77)), Some(0.77));
+        assert_eq!(second_opinion(None, None), None);
     }
 
     #[test]

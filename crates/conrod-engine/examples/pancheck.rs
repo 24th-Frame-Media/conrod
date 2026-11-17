@@ -108,15 +108,21 @@ fn main() -> Result<(), String> {
     let bare = bbox
         .is_none()
         .then(|| conrod_engine::bare_frame(&grey, &strictness));
-    // The score that would be stored now: a bare frame's rescued score, else the
-    // subject's edge blur, else the tile score it falls back to.
-    let now = match &bare {
-        Some(bare) => bare.score,
-        None => subject.or(Some(m.score)),
-    };
     // What the edge blur would be inside the camera's own box: the subject the
     // photographer focused on, without the wall behind a detection box's edges.
+    // As the engine: the whole AF box (it is already the subject), and the
+    // score can only be lowered by it, never raised.
     let af_blur = af.map(|b| conrod_engine::subject_blur(&grey, b, long));
+    let af_rating = bbox.and(af_blur).and_then(|a| {
+        sharpness::rating_from_blur(a.whole, sharpness::BlurStrictness::parse(&strictness))
+    });
+    // The score that would be stored now: a bare frame's rescued score, else the
+    // subject's edge blur (or the AF box's, when worse), else the tile score it
+    // falls back to.
+    let now = match &bare {
+        Some(bare) => bare.score,
+        None => conrod_engine::rescore::second_opinion(subject, af_rating).or(Some(m.score)),
+    };
     let blur_line = match &blur {
         Some(blur) => format!(
             " · sigma whole {:.3} · sigma centre {:.3} · tile {:.3} · uncertain {}{}",
@@ -126,11 +132,8 @@ fn main() -> Result<(), String> {
             m.uncertain,
             af_blur.map_or(String::new(), |a| format!(
                 " · sigma af {:.3} ({:.3})",
-                a.worst,
-                n(sharpness::rating_from_blur(
-                    a.worst,
-                    sharpness::BlurStrictness::parse(&strictness)
-                ))
+                a.whole,
+                n(af_rating)
             ))
         ),
         None => format!(" · tile {:.3}", m.score),
