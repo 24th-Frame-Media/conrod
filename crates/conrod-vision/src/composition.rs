@@ -4,7 +4,7 @@
 //! a Sobel gradient magnitude at 128 px is the saliency proxy (edges times a
 //! centre-distance prior), its left-right mirror is symmetry, edge density plus
 //! colour variety outside the subject is clutter, and a Hough transform of the
-//! 256 px edges finds leading lines. Total cost is a few milliseconds per
+//! 256 px edges finds leading lines. Total cost is under ten milliseconds per
 //! thumbnail (see the ignored `real_composition_timing` test), which is what
 //! makes it usable on every frame of a pan rather than only on the keepers.
 //!
@@ -16,7 +16,9 @@
 //! keeper-signals.md`. Constants marked "own choice" are not from that research.
 //!
 //! Conventions: fractions of the frame, origin top-left, y grows down, boxes
-//! `[x0, y0, x1, y1]`. Distances are fractions of the frame diagonal.
+//! `[x0, y0, x1, y1]`. Placement distances are Euclidean in frame fractions (x
+//! and y each a fraction of its own axis); line distances are fractions of the
+//! frame diagonal.
 
 use std::f64::consts::PI;
 
@@ -56,14 +58,18 @@ const MIN_EDGE: f64 = 10.0;
 /// Hue histogram bins for the colour-variety half of clutter.
 const HUES: usize = 24;
 
-/// Anchors: how far (as a fraction of the diagonal) a subject may sit from the
-/// anchor before its placement score reaches zero.
-///
-/// The centre radius is generous because a centred subject is a valid
-/// composition, not a near miss (research 4.8); the two grids are tighter so
-/// that being on a grid point is a real hit.
-pub const CENTRE_RADIUS: f64 = 0.30;
-pub const GRID_RADIUS: f64 = 0.18;
+/// Anchors: how far, in frame fractions, a subject may sit from an anchor
+/// before its placement score reaches zero. The distance is Euclidean with x
+/// and y each a fraction of its own axis (so 0.10 is 10% of the width and 10%
+/// of the height), not diagonal-normalised: a diagonal radius would let half a
+/// frame's subjects "hit" a grid at a 3:2 frame. The centre is a zone: both
+/// axes must be within [`CENTRE_GATE`] before the centre anchor is considered
+/// at all, and its score radius is [`CENTRE_RADIUS`]. Measured on a track
+/// album most moving subjects sit off every anchor, which is the honest answer;
+/// the score separates the frames that do land on one.
+pub const CENTRE_GATE: f64 = 0.10;
+pub const CENTRE_RADIUS: f64 = 0.14;
+pub const GRID_RADIUS: f64 = 0.10;
 
 /// Clutter mapping, linear in edge density outside the subject:
 /// density 0.02 -> 0.20, density 0.12 -> 0.90, clamped to 0..1. A frame with
@@ -79,9 +85,25 @@ pub const CLUTTER_COLOUR_WEIGHT: f64 = 0.30;
 
 /// A leading line counts when its infinite extension passes within this
 /// fraction of the diagonal of the subject (or mass) centroid.
-pub const LINE_NEAR: f64 = 0.12;
+pub const LINE_NEAR: f64 = 0.08;
 /// A line must be supported over this fraction of the diagonal to count.
-pub const LINE_MIN_LEN: f64 = 0.25;
+pub const LINE_MIN_LEN: f64 = 0.35;
+/// A peak must reach this share of the strongest peak in the frame, so texture
+/// that survives the length test still has to compete with the real line.
+const LINE_SHARE_OF_MAX: f64 = 0.25;
+/// Supporting edge pixels must form one run: a gap larger than this fraction of
+/// the diagonal breaks it. A peak that only gathers scattered collinear texture
+/// inside the 1.5-pixel corridor is not a line, however far apart its extremes.
+const LINE_SUPPORT_GAP: f64 = 0.04;
+/// The centroid's foot on the line must lie inside the line's own support span
+/// extended by this fraction of the diagonal at each end: a strong edge across
+/// the far side of the frame points at nothing, however well it extends.
+const LINE_SPAN_SLACK: f64 = 0.10;
+/// At most this many lines per [`THETA_BUCKET`]-wide orientation bucket, so a
+/// fence's parallel rails count once or twice, not seven times.
+const LINES_PER_BUCKET: usize = 2;
+/// Orientation bucket width in theta bins, i.e. degrees.
+const THETA_BUCKET: usize = 30;
 /// At most this many leading lines are reported.
 pub const MAX_LINES: u8 = 7;
 
@@ -90,8 +112,8 @@ const HOUGH_SAMPLES: usize = 3000;
 /// Hough resolution: theta bins over 0..180 degrees, one-pixel rho bins.
 const THETA_BINS: usize = 180;
 /// Peaks within this many theta bins and rho pixels are the same line.
-const MERGE_THETA: i32 = 4;
-const MERGE_RHO: isize = 4;
+const MERGE_THETA: i32 = 6;
+const MERGE_RHO: isize = 6;
 /// How many of the strongest Hough peaks are checked, at most.
 const PEAKS: usize = 64;
 
@@ -144,13 +166,13 @@ pub fn measure(image: &Rgb, subject: Option<[f64; 4]>) -> Composition {
 
     // Saliency: edges x centre prior, gated on the subject box.
     let gate = subject.map(|b| PxBox::of(b, small.w, small.h).padded(PAD));
-    let mass = saliency(&small_grad, gate);
+    let mass = saliency(&small_grad.mag, gate);
     let (mass_px, mass_py) = centroid(&mass, small.w, small.h);
     let mass_xy = (mass_px / small.w as f64, mass_py / small.h as f64);
 
     // Placement: the subject box centre when there is a box, else the mass.
     let point = subject.map_or(mass_xy, box_centre);
-    let (placement, mode) = placement_at(point, small.w, small.h);
+    let (placement, mode) = placement_at(point);
 
     // Balance: half the mass, half the box, so a small off-centre car does not
     // read as violently unbalanced.
@@ -164,10 +186,10 @@ pub fn measure(image: &Rgb, subject: Option<[f64; 4]>) -> Composition {
     let balance_x = ((bx - 0.5) * 2.0).clamp(-1.0, 1.0);
     let balance_y = ((by - 0.5) * 2.0).clamp(-1.0, 1.0);
 
-    let symmetry = symmetry(&small_grad);
-    let threshold = edge_threshold(&mid_grad);
+    let symmetry = symmetry(&small_grad.mag);
+    let threshold = edge_threshold(&mid_grad.mag);
     let background = subject.map(|b| PxBox::of(b, mid.w, mid.h).padded(PAD));
-    let clutter = clutter(image, &mid, &mid_grad, threshold, background);
+    let clutter = clutter(image, &mid, &mid_grad.mag, threshold, background);
 
     let mid_point = match subject {
         Some(b) => {
@@ -212,26 +234,98 @@ fn plane(gray: &Gray) -> Plane {
     }
 }
 
+/// A gradient map: the magnitude plane plus the two Sobel responses that the
+/// non-maximum suppression needs. One pass, shared by symmetry, clutter and the
+/// Hough transform.
+struct Sobel {
+    mag: Plane,
+    gx: Vec<f64>,
+    gy: Vec<f64>,
+}
+
 /// Sobel magnitude, divided by four so a full black-to-white step reads 255,
 /// clamped to the same 0..255 scale. Borders replicate.
-fn sobel(p: &Plane) -> Plane {
+fn sobel(p: &Plane) -> Sobel {
+    let (gx, gy) = sobel_components(p);
+    Sobel {
+        mag: Plane {
+            w: p.w,
+            h: p.h,
+            v: gx
+                .iter()
+                .zip(&gy)
+                .map(|(x, y)| x.hypot(*y).min(255.0))
+                .collect(),
+        },
+        gx,
+        gy,
+    }
+}
+
+/// The Sobel kernel's x and y responses, divided by four. Borders replicate.
+fn sobel_components(p: &Plane) -> (Vec<f64>, Vec<f64>) {
     let (w, h) = (p.w, p.h);
     let at = |x: isize, y: isize| -> f64 {
         let x = x.clamp(0, w as isize - 1) as usize;
         let y = y.clamp(0, h as isize - 1) as usize;
         p.at(x, y)
     };
-    let mut v = vec![0.0; w * h];
+    let mut gx = vec![0.0; w * h];
+    let mut gy = vec![0.0; w * h];
     for y in 0..h as isize {
         for x in 0..w as isize {
-            let gx = (at(x + 1, y - 1) + 2.0 * at(x + 1, y) + at(x + 1, y + 1))
-                - (at(x - 1, y - 1) + 2.0 * at(x - 1, y) + at(x - 1, y + 1));
-            let gy = (at(x - 1, y + 1) + 2.0 * at(x, y + 1) + at(x + 1, y + 1))
-                - (at(x - 1, y - 1) + 2.0 * at(x, y - 1) + at(x + 1, y - 1));
-            v[y as usize * w + x as usize] = (gx.hypot(gy) / 4.0).min(255.0);
+            let i = y as usize * w + x as usize;
+            gx[i] = ((at(x + 1, y - 1) + 2.0 * at(x + 1, y) + at(x + 1, y + 1))
+                - (at(x - 1, y - 1) + 2.0 * at(x - 1, y) + at(x - 1, y + 1)))
+                / 4.0;
+            gy[i] = ((at(x - 1, y + 1) + 2.0 * at(x, y + 1) + at(x + 1, y + 1))
+                - (at(x - 1, y - 1) + 2.0 * at(x, y - 1) + at(x + 1, y - 1)))
+                / 4.0;
         }
     }
-    Plane { w, h, v }
+    (gx, gy)
+}
+
+/// Edge pixels thinned by non-maximum suppression along the gradient direction,
+/// so every ridge votes once. Without it each thick edge yields two or three
+/// parallel rho peaks and the accumulator fills with texture: on real frames the
+/// unthinned map marks ~10% of all pixels and the Hough kept six "lines" per
+/// photo; thinned, a fence rail or a track edge is one ridge and a stray patch
+/// has no long contiguous support.
+fn edge_points(gradient: &Sobel, threshold: f64) -> Vec<(f64, f64)> {
+    let w = gradient.mag.w;
+    let h = gradient.mag.h;
+    if w < 3 || h < 3 {
+        return Vec::new();
+    }
+    let (gx, gy) = (&gradient.gx, &gradient.gy);
+    let mag = &gradient.mag;
+    let mut points = Vec::new();
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let i = y * w + x;
+            let m = mag.at(x, y);
+            if m < threshold {
+                continue;
+            }
+            let (ax, ay) = (gx[i].abs(), gy[i].abs());
+            let (sx, sy) = if ax > 2.414 * ay {
+                (1i32, 0i32)
+            } else if ay > 2.414 * ax {
+                (0, 1)
+            } else if (gx[i] >= 0.0) == (gy[i] >= 0.0) {
+                (1, 1)
+            } else {
+                (1, -1)
+            };
+            let ahead = mag.at((x as i32 + sx) as usize, (y as i32 + sy) as usize);
+            let behind = mag.at((x as i32 - sx) as usize, (y as i32 - sy) as usize);
+            if m >= ahead && m >= behind {
+                points.push((x as f64 + 0.5, y as f64 + 0.5));
+            }
+        }
+    }
+    points
 }
 
 /// A box in pixel coordinates of one of the sampled grids.
@@ -338,34 +432,45 @@ fn centroid(mass: &[f64], w: usize, h: usize) -> (f64, f64) {
 
 /// The best of the three anchor families and its score.
 ///
-/// Distances are per axis in fractions of the frame, then divided by the
-/// diagonal, so the aspect ratio is respected. The mode is the anchor with the
-/// highest score, not the smallest distance: the centre's larger radius means
-/// a subject a fifth of a frame off centre still reads as "centre", which is
-/// what a photographer means by it.
-fn placement_at(point: (f64, f64), w: usize, h: usize) -> (f64, &'static str) {
-    let diag = (w as f64).hypot(h as f64);
-    let distance = |px: f64, py: f64| {
-        ((point.0 - px) * w as f64).hypot((point.1 - py) * h as f64) / diag
+/// Distances are Euclidean in frame fractions (x and y each a fraction of its
+/// own axis), not fractions of the diagonal. The centre anchor only exists
+/// when the point is within [`CENTRE_GATE`] of the centre on **both** axes, so
+/// a subject a sixth of a frame off centre cannot be called centred; the grids
+/// are always available. The mode is the highest-scoring anchor; when every
+/// score is zero (the frame fits no anchor) the mode is still the nearest
+/// anchor, which is what names a frame "thirds" for a human to compare pans by,
+/// while its score honestly says zero.
+fn placement_at(point: (f64, f64)) -> (f64, &'static str) {
+    let mut best = (0.0, "centre");
+    let mut nearest = (f64::INFINITY, "centre");
+    let mut consider = |px: f64, py: f64, radius: f64, mode: &'static str| {
+        let distance = (point.0 - px).hypot(point.1 - py);
+        if distance < nearest.0 {
+            nearest = (distance, mode);
+        }
+        let score = (1.0 - distance / radius).clamp(0.0, 1.0);
+        if score > best.0 {
+            best = (score, mode);
+        }
     };
-    let mut best = (1.0 - distance(0.5, 0.5) / CENTRE_RADIUS, "centre");
+    if (point.0 - 0.5).abs() <= CENTRE_GATE && (point.1 - 0.5).abs() <= CENTRE_GATE {
+        consider(0.5, 0.5, CENTRE_RADIUS, "centre");
+    }
     for &px in &THIRDS_POINTS {
         for &py in &THIRDS_POINTS {
-            let score = 1.0 - distance(px, py) / GRID_RADIUS;
-            if score > best.0 {
-                best = (score, "thirds");
-            }
+            consider(px, py, GRID_RADIUS, "thirds");
         }
     }
     for &px in &PHI_POINTS {
         for &py in &PHI_POINTS {
-            let score = 1.0 - distance(px, py) / GRID_RADIUS;
-            if score > best.0 {
-                best = (score, "phi");
-            }
+            consider(px, py, GRID_RADIUS, "phi");
         }
     }
-    (best.0.clamp(0.0, 1.0), best.1)
+    if best.0 > 0.0 {
+        best
+    } else {
+        (0.0, nearest.1)
+    }
 }
 
 /// Pearson correlation of the gradient magnitude with its left-right mirror,
@@ -396,21 +501,26 @@ fn symmetry(grad: &Plane) -> f64 {
     }
 }
 
-/// The edge threshold: half the 99th percentile, but never below [`MIN_EDGE`].
+/// The edge threshold: half the 99th percentile magnitude, but never below
+/// [`MIN_EDGE`]. The percentile comes from a 256-bin histogram of the
+/// magnitudes (they are clamped to that range), so it costs one pass and no
+/// sort or copy.
 fn edge_threshold(grad: &Plane) -> f64 {
-    let p99 = percentile(&grad.v, EDGE_PERCENTILE);
-    (EDGE_SHARE_OF_P99 * p99).max(MIN_EDGE)
-}
-
-/// The `q` quantile of `v`, 0..1, by selection (no full sort).
-fn percentile(v: &[f64], q: f64) -> f64 {
-    if v.is_empty() {
-        return 0.0;
+    let mut hist = [0usize; 256];
+    for &v in &grad.v {
+        hist[v.clamp(0.0, 255.0) as usize] += 1;
     }
-    let mut copy = v.to_vec();
-    let k = ((q * (copy.len() - 1) as f64).round() as usize).min(copy.len() - 1);
-    copy.select_nth_unstable_by(k, f64::total_cmp);
-    copy[k]
+    let target = ((EDGE_PERCENTILE * grad.v.len() as f64).ceil() as usize).max(1);
+    let mut seen = 0;
+    let mut percentile = 0.0;
+    for (bin, &count) in hist.iter().enumerate() {
+        seen += count;
+        if seen >= target {
+            percentile = bin as f64;
+            break;
+        }
+    }
+    (EDGE_SHARE_OF_P99 * percentile).max(MIN_EDGE)
 }
 
 /// Background clutter: edge density outside the padded subject box mapped
@@ -504,33 +614,33 @@ fn hue_entropy(hist: &[f64; HUES]) -> f64 {
 }
 
 /// Leading lines: a plain Hough transform, no probabilistic sampling, no
-/// orientation bookkeeping.
+/// orientation bookkeeping, but strict about what counts.
 ///
-/// Every edge pixel (evenly sampled down to [`HOUGH_SAMPLES`]) votes in a
-/// 180-theta by one-pixel-rho accumulator. Peaks above 10% of the diagonal are
-/// checked in vote order, near-duplicates within four bins / four pixels are
-/// merged, and a peak is kept only when all three hold:
+/// Every thinned edge pixel (non-maximum suppression along the gradient, then
+/// evenly sampled down to [`HOUGH_SAMPLES`]) votes in a 180-theta by
+/// one-pixel-rho accumulator. Peaks are taken in vote order above 10% of the
+/// diagonal and [`LINE_SHARE_OF_MAX`] of the frame's strongest peak;
+/// near-duplicates within six bins / six pixels are merged, and at most two
+/// lines are kept per 30-degree orientation bucket. A peak is kept only when
+/// all four hold:
 /// * its infinite extension passes within [`LINE_NEAR`] of the centroid;
-/// * its supported edge pixels span more than [`LINE_MIN_LEN`] of the diagonal
-///   (a short segment that merely points at the subject is not a leading line);
+/// * its supporting edge pixels form one contiguous run longer than
+///   [`LINE_MIN_LEN`] of the diagonal (gaps over [`LINE_SUPPORT_GAP`] break it),
+///   so scattered texture in the corridor is not "a line";
+/// * the centroid's foot on the infinite line lies within that span, extended
+///   by [`LINE_SPAN_SLACK`] of the diagonal at each end (an edge across the far
+///   side of the frame does not lead to the subject);
 /// * some of its support lies outside the padded subject box (an edge traced
 ///   along the subject's own outline is not a leading line).
 fn hough_lines(
-    grad: &Plane,
+    gradient: &Sobel,
     threshold: f64,
     subject: Option<PxBox>,
     point: (f64, f64),
 ) -> u8 {
-    let (w, h) = (grad.w, grad.h);
+    let (w, h) = (gradient.mag.w, gradient.mag.h);
     let diag = (w as f64).hypot(h as f64);
-    let mut points: Vec<(f64, f64)> = Vec::new();
-    for y in 0..h {
-        for x in 0..w {
-            if grad.at(x, y) >= threshold {
-                points.push((x as f64 + 0.5, y as f64 + 0.5));
-            }
-        }
-    }
+    let points = edge_points(gradient, threshold);
     if points.is_empty() {
         return 0;
     }
@@ -582,13 +692,25 @@ fn hough_lines(
         }
     }
     peaks.sort_by(|a, b| b.0.cmp(&a.0));
+    let Some(&(strongest, _, _)) = peaks.first() else {
+        return 0;
+    };
+    let competing = (LINE_SHARE_OF_MAX * f64::from(strongest)).round() as u32;
 
     let mut chosen: Vec<(usize, isize)> = Vec::new();
-    for &(_, theta, rho) in peaks.iter().take(PEAKS) {
+    let mut per_bucket = [0usize; THETA_BINS.div_ceil(THETA_BUCKET)];
+    for &(votes, theta, rho) in peaks.iter().take(PEAKS) {
+        if votes < competing {
+            break;
+        }
         if chosen
             .iter()
             .any(|&(ct, cr)| theta_gap(theta, ct) <= MERGE_THETA && (rho - cr).abs() <= MERGE_RHO)
         {
+            continue;
+        }
+        let bucket = theta / THETA_BUCKET;
+        if per_bucket[bucket] == LINES_PER_BUCKET {
             continue;
         }
         let (c, s) = (cos[theta], sin[theta]);
@@ -596,22 +718,41 @@ fn hough_lines(
         if (point.0 * c + point.1 * s - rho_px).abs() > LINE_NEAR * diag {
             continue;
         }
-        let (mut lo, mut hi, mut outside) = (f64::INFINITY, f64::NEG_INFINITY, false);
+        let foot = -point.0 * s + point.1 * c;
+        let mut along: Vec<f64> = Vec::new();
+        let mut outside = false;
         for &(x, y) in &points {
             if (x * c + y * s - rho_px).abs() > 1.5 {
                 continue;
             }
-            let along = -x * s + y * c;
-            lo = lo.min(along);
-            hi = hi.max(along);
+            along.push(-x * s + y * c);
             if subject.is_none_or(|b| !b.contains(x, y)) {
                 outside = true;
             }
         }
-        if hi - lo <= LINE_MIN_LEN * diag || !outside {
+        if along.is_empty() {
+            continue;
+        }
+        along.sort_by(f64::total_cmp);
+        let gap = LINE_SUPPORT_GAP * diag;
+        let (mut run, mut prev) = (along[0], along[0]);
+        let (mut lo, mut hi) = (along[0], along[0]);
+        for &a in &along[1..] {
+            if a - prev > gap {
+                run = a;
+            }
+            prev = a;
+            if prev - run > hi - lo {
+                lo = run;
+                hi = prev;
+            }
+        }
+        let slack = LINE_SPAN_SLACK * diag;
+        if hi - lo <= LINE_MIN_LEN * diag || foot < lo - slack || foot > hi + slack || !outside {
             continue;
         }
         chosen.push((theta, rho));
+        per_bucket[bucket] += 1;
         if chosen.len() == MAX_LINES as usize {
             break;
         }
@@ -706,6 +847,15 @@ mod tests {
         let c = measure(&image, Some(b));
         assert_eq!(c.mode, "phi");
         assert!(c.placement > 0.8, "{c:?}");
+        assert_finite(&c);
+    }
+
+    #[test]
+    fn a_subject_outside_the_centre_zone_is_not_called_centred() {
+        let (image, b) = subject_frame(0.5, 0.62);
+        let c = measure(&image, Some(b));
+        assert_ne!(c.mode, "centre", "{c:?}");
+        assert!(c.placement < 0.5, "{c:?}");
         assert_finite(&c);
     }
 
@@ -816,9 +966,52 @@ mod tests {
         assert_finite(&none);
     }
 
+    /// A stand-in for the detector's box, for the real-thumbnail check only: the
+    /// 0.2 x 0.2 window with the most gradient energy, which is where a compact
+    /// subject would be. The cached thumbnails carry no subject box, a fixed
+    /// centre box would make placement a constant, and the centroid of all
+    /// edges is pulled to the middle, so the densest window is the closest
+    /// stand-in for a detector. It is a test proxy, not part of the measure.
+    fn proxy_box(image: &Rgb) -> [f64; 4] {
+        let small = plane(&image.to_gray().thumbnail(SMALL_EDGE));
+        let gradient = sobel(&small);
+        let (w, h) = (small.w, small.h);
+        let mut sat = vec![0.0; (w + 1) * (h + 1)];
+        for y in 0..h {
+            for x in 0..w {
+                sat[(y + 1) * (w + 1) + x + 1] = gradient.mag.at(x, y)
+                    + sat[y * (w + 1) + x + 1]
+                    + sat[(y + 1) * (w + 1) + x]
+                    - sat[y * (w + 1) + x];
+            }
+        }
+        let bw = ((0.2 * w as f64).round() as usize).clamp(2, w);
+        let bh = ((0.2 * h as f64).round() as usize).clamp(2, h);
+        let mut best = (f64::NEG_INFINITY, 0usize, 0usize);
+        for y in 0..=h - bh {
+            for x in 0..=w - bw {
+                let sum = sat[(y + bh) * (w + 1) + x + bw] - sat[y * (w + 1) + x + bw]
+                    - sat[(y + bh) * (w + 1) + x]
+                    + sat[y * (w + 1) + x];
+                if sum > best.0 {
+                    best = (sum, x, y);
+                }
+            }
+        }
+        let cx = (best.1 as f64 + bw as f64 / 2.0) / w as f64;
+        let cy = (best.2 as f64 + bh as f64 / 2.0) / h as f64;
+        let (hx, hy) = (0.1, 0.1);
+        [
+            (cx - hx).clamp(0.0, 1.0),
+            (cy - hy).clamp(0.0, 1.0),
+            (cx + hx).clamp(0.0, 1.0),
+            (cy + hy).clamp(0.0, 1.0),
+        ]
+    }
+
     /// `cargo test --release -p conrod-vision --lib composition -- --ignored
-    /// --nocapture`: time the measure on real thumbnails with a centre box and
-    /// print the clutter mean, to compare with what the UI will label.
+    /// --nocapture`: time the measure on real thumbnails and print where
+    /// placement, mode and lines land, so a saturated label shows.
     #[test]
     #[ignore = "needs ~/.conrod/cache/native thumbnails"]
     fn real_composition_timing() {
@@ -836,13 +1029,26 @@ mod tests {
         });
         paths.truncate(200);
         let mut ms = Vec::with_capacity(paths.len());
+        let mut placements = Vec::with_capacity(paths.len());
+        let (mut centre, mut thirds, mut phi) = (0usize, 0usize, 0usize);
+        let mut lines = [0usize; MAX_LINES as usize + 1];
         let mut clutter = 0.0;
         let mut used = 0;
         for path in &paths {
             let Ok(image) = Rgb::open(path) else { continue };
+            // The cached thumbnails carry no subject box, so the box comes from
+            // `proxy_box`: a fixed centre box would make placement a constant.
+            let subject = proxy_box(&image);
             let started = std::time::Instant::now();
-            let c = measure(&image, Some([0.35, 0.4, 0.65, 0.7]));
+            let c = measure(&image, Some(subject));
             ms.push(started.elapsed().as_secs_f64() * 1000.0);
+            placements.push(c.placement);
+            match c.mode {
+                "centre" => centre += 1,
+                "thirds" => thirds += 1,
+                _ => phi += 1,
+            }
+            lines[c.lines as usize] += 1;
             clutter += c.clutter;
             used += 1;
         }
@@ -851,12 +1057,31 @@ mod tests {
             return;
         }
         ms.sort_by(f64::total_cmp);
-        let p = |q: f64| ms[((q * (ms.len() - 1) as f64).round() as usize).min(ms.len() - 1)];
+        placements.sort_by(f64::total_cmp);
+        let p = |v: &[f64], q: f64| -> f64 {
+            v[((q * (v.len() - 1) as f64).round() as usize).min(v.len() - 1)]
+        };
         eprintln!(
             "{used} thumbnails: measure p50 {:.2} ms, p95 {:.2} ms, mean clutter {:.3}, one thread",
-            p(0.50),
-            p(0.95),
+            p(&ms, 0.50),
+            p(&ms, 0.95),
             clutter / used as f64
+        );
+        eprintln!(
+            "placement p10 {:.2} p50 {:.2} p90 {:.2} max {:.2}",
+            p(&placements, 0.10),
+            p(&placements, 0.50),
+            p(&placements, 0.90),
+            placements[placements.len() - 1]
+        );
+        eprintln!("mode centre {centre} thirds {thirds} phi {phi}");
+        eprintln!("lines 0..{} {lines:?}", MAX_LINES);
+        let low = lines[0] + lines[1];
+        let high: usize = lines[5..].iter().sum();
+        eprintln!(
+            "lines 0-1: {:.0}%, 5+: {:.0}%",
+            100.0 * low as f64 / used as f64,
+            100.0 * high as f64 / used as f64
         );
     }
 }

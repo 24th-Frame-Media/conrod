@@ -47,21 +47,99 @@ fn main() -> Result<(), String> {
     let bbox: Option<[f64; 4]> = db
         .query_row(box_sql, [&path], |r| Ok([r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?]))
         .ok();
+    let stored_det: Option<f64> = db
+        .query_row(
+            "SELECT d.sharpness FROM detections d JOIN images i ON i.id=d.image_id WHERE i.path=?1 ORDER BY (d.x2-d.x1)*(d.y2-d.y1) DESC LIMIT 1",
+            [&path],
+            |r| r.get::<_, Option<f64>>(0),
+        )
+        .ok()
+        .flatten();
+    // The camera's focus area, in pixels, when the album has read it.
+    let af: Option<[f64; 4]> = db
+        .query_row(
+            "SELECT af_x1,af_y1,af_x2,af_y2 FROM images WHERE path=?1",
+            [&path],
+            |r| {
+                Ok([
+                    r.get::<_, Option<f64>>(0)?,
+                    r.get::<_, Option<f64>>(1)?,
+                    r.get::<_, Option<f64>>(2)?,
+                    r.get::<_, Option<f64>>(3)?,
+                ])
+            },
+        )
+        .ok()
+        .and_then(|v| {
+            let b = [v[0]?, v[1]?, v[2]?, v[3]?];
+            let (w, h) = (
+                db.query_row("SELECT width FROM images WHERE path=?1", [&path], |r| {
+                    r.get::<_, Option<f64>>(0)
+                })
+                .ok()
+                .flatten()?,
+                db.query_row("SELECT height FROM images WHERE path=?1", [&path], |r| {
+                    r.get::<_, Option<f64>>(0)
+                })
+                .ok()
+                .flatten()?,
+            );
+            Some([b[0] * w, b[1] * h, b[2] * w, b[3] * h])
+        });
     let frame = raw::read(std::path::Path::new(&path)).map_err(|e| e.to_string())?;
     let image = Rgb::decode_jpeg(&frame.preview, 1)
         .map_err(|e| e.to_string())?
         .orient(frame.orientation);
     let grey = image.to_gray();
+    let long = grey.width.max(grey.height);
     let m = sharpness::measure(&grey, bbox, None);
     let n = |v: Option<f64>| v.unwrap_or(f64::NAN);
+    // What the edge-blur score is built from, exactly as `cull_frame` and a
+    // re-score build it: the worse of the whole box and its centre 60%.
+    let blur = bbox.map(|b| conrod_engine::subject_blur(&grey, b, long));
+    let subject = blur.and_then(|b| {
+        let tile = m.score;
+        let worst = if tile < 0.80 { b.worst } else { b.whole };
+        let edge =
+            sharpness::rating_from_blur(worst, sharpness::BlurStrictness::parse(&strictness))?;
+        // As the engine: a clearly lower tile score overrules the edge census.
+        Some(if !m.uncertain && tile < edge - 0.10 {
+            tile
+        } else {
+            edge
+        })
+    });
     // What the scan / re-score stores for a frame with no detected subject: the
     // same `bare_frame` the engine uses, so the numbers cannot drift apart.
     let bare = bbox
         .is_none()
         .then(|| conrod_engine::bare_frame(&grey, &strictness));
-    let stored = match &bare {
+    // The score that would be stored now: a bare frame's rescued score, else the
+    // subject's edge blur, else the tile score it falls back to.
+    let now = match &bare {
         Some(bare) => bare.score,
-        None => Some(m.score),
+        None => subject.or(Some(m.score)),
+    };
+    // What the edge blur would be inside the camera's own box: the subject the
+    // photographer focused on, without the wall behind a detection box's edges.
+    let af_blur = af.map(|b| conrod_engine::subject_blur(&grey, b, long));
+    let blur_line = match &blur {
+        Some(blur) => format!(
+            " · sigma whole {:.3} · sigma centre {:.3} · tile {:.3} · uncertain {}{}",
+            blur.whole,
+            blur.centre,
+            m.score,
+            m.uncertain,
+            af_blur.map_or(String::new(), |a| format!(
+                " · sigma af {:.3} ({:.3})",
+                a.worst,
+                n(sharpness::rating_from_blur(
+                    a.worst,
+                    sharpness::BlurStrictness::parse(&strictness)
+                ))
+            ))
+        ),
+        None => format!(" · tile {:.3}", m.score),
     };
     let bare_line = match &bare {
         Some(bare) => format!(
@@ -76,9 +154,9 @@ fn main() -> Result<(), String> {
     let share = sharpness::frame_sharp_share(&grey);
     let cap = share.map(sharpness::pan_share_cap);
     println!(
-        "{needle}: stored rating {rating:.3} · now score {:.3} · stored {:.3} · background {:.3} · panning {} · sharp end {} · share {:.2} · box {bbox:?} · frame share {:.3} · cap {:.3}{bare_line}",
-        m.score,
-        n(stored),
+        "{needle}: stored rating {rating:.3} · stored subject {:.3} · now score {:.3}{blur_line} · background {:.3} · panning {} · sharp end {} · share {:.2} · box {bbox:?} · frame share {:.3} · cap {:.3}{bare_line}",
+        n(stored_det),
+        n(now),
         m.background,
         m.panning,
         m.sharp_end,

@@ -179,6 +179,23 @@ pub struct Settings {
     /// Set by the one-time burst-gap migration (see `migrate_burst_gap`): once
     /// present, a stored 4.0 is a real choice and is never rewritten.
     pub burst_gap_scale: i64,
+    /// How eagerly a time burst is split into moments: "off" (one stack per
+    /// burst), "gentle", "normal" or "eager". An album's explicit choice; an
+    /// unknown word reads as "normal".
+    pub grouping_sensitivity: String,
+    /// Seconds between two frames of a burst that count as a pause: the next
+    /// frame starts a new moment if the picture also changed. 0 disables the
+    /// pause cut.
+    pub grouping_pause: f64,
+    /// Compare a pan's box like any other, rather than allowing it to travel
+    /// further between frames.
+    pub grouping_keep_pans: bool,
+    /// Anchor a frame the detector missed on the camera's focus area. Off, such
+    /// a frame has no subject at all.
+    pub grouping_focus_anchor: bool,
+    /// Give every frame a stack of its own. Off, a regroup stops stacking at
+    /// all: no burst or moment key is shared, and no keeper is suggested.
+    pub grouping_stacks: bool,
     pub sharp_at: f64,
     pub blurred_below: f64,
     pub focus_scale: i64,
@@ -287,6 +304,11 @@ impl Default for Settings {
             group_by_burst: true,
             burst_gap: crate::bursts::DEFAULT_BURST_GAP_SECONDS,
             burst_gap_scale: BURST_GAP_SCALE,
+            grouping_sensitivity: "normal".into(),
+            grouping_pause: crate::bursts::MOMENT_PAUSE,
+            grouping_keep_pans: true,
+            grouping_focus_anchor: true,
+            grouping_stacks: true,
             sharp_at: SHARP_AT,
             blurred_below: BLURRED_BELOW,
             focus_scale: FOCUS_SCALE,
@@ -526,6 +548,31 @@ mod tests {
     fn settings_without_blur_strictness_load_as_moderate() {
         let settings: Settings = serde_json::from_str(r#"{"scan_profile":"motorsport"}"#).unwrap();
         assert_eq!(settings.blur_strictness, "moderate");
+    }
+
+    #[test]
+    fn an_old_album_keeps_todays_grouping_until_it_chooses_otherwise() {
+        let settings: Settings = serde_json::from_str(r#"{"burst_gap":2.0}"#).unwrap();
+        assert_eq!(settings.grouping_sensitivity, "normal");
+        assert_eq!(settings.grouping_pause, crate::bursts::MOMENT_PAUSE);
+        assert!(settings.grouping_keep_pans);
+        assert!(settings.grouping_focus_anchor);
+        assert!(settings.grouping_stacks);
+
+        // A patch stores the album's own choice and keeps it on reload.
+        let patch: Map<String, Value> = serde_json::from_str(
+            r#"{"grouping_sensitivity":"eager","grouping_pause":0.0,"grouping_keep_pans":false,"grouping_focus_anchor":false,"grouping_stacks":false}"#,
+        )
+        .unwrap();
+        let chosen = Settings::default().apply(&patch);
+        assert_eq!(chosen.grouping_sensitivity, "eager");
+        assert_eq!(chosen.grouping_pause, 0.0);
+        assert!(!chosen.grouping_keep_pans);
+        assert!(!chosen.grouping_focus_anchor);
+        assert!(!chosen.grouping_stacks);
+        let reloaded: Settings =
+            serde_json::from_str(&serde_json::to_string(&chosen).unwrap()).unwrap();
+        assert_eq!(reloaded, chosen, "every grouping choice survives a save");
     }
 
     #[test]
