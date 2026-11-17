@@ -409,14 +409,9 @@ fn measure_frame(
                 worst,
                 sharpness::BlurStrictness::parse(&cfg.effective_blur()),
             ) {
-                // As `cull_frame`: a smear the edge census cannot see (too few
-                // edges in the motion direction) still shows on the tiles, so a
-                // clearly lower tile score is taken.
-                focus.score = if !focus.uncertain && tile < score - 0.10 {
-                    tile
-                } else {
-                    score
-                };
+                // As `cull_frame`: the crop's tile score only decides whether the
+                // centre was consulted; it never overrules the edge census.
+                focus.score = score;
             }
             // As `cull_frame` decides it: the subject not a blur miss, a
             // streaked background, and a preset that expects pans.
