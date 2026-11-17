@@ -256,6 +256,20 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("detections", "framing_score", "REAL"),
     // Rodeo/equestrian only: how much the animal is rearing under its rider.
     ("images", "buck_score", "REAL"),
+    // Composition, read off the thumbnail with the frame's main subject box
+    // (see conrod_vision::composition): where the subject sits, how the frame
+    // balances, how busy the background is, and whether a leading line runs
+    // into it. `comp_at` is when the measure was taken, Unix seconds, so the
+    // UI can say how fresh it is. A re-run rewrites all of them.
+    ("images", "comp_placement", "REAL"),
+    ("images", "comp_mode", "TEXT"),
+    ("images", "comp_balance_x", "REAL"),
+    ("images", "comp_balance_y", "REAL"),
+    ("images", "comp_symmetry", "REAL"),
+    ("images", "comp_clutter", "REAL"),
+    ("images", "comp_lines", "INTEGER"),
+    ("images", "comp_subject_share", "REAL"),
+    ("images", "comp_at", "REAL"),
 ];
 
 fn now_unix() -> f64 {

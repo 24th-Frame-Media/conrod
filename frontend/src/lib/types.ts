@@ -22,6 +22,19 @@ export type Frame = {
   taste?: number | null;
   /** Rodeo/equestrian only: how much the animal is rearing under its rider. */
   buck_score?: number | null;
+  /** Composition, measured on demand: where the subject sits and what the frame reads as. Null until `composition` runs. */
+  comp_placement?: number | null;
+  comp_mode?: 'centre' | 'thirds' | 'phi' | null;
+  /** -1 heavy left .. 1 heavy right. */
+  comp_balance_x?: number | null;
+  /** -1 top .. 1 bottom. */
+  comp_balance_y?: number | null;
+  comp_symmetry?: number | null;
+  /** 0..1, 1 = busiest background. */
+  comp_clutter?: number | null;
+  /** How many leading lines the frame reads as, 0..7. */
+  comp_lines?: number | null;
+  comp_subject_share?: number | null;
 };
 export type Detection = {
   rejected?: number; bystander?: number; stars?: number | null;

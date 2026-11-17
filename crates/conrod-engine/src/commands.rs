@@ -399,6 +399,10 @@ pub enum Command {
     /// Run the detector again over the frames it found nothing in, at a one-off
     /// lower bar, for the subjects it missed.
     Redetect(JobArgs),
+    /// Measure each frame's composition -- where the subject sits, how the
+    /// frame balances, how busy the background is and whether a leading line
+    /// runs into it -- from its thumbnail.
+    Composition(JobArgs),
     /// Hide the extra imports of one shot (the same frame under two or three
     /// names) from bursts, picks, counts and writes.
     CollapseCopies(JobArgs),

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { asset, call } from '../lib/api';
+import { compositionLabels } from '../lib/composition.mjs';
 import { filename, frameStars, frameExcluded } from '../lib/review';
 import type { Detection, Frame, KnownVehicle, MarkValues } from '../lib/types';
 import { StarControl } from './Stars';
@@ -126,6 +127,7 @@ export function Inspector({
   }
 
   const stars = frameStars(frame);
+  const labels = compositionLabels(frame);
 
   return (
     <aside
@@ -187,6 +189,14 @@ export function Inspector({
         <p className="muted taste-score" title="Learned taste: ranks this frame against its burst. A sort signal, not a keeper.">
           Taste {frame.taste.toFixed(2)}
         </p>
+      )}
+
+      {labels.length > 0 && (
+        <div className="comp-labels">
+          {labels.map((label) => (
+            <span key={label.id} className={label.tone === 'ok' ? 'tag' : `tag ${label.tone}`} title="Composition: measured framing, balance, background and leading lines. Nothing is culled.">{label.text}</span>
+          ))}
+        </div>
       )}
 
       {frame.error && <p className="error-text">{frame.error}</p>}
