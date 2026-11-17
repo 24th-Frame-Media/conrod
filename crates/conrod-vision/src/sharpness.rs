@@ -23,12 +23,15 @@ pub const PAN_COHERENCE: f64 = 0.80;
 /// A tile at or above this normalised score counts as sharp when measuring how
 /// much of a panning frame is sharp.
 pub const PAN_SHARE_SHARP: f64 = 0.75;
-/// A pan's rating is capped by how much of the frame is sharp: the car is the
-/// only part a pan keeps crisp, so a small car in a big streaked frame is a 3.
-/// cap = floor + share * slope, clamped to 1 (a car filling half the frame can
-/// still be a 5).
-pub const PAN_SHARE_FLOOR: f64 = 0.62;
-pub const PAN_SHARE_SLOPE: f64 = 0.45;
+/// A pan's rating is capped by how much of the frame is sharp: the cap says how
+/// the picture reads, so a small car in a big streaked frame is a three, and it
+/// never goes lower than the three-star floor because the cap must not cull a
+/// pan or leave a burst without a keeper.
+/// cap = three-star floor + share * slope, clamped to 1: a car filling a third
+/// of the frame is still a three, about 35% reaches four, and only a frame that
+/// is mostly sharp reaches five.
+pub const PAN_SHARE_FLOOR: f64 = STAR_BANDS[2].0;
+pub const PAN_SHARE_SLOPE: f64 = 0.28;
 pub const PAN_BACKGROUND_CEILING: f64 = 0.55;
 pub const BANDS: usize = 3;
 pub const END_MARGIN: f64 = 0.12;
@@ -66,26 +69,63 @@ pub enum BlurStrictness {
     Strict,
     Moderate,
     Lenient,
+    /// Each star floor sits on its own blur, so the stars spread instead of
+    /// piling into four: fitted on a 6,006-frame track album where sigma <= 0.70
+    /// px is the sharpest 17%, <= 1.0 px the next 32%, <= 1.9 px the next 40%;
+    /// three stars ends at 1.9 px.
+    Critical,
 }
+
+/// The (sigma, score) points of one strictness in ascending sigma. Strict,
+/// Moderate and Lenient keep the old three knots -- `SHARP_AT` then
+/// `BLURRED_BELOW` then zero -- and Critical puts one knot on each star floor.
+const STRICT_SCALE: [(f64, f64); 4] = [
+    (BLUR_SHARP, 1.0),
+    (1.5, SHARP_AT),
+    (2.2, BLURRED_BELOW),
+    (3.5, 0.0),
+];
+const MODERATE_SCALE: [(f64, f64); 4] = [
+    (BLUR_SHARP, 1.0),
+    (2.0, SHARP_AT),
+    (3.0, BLURRED_BELOW),
+    (4.5, 0.0),
+];
+const LENIENT_SCALE: [(f64, f64); 4] = [
+    (BLUR_SHARP, 1.0),
+    (2.5, SHARP_AT),
+    (3.5, BLURRED_BELOW),
+    (5.0, 0.0),
+];
+const CRITICAL_SCALE: [(f64, f64); 6] = [
+    (BLUR_SHARP, 1.0),
+    (0.70, STAR_BANDS[0].0),
+    (1.00, SHARP_AT),
+    (1.90, STAR_BANDS[2].0),
+    (2.60, BLURRED_BELOW),
+    (4.0, 0.0),
+];
 
 impl BlurStrictness {
     pub fn parse(value: &str) -> Self {
         match value {
             "strict" => BlurStrictness::Strict,
             "lenient" => BlurStrictness::Lenient,
+            "critical" => BlurStrictness::Critical,
             _ => BlurStrictness::Moderate,
         }
     }
 
-    /// Blur in px at which the subject scores exactly `SHARP_AT`, exactly
-    /// `BLURRED_BELOW`, and zero. Moderate sits where delivered keepers shot
-    /// through heat haze (up to ~2.7 px) stay above `BLURRED_BELOW`, so none of
-    /// them is culled, while heavy blur is still flagged as soft.
-    fn knots(self) -> (f64, f64, f64) {
+    /// The whole blur-to-score curve in px, ascending in sigma. Moderate sits
+    /// where delivered keepers shot through heat haze (up to ~2.7 px) stay above
+    /// `BLURRED_BELOW`, so none of them is culled, while heavy blur is still
+    /// flagged as soft.
+    fn scale(self) -> &'static [(f64, f64)] {
         match self {
-            BlurStrictness::Strict => (1.5, 2.2, 3.5),
-            BlurStrictness::Moderate => (2.0, 3.0, 4.5),
-            BlurStrictness::Lenient => (2.5, 3.5, 5.0),
+            BlurStrictness::Strict => &STRICT_SCALE,
+            BlurStrictness::Moderate => &MODERATE_SCALE,
+            BlurStrictness::Lenient => &LENIENT_SCALE,
+            BlurStrictness::Critical => &CRITICAL_SCALE,
         }
     }
 }
@@ -363,44 +403,30 @@ pub fn normalise(raw: f64) -> f64 {
 /// Subject score from the edge-blur measure's worst direction, in pixels at
 /// [`conrod_vision::edgeblur::REFERENCE_EDGE`].
 ///
-/// Monotone decreasing and piecewise linear between the measured knots, so it
+/// Monotone decreasing and piecewise linear between the measured points, so it
 /// speaks the same 0..1 language as the tile score and the configured star and
 /// verdict thresholds keep their meaning: at or below [`BLUR_SHARP`] it is 1.0,
-/// then it descends to exactly [`SHARP_AT`] and [`BLURRED_BELOW`] at the
-/// strictness's knots (see [`BlurStrictness`]), and zero from its last knot.
-/// The line keeps descending below one star, which is what keeps the worst
-/// frames orderable. `None` when there is no measurement (NaN).
+/// then it descends through exactly [`SHARP_AT`] and [`BLURRED_BELOW`] at the
+/// strictness's points (see [`BlurStrictness::scale`]), and zero from its last
+/// point. The line keeps descending below one star, which is what keeps the
+/// worst frames orderable. `None` when there is no measurement (NaN).
 pub fn rating_from_blur(sigma_worst_ref: f64, strictness: BlurStrictness) -> Option<f64> {
     if sigma_worst_ref.is_nan() {
         return None;
     }
-    let sharp_at = conrod_core::settings::SHARP_AT;
-    let blurred_below = conrod_core::settings::BLURRED_BELOW;
-    let (blur_at_sharp, blur_at_blurred, blur_hopeless) = strictness.knots();
-    let score = if sigma_worst_ref <= BLUR_SHARP {
-        1.0
-    } else if sigma_worst_ref <= blur_at_sharp {
-        interp(
-            sigma_worst_ref,
-            &[BLUR_SHARP, blur_at_sharp],
-            &[1.0, sharp_at],
-        )
-    } else if sigma_worst_ref <= blur_at_blurred {
-        interp(
-            sigma_worst_ref,
-            &[blur_at_sharp, blur_at_blurred],
-            &[sharp_at, blurred_below],
-        )
-    } else if sigma_worst_ref < blur_hopeless {
-        interp(
-            sigma_worst_ref,
-            &[blur_at_blurred, blur_hopeless],
-            &[blurred_below, 0.0],
-        )
-    } else {
-        0.0
-    };
-    Some(score)
+    let scale = strictness.scale();
+    let (first_sigma, first_score) = scale[0];
+    if sigma_worst_ref <= first_sigma {
+        return Some(first_score);
+    }
+    for pair in scale.windows(2) {
+        let ((lo_sigma, lo_score), (hi_sigma, hi_score)) = (pair[0], pair[1]);
+        if sigma_worst_ref < hi_sigma {
+            let t = (sigma_worst_ref - lo_sigma) / (hi_sigma - lo_sigma);
+            return Some(lo_score + t * (hi_score - lo_score));
+        }
+    }
+    Some(scale.last().map_or(0.0, |&(_, score)| score))
 }
 
 /// Score how sharp the subject is, and say what is behind it. `bbox` is the
@@ -491,22 +517,11 @@ pub fn measure(image: &Gray, bbox: Option<[f64; 4]>, model: Option<&SharpModel>)
     // Pan detection stays with the hand-built measure: whether the
     // background is smeared is a fact, not a matter of taste.
     let learned = model.and_then(|m| learned_score(m, &features));
-    // A matched pan keeps the whole subject crisp; a mismatched one leaves the
-    // roof or a door sharp and smears the rest. The tile percentile above is
-    // happy with that, so a pan is capped by its weakest measurable quarter.
-    let pan_cap = panning.then(|| pan_consistency(&subject)).flatten();
-    // What the picture looks like, not just the car: in a pan the car is the
-    // only thing that can be crisp, so how much of the frame it fills is what
-    // separates a 3 from a 5.
-    let share = panning.then(|| sharp_share(&data)).flatten();
-    let share_cap = share.map(pan_share_cap);
-    let mut final_score = learned.unwrap_or(score);
-    for cap in [pan_cap, share_cap].into_iter().flatten() {
-        final_score = final_score.min(cap);
-    }
+    // The subject's own score picks the keeper of a burst; how much of a pan's
+    // frame is sharp caps the frame's rating instead, in `pan_capped`.
+    let final_score = learned.unwrap_or(score);
     Sharpness {
         score: final_score,
-        pan_share: share.unwrap_or(-1.0),
         background,
         panning,
         sharp_end,
@@ -533,8 +548,19 @@ fn sharp_share(data: &Plane) -> Option<f64> {
     Some(sharp as f64 / tiles.len() as f64)
 }
 
+/// How much of a whole frame is sharp, 0..1, for capping a pan's frame rating:
+/// the share of its measurable tiles at or above [`PAN_SHARE_SHARP`], measured
+/// on the same working plane [`measure`] builds. `None` when too few tiles can
+/// be measured.
+pub fn frame_sharp_share(grey: &Gray) -> Option<f64> {
+    let grey = grey.thumbnail(WORKING_EDGE);
+    let data = Plane::from_gray(&grey);
+    sharp_share(&data)
+}
+
 /// The rating a pan is allowed by its sharp share: most pans land at three
-/// stars, a car filling half the frame can still reach five.
+/// stars, about 35% of the frame sharp reaches four, and only a mostly sharp
+/// frame reaches five.
 pub fn pan_share_cap(share: f64) -> f64 {
     (PAN_SHARE_FLOOR + share * PAN_SHARE_SLOPE).clamp(PAN_SHARE_FLOOR, 1.0)
 }
@@ -1066,31 +1092,31 @@ mod tests {
         let (frame, bbox) = pan_frame(960, false);
         let measured = measure(&frame, Some(bbox), None);
         assert!(measured.panning, "the smeared background makes it a pan");
-        assert!(
-            measured.pan_share > 0.0,
-            "a pan reports how much of the frame is sharp"
-        );
+        // What the app rates the frame by: its subject's own score, capped by
+        // how much of the panning frame is sharp.
+        let share = frame_sharp_share(&frame).expect("a measurable frame");
+        let rating = measured.score.min(pan_share_cap(share));
         assert_eq!(
-            stars_for(measured.score),
+            stars_for(rating),
             3,
-            "a car filling a third of a streaked frame is a three, got {}",
+            "a car filling a third of a streaked frame is a three: subject {:.3}, frame share {share:.3}, capped {rating:.3}",
             measured.score
         );
     }
 
     #[test]
     fn a_pan_is_rated_by_its_cap_not_by_its_sharpest_detail() {
-        let (frame, bbox) = pan_frame(960, false);
-        let whole = measure(&frame, Some(bbox), None);
-        assert!(whole.panning, "the smeared background marks it a pan");
-        let focal = focal_score(&frame).expect("the car itself carries detail");
-        assert!(
-            focal > whole.score,
-            "the car is sharper than the cap: {focal} vs {}",
-            whole.score
-        );
+        // A frame with no box is flagged a pan only when the ring round its
+        // centre streaks one way; whatever the flag, its sharpest detail must
+        // not lift the capped score back up.
+        let whole = Sharpness {
+            score: 0.78,
+            panning: true,
+            measured: true,
+            ..Sharpness::default()
+        };
         assert_eq!(
-            subjectless_score(&whole, Some(focal)),
+            subjectless_score(&whole, Some(1.0)),
             Some(whole.score),
             "taking the sharpest detail would undo the pan cap"
         );
@@ -1122,25 +1148,36 @@ mod tests {
             BlurStrictness::Strict,
             BlurStrictness::Moderate,
             BlurStrictness::Lenient,
+            BlurStrictness::Critical,
         ] {
-            let (at_sharp, at_blurred, hopeless) = strictness.knots();
+            let scale = strictness.scale();
             assert_eq!(rating_from_blur(f64::NAN, strictness), None);
             let score = |v: f64| rating_from_blur(v, strictness).expect("finite sigma");
             assert!((score(0.0) - 1.0).abs() < 1e-12);
-            assert!((score(BLUR_SHARP) - 1.0).abs() < 1e-12);
-            assert!((score(at_sharp) - SHARP_AT).abs() < 1e-12);
-            assert!((score(at_blurred) - BLURRED_BELOW).abs() < 1e-12);
-            assert!(score(hopeless).abs() < 1e-12);
+            for &(sigma, value) in scale {
+                assert!(
+                    (score(sigma) - value).abs() < 1e-12,
+                    "{strictness:?} at {sigma}: {} vs {value}",
+                    score(sigma)
+                );
+            }
+            let first = scale[0].0;
+            let last = scale[scale.len() - 1].0;
+            assert!(score(last).abs() < 1e-12);
             assert!(score(10.0).abs() < 1e-12);
             // The top is a ramp, not a plateau: a sharper frame still ranks higher.
-            assert!(score(BLUR_SHARP + 0.1) < 1.0);
-            assert!(score(BLUR_SHARP + 0.1) > score(0.9));
-            assert!(score(0.9) > score(1.2));
-            assert!(score(1.2) > score(at_sharp));
+            let at_sharp = scale
+                .iter()
+                .find(|(_, value)| *value == SHARP_AT)
+                .map(|&(sigma, _)| sigma)
+                .expect("a point at SHARP_AT");
+            assert!(score(first + 0.1) < 1.0);
+            assert!(score(first + 0.1) > score((first + at_sharp) / 2.0));
+            assert!(score((first + at_sharp) / 2.0) > score(at_sharp));
             // Monotone decreasing and inside 0..1 everywhere.
             let mut x = 0.0;
             let mut prev = score(0.0);
-            while x < 6.0 {
+            while x < last + 2.0 {
                 x += 0.01;
                 let v = score(x);
                 assert!(v <= prev + 1e-12, "score rose at {x:.2}: {prev:.3} -> {v:.3}");
@@ -1148,6 +1185,51 @@ mod tests {
                 prev = v;
             }
         }
+    }
+
+    #[test]
+    fn critical_gives_each_star_its_own_blur() {
+        let score = |sigma: f64| {
+            rating_from_blur(sigma, BlurStrictness::Critical).expect("finite sigma")
+        };
+        let stars = |sigma: f64| stars_for(score(sigma));
+        assert_eq!(stars(0.5), 5);
+        assert_eq!(stars(0.69), 5);
+        assert_eq!(stars(0.71), 4);
+        assert_eq!(stars(0.99), 4);
+        assert_eq!(stars(1.01), 3);
+        assert_eq!(stars(1.89), 3);
+        assert_eq!(stars(1.91), 2);
+        assert_eq!(stars(2.59), 2);
+        assert_eq!(stars(2.61), 1);
+        assert_eq!(stars(3.9), 1);
+        assert!(score(4.0).abs() < 1e-12);
+        assert!(score(6.0).abs() < 1e-12);
+        let verdict = |sigma: f64| verdict_for(score(sigma), SHARP_AT, BLURRED_BELOW);
+        assert_eq!(verdict(0.99), "sharp");
+        assert_ne!(verdict(1.01), "sharp");
+    }
+
+    #[test]
+    fn the_pan_cap_never_goes_below_three_stars() {
+        assert_eq!(pan_share_cap(0.0), STAR_BANDS[2].0);
+        assert_eq!(stars_for(pan_share_cap(0.0)), 3);
+        assert_eq!(stars_for(pan_share_cap(1.0 / 3.0)), 3);
+        assert_eq!(stars_for(pan_share_cap(0.5)), 4);
+        assert_eq!(pan_share_cap(1.0), 1.0);
+    }
+
+    #[test]
+    fn frame_sharp_share_counts_the_sharp_part_of_the_frame() {
+        // Detail in a quarter of the frame, smooth gradient elsewhere.
+        let shot = detail_shot(768, 0.25, 3);
+        let share = frame_sharp_share(&shot).expect("a measurable frame");
+        assert!(
+            share > 0.05 && share < 0.5,
+            "one sharp quarter reads as {share}"
+        );
+        let all_sharp = frame_sharp_share(&texture(768)).expect("a measurable frame");
+        assert!(all_sharp > 0.8, "all sharp reads as {all_sharp}");
     }
 
     #[test]
@@ -1177,6 +1259,8 @@ mod tests {
             let at = |s: BlurStrictness| rating_from_blur(sigma, s).expect("finite sigma");
             assert!(at(BlurStrictness::Strict) <= at(BlurStrictness::Moderate) + 1e-12);
             assert!(at(BlurStrictness::Moderate) <= at(BlurStrictness::Lenient) + 1e-12);
+            // Critical crosses Strict (it starts tighter) but never Moderate.
+            assert!(at(BlurStrictness::Critical) <= at(BlurStrictness::Moderate) + 1e-12);
         }
     }
 
@@ -1185,6 +1269,7 @@ mod tests {
         assert_eq!(BlurStrictness::parse("strict"), BlurStrictness::Strict);
         assert_eq!(BlurStrictness::parse("moderate"), BlurStrictness::Moderate);
         assert_eq!(BlurStrictness::parse("lenient"), BlurStrictness::Lenient);
+        assert_eq!(BlurStrictness::parse("critical"), BlurStrictness::Critical);
         assert_eq!(BlurStrictness::parse("loose"), BlurStrictness::Moderate);
         assert_eq!(BlurStrictness::parse(""), BlurStrictness::Moderate);
     }

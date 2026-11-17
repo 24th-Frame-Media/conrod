@@ -773,8 +773,8 @@ impl Desktop {
                 settings.include_people = people;
             }
             if let Some(strictness) = a.blur_strictness.as_deref() {
-                if !["strict", "moderate", "lenient"].contains(&strictness) {
-                    return Err("Strictness must be strict, moderate or lenient".into());
+                if !["critical", "strict", "moderate", "lenient"].contains(&strictness) {
+                    return Err("Strictness must be critical, strict, moderate or lenient".into());
                 }
                 settings.blur_strictness = strictness.to_string();
                 settings.blur_explicit = true;
@@ -980,7 +980,7 @@ impl Desktop {
             insert_subject(&tx, image, s)?;
         }
         let rating = f.rating;
-        tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=? WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,image]).map_err(err)?;
+        tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=? WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,image]).map_err(err)?;
         tx.commit().map_err(err)?;
         self.report_frame(image, &thumb, f, settings);
         Ok(())
@@ -1156,6 +1156,10 @@ impl Desktop {
         )
         .map_err(err)?;
         tx.commit().map_err(err)?;
+        // A frame with no subject in a burst where another frame has one is a
+        // shot the detector missed: rate it on the whole frame before the
+        // keepers below are picked on the ratings.
+        crate::passes::rate_missed_frames(&db, job)?;
         // The same rule the identify stage uses, so the keeper regroup leaves
         // is the one a later pick would choose anyway.
         let picks = crate::passes::pick_of_pass(

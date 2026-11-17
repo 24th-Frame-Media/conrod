@@ -175,6 +175,11 @@ pub struct FrameResult {
     pub smile_max: Option<f32>,
     /// Rodeo/equestrian only: how much the animal is rearing under its rider.
     pub buck: Option<f64>,
+    /// The whole-frame score of a subject-less frame before its in-focus-area
+    /// rescue; `None` when the detector found a subject.
+    pub whole_raw: Option<f64>,
+    /// How much of a panning frame is sharp, 0..1; `None` when it is not a pan.
+    pub pan_share: Option<f64>,
 }
 
 fn crop_gray(frame: &Gray, crop_box: [f64; 4]) -> Gray {
@@ -515,6 +520,65 @@ pub(crate) fn frame_rating(
         .unwrap_or(0.0)
 }
 
+/// What a frame with no detected subject is rated on.
+#[doc(hidden)]
+pub struct BareFrame {
+    /// The rating such a frame gets on its own: its in-focus area, so a sharp
+    /// detail over a deliberately soft background is not "blurred".
+    pub score: Option<f64>,
+    /// The whole frame's score with no rescue: what the frame is rated on when
+    /// its burst shows the detector simply missed the subject.
+    pub whole: Option<f64>,
+}
+
+/// One function rates every subject-less frame, so the scan and a re-score
+/// cannot disagree about it.
+#[doc(hidden)]
+pub fn bare_frame(grey: &Gray, strictness: &str) -> BareFrame {
+    let focus = sharpness::measure(grey, None, None);
+    // The raw whole-frame score is kept before any rescue: a burst where the
+    // other frames have a subject rates the missed frame on this.
+    let whole = focus.measured.then_some(focus.score);
+    let focal = sharpness::focal_score(grey);
+    let score = if focus.panning {
+        // A pan is rated on the picture, and its cap is the whole point: the
+        // car is sharp, the frame around it is not, and "how much of the frame
+        // is sharp" decides the stars. The detail-shot rescue must not undo
+        // that -- the car's own sharp detail is exactly what focal_score finds.
+        sharpness::subjectless_score(&focus, None)
+    } else {
+        // Nothing to judge: rate the frame on its in-focus area, so a sharp
+        // detail against a deliberately blurred background is not "blurred".
+        //
+        // Flat subject matter -- an empty wall, a worktop, a ceiling -- has
+        // too little texture for either tile ratio, and a sharp interior
+        // frame reads as soft. The edge blur of the frame's sharpest
+        // direction asks only whether any edge is sharp, which is the same
+        // question `focal_score` asks of the tiles.
+        let edges = conrod_vision::edgeblur::measure(grey, None);
+        let edge = sharpness::rating_from_blur(
+            conrod_vision::edgeblur::at_reference(edges.sigma_best, grey.width.max(grey.height)),
+            sharpness::BlurStrictness::parse(strictness),
+        );
+        let mut score = sharpness::subjectless_score(&focus, focal);
+        if let Some(edge) = edge {
+            score = Some(score.map_or(edge, |s| s.max(edge)));
+        }
+        score
+    };
+    BareFrame { score, whole }
+}
+
+/// A pan's frame rating says how the picture reads: capped by how much of the
+/// frame is sharp. The subjects keep their own ratings, which is what picks the
+/// keeper of a burst.
+pub(crate) fn pan_capped(rating: f64, panning: bool, share: Option<f64>) -> f64 {
+    match share {
+        Some(share) if panning => rating.min(sharpness::pan_share_cap(share)),
+        _ => rating,
+    }
+}
+
 /// A condition report keeps nearly everything: only a subject that is clearly
 /// out of focus goes, and never one that is merely soft or a held pan.
 /// `rating_word` is `rating_for`'s ("poor" is blurred), as `cullable` reads it.
@@ -794,47 +858,31 @@ pub fn cull_frame(
         }
     }
     step("sharpness");
-    let whole = {
-        let focus = sharpness::measure(&grey, None, None);
-        let measured = focus.measured.then_some(focus.score);
-        if subjects.is_empty() {
-            // A pan is rated on the picture, and its cap is the whole point: the
-            // car is sharp, the frame around it is not, and "how much of the frame
-            // is sharp" decides the stars. The detail-shot rescue must not undo
-            // that -- the car's own sharp detail is exactly what focal_score finds.
-            let focal = sharpness::focal_score(&grey);
-            let rescue = if focus.panning {
-                sharpness::subjectless_score(&focus, None)
-            } else {
-                // Nothing to judge: rate the frame on its in-focus area, so a sharp
-                // detail against a deliberately blurred background is not "blurred".
-                //
-                // Flat subject matter -- an empty wall, a worktop, a ceiling -- has
-                // too little texture for either tile ratio, and a sharp interior
-                // frame reads as soft. The edge blur of the frame's sharpest
-                // direction asks only whether any edge is sharp, which is the same
-                // question `focal_score` asks of the tiles.
-                let edges = conrod_vision::edgeblur::measure(&grey, None);
-                let edge = sharpness::rating_from_blur(
-                    conrod_vision::edgeblur::at_reference(edges.sigma_best, fw.max(fh)),
-                    sharpness::BlurStrictness::parse(&strictness),
-                );
-                let mut score = sharpness::subjectless_score(&focus, focal);
-                if let Some(edge) = edge {
-                    score = Some(score.map_or(edge, |s| s.max(edge)));
-                }
-                score
-            };
-            rescue
-        } else {
-            measured
+    // A frame with no subject is rated by the same function a re-score rates it
+    // by, so the two cannot differ; a frame with subjects keeps the plain
+    // measured whole-frame score it always had.
+    let bare = subjects.is_empty().then(|| bare_frame(&grey, &strictness));
+    let whole = match &bare {
+        Some(bare) => bare.score,
+        None => {
+            let focus = sharpness::measure(&grey, None, None);
+            focus.measured.then_some(focus.score)
         }
     };
+    // A pan's frame rating reads the picture, not the car; the subjects keep
+    // their own ratings, which is what picks the keeper of a burst.
+    let panning = subjects
+        .iter()
+        .any(|s| matches!(s.region_type, "vehicle" | "person") && s.panning);
+    let pan_share = panning
+        .then(|| sharpness::frame_sharp_share(&grey))
+        .flatten();
     let rated: Vec<_> = subjects
         .iter()
         .map(|s| (s.region_type, s.bbox, s.rating))
         .collect();
     let rating = frame_rating(preset.profile(), settings.include_people, &rated, whole);
+    let rating = pan_capped(rating, panning, pan_share);
     let stars = sharpness::stars_for(rating);
     // Exposure on the main subject, so a backlit rider's clipped whites are
     // told from a blown sky.
@@ -870,6 +918,8 @@ pub fn cull_frame(
         eye_open_min,
         smile_max,
         buck,
+        whole_raw: bare.as_ref().and_then(|bare| bare.whole),
+        pan_share,
     })
 }
 
@@ -1196,6 +1246,95 @@ mod tests {
         assert_eq!(deliver_most_reason(false, &focus, "poor"), "", "culling off");
         let held = sharpness::Sharpness { panning: true, ..focus };
         assert_eq!(deliver_most_reason(true, &held, "poor"), "", "a held pan stays");
+    }
+
+    /// Deterministic value noise, for a synthetic background.
+    fn hash(x: usize, y: usize) -> u32 {
+        let mut h = (x as u32).wrapping_mul(0x9E37_79B9) ^ (y as u32).wrapping_mul(0x85EB_CA6B);
+        h ^= h >> 13;
+        h = h.wrapping_mul(0xC2B2_AE35);
+        h ^ (h >> 16)
+    }
+
+    /// A smooth background of blurred value noise with one small checkerboard
+    /// patch left sharp: the detail shot a whole-frame score calls blurred. A
+    /// straight gradient cannot stand in for it: every one of its tiles is a
+    /// coherent ramp, which the pan measure reads as a pan.
+    fn detail_shot(edge: usize, fraction: f64) -> Gray {
+        let noise = |x: usize, y: usize| 20.0 + 215.0 * f64::from(hash(x, y) % 256) / 255.0;
+        let mut cur: Vec<f64> = (0..edge * edge)
+            .map(|i| noise((i % edge) / 2, (i / edge) / 2))
+            .collect();
+        // Two 7x7 box passes: out of focus, cheaply.
+        for _ in 0..2 {
+            let mut next = cur.clone();
+            for y in 0..edge {
+                for x in 0..edge {
+                    let mut sum = 0.0;
+                    for dy in 0..7 {
+                        for dx in 0..7 {
+                            let px = (x + dx).saturating_sub(3).min(edge - 1);
+                            let py = (y + dy).saturating_sub(3).min(edge - 1);
+                            sum += cur[py * edge + px];
+                        }
+                    }
+                    next[y * edge + x] = sum / 49.0;
+                }
+            }
+            cur = next;
+        }
+        let mut data: Vec<u8> = cur.iter().map(|v| v.clamp(0.0, 255.0) as u8).collect();
+        let side = (edge as f64 * fraction.sqrt()) as usize;
+        let corner = (edge - side) / 2;
+        for y in corner..corner + side {
+            for x in corner..corner + side {
+                let on = ((x - corner) / 6 + (y - corner) / 6) % 2 == 0;
+                data[y * edge + x] = if on { 235 } else { 20 };
+            }
+        }
+        Gray::new(edge, edge, data)
+    }
+
+    #[test]
+    fn a_pan_rating_is_capped_by_how_much_of_the_frame_is_sharp() {
+        assert_eq!(
+            pan_capped(0.95, false, Some(0.1)),
+            0.95,
+            "a still frame is not capped"
+        );
+        assert_eq!(
+            pan_capped(0.95, true, None),
+            0.95,
+            "a pan with no share is not capped"
+        );
+        let capped = pan_capped(0.95, true, Some(0.1));
+        assert_eq!(capped, sharpness::pan_share_cap(0.1));
+        assert_eq!(sharpness::stars_for(capped), 3);
+        assert_eq!(
+            pan_capped(0.60, true, Some(0.1)),
+            0.60,
+            "a cap never raises a rating"
+        );
+    }
+
+    #[test]
+    fn a_bare_frame_keeps_its_sharp_detail_but_reads_soft_as_a_whole() {
+        let shot = detail_shot(768, 0.06);
+        let bare = bare_frame(&shot, "critical");
+        let score = bare.score.expect("a measurable frame");
+        let whole = bare.whole.expect("a measurable frame");
+        assert!(
+            score >= whole,
+            "the in-focus area is never the harder judge: {score} vs {whole}"
+        );
+        assert!(
+            score >= sharpness::KEEPER_MIN_RATING,
+            "a sharp detail clears the keeper bar: {score}"
+        );
+        assert!(
+            whole < score,
+            "the whole frame reads softer than its detail: {whole} vs {score}"
+        );
     }
 
     #[test]

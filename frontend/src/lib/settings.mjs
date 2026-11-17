@@ -15,7 +15,7 @@ export const FIELDS = {
   blur_strictness: {
     label: 'Blur strictness', kind: 'segmented', album: true,
     hint: 'How much softness to accept before a photo is rated soft or culled. Moderate suits long-lens and heat-haze shots; strict flags any softness.',
-    options: [{ id: 'strict', name: 'Strict' }, { id: 'moderate', name: 'Moderate' }, { id: 'lenient', name: 'Lenient' }],
+    options: [{ id: 'critical', name: 'Critical' }, { id: 'strict', name: 'Strict' }, { id: 'moderate', name: 'Moderate' }, { id: 'lenient', name: 'Lenient' }],
   },
   burst_gap: {
     label: 'Burst gap', kind: 'number', album: true, unit: 's',

@@ -30,6 +30,10 @@ test('every setting keeps its engine key and appears in exactly one section', ()
   assert.deepEqual(TABS.map((t) => t.label), ['Culling', 'Identification', 'Metadata', 'System']);
 });
 
+test('blur strictness offers critical as the strictest stop', () => {
+  assert.deepEqual(FIELDS.blur_strictness.options.map((o) => o.id), ['critical', 'strict', 'moderate', 'lenient']);
+});
+
 test('sections expose their fields in section order, and every tab has a section except System', () => {
   assert.deepEqual(fieldsOf('culling').slice(0, 3).map((f) => f.key), ['blur_strictness', 'burst_gap', 'sharp_at']);
 
