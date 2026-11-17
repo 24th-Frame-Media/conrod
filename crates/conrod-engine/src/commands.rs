@@ -393,6 +393,11 @@ pub enum Command {
     Rescore(JobArgs),
     Rescan(JobArgs),
     PickKeepers(JobArgs),
+    /// Hide the extra imports of one shot (the same frame under two or three
+    /// names) from bursts, picks, counts and writes.
+    CollapseCopies(JobArgs),
+    /// Show the copies `collapse_copies` hid again, then regroup the album.
+    RestoreCopies(JobArgs),
     /// Score every frame's cached preview with the learned taste head. A sort
     /// signal only: it never changes a pick.
     TasteRank(TasteArgs),

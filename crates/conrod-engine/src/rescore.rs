@@ -172,7 +172,7 @@ fn remeasure_pixels(
 ) -> Result<usize> {
     let images = rows(
         &lock(&d.reader),
-        "SELECT id, path FROM images WHERE job_id=? AND status='done' ORDER BY id",
+        "SELECT id, path FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 ORDER BY id",
         [job],
     )?;
     let subjects = rows(

@@ -7,6 +7,9 @@ export const pct = (done: number, total: number): number => (total > 0 ? Math.mi
 export const shortDate = (unix: number): string => new Date(unix * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 export const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
+/** ` · 3 copies hidden` for an album whose byte-identical copies are collapsed, and nothing when there are none. */
+export const hiddenCopies = (copies?: number): string => (copies ? ` · ${plural(copies, 'copy', 'copies')} hidden` : '');
+
 /** The one-line state of an album, in the words the Python home screen uses for its cover. */
 export function jobState(job: Job): string {
   if (job.status === 'done') return 'Ready to review';

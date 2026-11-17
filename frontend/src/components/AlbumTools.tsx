@@ -47,6 +47,8 @@ export function AlbumTools({ jobId, label, refresh, ids, imageIds }: { jobId: nu
 
     <button onClick={() => void act('pick_keepers')}>Pick keepers</button>
 
+    <button title="Hide byte-identical copies of the same shot (imported under different names). Files are not touched." onClick={() => void act('collapse_copies')}>Hide duplicate copies</button>
+
     <button onClick={() => void act('group')}>Group cars</button>
 
     <button onClick={() => void run(async () => setSummary(await call('summary', {jobId})))}>Summary</button>

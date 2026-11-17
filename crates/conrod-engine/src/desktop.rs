@@ -201,8 +201,8 @@ pub fn rows_compact(
 /// embedding are matched against the known vehicles and people here, and the
 /// embedding itself never leaves this function.
 pub fn review_payload(db: &Connection, job: i64) -> Result<Value> {
-    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste FROM images i WHERE job_id=? ORDER BY path",[job])?;
-    let mut detections = rows_compact(db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id",[job])?;
+    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path",[job])?;
+    let mut detections = rows_compact(db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY d.image_id,d.id",[job])?;
     let known: Vec<(Value, Vec<f32>)> = rows(db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
         .into_iter()
         .filter_map(|row| similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector)))
@@ -430,6 +430,8 @@ impl Desktop {
             Command::Rescore(a) => crate::rescore::rescore(self, a.job_id),
             Command::Rescan(a) => crate::rescore::rescan(self, a.job_id),
             Command::PickKeepers(a) => crate::passes::pick_keepers(self, a.job_id),
+            Command::CollapseCopies(a) => crate::passes::collapse_copies(self, a.job_id),
+            Command::RestoreCopies(a) => crate::passes::restore_copies(self, a.job_id),
             Command::TasteRank(a) => crate::taste::taste_rank(self, a.job_id, a.force),
             Command::Group(a) => crate::passes::group(self, a.job_id),
             Command::Regroup(a) => self.regroup(a.job_id),
@@ -589,7 +591,7 @@ impl Desktop {
 
     fn jobs(&self) -> Result<Vec<Value>> {
         let fallback_gap = lock(&self.settings).burst_gap;
-        let mut jobs = rows(&lock(&self.reader), "SELECT j.*, (SELECT count(*) FROM images i WHERE i.job_id=j.id) AS total, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.status='done') AS done FROM jobs j ORDER BY j.id DESC", [])?;
+        let mut jobs = rows(&lock(&self.reader), "SELECT j.*, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND COALESCE(i.copy_of,0)=0) AS total, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.status='done' AND COALESCE(i.copy_of,0)=0) AS done, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND COALESCE(i.copy_of,0)<>0) AS copies FROM jobs j ORDER BY j.id DESC", [])?;
         for job in &mut jobs {
             if job["label"].as_str().is_none_or(|s| s.trim().is_empty()) {
                 job["label"] = json!(Path::new(job["root"].as_str().unwrap_or_default())
@@ -631,9 +633,10 @@ impl Desktop {
         const CAP: i64 = 400;
         let db = lock(&self.reader);
         let read = "COALESCE(d.number,'')<>'' OR COALESCE(d.plate,'')<>'' OR COALESCE(d.attributes,'') NOT IN ('','{}','null')";
+        let keep = "COALESCE(i.copy_of,0)=0";
         let count = |extra: &str| -> Result<i64> {
             let sql = format!(
-                "SELECT count(*) FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND ({read}) {extra}"
+                "SELECT count(*) FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND ({read}) AND {keep} {extra}"
             );
             let found = rows(&db, &sql, [job])?;
             Ok(found
@@ -650,7 +653,7 @@ impl Desktop {
                     d.attributes,d.quality,d.reviewed,d.rejected,d.group_key,
                     i.path AS frame_path,i.thumb_path AS frame_thumb
              FROM detections d JOIN images i ON i.id=d.image_id
-             WHERE i.job_id=?1 AND ({read})
+             WHERE i.job_id=?1 AND ({read}) AND {keep}
              ORDER BY COALESCE(d.reviewed,0) ASC,
                       (COALESCE(d.number,'')='' AND COALESCE(d.plate,'')='') ASC,
                       d.image_id, d.id LIMIT {CAP}"
@@ -736,7 +739,7 @@ impl Desktop {
             }
             let paths = rows(
                 &db,
-                "SELECT path FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0",
+                "SELECT path FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0",
                 [job],
             )?
             .iter()
@@ -928,7 +931,7 @@ impl Desktop {
             let db = lock(&desktop.db);
             let incomplete: i64 = db
                 .query_row(
-                    "SELECT count(*) FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0",
+                    "SELECT count(*) FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0",
                     [job],
                     |r| r.get(0),
                 )
@@ -1046,7 +1049,7 @@ impl Desktop {
         let db = lock(&self.db);
         let images = rows(
             &db,
-            "SELECT id,path,camera,taken_at,rating,width,height,exposure_time,exposure_bias,f_number,focal_length,focus_distance FROM images WHERE job_id=? AND status='done' ORDER BY path",
+            "SELECT id,path,camera,taken_at,rating,width,height,exposure_time,exposure_bias,f_number,focal_length,focus_distance FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 ORDER BY path",
             [job],
         )?;
         // Keep-together sets from the EXIF: a bracket is meant to hold a dark
@@ -1145,6 +1148,13 @@ impl Desktop {
             )
             .map_err(err)?;
         }
+        // A hidden copy keeps no key of its own: nothing may see it as a burst
+        // or moment member, even if it is shown again before the next regroup.
+        tx.execute(
+            "UPDATE images SET burst_key=NULL,set_id=NULL,set_kind=NULL WHERE job_id=? AND COALESCE(copy_of,0)<>0",
+            [job],
+        )
+        .map_err(err)?;
         tx.commit().map_err(err)?;
         // The same rule the identify stage uses, so the keeper regroup leaves
         // is the one a later pick would choose anyway.
@@ -1588,6 +1598,43 @@ mod tests {
     }
 
     #[test]
+    fn a_hidden_copy_stays_out_of_the_review_payload_and_the_album_counts() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("review-copy");
+        let frame = lib.frame("frame.jpg", Some(1));
+        let copy = lib.frame("copy.jpg", Some(1));
+        lib.detection(frame, "vehicle", 0.9);
+        lib.detection(copy, "vehicle", 0.8);
+        lib.sql("UPDATE images SET copy_of=? WHERE id=?", params![frame, copy]);
+
+        let review = lib.run("review", json!({"jobId": lib.job})).unwrap();
+        let frames = review["frames"].as_array().unwrap();
+        assert_eq!(frames.len(), 1, "{review}");
+        assert_eq!(frames[0]["id"].as_i64(), Some(frame));
+        let detections = review["detections"].as_array().unwrap();
+        assert!(
+            detections
+                .iter()
+                .all(|d| d["image_id"].as_i64() == Some(frame)),
+            "the copy's detection is hidden too: {review}"
+        );
+
+        let jobs = lib.run("jobs", json!({})).unwrap();
+        let album = jobs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|j| j["id"].as_i64() == Some(lib.job))
+            .unwrap();
+        assert_eq!(
+            album["total"].as_i64(),
+            Some(1),
+            "the copy is not a frame of the album: {album}"
+        );
+        assert_eq!(album["copies"].as_i64(), Some(1), "{album}");
+    }
+
+    #[test]
     fn picking_and_rejecting_a_frame_are_mutually_exclusive() {
         let root =
             std::env::temp_dir().join(format!("conrod-pick-{}-{}", std::process::id(), now()));
@@ -1647,8 +1694,8 @@ mod tests {
             .unwrap_or(106);
         let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .expect("open the album read-only");
-        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score FROM images i WHERE job_id=? ORDER BY path";
-        const DET_SQL: &str = "SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id,d.id";
+        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path";
+        const DET_SQL: &str = "SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY d.image_id,d.id";
 
         let mut sql = f64::MAX;
         let mut payload = f64::MAX;
