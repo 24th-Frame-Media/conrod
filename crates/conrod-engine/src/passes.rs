@@ -673,7 +673,8 @@ pub fn focus_points(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         let images = rows(
             &lock(&d.reader),
             "SELECT id,path,width,height FROM images WHERE job_id=? AND status='done' \
-             AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 ORDER BY id",
+             AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 \
+             AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_id=images.id) ORDER BY id",
             [job],
         )?;
         let raws: Vec<(i64, std::path::PathBuf, u32, u32)> = images
