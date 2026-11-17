@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { asset, call } from '../lib/api';
 import { compositionLabels } from '../lib/composition.mjs';
+import { afLabel } from '../lib/viewer.mjs';
 import { filename, frameStars, frameExcluded } from '../lib/review';
 import type { Detection, Frame, KnownVehicle, MarkValues } from '../lib/types';
 import { StarControl } from './Stars';
@@ -128,6 +129,7 @@ export function Inspector({
 
   const stars = frameStars(frame);
   const labels = compositionLabels(frame);
+  const af = afLabel(frame);
 
   return (
     <aside
@@ -183,6 +185,12 @@ export function Inspector({
         <dd>{frame.rating != null ? frame.rating.toFixed(3) : '—'}</dd>
         <dt>Burst</dt>
         <dd>{frame.burst_key == null || (allFrames.length > 0 && allFrames.filter((f) => f.burst_key === frame.burst_key).length < 2) ? '—' : frame.burst_key}</dd>
+        {af && (
+          <>
+            <dt title="Camera's autofocus area">AF box</dt>
+            <dd>{af}</dd>
+          </>
+        )}
       </dl>
 
       {frame.taste != null && (

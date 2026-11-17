@@ -15,6 +15,11 @@ export type Frame = {
   tilt_deg?: number | null;
   converge_deg?: number | null;
   level_verdict?: 'level' | 'tilted' | 'keystone' | 'unknown' | null;
+  /** The camera's autofocus area, as fractions 0..1 of the upright photo; null when the payload has none. */
+  af_x1?: number | null;
+  af_y1?: number | null;
+  af_x2?: number | null;
+  af_y2?: number | null;
   /** Expression across the frame's faces, 0..1; null without the models. */
   eye_open_min?: number | null;
   smile_max?: number | null;
@@ -75,7 +80,7 @@ export type Page = 'Library' | 'Scan' | 'Review' | 'Train' | 'Known vehicles' | 
 export type View = 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook';
 export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick' | 'taste';
 export type Facet = { kind: import('./facets.mjs').FacetKind; value: string };
-export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean; scanProfile?: string; blurStrictness?: string; burstGap?: number } | { jobId: number };
+export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean; scanProfile?: string; blurStrictness?: string; burstGap?: number; groupingStacks?: boolean; groupingSensitivity?: string; groupingPause?: number; groupingKeepPans?: boolean; groupingFocusAnchor?: boolean } | { jobId: number };
 export type MarkValues = { stars?: number | null; rejected?: boolean; picked?: boolean };
 export type Toaster = (message: string, options?: { tone?: 'error' | 'ok'; ms?: number }) => void;
 

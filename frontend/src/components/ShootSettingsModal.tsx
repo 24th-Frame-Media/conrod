@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Icon, Portal, useBackdropClose } from './basics';
 import { type Settings } from '../lib/types';
 import { ShootTypeSelect } from './ShootTypeSelect';
+import { GroupingFields, groupingOf, type GroupingValues } from './GroupingFields';
 
 type Props = {
   jobId: number;
@@ -15,7 +16,7 @@ type Props = {
     read_numbers: boolean;
     read_plates: boolean;
     group_vehicles: boolean;
-  }) => Promise<void>;
+  } & GroupingValues) => Promise<void>;
 };
 
 export function ShootSettingsModal({
@@ -31,6 +32,7 @@ export function ShootSettingsModal({
   const [readNumbers, setReadNumbers] = useState(initialSettings.read_numbers !== false);
   const [readPlates, setReadPlates] = useState(initialSettings.read_plates !== false);
   const [groupVehicles, setGroupVehicles] = useState(initialSettings.group_vehicles !== false);
+  const [grouping, setGrouping] = useState<GroupingValues>(() => groupingOf(initialSettings));
   const [saving, setSaving] = useState(false);
   const backdrop = useBackdropClose(onClose);
 
@@ -40,6 +42,7 @@ export function ShootSettingsModal({
       setReadNumbers(initialSettings.read_numbers !== false);
       setReadPlates(initialSettings.read_plates !== false);
       setGroupVehicles(initialSettings.group_vehicles !== false);
+      setGrouping(groupingOf(initialSettings));
       setSaving(false);
     }
   }, [visible, initialProfile, initialSettings]);
@@ -54,6 +57,7 @@ export function ShootSettingsModal({
         read_numbers: readNumbers,
         read_plates: readPlates,
         group_vehicles: groupVehicles,
+        ...grouping,
       });
       onClose();
     } finally {
@@ -116,6 +120,10 @@ export function ShootSettingsModal({
                 <span>Link identical vehicles across passes and burst stacks.</span>
               </div>
             </label>
+          </div>
+
+          <div className="field-group">
+            <GroupingFields value={grouping} onChange={(patch) => setGrouping((current) => ({ ...current, ...patch }))} disabled={saving} idPrefix="album-grouping" />
           </div>
         </div>
 

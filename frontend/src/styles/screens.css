@@ -195,6 +195,17 @@
 .burst-strip .focus.rank { top: 32px; right: 8px; z-index: 2; }
 .focus.picked { top: 8px; left: 8px; right: auto; color: var(--overlay-good); }
 .focus.stars.by-hand { color: var(--overlay-accent); }
+/* The keep/cull pill takes the top-right corner; the star pill moves over so both stay readable. */
+.decision-pill { position: absolute; top: 8px; right: 8px; z-index: 4; display: inline-flex; height: 22px; border: 1px solid var(--overlay-line); border-radius: 6px; overflow: hidden; background: rgba(0, 0, 0, .55); backdrop-filter: blur(4px); }
+.decision-seg { width: 22px; height: 22px; padding: 0; display: grid; place-items: center; border: 0; background: transparent; color: var(--overlay-text-dim); font: 13px/1 var(--mono); cursor: pointer; }
+.decision-seg + .decision-seg { border-left: 1px solid var(--overlay-line); }
+.decision-seg:hover { background: rgba(255, 255, 255, .14); color: var(--overlay-text); }
+.decision-seg.keep.on { background: var(--good); color: var(--on-good); }
+.decision-seg.cull.on { background: var(--bad); color: var(--overlay-text); }
+.card .focus.stars, .burst-strip .focus.stars { right: 60px; }
+/* "No 4★+": the best live frame in the stack is below four stars (independent of the "No keeper" pill). */
+.low-stars { position: absolute; top: 32px; right: 8px; z-index: 2; padding: 2px 7px; border-radius: 6px; background: rgba(0, 0, 0, .55); backdrop-filter: blur(4px); color: var(--overlay-text-dim); font: 11px/15px var(--mono); white-space: nowrap; }
+.low-stars.inline { position: static; padding: 0; background: none; color: var(--text-mute); }
 .keeper-mark { position: absolute; left: 8px; bottom: 8px; z-index: 2; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: var(--overlay-accent); pointer-events: none; }
 .burst-strip .keeper-mark { left: 8px; bottom: 8px; }
 .keeper-mark.inline { position: static; width: 14px; height: 14px; border-radius: 0; background: none; }
@@ -307,6 +318,8 @@ dialog.viewer {
 .box.box-person { --cat: #d98a6b; border-color: var(--cat); }
 .box.box-plate { --cat: #6dc9a4; border-color: var(--cat); }
 .box.box-landmark { --cat: #a996d6; border-color: var(--cat); border-width: 1.5px; }
+/* the camera's autofocus area: warm amber and dashed, never under the detection colours, never in the way of a click */
+.box.box-af { --cat: #f5b942; border: 2px dashed var(--cat); background: rgba(245, 185, 66, .05); pointer-events: none; cursor: default; }
 .box.hovered-box { border-width: 3px; box-shadow: 0 0 0 1px #000; z-index: 4; }
 .box.active-box { border-width: 3px; box-shadow: 0 0 0 1.5px #000, inset 0 0 0 1px rgba(0, 0, 0, .45); z-index: 5; }
 
@@ -315,6 +328,7 @@ dialog.viewer {
 .box-label.label-person { background: #d98a6b; }
 .box-label.label-plate { background: #6dc9a4; }
 .box-label.label-landmark { background: #a996d6; }
+.box-label.label-af { background: #f5b942; }
 .det-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cat, var(--text-mute)); flex: none; }
 .det-pill.pill-vehicle { --cat: #6bb4d9; } .det-pill.pill-person { --cat: #d98a6b; } .det-pill.pill-plate { --cat: #6dc9a4; } .det-pill.pill-landmark { --cat: #a996d6; }
 
@@ -894,6 +908,9 @@ dialog.viewer {
 /* A burst whose lead is the engine's unaccepted suggestion. */
 .burst-stack.suggested .burst-layers { border-color: rgba(76, 195, 138, .55); }
 .burst-stack.suggested .burst-caption b { color: var(--text); }
+/* Whole-stack decision state: green once every frame is decided and it has a keeper, red when all are culled. */
+.burst-stack.tone-kept .burst-layers { border-left: 3px solid var(--good); }
+.burst-stack.tone-culled .burst-layers { border-left: 3px solid var(--bad); }
 .burst-layers .image-load, .burst-layers img { width: 100%; height: 100%; object-fit: cover; }
 
 .burst-caption { display: grid; gap: 2px; padding: 0 4px; }
@@ -901,9 +918,17 @@ dialog.viewer {
 .burst-caption span { min-height: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-mute); font-size: 11px; }
 .burst-expanded { position: absolute; left: 0; right: 0; box-sizing: border-box; overflow: hidden; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
 .burst-expanded-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+/* One row above the strip: how the whole stack stands, then its two bulk decisions. */
+.stack-actions { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.stack-actions .ghost.small { padding: 3px 9px; font-size: 11px; }
+.stack-kept { font: 12px/16px var(--mono); font-variant-numeric: tabular-nums; color: var(--text-mute); }
+.stack-kept.has { color: var(--good); }
+.stack-kept.none { color: var(--bad); }
+.reviewed-count { align-self: center; color: var(--text-mute); font: 12px/16px var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .burst-strip { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; }
-.burst-strip > button { position: relative; flex: 0 0 190px; padding: 0; overflow: hidden; text-align: left; background: var(--surface); }
-.burst-strip > button.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.burst-strip-item { position: relative; flex: 0 0 190px; }
+.burst-strip-item > button { position: relative; width: 100%; padding: 0; overflow: hidden; text-align: left; background: var(--surface); }
+.burst-strip-item.selected > button { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .burst-strip .image-load { width: 100%; aspect-ratio: 3 / 2; }
 .burst-strip img { width: 100%; height: 100%; object-fit: cover; }
 .burst-strip input { position: absolute; z-index: 4; top: 8px; left: 8px; }
@@ -1982,6 +2007,14 @@ dialog.viewer {
 .import-gap-input input[aria-invalid="true"] { border-color: var(--bad); }
 .import-entries { margin-bottom: 0; align-items: center; }
 .import-sheet .actions-row { position: sticky; bottom: -28px; margin: 12px 0 -28px; padding: 14px 0 28px; background: var(--surface); }
+
+/* Stacking, shared by the import sheet and an album's shoot settings. */
+.grouping-fields { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.grouping-title { margin: 0; font-size: 12px; font-weight: 500; letter-spacing: .01em; color: var(--text-dim); }
+.grouping-note { margin: 0; font-size: 12px; line-height: 1.4; color: var(--text-mute); }
+.grouping-body { display: grid; gap: 10px; }
+.grouping-body[aria-disabled="true"] { opacity: .55; }
+.grouping-fields select { min-width: 132px; }
 .tab-live { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--scan); animation: pulse 1.4s ease-in-out infinite; }
 
 /* ── scan screen ── */

@@ -152,6 +152,7 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keep
               selectedId={frame.id}
               culled={(f) => frameExcluded(f, facts.get(f.id)?.dets ?? [])}
               onSelect={(id) => rv.setSelected(id)}
+              onDecide={(id, values) => void rv.mark(values, id)}
             />
           )}
 

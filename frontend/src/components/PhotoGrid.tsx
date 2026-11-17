@@ -1,10 +1,11 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { asset } from '../lib/api';
 import { filename, frameStars, verdictOf, type FrameFacts } from '../lib/review';
-import type { Frame } from '../lib/types';
+import type { Frame, MarkValues } from '../lib/types';
 import { KeeperMark, RankBadge, StarPill } from './Stars';
 import { LoadableImage } from './Media';
 import { Icon } from './basics';
+import { DecisionPill } from './DecisionPill';
 
 const GAP = 10, MIN_W = 190, BODY_H = 64, PAD = 18;
 
@@ -16,10 +17,11 @@ type CardProps = {
   left: number; top: number; width: number; height: number;
   onSelect: (id: number) => void; onOpen: () => void; onReject: (id: number, rejected: boolean) => void;
   onPick?: (id: number) => void;
+  onDecide?: (id: number, values: MarkValues) => void;
 };
 
 /** A card's keeper, its suggestion, and the green "Suggested" pill that accepts it in one click. */
-const Card = memo(function Card({ frame, facts, rank, selected, keeper, suggestion, left, top, width, height, onSelect, onOpen, onReject, onPick, checked, onToggle }: CardProps) {
+const Card = memo(function Card({ frame, facts, rank, selected, keeper, suggestion, left, top, width, height, onSelect, onOpen, onReject, onPick, onDecide, checked, onToggle }: CardProps) {
   const verdict = verdictOf(frameStars(frame));
   const suggested = keeper && !frame.picked && !frame.rejected && !facts?.cull;
   const cls = ['card', selected && 'selected current', frame.rejected && 'rejected', frame.picked && 'picked', suggested && 'suggested', facts?.cull && 'culled', verdict !== 'none' && `rated-${verdict}`]
@@ -31,6 +33,7 @@ const Card = memo(function Card({ frame, facts, rank, selected, keeper, suggesti
       <div className="frame-box">
         {onToggle && <input style={{position: 'absolute', left: 8, top: 8, zIndex: 4}} type="checkbox" aria-label={`Select ${filename(frame.path)}`} checked={checked} onClick={e => e.stopPropagation()} onChange={() => onToggle(frame.id)} />}
         <LoadableImage className="thumb" loading="lazy" decoding="async" draggable={false} src={asset(frame.thumb_path)} alt={filename(frame.path)} />
+        <DecisionPill frame={frame} onDecide={(values) => onDecide?.(frame.id, values)} />
         <StarPill frame={frame} />
         {facts?.panned && <span className="focus panning" title="Subject sharp against a blurred background. Kept, never auto-culled">panned</span>}
         {suggested ? (
@@ -73,12 +76,14 @@ type Props = {
   onSelect: (id: number) => void; onOpen: () => void; onReject: (id: number, rejected: boolean) => void;
   /** Accept a suggested keeper (same as pressing P on it). */
   onPick?: (id: number) => void;
+  /** Keep or cull one photo from its pill; never moves the selection. */
+  onDecide?: (id: number, values: MarkValues) => void;
   /** Cards per row, so up/down can move one row. */
   onCols?: (cols: number) => void;
 };
 
 /** Windowed grid: only the rows in view are mounted, so a 5 000-frame album scrolls like a 50-frame one. */
-export function PhotoGrid({ frames, facts, ranks, keepers, suggestions, selected, empty, onSelect, onOpen, onReject, onPick, checked, onToggle, onCols }: Props) {
+export function PhotoGrid({ frames, facts, ranks, keepers, suggestions, selected, empty, onSelect, onOpen, onReject, onPick, onDecide, checked, onToggle, onCols }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 900, h: 600 });
@@ -123,7 +128,7 @@ export function PhotoGrid({ frames, facts, ranks, keepers, suggestions, selected
           return (
             <Card checked={checked?.has(f.id)} onToggle={onToggle} key={f.id} frame={f} facts={facts.get(f.id)} rank={ranks?.get(f.id)} keeper={Boolean(keepers?.has(f.id))} suggestion={suggestions?.get(f.id)} selected={selected === f.id}
               left={(i % cols) * (width + GAP)} top={Math.floor(i / cols) * rowH} width={width} height={height}
-              onSelect={onSelect} onOpen={onOpen} onReject={onReject} onPick={onPick} />
+              onSelect={onSelect} onOpen={onOpen} onReject={onReject} onPick={onPick} onDecide={onDecide} />
           );
         })}
       </div>

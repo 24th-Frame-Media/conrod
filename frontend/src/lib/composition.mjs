@@ -8,14 +8,16 @@ const BALANCE_DEAD = 0.15;
 
 const label = (id, text, tone) => ({ id, text, tone });
 
-/** Where the subject sits on the frame's composition grid: on an anchor, near one, or off it. */
+/**
+ * Where the subject sits on the frame's composition grid. Below 0.5 it sits off every anchor, which is most moving
+ * subjects and not worth a chip: silence instead of an "Off the grid" warning on every frame.
+ */
 function placement(frame) {
   const p = frame.comp_placement;
-  if (p == null) return null;
+  if (p == null || p < 0.5) return null;
   const mode = MODES[frame.comp_mode];
   if (p >= 0.75) return label('placement', mode ?? 'Well placed', 'good');
-  if (p >= 0.4) return label('placement', mode ?? 'Framing average', 'ok');
-  return label('placement', 'Off the grid', 'warn');
+  return label('placement', mode ?? 'Framing average', 'ok');
 }
 
 /** Which way the frame leans; both axes inside the dead zone is the only "Balanced". */

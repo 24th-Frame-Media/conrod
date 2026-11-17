@@ -52,6 +52,11 @@ type ZoomProps = {
   zoomed?: boolean;
   onZoomChange?: (zoomed: boolean) => void;
   focusBox?: [number, number, number, number] | null;
+  /**
+   * A single click on the photo that was not a drag: `target` is what was pressed (a detection box, or the
+   * stage). When set, the owner handles the click-to-zoom toggle itself instead of the default one.
+   */
+  onSurfaceClick?: (clientX: number, clientY: number, target: HTMLElement | null) => void;
 };
 
 function getFitScaleAndSize(containerW: number, containerH: number, naturalW: number, naturalH: number) {
@@ -101,7 +106,7 @@ function focusView(
 
 /** Lightroom-inspired zoom & pan: single-click toggle, true 1:1 resolution, bounded panning, presets. */
 export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanImage(
-  { src, alt, children, className = '', zoomed, onZoomChange, focusBox },
+  { src, alt, children, className = '', zoomed, onZoomChange, focusBox, onSurfaceClick },
   ref,
 ) {
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
@@ -119,7 +124,8 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
     ox: number;
     oy: number;
     moved: boolean;
-    isBox: boolean;
+    /** What the press landed on, before pointer capture retargets the events. */
+    target: HTMLElement | null;
   } | null>(null);
 
   const getDimensions = useCallback(() => {
@@ -232,7 +238,6 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
   const down = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest('.zoom-tools, button, select, input, a')) return;
-    const isBox = Boolean((event.target as HTMLElement).closest('.box'));
 
     drag.current = {
       id: event.pointerId,
@@ -241,7 +246,7 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
       ox: view.x,
       oy: view.y,
       moved: false,
-      isBox,
+      target: event.target as HTMLElement,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -277,8 +282,9 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
     } catch {}
 
     if (!cur.moved) {
-      if (cur.isBox) return;
-      toggleZoom(event.clientX, event.clientY);
+      // A press that lands on a detection box is a click on the photo too; only a drag is excluded.
+      if (onSurfaceClick) onSurfaceClick(event.clientX, event.clientY, cur.target);
+      else toggleZoom(event.clientX, event.clientY);
     }
   };
 

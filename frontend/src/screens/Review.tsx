@@ -5,7 +5,9 @@ import { Inspector } from '../components/Inspector';
 import { PhotoGrid } from '../components/PhotoGrid';
 import { StackGrid, type StackView } from '../components/StackGrid';
 import { burstRankMap, decisionOf, defaultFilters, filename, vehicleGroups, type FrameFacts } from '../lib/review';
-import { buildStacks, makeStack, nextUndecided, softBursts as softBurstMapOf, stepFlat, stepInStack, stepRow, stepStack, suggestionSizes, type Stack } from '../lib/stacks.mjs';
+import { buildStacks, groupKeyOf, makeStack, nextUndecided, softBursts as softBurstMapOf, stepFlat, stepInStack as stepWithinStack, stepRow, stepStack, suggestionSizes, type Stack } from '../lib/stacks.mjs';
+import { edgeFrameId, stepInStack } from '../lib/navigation.mjs';
+import { reviewedStacks, stackDecision } from '../lib/decisions.mjs';
 import { tasteStacks } from '../lib/taste.mjs';
 import { albumSetting } from '../lib/album.mjs';
 import { call, engine } from '../lib/api';
@@ -28,14 +30,18 @@ export type ReviewView = 'grid' | 'loupe' | 'compare';
 /** How App's global hotkey handler reaches into whichever view Review currently owns (mirrors Train's `verbs` ref). */
 export type ReviewVerbs = {
   view: ReviewView; setView: (v: ReviewView) => void;
-  stepFrame: (delta: number) => void; stepBurst: (delta: number) => void; nextBurst: (delta: number) => void;
+  /** `repeat` is true on a held key's auto-repeat: within-stack movement continues, a jump into the next stack does not. */
+  stepFrame: (delta: number, repeat?: boolean) => void; stepBurst: (delta: number) => void; nextBurst: (delta: number) => void;
   nextUndecided: () => void; enter: () => void; escape: () => void;
   mark: (values: MarkValues) => void; rejected: () => boolean; picked: () => boolean;
+  /** B / Shift+B: keep this frame and cull its stack, or cull the whole stack. */
+  stackAction: (mode: 'keep' | 'cull') => void;
   undo: () => void; redo: () => void;
 };
 export const noReviewVerbs: ReviewVerbs = {
   view: 'grid', setView: () => {}, stepFrame: () => {}, stepBurst: () => {}, nextBurst: () => {}, nextUndecided: () => {},
   enter: () => {}, escape: () => {}, mark: () => {}, rejected: () => false, picked: () => false,
+  stackAction: () => {},
   undo: () => {}, redo: () => {},
 };
 
@@ -135,6 +141,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [autoAdvance, setAutoAdvance] = useLocalFlag('conrod.autoAdvance', true);
+  const [crossStacks, setCrossStacks] = useLocalFlag('conrod.crossStacks', true);
   const [cols, setCols] = useState(4);
   const run = useRun();
   const toast = useToast();
@@ -154,6 +161,9 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const suggestions = useMemo(() => suggestionSizes(review.frames, facts), [review.frames, facts]);
   // Bursts the engine refused to keep anything from: the grid says "No keeper".
   const softBursts = useMemo(() => softBurstMapOf(review.frames, facts), [review.frames, facts]);
+  // Whole-album burst stacks for the progress readout, so narrowing the view does not change the denominator.
+  const albumBursts = useMemo(() => buildStacks(review.frames.filter((f) => f.status === 'done'), { facts, keepers, all: review.frames }), [review.frames, facts, keepers]);
+  const progress = useMemo(() => reviewedStacks(albumBursts, (f) => decisionOf(f, facts.get(f.id)) === 'undecided'), [albumBursts, facts]);
   const acceptSuggestion = (id: number) => { void rv.mark({ picked: true }, id); };
   const burstStacks = useMemo(() => {
     const stacks = buildStacks(frames.filter((f) => f.status === 'done'), { facts, keepers, all: review.frames }).map((s) => describe(s, facts, ranks));
@@ -233,18 +243,87 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     const next = stepStack(navStacks, id, 1);
     return next === id ? null : next;
   };
+  /** The whole group behind a frame for a bulk decision; the filter may hide frames, but B should settle the burst. */
+  const stackFramesOf = (f: Frame): Frame[] => {
+    if (groupingNow === 'dupes') return review.frames.filter((x) => groupKeyOf(x, true) === groupKeyOf(f, true));
+    if (groupingNow === 'vehicles') return stackOf.get(f.id)?.frames ?? [f];
+    return review.frames.filter((x) => groupKeyOf(x) === groupKeyOf(f));
+  };
+  /**
+   * One-key stack decision: `keep` keeps the focused frame and culls the rest, `cull` culls all. One markMany call
+   * means one undo step, and no auto-advance: the view moves to the next stack that still has undecided frames.
+   */
+  const stackAction = (mode: 'keep' | 'cull', stack?: StackView) => {
+    const target = stack
+      ? stack.frames.find((f) => f.id === selected) ?? stack.lead
+      : view === 'compare' ? activeCompareFrame : frame;
+    if (!target) return;
+    const members = stack ? stack.frames : stackFramesOf(target);
+    const changes = stackDecision(members, mode === 'keep' ? target.id : 'cull');
+    void rv.markMany(changes);
+    if (!stacked) return;
+    const settled = new Set(changes.map((c) => c.id));
+    const currentLead = (stack?.lead ?? stackOf.get(target.id)?.lead)?.id ?? null;
+    const byLead = new Map(navStacks.map((s) => [s.lead.id, s]));
+    const holdsUndecided = (lead: Frame) => {
+      const s = byLead.get(lead.id);
+      return s ? s.frames.some((f) => !settled.has(f.id) && undecided(f)) : false;
+    };
+    let next = nextUndecided(navStacks.map((s) => s.lead), currentLead, holdsUndecided);
+    if (next === currentLead) next = null;
+    if (next != null) { rv.setSelected(next); rv.setExpanded(next); }
+  };
 
   verbs.current = {
     view,
     setView,
-    stepFrame: (delta) => {
-      if (view === 'compare') { const next = stepInStack(navStacks, (compareRight ?? frame)?.id ?? null, delta); if (next != null) setCompareRightId(next); return; }
+    stepFrame: (delta, repeat = false) => {
+      if (view === 'compare') { const next = stepWithinStack(navStacks, (compareRight ?? frame)?.id ?? null, delta); if (next != null) setCompareRightId(next); return; }
       if (view === 'grid' && !stacked) { goTo(stepFlat(frames, selected, delta)); return; }
-      const next = stepInStack(view === 'grid' ? shown : navStacks, selected, delta) ?? stepStack(view === 'grid' ? shown : navStacks, selected, delta);
-      if (next == null) return;
-      rv.setSelected(next);
-      if (view === 'grid' && (stackOf.get(next)?.frames.length ?? 0) > 1) rv.setExpanded(next);
-      else if (expanded != null) rv.setExpanded(next);
+      const list = view === 'grid' ? shown : navStacks;
+      const byFrame = view === 'grid' ? shownOf : stackOf;
+      const stack = selected != null ? byFrame.get(selected) ?? null : null;
+      if (!stack) {
+        const next = stepWithinStack(list, selected, delta) ?? stepStack(list, selected, delta);
+        if (next != null) { rv.setSelected(next); if (expanded != null) rv.setExpanded(next); }
+        return;
+      }
+      const direction = delta > 0 ? 'forward' : 'back';
+      // A collapsed card is the stack's cover: → enters the stack on its first frame, as shot.
+      if (view === 'grid' && expandedKey !== stack.key && delta > 0 && selected === stack.lead.id && stack.frames.length > 1) {
+        rv.setSelected(stack.frames[0].id);
+        rv.setExpanded(stack.frames[0].id);
+        return;
+      }
+      // First/Last in the loupe send ±Infinity: those stay inside the stack.
+      const bounded = delta === 1 || delta === -1;
+      // In the grid, ← on the first frame of an open strip closes it onto the cover first; the next ←
+      // crosses into the previous stack, like the loupe. A held key repeats within its stack, but one
+      // keydown can cross at most one edge.
+      const atCover = view === 'grid' && expandedKey !== stack.key;
+      const edge = crossStacks && !repeat && (view !== 'grid' || direction === 'forward' || atCover);
+      const step = bounded ? stepInStack(list, list.indexOf(stack), selected, direction, { crossStacks: edge }) : null;
+      if (step == null) {
+        const next = bounded ? null : stepWithinStack(list, selected, delta);
+        if (next != null) {
+          rv.setSelected(next);
+          if (expanded != null) rv.setExpanded(next);
+        } else if (bounded && view === 'grid' && direction === 'back' && expandedKey === stack.key && selected === stack.frames[0]?.id) {
+          // Back from the first frame closes the strip onto the cover.
+          rv.setSelected(stack.lead.id);
+          rv.setExpanded(null);
+        }
+        return;
+      }
+      if ('id' in step) {
+        rv.setSelected(step.id);
+        if (view === 'grid' ? expanded != null || stack.frames.length > 1 : expanded != null) rv.setExpanded(step.id);
+        return;
+      }
+      const id = edgeFrameId(list[step.stackIndex], direction);
+      if (id == null) return;
+      rv.setSelected(id);
+      rv.setExpanded(id);
     },
     stepBurst: (delta) => {
       if (view === 'compare') { const next = stepStack(navStacks, (compareRight ?? frame)?.id ?? null, delta); if (next != null) setCompareRightId(next); return; }
@@ -272,6 +351,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     },
     rejected: () => Boolean(activeCompareFrame && facts.get(activeCompareFrame.id)?.cull),
     picked: () => Boolean(activeCompareFrame?.picked),
+    stackAction,
     undo: () => { const id = rv.undo(); if (id != null) goTo(id); },
     redo: () => { const id = rv.redo(); if (id != null) goTo(id); },
   };
@@ -319,6 +399,11 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     read_numbers: albumSetting(currentJob, 'read_numbers', settings) as boolean | undefined ?? true,
     read_plates: albumSetting(currentJob, 'read_plates', settings) as boolean | undefined ?? true,
     group_vehicles: albumSetting(currentJob, 'group_vehicles', settings) as boolean | undefined ?? true,
+    grouping_stacks: albumSetting(currentJob, 'grouping_stacks', settings) as boolean | undefined ?? true,
+    grouping_sensitivity: String(albumSetting(currentJob, 'grouping_sensitivity', settings) ?? 'normal'),
+    grouping_pause: Number(albumSetting(currentJob, 'grouping_pause', settings) ?? 0.8),
+    grouping_keep_pans: albumSetting(currentJob, 'grouping_keep_pans', settings) as boolean | undefined ?? true,
+    grouping_focus_anchor: albumSetting(currentJob, 'grouping_focus_anchor', settings) as boolean | undefined ?? true,
   };
   /** Album-scoped changes go to this album only; the global defaults are edited in Settings. */
   const saveAlbum = async (patch: Record<string, unknown>) => {
@@ -492,6 +577,14 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       checked: autoAdvance,
       onChange: (checked) => setAutoAdvance(checked),
     },
+    {
+      type: 'checkbox',
+      id: 'toggle_cross_stacks',
+      label: 'Arrow keys continue into the next stack',
+      hint: '→ on a stack\u2019s last frame opens the next stack; ← on its first goes back',
+      checked: crossStacks,
+      onChange: (checked) => setCrossStacks(checked),
+    },
     { type: 'divider' },
     { type: 'header', label: 'Album resets' },
     {
@@ -565,6 +658,11 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         <select aria-label="Photo filter" value={filters.view} onChange={(e) => patchFilters({ view: e.target.value as typeof filters.view })}>
           <option value="all">All photos</option><option value="keepers">Keepers</option><option value="undecided">Undecided</option><option value="rejected">Rejected</option><option value="top3">Top 3 per burst</option><option value="review">Needs review</option>{(vehicleBrowse || filters.view === 'needsLook') && <option value="needsLook">Needs a look</option>}
         </select>
+        {stacked && (
+          <span className="reviewed-count" title="Bursts where every frame is kept or culled, over the whole album">
+            reviewed {progress.reviewed.toLocaleString()} / {progress.total.toLocaleString()} bursts
+          </span>
+        )}
         <select aria-label="Group photos" value={groupingNow} onChange={(e) => rv.setGrouping(e.target.value as typeof grouping)}>
           <option value="bursts">Group: Burst stacks</option>{vehicleBrowse && <option value="vehicles">Group: By vehicle</option>}<option value="dupes">Group: Duplicates</option><option value="flat">Group: Individual photos</option>
         </select>
@@ -595,8 +693,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         visible={shootSettingsOpen}
         onClose={() => setShootSettingsOpen(false)}
         onSave={async (patch) => {
-          await saveAlbum(patch);
-          toast('Shoot settings updated for this album.');
+          await engine.updateJobSettings(jobId, patch);
+          // A grouping choice only shows once the album is regrouped; a preset or detection change is safe to regroup too.
+          await call('regroup', { jobId });
+          await onJobsChanged();
+          await rv.refresh();
+          toast('Shoot settings updated for this album and its stacks regrouped.');
         }}
       />
       <Identifications
@@ -692,10 +794,11 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         {stacked
           ? <StackGrid stacks={shown} selectedKey={selectedKey} selectedId={selected} expandedKey={expandedKey} keeperIds={keepers} suggestions={suggestions} softBursts={softBursts}
               culled={(f) => Boolean(facts.get(f.id)?.cull)} onToggle={toggleStack} onSelect={rv.setSelected} onOpen={openViewer} onPick={acceptSuggestion}
+              onDecide={(id, values) => void rv.mark(values, id)} onStackAction={(stack, mode) => stackAction(mode, stack)}
               ariaLabel={groupingNow === 'dupes' ? 'Duplicate stacks' : groupingNow === 'vehicles' ? 'Vehicle stacks' : 'Burst stacks'}
               empty={emptyState} />
           : <PhotoGrid frames={frames} facts={facts} ranks={ranks} keepers={keepers} suggestions={suggestions} selected={selected} onSelect={rv.setSelected} onOpen={openViewer} onCols={setCols}
-              onReject={(id, rejected) => void rv.mark({ rejected }, id)} onPick={acceptSuggestion} empty={emptyState} />}
+              onReject={(id, rejected) => void rv.mark({ rejected }, id)} onPick={acceptSuggestion} onDecide={(id, values) => void rv.mark(values, id)} empty={emptyState} />}
         <Inspector frame={frame} detections={frame ? facts.get(frame.id)?.dets ?? [] : []} allDetections={review.detections} allFrames={review.frames} known={known} scanning={scanning} kind={kind}
           onMark={(values) => void rv.mark(values)} onOpen={openViewer} onEdit={onEdit} />
       </div>
