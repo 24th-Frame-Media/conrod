@@ -146,6 +146,9 @@ pub struct Desktop {
     active: Mutex<Option<(i64, Arc<Scan>)>>,
     /// The scan in progress (or just finished), for `scan-progress` events.
     progress: Mutex<Option<Arc<crate::progress::Progress>>>,
+    /// The identify run in progress (or just finished), for `identify-progress`
+    /// events: the car being read, its prompt and reply, and its final fields.
+    pub(crate) identify: Mutex<Option<Arc<crate::identify_live::IdentifyLive>>>,
     pub(crate) operations:
         Mutex<std::collections::BTreeMap<String, Arc<std::sync::atomic::AtomicBool>>>,
 }
@@ -292,6 +295,7 @@ impl Desktop {
             watching: Mutex::new(Default::default()),
             active: Mutex::new(None),
             progress: Mutex::new(None),
+            identify: Mutex::new(None),
             operations: Mutex::new(std::collections::BTreeMap::new()),
         });
         crate::watching::restore(&desktop);
@@ -308,6 +312,18 @@ impl Desktop {
     pub fn progress_snapshot(&self) -> Option<Value> {
         let progress = self.progress()?;
         progress.emit_snapshot().map(|snapshot| json!(snapshot))
+    }
+
+    /// The identify run in progress (or the one that just ended), if any.
+    pub fn identify_live(&self) -> Option<Arc<crate::identify_live::IdentifyLive>> {
+        lock(&self.identify).clone()
+    }
+
+    /// The `identify-progress` payload for this tick, throttled the same way as
+    /// `scan-progress`: one per tick while the run is live, then one final
+    /// snapshot. The last snapshot is what the screen shows as its summary.
+    pub fn identify_snapshot(&self) -> Option<Value> {
+        self.identify_live()?.emit_snapshot()
     }
 
     pub fn request_quit(&self) {

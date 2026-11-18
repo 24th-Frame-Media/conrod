@@ -1,15 +1,15 @@
 /* Dev-only engine stand-in: `vite dev` + `?mock=1`. Imported dynamically behind import.meta.env.DEV, so it is not in `dist`.
-   Extra params: page=library|scan|review|train|known|settings, viewer, popover, scan (a scan is running), profile=<shoot preset id>. */
-import type { Bootstrap, Detection, Frame, GlobalStats, Job, KnownVehicle, Page, PipelineStage, PipelineWorker, ScanProgress, ScanRecentFrame, Settings, Status, WorkerLimits } from './types';
+   Extra params: page=library|scan|identify|review|train|known|settings, viewer, popover, scan (a scan is running), profile=<shoot preset id>. */
+import type { Bootstrap, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, PipelineStage, PipelineWorker, ScanProgress, ScanRecentFrame, Settings, Status, WorkerLimits } from './types';
 
 export type DevStart = { page?: Page; jobId?: number; viewer?: boolean; popover?: boolean };
 const params = () => new URLSearchParams(location.search);
 
 /** `?mock=1&page=scan` plays a ~30 s scan of album 3 through every stage (`&speed=2` to hurry it). */
 export function devStart(): DevStart {
-  const pages: Record<string, Page> = { library: 'Library', scan: 'Scan', review: 'Review', train: 'Train', known: 'Known vehicles', settings: 'Settings' };
+  const pages: Record<string, Page> = { library: 'Library', scan: 'Scan', identify: 'Identify', review: 'Review', train: 'Train', known: 'Known vehicles', settings: 'Settings' };
   const page = pages[params().get('page') ?? ''];
-  return { page, jobId: page === 'Review' || page === 'Train' ? 1 : page === 'Scan' ? 3 : undefined, viewer: params().has('viewer'), popover: params().has('popover') };
+  return { page, jobId: page === 'Review' || page === 'Train' || page === 'Identify' ? 1 : page === 'Scan' ? 3 : undefined, viewer: params().has('viewer'), popover: params().has('popover') };
 }
 
 const CARS: [string, string, string, string, string, string, number][] = [
@@ -216,7 +216,92 @@ function tickSim(db: Db): void {
   for (const cb of listeners) cb(lastProgress);
 }
 
+/* ── identify simulator: the live AI trace, so the Identify screen can be walked without the engine ── */
+const identifyListeners = new Set<(p: IdentifyLive) => void>();
+let lastIdentify: IdentifyLive | null = null;
+export function subscribeIdentifyProgress(cb: (p: IdentifyLive) => void): () => void {
+  identifyListeners.add(cb);
+  if (lastIdentify) cb(lastIdentify);
+  return () => { identifyListeners.delete(cb); };
+}
+
+const IDENTIFY_STEPS: IdentifyStage[] = ['read', 'crop', 'vision', 'merge'];
+type IdentifySim = { jobId: number; tick: number; total: number; startedAt: number; timer: number; recent: IdentifyItem[]; finished: boolean };
+let identSim: IdentifySim | undefined;
+
+function identifyItem(k: number, stage: IdentifyStage, startedAt: number): IdentifyItem {
+  const [make, model, colour, team, no, plate] = CARS[k % CARS.length];
+  return {
+    detection_id: 9000 + k, image_id: 1000 + k, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + k}.CR3`,
+    thumb_path: mockThumb(k), preview_path: null, crop_path: mockThumb(k + 2), stage,
+    prompt: 'You are reading one competition car. Read the race number from the windscreen or side window first, then the door board. Take the make and model from badges or the body shape, and the team from the livery.',
+    reply: { number: no, make, model, colour, team, plate: null },
+    trace: [
+      `read IMG_${4200 + k}.CR3 · RAW preview 1920 px`,
+      `crop subject · car ${model}`,
+      `vlm 1 ask(s): ${stage === 'vision' ? 'reading the number and make' : 'queued'}`,
+      `entry list: 26 candidates · best match #${no}`,
+    ],
+    number: no, number_source: k % 5 === 0 ? 'ocr+entry' : 'vlm', number_conf: 0.62 + ((k * 7) % 36) / 100,
+    plate, make, model, team, colour, failures: [], ms: 1200 + ((k * 37) % 900), at: startedAt + (k + 1) * 2,
+  };
+}
+
+function emitIdentify(snap: IdentifyLive): void {
+  lastIdentify = snap;
+  for (const cb of identifyListeners) cb(snap);
+}
+
+function startIdentifySim(jobId: number): void {
+  if (identSim && !identSim.finished) return;
+  const total = Math.max(8, Number(params().get('frames')) || 24);
+  identSim = { jobId, tick: 0, total, startedAt: Date.now(), timer: 0, recent: [], finished: false };
+  identSim.timer = window.setInterval(() => tickIdentify(), 900);
+  tickIdentify();
+}
+
+function tickIdentify(): void {
+  const s = identSim;
+  if (!s || s.finished) return;
+  const idx = Math.floor(s.tick / 4), step = s.tick % 4;
+  const stage = IDENTIFY_STEPS[step];
+  const finished = idx >= s.total;
+  if (step === 0 && idx > 0 && idx <= s.total) s.recent = [identifyItem(idx - 1, 'done', s.startedAt), ...s.recent].slice(0, 16);
+  const current = finished ? null : identifyItem(idx, stage, s.startedAt);
+  emitIdentify({
+    job_id: s.jobId, state: finished ? 'done' : 'running', done: finished ? s.total : idx, total: s.total,
+    started_at: s.startedAt / 1000, elapsed_ms: Date.now() - s.startedAt,
+    stage: finished ? 'done' : stage,
+    current,
+    // The real run has one car per worker; the mock shows the same three lanes.
+    active: current ? [current, identifyItem(idx + 1, 'crop', s.startedAt), identifyItem(idx + 2, 'read', s.startedAt)] : [],
+    recent: s.recent, errors: [],
+  });
+  if (finished) { s.finished = true; clearInterval(s.timer); return; }
+  s.tick += 1;
+}
+
+function stopIdentifySim(): void {
+  const s = identSim;
+  if (!s || s.finished) return;
+  s.finished = true;
+  clearInterval(s.timer);
+  const idx = Math.min(Math.floor(s.tick / 4), s.total);
+  emitIdentify({
+    job_id: s.jobId, state: 'stopped', done: idx, total: s.total,
+    started_at: s.startedAt / 1000, elapsed_ms: Date.now() - s.startedAt, stage: 'done',
+    current: lastIdentify?.current ?? null, active: [], recent: s.recent, errors: [],
+  });
+}
+
 function status(db: Db): Status {
+  if (identSim && !identSim.finished) {
+    const job = db.jobs.find((j) => j.id === identSim?.jobId);
+    return {
+      tasks: [{ id: 11, label: `Identifying · album ${identSim.jobId}`, detail: lastIdentify?.current?.path ?? 'Preparing…', state: 'running', done: lastIdentify?.done ?? 0, total: identSim.total, eta: null, error: null }],
+      log: [`Reading ${job?.label ?? 'album'} vehicles`], activeJob: null, operations: [`Identifying:${identSim.jobId}`],
+    };
+  }
   if (sim && !sim.finished) {
     const job = db.jobs.find((j) => j.id === sim?.jobId);
     return { tasks: [{ id: 9, label: `Scanning ${job?.label ?? 'album'}`, detail: `IMG_${4200 + sim.overall}.CR3`, state: 'running', done: sim.overall, total: sim.total, eta: lastProgress?.eta_s ?? null, error: null }], log: ['scan started'], activeJob: sim.jobId, operations: [] };
@@ -260,12 +345,12 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     });
     case 'provider_models': {
       const provider = String(a.provider ?? '');
-      if (provider !== 'openai' && provider !== 'opencode') {
+      if (provider !== 'openai' && provider !== 'opencode' && provider !== 'opencode-go') {
         return out({ models: [], error: `'${provider}' does not list models; type the model name` });
       }
-      const models = provider === 'opencode'
-        ? [{ id: 'qwen3.8-max', name: 'qwen3.8-max' }, { id: 'claude-sonnet-4-5', name: 'claude-sonnet-4-5' }, { id: 'kimi-k2', name: 'kimi-k2' }]
-        : [{ id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }, { id: 'o4-mini', name: 'o4-mini' }];
+      const models = provider === 'openai'
+        ? [{ id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }, { id: 'o4-mini', name: 'o4-mini' }]
+        : [{ id: 'qwen3.8-max', name: 'qwen3.8-max' }, { id: 'deepseek-v4.1-flash', name: 'deepseek-v4.1-flash' }, { id: 'kimi-k2', name: 'kimi-k2' }];
       return out({ models });
     }
     case 'summary': return out({images: {scanned: db.frames.length, written: 0, errors: 0}, counts: {numbered: 48, plated: 48, to_review: 12}});
@@ -284,6 +369,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     }
     case 'bootstrap':
       if (params().get('page') === 'scan') startSim(db, 3);
+      if (params().get('page') === 'identify') startIdentifySim(1);
       return out({ jobs: db.jobs, settings: db.settings, status: status(db), models: [{ name: 'Vehicle detector', file: 'yolo.onnx', ready: true }, { name: 'Plate reader', file: 'plates.onnx', ready: true }, { name: 'Vision model', file: 'qwen', ready: false }] } satisfies Bootstrap);
     case 'status': return out(status(db));
     case 'jobs': return out(db.jobs);
@@ -384,6 +470,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       return out({ jobId });
     }
     case 'identify': {
+      startIdentifySim(Number(a.jobId) || 1);
       for (const d of db.dets) {
         const f = db.frames.find((f) => f.id === d.image_id);
         if (f && !f.rejected && !d.rejected && !d.bystander && (!d.cull_reason || d.stars != null || f.manual_stars != null)) d.reviewed = 1;
@@ -423,7 +510,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'save_settings': db.settings = { ...db.settings, ...(args as Settings) }; return out(db.settings);
     case 'stop': if (sim && !sim.finished) { sim.finished = true; clearInterval(sim.timer); if (lastProgress) { lastProgress = { ...lastProgress, state: 'stopped', eta_s: null }; for (const cb of listeners) cb(lastProgress); } const job = db.jobs.find((j) => j.id === sim?.jobId); if (job) job.status = 'stopped'; } return out(status(db));
     case 'delete_job': db.jobs = db.jobs.filter((j) => j.id !== a.jobId); return out(null);
-    case 'cancel_operation': db.identifySkipped = true; return out(null);
+    case 'cancel_operation': db.identifySkipped = true; stopIdentifySim(); return out(null);
     default: return out(null);
   }
 }

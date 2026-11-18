@@ -10,6 +10,7 @@ import type { Page, ScanArgs, Scope, Status } from './lib/types';
 import { Library } from './screens/Library';
 import { noReviewVerbs, ReviewScreen, type ReviewVerbs } from './screens/Review';
 import { ImportDialog, type ImportDefaults, type ScanDraft } from './screens/Import';
+import { IdentifyScreen } from './screens/Identify';
 import { ScanScreen } from './screens/Scan';
 import { Settings } from './screens/Settings';
 import { noTrainVerbs, Train, type TrainVerbs } from './screens/Train';
@@ -17,6 +18,7 @@ import { useFolderDrop, useLocalFlag, useRun } from './state/hooks';
 import { useToast } from './state/toast';
 import { useEngine } from './state/useEngine';
 import { useHotkeys } from './state/useHotkeys';
+import { useIdentifyProgress } from './state/useIdentifyProgress';
 import { useReview } from './state/useReview';
 import { useScanProgress } from './state/useScanProgress';
 
@@ -44,12 +46,20 @@ export function App() {
   const { status } = eng;
   const scanning = status.activeJob !== null;
   const scanLive = useScanProgress();
+  const identifyLive = useIdentifyProgress();
+  const identifyPaused = status.tasks.some((task) => task.state === 'paused' && /^Identifying\b/.test(task.label));
   // Review is locked for an album until its scan finishes: asking for it shows the scan instead.
   // The scan's own final snapshot unlocks it a beat before the pushed status catches up.
   const locked = jobId != null && status.activeJob === jobId && (scanLive[jobId]?.progress.state ?? 'running') === 'running';
   const view: Page = page === 'Review' && locked ? 'Scan' : page;
   const goPage = (next: Page) => {
     if (next === 'Scan' && status.activeJob != null) setJobId(status.activeJob);
+    if (next === 'Identify') {
+      // The tab is live for whichever album is identifying: open that album, not the last one browsed.
+      const key = status.operations.find((k) => k === `Identifying:${jobId}`) ?? status.operations.find((k) => k.startsWith('Identifying:'));
+      const id = key ? Number(key.slice('Identifying:'.length)) : NaN;
+      if (Number.isFinite(id)) setJobId(id);
+    }
     setPage(next === 'Review' && locked ? 'Scan' : next);
   };
 
@@ -100,7 +110,12 @@ export function App() {
     setStarting(false);
   };
   /** `scope` is the run's override; absent, the engine reads the album's own `identify_scope`. */
-  const identify = (id: number, scope?: Scope) => void run(async () => { await engine.identify(id, scope); toast('Identification started. Progress is in the activity menu.'); });
+  const identify = (id: number, scope?: Scope) => void run(async () => {
+    setJobId(id);
+    setPage('Identify');
+    await engine.identify(id, scope);
+    toast('Identification started. The live trace is open.');
+  });
   const write = (id: number, dryRun: boolean) => void run(async () => {
     await engine.write(id, dryRun);
     toast(dryRun ? 'Checking what would be written. The activity menu lists it and no file is touched.' : 'Writing started. Progress is in the activity menu.');
@@ -166,11 +181,16 @@ export function App() {
             onPause={actions.pause} onResume={actions.resume} onCancel={actions.stop}
             onReview={() => setPage('Review')} onLibrary={() => setPage('Library')} />
         )}
+        {view === 'Identify' && (
+          <IdentifyScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? identifyLive[jobId] : undefined}
+            status={status} model={typeof eng.settings.vlm_model === 'string' ? eng.settings.vlm_model : undefined}
+            paused={identifyPaused} onCancel={actions.cancel} onReview={() => setPage('Review')} />
+        )}
         {view === 'Review' && (
           <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} status={status} settings={eng.settings}
             showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} verbs={reviewVerbs}
             onJobsChanged={eng.refreshJobs} onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={(scope) => jobId != null && identify(jobId, scope)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
-              onLibrary={() => setPage('Library')}
+              onLibrary={() => setPage('Library')} onWatchIdentify={() => jobId != null && setPage('Identify')}
               onAcceptAll={() => void run(async () => {
                 const ids = rv.review.detections.filter((d) => !d.reviewed && rv.review.frames.some((f) => f.id === d.image_id && !subjectExcluded(f, d))).map((d) => d.id);
                 if (ids.length) await call('bulk_edit', { ids, reviewed: true });

@@ -139,7 +139,7 @@ export type Training = { labels: number; active?: boolean; validation?: unknown 
 
 export const REGIONS = ['vehicle', 'person', 'face', 'eye'] as const;
 export type Region = (typeof REGIONS)[number];
-export type Page = 'Library' | 'Scan' | 'Review' | 'Train' | 'Known vehicles' | 'Settings';
+export type Page = 'Library' | 'Scan' | 'Identify' | 'Review' | 'Train' | 'Known vehicles' | 'Settings';
 export type View = 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook';
 export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick' | 'taste';
 /** Which subjects identification reads: the suggested keeper of each burst, or every subject. */
@@ -298,6 +298,65 @@ export type ScanProgress = {
   overall: ScanOverall;
 };
 
+/** One subject the identify pass is reading, or has just finished reading. */
+export type IdentifyStage = 'read' | 'crop' | 'vision' | 'merge' | 'done';
+
+/**
+ * `identify-progress` `current` and each `recent` entry: the car, the exact question and reply,
+ * the parsed fields, and the trace lines the engine wrote while deciding them.
+ */
+export type IdentifyItem = {
+  detection_id: number;
+  image_id: number;
+  path: string;
+  thumb_path?: string | null;
+  preview_path?: string | null;
+  crop_path?: string | null;
+  stage: IdentifyStage;
+  /** The exact prompt sent to the vision model; null when the shoot has no VLM. */
+  prompt?: string | null;
+  /** The model's raw JSON reply; null when only OCR / the entry list answered. */
+  reply?: Record<string, unknown> | null;
+  /** Newest first, as the engine wrote them. */
+  trace?: string[];
+  number: string | null;
+  /** `vlm`, `ocr`, `entry`, `ocr+entry`, … */
+  number_source?: string | null;
+  /** 0..1. */
+  number_conf?: number | null;
+  plate?: string | null;
+  make?: string | null;
+  model?: string | null;
+  team?: string | null;
+  colour?: string | null;
+  failures?: string[];
+  /** How long this car took, in milliseconds. */
+  ms?: number | null;
+  /** Epoch seconds. */
+  at?: number | null;
+};
+
+/** The payload of the `identify-progress` event, a few times a second while identification runs. */
+export type IdentifyLive = {
+  job_id: number;
+  state: 'running' | 'done' | 'stopped' | 'error';
+  done: number;
+  total: number;
+  /** Epoch seconds. */
+  started_at?: number | null;
+  elapsed_ms?: number | null;
+  stage: IdentifyStage;
+  /** The vision model this run calls, for the VISION node; empty when off. */
+  model?: string;
+  /** Null before the first car is read. */
+  current: IdentifyItem | null;
+  /** Every car a worker is inside right now, one per identify worker, newest first. */
+  active: IdentifyItem[];
+  /** Finished cars only, newest first, up to 16. */
+  recent: IdentifyItem[];
+  errors: string[];
+};
+
 /** One detection the identify pass has read: the light row behind the identifications list. */
 export type IdentifiedRow = {
   id: number;
@@ -351,7 +410,7 @@ export type OllamaModelsResponse = {
   error?: string;
 };
 
-export type VlmProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'opencode';
+export type VlmProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'opencode' | 'opencode-go';
 /** `provider_models`: the models a provider key can call. */
 export type ProviderModelsResponse = { models: { id: string; name: string }[]; error?: string };
 export type VlmService = {

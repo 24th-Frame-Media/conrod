@@ -1,6 +1,7 @@
 //! The slower identification and metadata lanes. Work is visible and cancellable.
 use crate::analyze::{self, Context, Readers};
 use crate::desktop::{rows, Desktop, Result};
+use crate::identify_live::{self, IdentifyLive};
 use crate::lock;
 use crate::setup;
 use conrod_core::{
@@ -25,6 +26,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
+    time::Instant,
 };
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -120,11 +122,16 @@ pub(crate) fn launch(
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             work(&desktop, &flag, &task)
         }));
-        match result {
-            Ok(Ok(())) if !flag.load(Ordering::Relaxed) => task.finish(),
-            Ok(Ok(())) => task.fail("Cancelled"),
-            Ok(Err(e)) => task.fail(e),
-            Err(_) => task.fail("Worker stopped unexpectedly; this operation can be retried"),
+        if flag.load(Ordering::Relaxed) {
+            // The user stopped it. Whatever the worker was in the middle of is
+            // not an error, and the status area should not light up red.
+            task.cancel();
+        } else {
+            match result {
+                Ok(Ok(())) => task.finish(),
+                Ok(Err(e)) => task.fail(e),
+                Err(_) => task.fail("Worker stopped unexpectedly; this operation can be retried"),
+            }
         }
         lock(&desktop.operations).remove(&operation);
     });
@@ -203,6 +210,8 @@ struct Run<'a> {
     total: usize,
     reported: &'a Mutex<HashSet<String>>,
     progress: Option<&'a crate::progress::Progress>,
+    /// The live feed the identify screen draws; shared by all workers.
+    live: Option<&'a Arc<IdentifyLive>>,
 }
 
 impl Run<'_> {
@@ -211,6 +220,9 @@ impl Run<'_> {
         self.task.progress(n as u64, self.total as u64);
         if let Some(p) = self.progress {
             p.advance("identify", by as u64);
+        }
+        if let Some(live) = self.live {
+            live.advance_by(by);
         }
     }
 
@@ -224,6 +236,9 @@ impl Run<'_> {
     /// Say a failure once: a vision model that is down would otherwise put one
     /// line per detection in the status log.
     fn report(&self, failure: String) {
+        if let Some(live) = self.live {
+            live.error(failure.clone());
+        }
         if lock(self.reported).insert(failure.clone()) {
             self.d
                 .hub
@@ -258,14 +273,55 @@ impl Run<'_> {
             .to_string_lossy()
             .into_owned();
         self.busy(lane, &filename, "read");
+        // The frame is decoded once for all its cars. Show the first one while
+        // the RAW is being read, then each car as its turn comes.
+        let mut started: Option<i64> = None;
+        if let Some(live) = self.live {
+            if let Some(row) = wanted.first() {
+                let id = row["id"].as_i64().ok_or("Invalid detection")?;
+                live.start_item(
+                    id,
+                    row["image_id"].as_i64().unwrap_or_default(),
+                    path,
+                    row["thumb_path"].as_str(),
+                    row["preview_path"].as_str(),
+                );
+                live.phase(id, identify_live::READ);
+                started = Some(id);
+            }
+        }
         let raw = conrod_io::raw::read(Path::new(path))?;
         let image = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
         for row in wanted {
             let id = row["id"].as_i64().ok_or("Invalid detection")?;
+            let image_id = row["image_id"].as_i64().unwrap_or_default();
             if !ml_eligible(self.d, id)? {
+                if started == Some(id) {
+                    if let Some(live) = self.live {
+                        live.finish_error(
+                            id,
+                            format!("detection {id} is no longer eligible and was skipped"),
+                        );
+                    }
+                    started = None;
+                }
                 self.advance(1);
                 continue;
             }
+            if let Some(live) = self.live {
+                if started != Some(id) {
+                    live.start_item(
+                        id,
+                        image_id,
+                        path,
+                        row["thumb_path"].as_str(),
+                        row["preview_path"].as_str(),
+                    );
+                    started = Some(id);
+                }
+                live.phase(id, identify_live::CROP);
+            }
+            let item_start = Instant::now();
             let subject = ["x1", "y1", "x2", "y2"].map(|k| row[k].as_f64().unwrap_or(0.0).max(0.0));
             let bbox = subject.map(|v| v as usize);
             let tight = image.crop(
@@ -275,7 +331,11 @@ impl Run<'_> {
                 bbox[3].min(image.height),
             );
             if tight.width == 0 || tight.height == 0 {
-                self.report(format!("detection {id} has an empty box and was skipped"));
+                let message = format!("detection {id} has an empty box and was skipped");
+                self.report(message.clone());
+                if let Some(live) = self.live {
+                    live.finish_error(id, message);
+                }
                 self.advance(1);
                 continue;
             }
@@ -291,7 +351,16 @@ impl Run<'_> {
             let kind = row["cls"].as_str().unwrap_or("car");
             self.task.detail(format!("{filename} · {kind}"));
             self.busy(lane, &filename, "identify");
-            let outcome = analyze::analyze(
+            if let Some(live) = self.live {
+                live.phase(id, identify_live::VISION);
+            }
+            // The prompt goes out while the model is thinking, not after it
+            // answers, so the screen can show what was asked.
+            let prompt_sink = self.live.as_ref().map(|live| {
+                let live = Arc::clone(live);
+                move |prompt: &str| live.set_prompt(id, prompt)
+            });
+            let outcome = analyze::analyze_with(
                 &crop,
                 native,
                 kind,
@@ -302,9 +371,17 @@ impl Run<'_> {
                     known: self.known,
                 },
                 readers,
+                prompt_sink.as_ref().map(|sink| sink as &dyn Fn(&str)),
             )?;
-            for failure in outcome.failures {
-                self.report(failure);
+            if let Some(live) = self.live {
+                live.phase(id, identify_live::MERGE);
+                // Fallback for a prompt that the callback could not attach.
+                if let Some(prompt) = outcome.vlm_prompt.as_deref() {
+                    live.set_prompt(id, prompt);
+                }
+            }
+            for failure in &outcome.failures {
+                self.report(failure.clone());
             }
             let mut analysis = outcome.analysis;
             // What the frame reads as, for the live strip on the scan screen.
@@ -315,7 +392,7 @@ impl Run<'_> {
                 .filter(|label| !label.is_empty())
             {
                 if let Some(p) = self.progress {
-                    p.label(row["image_id"].as_i64().unwrap_or_default(), label);
+                    p.label(image_id, label);
                 }
             }
             // `plate_bbox` (when set) is in the native tight-crop's own pixels; `bbox` is that
@@ -333,6 +410,17 @@ impl Run<'_> {
             let crop_path = self.d.root.join(format!("cache/native/crop-{id}.jpg"));
             crate::desktop::save_jpeg(&crop, &crop_path)?;
             lock(&self.d.db).execute("UPDATE detections SET attributes=?,plate=?,plate_state=?,plate_conf=?,number=?,number_source=?,number_conf=?,embedding=?,colour_hex=?,crop_path=? WHERE id=? AND reviewed=0",params![serde_json::to_string(&analysis).map_err(err)?,analysis.plate,analysis.plate_state,analysis.plate_conf,analysis.race_number,analysis.number_source,analysis.number_conf,embedding,swatch,crop_path.to_string_lossy(),id]).map_err(err)?;
+            if let Some(live) = self.live {
+                live.finish_item(
+                    id,
+                    &analysis,
+                    outcome.vlm_reply,
+                    outcome.trace,
+                    outcome.failures,
+                    item_start.elapsed().as_secs_f64() * 1000.0,
+                    Some(&crop_path),
+                );
+            }
             self.advance(1);
         }
         Ok(())
@@ -382,7 +470,26 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             task.detail(format!("Prepared {faces} faces for name suggestions"));
             return Ok(());
         }
-        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
+        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
+        // The live feed the identify screen draws, replaced by the next run and
+        // kept after this one so its summary stays on screen. The guard ends an
+        // early return (`?`) as an error rather than leaving the feed running.
+        let live = Arc::new(IdentifyLive::new(job, pending.len()));
+        // The model the VISION node should name: the enabled service that will
+        // actually answer, not the album's unused fallback.
+        let vision = if settings.use_vlm {
+            settings
+                .vlm_services
+                .iter()
+                .find(|service| service.enabled)
+                .map(|service| service.model.clone())
+                .unwrap_or_else(|| settings.vlm_model.clone())
+        } else {
+            "off".to_string()
+        };
+        live.set_model(&vision);
+        *lock(&d.identify) = Some(live.clone());
+        let mut end = LiveRun(live.clone());
         if pending.is_empty() {
             crate::passes::embed_faces_missing(d, job, stop, task)?;
             task.detail(if scope == conrod_core::settings::IDENTIFY_EVERYTHING {
@@ -390,6 +497,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             } else {
                 "No keepers need identification"
             });
+            end.finish("done");
             return Ok(());
         }
         let reads_text = settings.read_plates || settings.read_numbers || settings.read_text;
@@ -473,6 +581,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             total: pending.len(),
             reported: &reported,
             progress: progress.as_deref(),
+            live: Some(&live),
         };
         let fail = |e: String| {
             lock(&failure).get_or_insert(e);
@@ -522,6 +631,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             }
         });
         if let Some(e) = failure.into_inner().unwrap() {
+            end.finish("error");
             return Err(e);
         }
         if !stop.load(Ordering::Relaxed) {
@@ -538,9 +648,31 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             }
             task.detail("Picking keepers");
             crate::passes::pick_keepers(d, job)?;
+            end.finish("done");
+        } else {
+            end.finish("stopped");
         }
         Ok(())
     })
+}
+
+/// Ends a live identify feed exactly once. The explicit paths say `done`,
+/// `stopped` or `error`; an early `?` or a panic drops this as an error, so a
+/// feed can never be left "running" and emitted forever.
+struct LiveRun(Arc<IdentifyLive>);
+
+impl LiveRun {
+    fn finish(&mut self, state: &'static str) {
+        self.0.finish(state);
+    }
+}
+
+impl Drop for LiveRun {
+    fn drop(&mut self) {
+        if !self.0.finished() {
+            self.0.finish("error");
+        }
+    }
 }
 
 /// The plate registry as `registry::fill` wants it: keyed by normalised plate.

@@ -15,6 +15,8 @@ pub enum State {
     Paused,
     Done,
     Failed,
+    /// Stopped by the user: finished, but not a failure and not completed.
+    Cancelled,
 }
 
 #[derive(Debug, Clone)]
@@ -217,6 +219,12 @@ impl Task {
         self.end(State::Failed, Some(error.into()));
     }
 
+    /// Stopped by the user. Distinct from `fail`: the status area, the taskbar
+    /// and the activity list must not call a deliberate stop an error.
+    pub fn cancel(self) {
+        self.end(State::Cancelled, None);
+    }
+
     fn end(&self, state: State, error: Option<String>) {
         self.hub.update(self.id, |e, log| {
             if e.ended.is_some() {
@@ -226,9 +234,12 @@ impl Task {
             e.ended = Some(Instant::now());
             push_log(
                 log,
-                match &error {
-                    Some(err) => format!("failed: {}: {err}", e.label),
-                    None => format!("done: {}", e.label),
+                match state {
+                    State::Cancelled => format!("cancelled: {}", e.label),
+                    _ => match &error {
+                        Some(err) => format!("failed: {}: {err}", e.label),
+                        None => format!("done: {}", e.label),
+                    },
                 },
             );
             e.error = error;
@@ -265,6 +276,19 @@ mod tests {
         let s = &hub.snapshot()[0];
         assert_eq!(s.state, State::Failed);
         assert!(s.error.is_some());
+    }
+
+    #[test]
+    fn a_cancelled_task_is_not_a_failure() {
+        let hub = TaskHub::new();
+        let task = hub.start("Identifying", 10);
+        task.progress(3, 10);
+        task.cancel();
+        let s = &hub.snapshot()[0];
+        assert_eq!(s.state, State::Cancelled);
+        assert!(s.error.is_none());
+        assert!(hub.log().iter().any(|l| l == "cancelled: Identifying"));
+        assert!(!hub.log().iter().any(|l| l.starts_with("failed")));
     }
 
     #[test]
