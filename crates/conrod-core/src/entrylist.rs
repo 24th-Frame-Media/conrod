@@ -134,6 +134,40 @@ impl EntryList {
         self.entries.iter().find(|e| number_key(&e.number) == key)
     }
 
+    /// The one entry whose driver names appear in `evidence`, if the match is
+    /// unique. Team names alone never decide: one team runs two cars. Driver
+    /// surnames of four letters or more and full names count; two entries
+    /// sharing a surname tie and return nothing.
+    pub fn from_evidence(&self, evidence: &[String]) -> Option<&Entry> {
+        let all: Vec<String> = evidence.iter().flat_map(|line| words(line)).collect();
+        let text = all.join(" ");
+        let mut scored: Vec<(&Entry, usize)> = Vec::new();
+        for entry in &self.entries {
+            let mut score = 0;
+            for driver in &entry.drivers {
+                let parts = words(driver);
+                let Some(surname) = parts.last() else {
+                    continue;
+                };
+                let full = parts.join(" ");
+                if parts.len() > 1 && contains_phrase(&text, &full) {
+                    score += 3;
+                } else if surname.len() >= 4 && contains_phrase(&text, surname) {
+                    score += 2;
+                }
+            }
+            if score > 0 {
+                scored.push((entry, score));
+            }
+        }
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        let (best, top) = *scored.first()?;
+        if scored.iter().skip(1).any(|(_, score)| *score == top) {
+            return None;
+        }
+        Some(best)
+    }
+
     /// Distinct "Make Model" strings, sorted.
     pub fn candidates(&self) -> Vec<String> {
         let set: BTreeSet<String> = self
@@ -174,6 +208,19 @@ fn number_key(number: &str) -> String {
     } else {
         significant.into()
     }
+}
+
+/// A line's words, uppercased and stripped of punctuation.
+fn words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_uppercase)
+        .collect()
+}
+
+/// Whether `phrase` appears as a whole-word run in `text`.
+fn contains_phrase(text: &str, phrase: &str) -> bool {
+    !phrase.is_empty() && format!(" {text} ").contains(&format!(" {phrase} "))
 }
 
 fn cell(record: &csv::StringRecord, col: Option<usize>) -> &str {
@@ -220,6 +267,41 @@ mod tests {
     {"number": "3", "team": "Blanchard Racing Team", "drivers": ["Aaron Cameron", "Zak Best"], "car": {"make": "Ford", "model": "Mustang S650"}, "primary_sponsor": "Liqui Moly", "livery_sponsors": ["Blahst"]}
   ]
 }"#;
+
+    #[test]
+    fn driver_evidence_finds_one_entry_but_a_shared_team_does_not() {
+        let list = parse(BATHURST_EXCERPT).unwrap();
+        assert_eq!(
+            list.from_evidence(&["Wood".into()]).map(|e| e.number.as_str()),
+            Some("2")
+        );
+        assert_eq!(
+            list.from_evidence(&["Mostert".into()]).map(|e| e.number.as_str()),
+            Some("1")
+        );
+        assert_eq!(
+            list.from_evidence(&["Ryan Wood".into(), "Evans".into()])
+                .map(|e| e.number.as_str()),
+            Some("2")
+        );
+        // Two Walkinshaw cars: the team alone does not pick one.
+        assert!(list.from_evidence(&["Walkinshaw".into()]).is_none());
+        assert!(list.from_evidence(&["a sponsor".into()]).is_none());
+    }
+
+    #[test]
+    fn a_surname_shared_by_two_entries_is_not_a_match() {
+        let json = r#"[
+          {"number":"1","drivers":["Alex Jones"]},
+          {"number":"2","drivers":["Sam Jones"]}
+        ]"#;
+        let list = parse(json).unwrap();
+        assert!(list.from_evidence(&["Jones".into()]).is_none());
+        assert_eq!(
+            list.from_evidence(&["Alex Jones".into()]).map(|e| e.number.as_str()),
+            Some("1")
+        );
+    }
 
     #[test]
     fn csv_handles_quotes_commas_and_any_column_order() {

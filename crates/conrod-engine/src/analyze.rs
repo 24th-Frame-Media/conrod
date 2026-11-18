@@ -262,6 +262,30 @@ pub fn analyze(
     a.number_source = source;
     a.number_conf = confidence;
 
+    // 4b. A driver name on the car identifies the entry more reliably than a
+    // single number read: car 2's nose board says 1, but "Wood" and "Evans" on
+    // the windscreen are entry 2. Only a unique driver match corrects the
+    // number; a team alone runs two cars and proves nothing.
+    if let Some(list) = entries.as_deref() {
+        if !list.is_empty() {
+            if let Some(entry) = evidence_entry(&a, &described, list) {
+                let agrees = a
+                    .race_number
+                    .as_deref()
+                    .is_some_and(|number| list.get(number) == Some(entry));
+                if !agrees {
+                    trace.push(format!(
+                        "entry evidence: car {} from a driver name replaces number {:?} at {:.2}",
+                        entry.number, a.race_number, a.number_conf
+                    ));
+                    a.race_number = Some(entry.number.clone());
+                    a.number_source = Some("entry".into());
+                    a.number_conf = 0.9;
+                }
+            }
+        }
+    }
+
     let entry_team = entries
         .as_deref()
         .is_some_and(|list| apply_entry(&mut a, list));
@@ -441,6 +465,20 @@ fn entry_list(path: &str) -> (Option<Arc<EntryList>>, Option<String>) {
 /// Fills the car from the entry list, where the final number is in it: team,
 /// drivers, make/model (the list wins over a missing, suggested or differing
 /// model read) and sponsors spelled as the list has them. A number missing from
+/// The one entry a driver name on the car points at. The model's visible text
+/// is the strongest source; its own driver/team fields are the fallback. Team
+/// names alone never decide because one team runs two cars.
+fn evidence_entry<'a>(
+    a: &VehicleAnalysis,
+    described: &VehicleDescription,
+    list: &'a EntryList,
+) -> Option<&'a conrod_core::entrylist::Entry> {
+    let mut evidence = described.livery_text.clone();
+    evidence.extend(a.driver.iter().cloned());
+    evidence.extend(a.team.iter().cloned());
+    list.from_evidence(&evidence)
+}
+
 /// a non-empty list is kept but trusted half as much, and fills nothing.
 /// Returns whether the team came from the list.
 fn apply_entry(a: &mut VehicleAnalysis, list: &EntryList) -> bool {
@@ -589,6 +627,31 @@ mod tests {
         assert!((a.number_conf - 0.4).abs() < 1e-9);
         assert_eq!(a.team, None);
         assert_eq!(a.driver, None);
+    }
+
+    #[test]
+    fn a_driver_name_corrects_a_conflicting_number() {
+        let list = entrylist::parse(
+            r#"[{"number":"2","drivers":["Ryan Wood","Jaxon Evans"]},
+                {"number":"1","drivers":["Chaz Mostert"]}]"#,
+        )
+        .unwrap();
+        let a = VehicleAnalysis {
+            race_number: Some("1".into()),
+            number_conf: 0.95,
+            driver: Some("Wood".into()),
+            ..VehicleAnalysis::default()
+        };
+        let entry = evidence_entry(&a, &VehicleDescription::default(), &list).unwrap();
+        assert_eq!(entry.number, "2");
+        // A sponsor name that happens to match a driver is not enough unless
+        // it names the driver; the entry list method itself is tested there.
+        assert!(evidence_entry(
+            &VehicleAnalysis::default(),
+            &VehicleDescription::default(),
+            &list
+        )
+        .is_none());
     }
 
     #[test]
