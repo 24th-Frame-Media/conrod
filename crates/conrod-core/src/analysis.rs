@@ -23,6 +23,9 @@ pub struct VehicleAnalysis {
     pub plate: Option<String>,
     pub plate_state: Option<String>,
     pub plate_conf: f64,
+    /// The plate's box, in the coordinates of whichever crop it was found in (`crop` or `native`);
+    /// `analyze::analyze`'s caller translates this to full-frame pixels before it is stored.
+    pub plate_bbox: Option<[i64; 4]>,
     pub race_number: Option<String>,
     pub number_source: Option<String>,
     pub number_conf: f64,
@@ -32,8 +35,15 @@ pub struct VehicleAnalysis {
     pub team_corroborated: bool,
     pub sponsors: Vec<String>,
     pub text: Vec<String>,
+    /// Visible action effects: `airborne`, `dust`, `tyre_smoke`, `spray`,
+    /// `flames`, `sparks`, `contact`, `wheel_lift`.
+    pub action: Vec<String>,
     pub is_competition: bool,
     pub vlm_conf: f64,
+    /// What the model based make/model on: "badge", "script" or "design".
+    pub model_evidence: Option<String>,
+    /// Make/model came from the car's design alone: a suggestion, not a read.
+    pub model_suggested: bool,
 }
 
 impl Default for VehicleAnalysis {
@@ -48,6 +58,7 @@ impl Default for VehicleAnalysis {
             plate: None,
             plate_state: None,
             plate_conf: 0.0,
+            plate_bbox: None,
             race_number: None,
             number_source: None,
             number_conf: 0.0,
@@ -57,8 +68,11 @@ impl Default for VehicleAnalysis {
             team_corroborated: false,
             sponsors: Vec::new(),
             text: Vec::new(),
+            action: Vec::new(),
             is_competition: false,
             vlm_conf: 0.0,
+            model_evidence: None,
+            model_suggested: false,
         }
     }
 }
@@ -97,6 +111,7 @@ impl VehicleAnalysis {
         text("team", &mut a.team);
         text("driver", &mut a.driver);
         text("country", &mut a.country);
+        text("model_evidence", &mut a.model_evidence);
         if let Some(Value::String(kind)) = data.get("kind") {
             a.kind = kind.clone();
         }
@@ -104,6 +119,7 @@ impl VehicleAnalysis {
         a.is_bike = flag("is_bike").unwrap_or(false);
         a.team_corroborated = flag("team_corroborated").unwrap_or(false);
         a.is_competition = flag("is_competition").unwrap_or(false);
+        a.model_suggested = flag("model_suggested").unwrap_or(false);
         let number = |key: &str| data.get(key).and_then(Value::as_f64).unwrap_or(0.0);
         a.plate_conf = number("plate_conf");
         a.number_conf = number("number_conf");
@@ -125,9 +141,18 @@ impl VehicleAnalysis {
         a
     }
 
+    /// The model, unless it is only a suggestion from the car's shape.
+    pub fn confirmed_model(&self) -> Option<&str> {
+        if self.model_suggested {
+            None
+        } else {
+            given(&self.model)
+        }
+    }
+
     /// A short human label for the review UI.
     pub fn title(&self) -> String {
-        let model = given(&self.model).unwrap_or("");
+        let model = self.confirmed_model().unwrap_or("");
         let mut make = given(&self.make).unwrap_or("");
         // The model often already carries the make ("Holden Commodore").
         if !make.is_empty() && model.to_lowercase().starts_with(&make.to_lowercase()) {
@@ -190,16 +215,24 @@ impl Default for OcrReading {
 
 /// Decide the competition number from two disagreeing readers.
 ///
-/// `ocr_accept_confidence` is `Settings.ocr_accept_confidence` (default
-/// 0.80): the OCR reading's own floor for winning outright.
+/// `vlm_confidence` is the model's own confidence in the number (already
+/// lowered for nose-board reads by `map_vehicle`); `ocr_accept_confidence`
+/// is `Settings.ocr_accept_confidence` (default 0.80), the OCR reading's own
+/// floor for winning outright.
 pub fn merge_number(
     ocr_reading: &OcrReading,
     vlm_number: Option<&str>,
+    vlm_confidence: f64,
     ocr_accept_confidence: f64,
 ) -> (Option<String>, Option<String>, f64) {
     let ocr_number = given(&ocr_reading.number);
     // Treat an empty vlm_number the same as a missing ocr number.
     let vlm_number = vlm_number.filter(|s| !s.is_empty());
+    let vlm_confidence = if vlm_confidence.is_finite() {
+        vlm_confidence.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let source = if ocr_reading.source.is_empty() {
         "ocr".to_string()
     } else {
@@ -209,7 +242,7 @@ pub fn merge_number(
     if let (Some(o), Some(v)) = (ocr_number, vlm_number) {
         if o == v {
             // Independent agreement is worth more than either one's confidence.
-            let confidence = (ocr_reading.confidence.max(0.7) + 0.2).min(1.0);
+            let confidence = (ocr_reading.confidence.max(vlm_confidence).max(0.7) + 0.2).min(1.0);
             return (
                 Some(o.to_string()),
                 Some(format!("{source}+vlm")),
@@ -223,9 +256,10 @@ pub fn merge_number(
         }
     }
     if let Some(v) = vlm_number {
-        // The model reads stylised and angled numbers far better than OCR,
-        // so it wins where OCR was not already confident.
-        return (Some(v.to_string()), Some("vlm".to_string()), 0.7);
+        // The model reads stylised and angled numbers far better than OCR, so
+        // it wins where OCR was not already confident. Keep its own confidence:
+        // a high read can clear review, a low one stays visibly uncertain.
+        return (Some(v.to_string()), Some("vlm".to_string()), vlm_confidence);
     }
     if let Some(o) = ocr_number {
         // Weak, but better than nothing -- the low score sends it to review.
@@ -274,4 +308,70 @@ pub fn corroborated(claim: Option<&str>, evidence: &[String]) -> bool {
         return false;
     }
     words.iter().any(|w| haystack.contains(w.as_str()))
+}
+
+#[cfg(test)]
+mod merge_number_tests {
+    use super::*;
+
+    fn ocr(number: Option<&str>, confidence: f64) -> OcrReading {
+        OcrReading {
+            number: number.map(str::to_string),
+            confidence,
+            source: "ocr".into(),
+        }
+    }
+
+    #[test]
+    fn a_confident_vlm_number_keeps_its_own_confidence() {
+        let (number, source, confidence) = merge_number(&ocr(None, 0.0), Some("88"), 0.95, 0.8);
+        assert_eq!(number.as_deref(), Some("88"));
+        assert_eq!(source.as_deref(), Some("vlm"));
+        assert_eq!(confidence, 0.95, "a 0.95 read can clear review");
+    }
+
+    #[test]
+    fn a_weak_vlm_number_is_kept_but_stays_uncertain() {
+        let (number, source, confidence) = merge_number(&ocr(None, 0.0), Some("88"), 0.2, 0.8);
+        assert_eq!(number.as_deref(), Some("88"));
+        assert_eq!(source.as_deref(), Some("vlm"));
+        assert_eq!(confidence, 0.2, "a weak read stays visibly uncertain");
+    }
+
+    #[test]
+    fn agreement_takes_the_better_of_the_two_readers() {
+        let (_, source, confidence) = merge_number(&ocr(Some("7"), 0.5), Some("7"), 0.9, 0.8);
+        assert_eq!(source.as_deref(), Some("ocr+vlm"));
+        assert_eq!(confidence, 1.0);
+    }
+
+    #[test]
+    fn an_out_of_range_vlm_confidence_is_clamped() {
+        let (_, _, high) = merge_number(&ocr(None, 0.0), Some("7"), 9.0, 0.8);
+        let (_, _, low) = merge_number(&ocr(None, 0.0), Some("7"), -1.0, 0.8);
+        assert_eq!((high, low), (1.0, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod suggested_model_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn parse(value: Value) -> VehicleAnalysis {
+        VehicleAnalysis::from_map(value.as_object().unwrap())
+    }
+
+    #[test]
+    fn suggested_model_is_left_out_of_title() {
+        let suggested = parse(
+            json!({"make": "Ford", "model": "Focus", "colour": "red", "model_suggested": true}),
+        );
+        assert_eq!(suggested.title(), "Red Ford");
+        let confirmed = parse(json!({"make": "Ford", "model": "Focus", "colour": "red"}));
+        assert_eq!(confirmed.title(), "Red Ford Focus");
+        let missing_flag =
+            parse(json!({"make": "Ford", "model": "Focus", "model_suggested": false}));
+        assert_eq!(missing_flag.title(), "Ford Focus");
+    }
 }

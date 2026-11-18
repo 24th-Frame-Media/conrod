@@ -86,6 +86,13 @@ fn main() {
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
+            // What a background operation ended up doing lives in its task's
+            // detail; a headless run is useless without it.
+            for t in desktop.hub.snapshot() {
+                if !t.detail.is_empty() {
+                    eprintln!("{}: {}", t.label, t.detail);
+                }
+            }
             if let Some(t) = desktop
                 .hub
                 .snapshot()
@@ -137,9 +144,15 @@ fn main() {
     let started = Instant::now();
     let mut paths = conrod_engine::files(&PathBuf::from(&args[1]));
     paths.truncate(limit.unwrap_or(usize::MAX));
-    let scan = conrod_engine::scan_files(paths, settings, profile, hub.clone(), move |result| {
-        let Ok(f) = result else { return };
-        let subjects: Vec<_> = f
+    let scan = conrod_engine::scan_files(
+        paths,
+        settings,
+        profile,
+        hub.clone(),
+        None,
+        move |result| {
+            let Ok(f) = result else { return };
+            let subjects: Vec<_> = f
             .subjects
             .iter()
             .map(|s| {
@@ -147,10 +160,11 @@ fn main() {
                        "panning": s.panning, "rating": s.rating, "stars": s.stars, "cull": s.cull_reason})
             })
             .collect();
-        let line = json!({"path": f.path, "camera": f.camera, "taken": f.taken, "size": [f.size.0, f.size.1],
+            let line = json!({"path": f.path, "camera": f.camera, "taken": f.taken, "size": [f.size.0, f.size.1],
                           "stars": f.stars, "whole": f.whole, "vehicles": subjects});
-        let _ = writeln!(stdout.lock().unwrap(), "{line}");
-    });
+            let _ = writeln!(stdout.lock().unwrap(), "{line}");
+        },
+    );
     // Report from the hub, as the app's status area does, until nothing runs.
     loop {
         std::thread::sleep(Duration::from_millis(500));

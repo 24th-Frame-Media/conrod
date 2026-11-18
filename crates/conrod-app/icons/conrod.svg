@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Conrod app icon">
+  <defs>
+    <linearGradient id="tile" x1="120" y1="80" x2="900" y2="960" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f6c86b"/>
+      <stop offset="0.48" stop-color="#e3a83a"/>
+      <stop offset="1" stop-color="#c98516"/>
+    </linearGradient>
+    <linearGradient id="rod" x1="330" y1="250" x2="700" y2="790" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#232327"/>
+      <stop offset="1" stop-color="#111113"/>
+    </linearGradient>
+    <mask id="conrod-bores">
+      <rect width="64" height="64" fill="#fff"/>
+      <circle cx="46.2" cy="43.1" r="3.4" fill="#000"/>
+      <circle cx="46.2" cy="20.9" r="2.1" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="1024" height="1024" rx="226" fill="url(#tile)"/>
+  <rect x="3" y="3" width="1018" height="1018" rx="223" fill="none" stroke="#fff" stroke-opacity="0.22" stroke-width="6"/>
+  <svg x="188" y="188" width="648" height="648" viewBox="0 0 64 64">
+    <g mask="url(#conrod-bores)" fill="none">
+      <path d="M46.2 20.9 A18 18 0 1 0 46.2 43.1" stroke="url(#rod)" stroke-width="9" stroke-linecap="round"/>
+      <circle cx="46.2" cy="43.1" r="8.5" fill="url(#rod)"/>
+      <circle cx="46.2" cy="20.9" r="5.8" fill="url(#rod)"/>
+    </g>
+  </svg>
+</svg>

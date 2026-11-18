@@ -26,3 +26,7 @@ fixtures/*_local.json
 # Release assets are fetched, not committed (see scripts/README.md)
 crates/conrod-app/resources/models/
 crates/conrod-app/resources/exiftool/
+
+MEMORY.md
+
+.playwright-mcp/

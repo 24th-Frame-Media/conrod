@@ -1,113 +1,51 @@
-import { Fragment, useMemo, CSSProperties, useEffect, useState } from 'react';
+import { useMemo, useEffect, useState, type MutableRefObject } from 'react';
 import { Confirm, Empty, Icon } from '../components/basics';
 import { Facets } from '../components/Facets';
 import { Inspector } from '../components/Inspector';
 import { PhotoGrid } from '../components/PhotoGrid';
-import { LoadableImage } from '../components/Media';
-import { defaultFilters, frameStars, parseAttributes, filename } from '../lib/review';
-import { StarPill } from '../components/Stars';
-import { asset, call, engine } from '../lib/api';
-import { useRun } from '../state/hooks';
+import { StackGrid, type StackView } from '../components/StackGrid';
+import { burstRankMap, decisionOf, defaultFilters, filename, vehicleGroups, type FrameFacts } from '../lib/review';
+import { buildStacks, groupKeyOf, makeStack, nextUndecided, softBursts as softBurstMapOf, stepFlat, stepInStack as stepWithinStack, stepRow, stepStack, suggestionSizes, type Stack } from '../lib/stacks.mjs';
+import { edgeFrameId, stepInStack } from '../lib/navigation.mjs';
+import { reviewedStacks, stackDecision } from '../lib/decisions.mjs';
+import { tasteStacks } from '../lib/taste.mjs';
+import { albumSetting } from '../lib/album.mjs';
+import { WORKFLOW_OPTIONS, pipelineSteps, workflowIncludesCull, workflowIncludesIdentify, workflowLabel, workflowModeOf, type PipelineStep } from '../lib/workflow.mjs';
+import { everythingCount, identifyActionLabel, identifyScopeOf, keeperCount } from '../lib/identify.mjs';
+import { call, engine } from '../lib/api';
+import { useLocalFlag, useRun } from '../state/hooks';
 import { useToast } from '../state/toast';
 import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
 import { ShootSettingsModal } from '../components/ShootSettingsModal';
-import type { Frame, Job, KnownVehicle, Settings, Status, Task } from '../lib/types';
+import { ShootStatsModal } from '../components/ShootStatsModal';
+import { ExportSheet } from '../components/ExportSheet';
+import { Identifications } from '../components/Identifications';
+import type { Frame, Job, KnownVehicle, MarkValues, Scope, Settings, Status, Task } from '../lib/types';
 import { profileLabel, profileParent } from '../lib/types';
+import { facetsFor } from '../lib/facets.mjs';
 import type { ReviewModel } from '../state/useReview';
-import { subjectExcluded } from '../review.mjs';
+import { Viewer } from './Viewer';
+import { Compare } from './Compare';
 
-type Stack = { key: string; frames: Frame[]; pick: Frame; title: string; subtitle: string; photoWord?: string };
-
-/** Shared renderer for grouped-photo grids (vehicle identity or burst grouping): identical markup either way. */
-function StackGrid({ stacks, rv, onOpenViewer, ariaLabel, emptyTitle }: {
-  stacks: Stack[]; rv: ReviewModel; onOpenViewer: () => void; ariaLabel: string; emptyTitle: string;
-}) {
-  const [expanded, setExpanded] = useState<string | null>(null);
-  return <div className="burst-grid" role="list" aria-label={ariaLabel}>
-    {stacks.map((group) => {
-      const open = expanded === group.key;
-      const isSelected = group.frames.some((f) => f.id === rv.selected);
-      return <Fragment key={group.key}>
-        <article className={`burst-stack${open ? ' open' : ''}${isSelected ? ' selected' : ''}`} onClick={() => { rv.setSelected(group.pick.id); setExpanded(open ? null : group.key); }}>
-          <div className="burst-layers" style={{ '--layers': Math.min(group.frames.length, 4) } as CSSProperties}>
-            <LoadableImage src={asset(group.pick.thumb_path)} alt={group.title} />
-            <StarPill frame={group.pick} />
-            <span className="stack-count">{group.frames.length}</span>
-            <span className="focus keeper">Best</span>
-          </div>
-          <div className="burst-caption">
-            <b>{group.title}</b>
-            <span>{group.subtitle}</span>
-          </div>
-        </article>
-        {open && <div className="burst-expanded">
-          <div className="burst-expanded-head">
-            <b>{group.title} · {group.frames.length} {group.photoWord ?? 'frames'}</b>
-            <span className="muted" style={{ marginLeft: 8 }}>· Best photo first</span>
-          </div>
-          <div className="burst-strip">
-            {group.frames.map((frame, index) => {
-              const culled = Boolean(rv.facts.get(frame.id)?.cull);
-              return (
-                <button
-                  key={frame.id}
-                  className={`${rv.selected === frame.id ? 'selected' : ''}${index === 0 ? ' burst-best-card' : ''}`}
-                  style={culled ? { opacity: 0.6 } : undefined}
-                  onClick={() => rv.setSelected(frame.id)}
-                  onDoubleClick={onOpenViewer}
-                >
-                  <div style={{ position: 'relative' }}>
-                    <LoadableImage src={asset(frame.thumb_path)} alt={filename(frame.path)} />
-                    {index === 0 && <span className="focus keeper" style={{ position: 'absolute', top: 4, left: 4, zIndex: 2 }}>Best</span>}
-                    {culled && <span className="cull-tag">Culled</span>}
-                  </div>
-                  <StarPill frame={frame} />
-                  <small>{filename(frame.path)}</small>
-                </button>
-              );
-            })}
-          </div>
-        </div>}
-      </Fragment>;
-    })}
-    {!stacks.length && <Empty icon="images" title={emptyTitle} />}
-  </div>;
-}
-
-function VehicleStacks({ rv, onOpenViewer, identifying }: { rv: ReviewModel; onOpenViewer: () => void; identifying: boolean }) {
-  const visible = useMemo(() => new Set(rv.frames.map((frame) => frame.id)), [rv.frames]);
-  const stacks = useMemo(() => {
-    const groups = new Map<string, typeof rv.review.detections>();
-    for (const detection of rv.review.detections.filter((d) => (d.region_type ?? 'vehicle') === 'vehicle')) {
-      const attrs = parseAttributes(detection);
-      const identity = attrs.plate || (attrs.race_number && `${attrs.race_number}-${attrs.make ?? ''}-${attrs.model ?? ''}`);
-      const frame = rv.review.frames.find((item) => item.id === detection.image_id);
-      const key = detection.group_key != null
-        ? `group-${detection.group_key}`
-        : identity
-        ? `identity-${identity}`
-        : identifying && frame?.burst_key != null
-        ? `processing-burst-${frame.burst_key}`
-        : `single-${detection.id}`;
-      const list = groups.get(key); if (list) list.push(detection); else groups.set(key, [detection]);
-    }
-    return [...groups.entries()].map(([key, detections]) => {
-      const frames = [...new Map(detections.map((d) => [d.image_id, rv.review.frames.find((frame) => frame.id === d.image_id)])).values()]
-        .filter((frame): frame is Frame => Boolean(frame));
-      const pick = frames.find((frame) => rv.facts.get(frame.id)?.pick) ?? [...frames].sort((a, b) => frameStars(b) - frameStars(a))[0];
-      const attrs = parseAttributes(detections[0]);
-      const processing = identifying && key.startsWith('processing-');
-      const title = processing ? 'Being identified' : [attrs.make, attrs.model].filter(Boolean).join(' ') || (attrs.plate || (attrs.race_number && `#${attrs.race_number}`) || 'Unidentified vehicle');
-      const subtitle = processing
-        ? `Analysing ${frames.length} photos`
-        : `${frames.length} shot${frames.length === 1 ? '' : 's'}${attrs.plate ? ` · ${attrs.plate}` : ''}${attrs.race_number ? ` · #${attrs.race_number}` : ''}${attrs.team ? ` · ${attrs.team}` : ''}`;
-      return { key, frames, pick, title, subtitle, photoWord: 'photos' as const };
-    }).filter((group): group is typeof group & { pick: Frame } => Boolean(group.pick) && group.frames.some((f) => visible.has(f.id)))
-      .sort((a, b) => a.pick.id - b.pick.id);
-  }, [rv.review.detections, rv.review.frames, rv.facts, identifying, visible]);
-
-  return <StackGrid stacks={stacks} rv={rv} onOpenViewer={onOpenViewer} ariaLabel="Vehicle stacks" emptyTitle="No vehicles match these filters." />;
-}
+/** G/E/C hotkeys switch between the grid, the loupe (Viewer) and the compare view. */
+export type ReviewView = 'grid' | 'loupe' | 'compare';
+/** How App's global hotkey handler reaches into whichever view Review currently owns (mirrors Train's `verbs` ref). */
+export type ReviewVerbs = {
+  view: ReviewView; setView: (v: ReviewView) => void;
+  /** `repeat` is true on a held key's auto-repeat: within-stack movement continues, a jump into the next stack does not. */
+  stepFrame: (delta: number, repeat?: boolean) => void; stepBurst: (delta: number) => void; nextBurst: (delta: number) => void;
+  nextUndecided: () => void; enter: () => void; escape: () => void;
+  mark: (values: MarkValues) => void; rejected: () => boolean; picked: () => boolean;
+  /** B / Shift+B: keep this frame and cull its stack, or cull the whole stack. */
+  stackAction: (mode: 'keep' | 'cull') => void;
+  undo: () => void; redo: () => void;
+};
+export const noReviewVerbs: ReviewVerbs = {
+  view: 'grid', setView: () => {}, stepFrame: () => {}, stepBurst: () => {}, nextBurst: () => {}, nextUndecided: () => {},
+  enter: () => {}, escape: () => {}, mark: () => {}, rejected: () => false, picked: () => false,
+  stackAction: () => {},
+  undo: () => {}, redo: () => {},
+};
 
 function currentItem(task: Task): string {
   const detail = task.detail?.trim();
@@ -152,18 +90,13 @@ function IdentificationBanner({ task, settings, onSkip }: { task: Task; settings
   );
 }
 
-function PipelineStepper({ job, scanning, identified, identifying, written }: { job: Job | undefined; scanning: boolean; identified: boolean; identifying: boolean; written: boolean }) {
-  const steps = [
-    { key: 'scan', label: 'Scanned', done: Boolean(job && job.status !== 'scanning'), active: scanning },
-    { key: 'cull', label: 'Culled', done: Boolean(job && (job.status === 'done' || job.status === 'indexed')), active: false },
-    { key: 'identify', label: 'Identified', done: identified && !identifying, active: identifying },
-    { key: 'write', label: 'XMP written', done: written, active: false },
-  ];
+/** The steps the album's workflow actually runs: the mode decides which exist, the data decides what is done. */
+function PipelineStepper({ steps }: { steps: PipelineStep[] }) {
   return (
     <nav className="pipeline" aria-label="Processing pipeline">
       {steps.map((step, i) => (
         <span key={step.key} className={`pipeline-step${step.done ? ' done' : ''}${step.active ? ' active' : ''}`}>
-          <span className="pipeline-dot">{step.done ? '✓' : i + 1}</span>
+          <span className="pipeline-dot">{step.done ? <Icon name="check" size={12} /> : i + 1}</span>
           <span className="pipeline-label">{step.label}</span>
         </span>
       ))}
@@ -171,59 +104,272 @@ function PipelineStepper({ job, scanning, identified, identifying, written }: { 
   );
 }
 
-function BurstStacks({ rv, onOpenViewer }: { rv: ReviewModel; onOpenViewer: () => void }) {
-  const visibleIds = useMemo(() => new Set(rv.frames.map((f) => f.id)), [rv.frames]);
-  const bursts = useMemo(() => {
-    const map = new Map<string, Frame[]>();
-    for (const frame of rv.review.frames.filter((item) => item.status === 'done')) {
-      const key = frame.burst_key == null ? `frame-${frame.id}` : `burst-${frame.burst_key}`;
-      const list = map.get(key); if (list) list.push(frame); else map.set(key, [frame]);
-    }
-    const scoreOf = (f: Frame) => {
-      // Manual stars outrank everything (50 max)
-      const stars = (f.manual_stars ?? 0) * 10;
-      // Detector burst pick bonus
-      const isPick = (rv.facts.get(f.id)?.pick || Boolean(f.burst_pick)) ? 2.0 : 0.0;
-      // Measured rating
-      const rating = (f.rating ?? 0) * 5.0;
-      return stars + isPick + rating;
-    };
-    return [...map]
-      .filter(([, rawFrames]) => rawFrames.some((f) => visibleIds.has(f.id)))
-      .map(([key, rawFrames]) => {
-        const sortedByBest = [...rawFrames].sort((a, b) => scoreOf(b) - scoreOf(a));
-        const pick = sortedByBest.find((f) => !rv.facts.get(f.id)?.cull) ?? sortedByBest[0];
-        const remaining = rawFrames.filter((f) => f.id !== pick.id).sort((a, b) => a.id - b.id);
-        const frames = [pick, ...remaining];
-        const facts = rv.facts.get(pick.id);
-        const title = facts?.vehicle || facts?.plate || (facts?.number && `#${facts.number}`) || filename(pick.path);
-        const subtitle = `${frames.length} shot${frames.length === 1 ? '' : 's'}${facts?.plate ? ` · ${facts.plate}` : ''}${facts?.number ? ` · #${facts.number}` : ''}${facts?.team ? ` · ${facts.team}` : ''}`;
-        return { key, frames, pick, title, subtitle };
-      })
-      .sort((a, b) => a.pick.id - b.pick.id);
-  }, [rv.review.frames, rv.facts, visibleIds]);
-
-  return <StackGrid stacks={bursts} rv={rv} onOpenViewer={onOpenViewer} ariaLabel="Burst stacks" emptyTitle="No burst stacks match these filters." />;
-}
-
 type Props = {
   rv: ReviewModel; jobs: Job[]; jobId: number | null; scanning: boolean; status: Status; settings: Settings;
-  onPickJob: (id: number) => void; onIdentify: () => void; onCull: () => void;
+  showBoxes: boolean; onToggleBoxes: () => void; verbs: MutableRefObject<ReviewVerbs>;
+  onPickJob: (id: number) => void; onIdentify: (scope?: Scope) => void; onCull: () => void;
   onHelp: () => void; onOpenViewer: () => void; onLibrary: () => void;
   onEdit: (detectionId: number, updates: Record<string, string | string[] | null>) => unknown;
   onAcceptAll: () => void; onSkipIdentify: () => void; onWrite: (dryRun: boolean) => void;
+  /** Reopen the live identification flow from the stepper while a run is going. */
+  onWatchIdentify: () => void;
+  /** Album settings changed (preset, toggles): reload the job list so the new values show. */
+  onJobsChanged: () => Promise<unknown> | void;
+};
+
+/** A burst/duplicate/vehicle group with the words the card shows. */
+function describe(stack: Stack<Frame>, facts: Map<number, FrameFacts>, ranks: Map<number, number>, extra?: { title: string; subtitle: string; photoWord?: string }): StackView {
+  if (extra) return { ...stack, ...extra, ranks };
+  const x = facts.get(stack.lead.id);
+  const title = x?.vehicle || x?.plate || (x?.number && `#${x.number}`) || filename(stack.lead.path);
+  const n = stack.frames.length;
+  const shots = n === stack.total ? `${n} shot${n === 1 ? '' : 's'}` : `${n} of ${stack.total} shots`;
+  return { ...stack, title, subtitle: `${shots}${x?.plate ? ` · ${x.plate}` : ''}${x?.number ? ` · #${x.number}` : ''}${x?.team ? ` · ${x.team}` : ''}`, ranks };
+}
+
+const byFrame = (stacks: StackView[]) => {
+  const map = new Map<number, StackView>();
+  for (const s of stacks) for (const f of s.frames) if (!map.has(f.id)) map.set(f.id, s);
+  return map;
 };
 
 /** Toolbar (album, view, search, stars, sort, actions), facets, the card grid and the inspector. */
-export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite }: Props) {
+export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite, onJobsChanged, onWatchIdentify }: Props) {
   const [known, setKnown] = useState<KnownVehicle[]>([]);
-  const [grouping, setGrouping] = useState<'bursts' | 'vehicles' | 'flat'>('bursts');
-  const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | null>(null);
+  const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [autoAdvance, setAutoAdvance] = useLocalFlag('conrod.autoAdvance', true);
+  const [crossStacks, setCrossStacks] = useLocalFlag('conrod.crossStacks', true);
+  const [cols, setCols] = useState(4);
   const run = useRun();
   const toast = useToast();
   useEffect(() => { void engine.known().then(setKnown); }, [jobId]);
-  const { filters, patchFilters, frames, review, facts, selected, frame } = rv;
+  const { filters, patchFilters, frames, review, facts, keepers, selected, frame, grouping, expanded } = rv;
+  const currentJob = jobs.find((j) => j.id === jobId);
+  const currentProfile = String(currentJob?.scan_profile || settings.scan_profile || 'motorsport');
+  // Vehicle-only controls (by-vehicle grouping, "needs a look" for unread numbers and plates) go away for shoots with no vehicles to read.
+  const vehicleBrowse = facetsFor(currentProfile).some((k) => k === 'number' || k === 'plate' || k === 'make');
+  const groupingNow = grouping === 'vehicles' && !vehicleBrowse ? 'bursts' : grouping;
+  const identifyTask = jobId == null ? undefined : status.tasks.find((task) => (task.state === 'running' || task.state === 'paused') && /^Identifying\b/.test(task.label) && task.label.includes(`album ${jobId}`));
+  const identifying = Boolean(identifyTask || (jobId != null && status.operations.some((key) => key === `Identifying:${jobId}`)));
+
+  // The one filtered model: every stack below is built from `frames`, the list the toolbar already narrowed.
+  const ranks = useMemo(() => burstRankMap(review.frames, keepers), [review.frames, keepers]);
+  // Whole-album, like `keepers`: a filter must not change which frame a burst suggests.
+  const suggestions = useMemo(() => suggestionSizes(review.frames, facts), [review.frames, facts]);
+  // Bursts the engine refused to keep anything from: the grid says "No keeper".
+  const softBursts = useMemo(() => softBurstMapOf(review.frames, facts), [review.frames, facts]);
+  // Whole-album burst stacks for the progress readout, so narrowing the view does not change the denominator.
+  const albumBursts = useMemo(() => buildStacks(review.frames.filter((f) => f.status === 'done'), { facts, keepers, all: review.frames }), [review.frames, facts, keepers]);
+  const progress = useMemo(() => reviewedStacks(albumBursts, (f) => decisionOf(f, facts.get(f.id)) === 'undecided'), [albumBursts, facts]);
+  const acceptSuggestion = (id: number) => { void rv.mark({ picked: true }, id); };
+  const burstStacks = useMemo(() => {
+    const stacks = buildStacks(frames.filter((f) => f.status === 'done'), { facts, keepers, all: review.frames }).map((s) => describe(s, facts, ranks));
+    // "Taste": highest inside each burst first, bursts by the taste of their lead.
+    return filters.sort === 'taste' ? tasteStacks(stacks) : stacks;
+  }, [frames, facts, keepers, review.frames, ranks, filters.sort]);
+  const shown = useMemo<StackView[]>(() => {
+    if (groupingNow === 'bursts') return burstStacks;
+    if (groupingNow === 'dupes') return buildStacks(frames.filter((f) => f.status === 'done'), { facts, keepers, all: review.frames, dupes: true }).map((s) => describe(s, facts, ranks));
+    if (groupingNow === 'vehicles') {
+      const order = new Map(frames.map((f, i) => [f.id, i]));
+      return vehicleGroups(review, new Set(order.keys()), identifying)
+        .map((g) => describe(makeStack(`v:${g.key}`, g.frames, { facts, keepers, total: g.total }), facts, ranks, { title: g.title, subtitle: g.subtitle, photoWord: 'photos' }))
+        .sort((a, b) => (order.get(a.lead.id) ?? 0) - (order.get(b.lead.id) ?? 0));
+    }
+    return [];
+  }, [groupingNow, burstStacks, frames, facts, keepers, review, ranks, identifying]);
+  const stacked = groupingNow !== 'flat';
+  // Loupe and compare walk bursts even when the grid is flat; duplicate and vehicle grouping walk their own stacks.
+  const navStacks = groupingNow === 'dupes' || groupingNow === 'vehicles' ? shown : burstStacks;
+  const stackOf = useMemo(() => byFrame(navStacks), [navStacks]);
+  const shownOf = useMemo(() => byFrame(shown), [shown]);
+  const expandedKey = expanded != null ? shownOf.get(expanded)?.key ?? null : null;
+  const selectedKey = selected != null ? shownOf.get(selected)?.key ?? null : null;
+
+  // 1.3: which of grid / loupe (Viewer) / compare is showing; G/E/C reach this through `verbs`.
+  const [view, setView] = useState<ReviewView>('grid');
+  const [idsOpen, setIdsOpen] = useState(false);
+  const [comparePane, setComparePane] = useState<'left' | 'right'>('left');
+  const [compareRightId, setCompareRightId] = useState<number | null>(null);
+  const compareRight = useMemo(() => {
+    if (!frame) return null;
+    if (compareRightId != null) return frames.find((f) => f.id === compareRightId) ?? null;
+    // Default right pane: the burst's keeper if this frame isn't it, else the next frame of the burst.
+    const stack = stackOf.get(frame.id);
+    if (!stack) return null;
+    const keeper = stack.keepers.find((f) => f.id !== frame.id);
+    if (keeper) return keeper;
+    const index = stack.frames.findIndex((f) => f.id === frame.id);
+    return stack.frames[index + 1] ?? stack.frames[index - 1] ?? null;
+  }, [frame, compareRightId, frames, stackOf]);
+  useEffect(() => { setCompareRightId(null); setComparePane('left'); }, [frame?.id]);
+  const activeCompareFrame = comparePane === 'left' ? frame : compareRight;
+
+  const openViewer = () => { setView('loupe'); onOpenViewer(); };
+  /** Move the selection; an open stack stays open on the stack the selection lands in. */
+  const goTo = (id: number | null) => {
+    if (id == null) return;
+    rv.setSelected(id);
+    if (expanded != null) rv.setExpanded(id);
+  };
+  const undecided = (f: Frame) => decisionOf(f, facts.get(f.id)) === 'undecided';
+  const stackUndecided = (s: Stack<Frame>) => !s.frames.some((f) => f.picked) && s.frames.some(undecided);
+  const jumpStack = (delta: number) => {
+    const base = view === 'compare' ? compareRight ?? frame : frame;
+    const next = stepStack(navStacks, base?.id ?? null, delta);
+    if (view === 'compare') { if (next != null) setCompareRightId(next); } else goTo(next);
+  };
+  const jumpUndecided = () => {
+    const base = view === 'compare' ? compareRight ?? frame : frame;
+    if (!stacked && view === 'grid') { goTo(nextUndecided(frames, base?.id ?? null, undecided)); return; }
+    const leads = navStacks.map((s) => s.lead);
+    const current = base ? stackOf.get(base.id)?.lead.id ?? null : null;
+    const byLead = new Map(navStacks.map((s) => [s.lead.id, s]));
+    const next = nextUndecided(leads, current, (f) => stackUndecided(byLead.get(f.id)!));
+    if (view === 'compare') { if (next != null) setCompareRightId(next); } else goTo(next);
+  };
+  /** After P or X: X moves to the next undecided frame of the burst (then the next burst), P to the next burst. */
+  const advanceFrom = (id: number, values: MarkValues): number | null => {
+    if (!stacked && view === 'grid') return stepFlat(frames, id, 1);
+    const stack = stackOf.get(id);
+    if (!stack) return null;
+    if (values.rejected) {
+      const within = nextUndecided(stack.frames, id, (f) => f.id !== id && undecided(f), { wrap: false });
+      if (within != null) return within;
+    }
+    const next = stepStack(navStacks, id, 1);
+    return next === id ? null : next;
+  };
+  /** The whole group behind a frame for a bulk decision; the filter may hide frames, but B should settle the burst. */
+  const stackFramesOf = (f: Frame): Frame[] => {
+    if (groupingNow === 'dupes') return review.frames.filter((x) => groupKeyOf(x, true) === groupKeyOf(f, true));
+    if (groupingNow === 'vehicles') return stackOf.get(f.id)?.frames ?? [f];
+    return review.frames.filter((x) => groupKeyOf(x) === groupKeyOf(f));
+  };
+  /**
+   * One-key stack decision: `keep` keeps the focused frame and culls the rest, `cull` culls all. One markMany call
+   * means one undo step, and no auto-advance: the view moves to the next stack that still has undecided frames.
+   */
+  const stackAction = (mode: 'keep' | 'cull', stack?: StackView) => {
+    const target = stack
+      ? stack.frames.find((f) => f.id === selected) ?? stack.lead
+      : view === 'compare' ? activeCompareFrame : frame;
+    if (!target) return;
+    const members = stack ? stack.frames : stackFramesOf(target);
+    const changes = stackDecision(members, mode === 'keep' ? target.id : 'cull');
+    void rv.markMany(changes);
+    if (!stacked) return;
+    const settled = new Set(changes.map((c) => c.id));
+    const currentLead = (stack?.lead ?? stackOf.get(target.id)?.lead)?.id ?? null;
+    const byLead = new Map(navStacks.map((s) => [s.lead.id, s]));
+    const holdsUndecided = (lead: Frame) => {
+      const s = byLead.get(lead.id);
+      return s ? s.frames.some((f) => !settled.has(f.id) && undecided(f)) : false;
+    };
+    let next = nextUndecided(navStacks.map((s) => s.lead), currentLead, holdsUndecided);
+    if (next === currentLead) next = null;
+    if (next != null) { rv.setSelected(next); rv.setExpanded(next); }
+  };
+
+  verbs.current = {
+    view,
+    setView,
+    stepFrame: (delta, repeat = false) => {
+      if (view === 'compare') { const next = stepWithinStack(navStacks, (compareRight ?? frame)?.id ?? null, delta); if (next != null) setCompareRightId(next); return; }
+      if (view === 'grid' && !stacked) { goTo(stepFlat(frames, selected, delta)); return; }
+      const list = view === 'grid' ? shown : navStacks;
+      const byFrame = view === 'grid' ? shownOf : stackOf;
+      const stack = selected != null ? byFrame.get(selected) ?? null : null;
+      if (!stack) {
+        const next = stepWithinStack(list, selected, delta) ?? stepStack(list, selected, delta);
+        if (next != null) { rv.setSelected(next); if (expanded != null) rv.setExpanded(next); }
+        return;
+      }
+      const direction = delta > 0 ? 'forward' : 'back';
+      // A collapsed card is the stack's cover: → enters the stack on its first frame, as shot.
+      if (view === 'grid' && expandedKey !== stack.key && delta > 0 && selected === stack.lead.id && stack.frames.length > 1) {
+        rv.setSelected(stack.frames[0].id);
+        rv.setExpanded(stack.frames[0].id);
+        return;
+      }
+      // First/Last in the loupe send ±Infinity: those stay inside the stack.
+      const bounded = delta === 1 || delta === -1;
+      // In the grid, ← on the first frame of an open strip closes it onto the cover first; the next ←
+      // crosses into the previous stack, like the loupe. A held key repeats within its stack, but one
+      // keydown can cross at most one edge.
+      const atCover = view === 'grid' && expandedKey !== stack.key;
+      const edge = crossStacks && !repeat && (view !== 'grid' || direction === 'forward' || atCover);
+      const step = bounded ? stepInStack(list, list.indexOf(stack), selected, direction, { crossStacks: edge }) : null;
+      if (step == null) {
+        const next = bounded ? null : stepWithinStack(list, selected, delta);
+        if (next != null) {
+          rv.setSelected(next);
+          if (expanded != null) rv.setExpanded(next);
+        } else if (bounded && view === 'grid' && direction === 'back' && expandedKey === stack.key && selected === stack.frames[0]?.id) {
+          // Back from the first frame closes the strip onto the cover.
+          rv.setSelected(stack.lead.id);
+          rv.setExpanded(null);
+        }
+        return;
+      }
+      if ('id' in step) {
+        rv.setSelected(step.id);
+        if (view === 'grid' ? expanded != null || stack.frames.length > 1 : expanded != null) rv.setExpanded(step.id);
+        return;
+      }
+      const id = edgeFrameId(list[step.stackIndex], direction);
+      if (id == null) return;
+      rv.setSelected(id);
+      rv.setExpanded(id);
+    },
+    stepBurst: (delta) => {
+      if (view === 'compare') { const next = stepStack(navStacks, (compareRight ?? frame)?.id ?? null, delta); if (next != null) setCompareRightId(next); return; }
+      if (view === 'grid' && !stacked) { goTo(stepRow(frames, selected, delta, cols)); return; }
+      goTo(stepStack(view === 'grid' ? shown : navStacks, selected, delta));
+    },
+    nextBurst: jumpStack,
+    nextUndecided: jumpUndecided,
+    enter: () => {
+      if (view !== 'grid' || !frame) return;
+      const stack = shownOf.get(frame.id);
+      if (stacked && stack && stack.frames.length > 1 && expandedKey !== stack.key) rv.setExpanded(frame.id);
+      else openViewer();
+    },
+    escape: () => {
+      if (view !== 'grid') setView('grid');
+      else rv.setExpanded(null);
+    },
+    mark: (values) => {
+      const target = view === 'compare' ? activeCompareFrame : frame;
+      if (!target) return;
+      const next = autoAdvance && view !== 'compare' && (values.picked === true || values.rejected === true) ? advanceFrom(target.id, values) : null;
+      void rv.mark(values, target.id);
+      goTo(next);
+    },
+    rejected: () => Boolean(activeCompareFrame && facts.get(activeCompareFrame.id)?.cull),
+    picked: () => Boolean(activeCompareFrame?.picked),
+    stackAction,
+    undo: () => { const id = rv.undo(); if (id != null) goTo(id); },
+    redo: () => { const id = rv.redo(); if (id != null) goTo(id); },
+  };
+  const viewerStack = frame ? stackOf.get(frame.id) ?? null : null;
+  const compareStack = (compareRight ?? frame) ? stackOf.get((compareRight ?? frame)!.id) ?? null : null;
+  const viewerPosition = (() => {
+    if (!frame) return '';
+    if (!viewerStack) return `${(frames.findIndex((f) => f.id === frame.id) + 1).toLocaleString()} / ${frames.length.toLocaleString()}`;
+    const i = viewerStack.frames.findIndex((f) => f.id === frame.id);
+    return `Frame ${i + 1} of ${viewerStack.frames.length} · burst ${(navStacks.indexOf(viewerStack) + 1).toLocaleString()} of ${navStacks.length.toLocaleString()}`;
+  })();
+  const toggleStack = (stack: StackView) => {
+    const here = selected != null && stack.frames.some((f) => f.id === selected);
+    const target = here ? selected! : stack.lead.id;
+    rv.setSelected(target);
+    rv.setExpanded(expandedKey === stack.key ? null : target);
+  };
+
   if (jobId == null) {
     return (
       <div className="screen">
@@ -234,31 +380,71 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
       </div>
     );
   }
-  const filtered = filters.search !== '' || filters.facet !== null;
-  const identifyTask = status.tasks.find((task) => (task.state === 'running' || task.state === 'paused') && /^Identifying\b/.test(task.label) && task.label.includes(`album ${jobId}`));
-  const identifying = Boolean(identifyTask || status.operations.some((key) => key === `Identifying:${jobId}`));
+  const filtered = filters.search !== '' || filters.facet !== null || filters.view !== 'all' || filters.minStars > 0;
+  const emptyState = (
+    <Empty icon="images" title={review.frames.length ? 'Nothing matches these filters.' : rv.loading ? 'Loading this album…' : scanning ? 'Waiting for the first frames…' : 'No photographs to show yet.'}>
+      {filtered && <button className="ghost" onClick={() => patchFilters({ ...defaultFilters })}>Clear filters</button>}
+    </Empty>
+  );
   const excluded = review.frames.filter((f) => facts.get(f.id)?.cull).length;
   const pending = review.frames.filter((f) => !facts.get(f.id)?.cull && f.status !== 'done').length;
-  const eligible = review.frames.filter((f) => (facts.get(f.id)?.dets ?? []).some((d) => !d.reviewed && !subjectExcluded(f, d))).length;
+  // What each identify scope could still read. The keeper count follows the album's effective keepers (`rv.keepers`:
+  // a manual pick when a burst has one, else the engine's suggestion), so it never re-derives the suggestion from
+  // `burst_pick`; everything counts every unreviewed subject, culled frames included.
+  const keeperEligible = keeperCount(review.frames, facts, keepers);
+  const everythingEligible = everythingCount(review.frames, facts);
+  const identifyScope = identifyScopeOf(albumSetting(currentJob, 'identify_scope', settings));
+  const scopeEligible = identifyScope === 'everything' ? everythingEligible : keeperEligible;
   const busy = scanning || status.operations.some((key) => key.endsWith(`:${jobId}`));
-  const currentJob = jobs.find((j) => j.id === jobId);
-  const currentProfile = String(currentJob?.scan_profile || settings.scan_profile || 'motorsport');
   const currentParent = profileParent(currentProfile);
   const kind = currentParent === 'portrait' ? 'portrait'
     : currentParent === 'motorsport' ? (currentJob?.include_people ? 'motorsport+people' : 'motorsport')
     : 'mixed';
+  const albumSettings: Settings = {
+    ...settings,
+    read_numbers: albumSetting(currentJob, 'read_numbers', settings) as boolean | undefined ?? true,
+    read_plates: albumSetting(currentJob, 'read_plates', settings) as boolean | undefined ?? true,
+    read_action: albumSetting(currentJob, 'read_action', settings) as boolean | undefined ?? true,
+    group_vehicles: albumSetting(currentJob, 'group_vehicles', settings) as boolean | undefined ?? true,
+    grouping_stacks: albumSetting(currentJob, 'grouping_stacks', settings) as boolean | undefined ?? true,
+    grouping_sensitivity: String(albumSetting(currentJob, 'grouping_sensitivity', settings) ?? 'normal'),
+    grouping_pause: Number(albumSetting(currentJob, 'grouping_pause', settings) ?? 0.8),
+    grouping_keep_pans: albumSetting(currentJob, 'grouping_keep_pans', settings) as boolean | undefined ?? true,
+    grouping_focus_anchor: albumSetting(currentJob, 'grouping_focus_anchor', settings) as boolean | undefined ?? true,
+    identify_scope: identifyScopeOf(albumSetting(currentJob, 'identify_scope', settings)),
+  };
+  /** Album-scoped changes go to this album only; the global defaults are edited in Settings. */
+  const saveAlbum = async (patch: Record<string, unknown>) => {
+    await engine.updateJobSettings(jobId, patch);
+    await onJobsChanged();
+    await rv.refresh();
+  };
+  const workflow = workflowModeOf(albumSetting(currentJob, 'workflow_mode', settings));
+  // The stepper reads the album's own data, not `job.status`: a long-finished album can still say "scanning".
+  const scanned = Boolean(currentJob && currentJob.total > 0 && currentJob.done >= currentJob.total) && !scanning;
+  const identified = scopeEligible === 0 && review.detections.length > 0;
+  const steps = pipelineSteps(workflow, { scanned, identified, identifying, scanning });
+  const pickWorkflow = (value: string) => {
+    void run(async () => {
+      await saveAlbum({ workflow_mode: workflowModeOf(value) });
+      toast(`Workflow: ${workflowLabel(value)}.`);
+    });
+  };
+  // One label per scope for the split button and its menu, so the two cannot disagree. The workflow only decides
+  // whether identification exists at all; the album's scope decides what it reads.
+  const identifyLabels = {
+    keepers: identifyActionLabel('keepers', keeperEligible),
+    everything: identifyActionLabel('everything', everythingEligible),
+  };
+  const identifyTitle = identifyScope === 'everything'
+    ? 'Read plates, numbers, and vehicle data on every subject, culled frames included'
+    : 'Read plates, numbers, and vehicle data on the keeper you picked, or the suggested one';
 
-  const primaryStep = !busy && pending > 0
+  const primaryStep = !busy && pending > 0 && workflowIncludesCull(workflow)
     ? {
         label: `Suggest culls (${pending.toLocaleString()})`,
         onClick: onCull,
         title: 'Run AI sharpness scoring and keeper selection on unculled photos',
-      }
-    : !busy && pending === 0 && eligible > 0 && !identifying
-    ? {
-        label: `Identify kept photos (${eligible.toLocaleString()})`,
-        onClick: onIdentify,
-        title: 'Run plate, number, and vision model identification on kept photos',
       }
     : identifying
     ? {
@@ -267,7 +453,13 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
         onClick: () => {},
         title: 'Identification is currently running',
       }
-    : !identifying && review.detections.some((d) => !d.reviewed)
+    : !busy && scopeEligible > 0 && workflowIncludesIdentify(workflow)
+    ? {
+        label: identifyActionLabel(identifyScope, scopeEligible),
+        onClick: () => onIdentify(identifyScope),
+        title: identifyTitle,
+      }
+    : !identifying && workflowIncludesIdentify(workflow) && review.detections.some((d) => !d.reviewed)
     ? {
         label: 'Accept all',
         onClick: onAcceptAll,
@@ -275,44 +467,61 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
       }
     : {
         label: 'Write XMP',
-        onClick: () => onWrite(false),
-        title: 'Write ratings, tags, and vehicle metadata to XMP sidecars',
+        onClick: () => setExportOpen(true),
+        title: 'Export: write ratings, tags, and vehicle metadata to XMP sidecars',
       };
 
   const actionItems: MenuItem[] = [
-    {
+    ...(workflowIncludesCull(workflow) ? [{
       id: 'cull',
       label: 'Suggest culls',
       hint: 'Re-evaluate sharpness and keepers for unculled photos',
       badge: pending > 0 ? pending : undefined,
       disabled: busy || pending === 0,
       onClick: onCull,
-    },
-    {
-      id: 'identify',
-      label: 'Identify kept photos',
-      hint: 'Run plates, numbers, and VLM on unreviewed kept photos',
-      badge: eligible > 0 ? eligible : undefined,
-      disabled: busy || identifying || eligible === 0,
-      onClick: onIdentify,
-    },
-    {
-      id: 'accept_all',
-      label: 'Accept all identifications',
-      hint: 'Mark all unreviewed detections in this shoot as accepted',
-      disabled: !review.detections.some((d) => !d.reviewed),
-      onClick: onAcceptAll,
-    },
+    }] : []),
+    ...(workflowIncludesIdentify(workflow) ? [
+      {
+        id: 'identify_keepers',
+        label: identifyLabels.keepers,
+        hint: 'Read plates, numbers, and VLM on your keeper, or the suggested one',
+        badge: keeperEligible > 0 ? keeperEligible.toLocaleString() : undefined,
+        disabled: busy || identifying || keeperEligible === 0,
+        onClick: () => onIdentify('keepers'),
+      },
+      {
+        id: 'identify_everything',
+        label: identifyLabels.everything,
+        hint: 'Read every subject, culled frames included; bystanders skipped',
+        badge: everythingEligible > 0 ? everythingEligible.toLocaleString() : undefined,
+        disabled: busy || identifying || everythingEligible === 0,
+        onClick: () => onIdentify('everything'),
+      },
+      {
+        id: 'identified',
+        label: 'Identifications…',
+        hint: 'See what was read on each photo, and accept it one by one',
+        disabled: !review.detections.some((d) => d.number || d.plate || (d.attributes && d.attributes !== '{}')),
+        onClick: () => setIdsOpen(true),
+      },
+      {
+        id: 'accept_all',
+        label: 'Accept all identifications',
+        hint: 'Mark all unreviewed detections in this shoot as accepted',
+        disabled: !review.detections.some((d) => !d.reviewed),
+        onClick: onAcceptAll,
+      },
+    ] : []),
     {
       id: 'write',
-      label: 'Write XMP',
-      hint: 'Write ratings, stars, and tags directly to photo sidecars',
-      onClick: () => onWrite(false),
+      label: 'Export…',
+      hint: 'Review what leaves Conrod, then write XMP sidecars',
+      onClick: () => setExportOpen(true),
     },
     {
       id: 'dry_run',
       label: 'Dry run (preview XMP)',
-      hint: 'Simulate XMP write without touching files on disk',
+      hint: 'List what would be written without touching files on disk',
       onClick: () => onWrite(true),
     },
     { type: 'divider' },
@@ -328,6 +537,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
           toast('Sharpness re-scoring started. Progress in Activity.');
         });
       },
+    },
+    {
+      id: 'rescan',
+      label: 'Rescan from pixels…',
+      hint: 'Re-read every photo and re-measure sharpness; keeps your edits',
+      onClick: () => setConfirmReset('rescan'),
     },
     {
       id: 'pick_keepers',
@@ -369,12 +584,10 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
       id: 'toggle_numbers',
       label: 'Read race numbers',
       hint: 'Detect vehicle competition numbers (#0–999)',
-      checked: settings.read_numbers !== false,
+      checked: albumSettings.read_numbers !== false,
       onChange: (checked) => {
         void run(async () => {
-          await engine.updateJobSettings(jobId, { read_numbers: checked });
-          await call('save_settings', { ...settings, read_numbers: checked });
-          await rv.refresh();
+          await saveAlbum({ read_numbers: checked });
           toast(`Race number detection turned ${checked ? 'on' : 'off'}.`);
         });
       },
@@ -384,15 +597,31 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
       id: 'toggle_plates',
       label: 'Read licence plates',
       hint: 'Detect vehicle licence and registration plates',
-      checked: settings.read_plates !== false,
+      checked: albumSettings.read_plates !== false,
       onChange: (checked) => {
         void run(async () => {
-          await engine.updateJobSettings(jobId, { read_plates: checked });
-          await call('save_settings', { ...settings, read_plates: checked });
-          await rv.refresh();
+          await saveAlbum({ read_plates: checked });
           toast(`Licence plate detection turned ${checked ? 'on' : 'off'}.`);
         });
       },
+    },
+    { type: 'divider' },
+    { type: 'header', label: 'Culling' },
+    {
+      type: 'checkbox',
+      id: 'toggle_auto_advance',
+      label: 'Auto-advance after P and X',
+      hint: 'P goes to the next burst, X to the next undecided frame',
+      checked: autoAdvance,
+      onChange: (checked) => setAutoAdvance(checked),
+    },
+    {
+      type: 'checkbox',
+      id: 'toggle_cross_stacks',
+      label: 'Arrow keys continue into the next stack',
+      hint: '→ on a stack\u2019s last frame opens the next stack; ← on its first goes back',
+      checked: crossStacks,
+      onChange: (checked) => setCrossStacks(checked),
     },
     { type: 'divider' },
     { type: 'header', label: 'Album resets' },
@@ -434,6 +663,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
       },
     },
     {
+      id: 'stats',
+      label: 'Shoot statistics…',
+      hint: 'Frames, gear, exposure and quality',
+      onClick: () => setStatsOpen(true),
+    },
+    {
       id: 'summary',
       label: 'Shoot summary',
       onClick: () => {
@@ -455,59 +690,99 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
           <button
             type="button"
             className="pill scan-type clickable"
-            style={{ alignSelf: 'center' }}
             title={`Preset: ${profileLabel(currentProfile)} (Click to change shoot preset or detection options)`}
             onClick={() => setShootSettingsOpen(true)}
           >
-            {profileLabel(currentProfile)} ⚙
+            {profileLabel(currentProfile)}<Icon name="sliders" />
           </button>
         )}
-        <input id="search" type="search" aria-label="Search photos" placeholder="Search make, team, plate…" spellCheck={false}
+        <input id="search" type="search" aria-label="Search photos" placeholder="Search" spellCheck={false}
           value={filters.search} onChange={(e) => patchFilters({ search: e.target.value })} />
         <select aria-label="Photo filter" value={filters.view} onChange={(e) => patchFilters({ view: e.target.value as typeof filters.view })}>
-          <option value="all">All photos</option><option value="kept">Kept photos</option><option value="rejected">Culled / rejected</option><option value="picks">Burst picks</option><option value="review">Needs review</option>
+          <option value="all">All photos</option><option value="keepers">Keepers</option><option value="undecided">Undecided</option><option value="rejected">Rejected</option><option value="top3">Top 3 per burst</option><option value="review">Needs review</option>{(vehicleBrowse || filters.view === 'needsLook') && <option value="needsLook">Needs a look</option>}
         </select>
-        <select aria-label="Group photos" value={grouping} onChange={(e) => setGrouping(e.target.value as typeof grouping)}>
-          <option value="bursts">Group: Burst stacks</option><option value="vehicles">Group: By vehicle</option><option value="flat">Group: Individual photos</option>
+        {stacked && workflow !== 'identify' && (
+          <span className="reviewed-count" title="Bursts where every frame is kept or culled, over the whole album">
+            reviewed {progress.reviewed.toLocaleString()} / {progress.total.toLocaleString()} bursts
+          </span>
+        )}
+        <select aria-label="Group photos" value={groupingNow} onChange={(e) => rv.setGrouping(e.target.value as typeof grouping)}>
+          <option value="bursts">Group: Burst stacks</option>{vehicleBrowse && <option value="vehicles">Group: By vehicle</option>}<option value="dupes">Group: Duplicates</option><option value="flat">Group: Individual photos</option>
         </select>
-        <select aria-label="Photo order" value={filters.sort} onChange={(e) => patchFilters({ sort: e.target.value as typeof filters.sort })}>
-          <option value="frame">Filename order</option><option value="best">Highest rated first</option><option value="worst">Lowest rated first</option><option value="pick">Burst picks first</option>
+        <select aria-label="Photo order" value={!review.tasteHead && filters.sort === 'taste' ? 'frame' : filters.sort} onChange={(e) => patchFilters({ sort: e.target.value as typeof filters.sort })}>
+          <option value="frame">Filename order</option><option value="best">Highest rated first</option><option value="worst">Lowest rated first</option><option value="pick">Keepers first</option>{review.tasteHead && <option value="taste">Taste (learned)</option>}
         </select>
-        <div className="spacer" />
-        <MenuDropdown
-          splitAction={primaryStep}
-          items={actionItems}
-          title="Workflow actions"
-          align="right"
-        />
-        <MenuDropdown
-          label="Manage shoot"
-          variant="ghost"
-          items={manageItems}
-          align="right"
-        />
-        <button className="ghost icon" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={onHelp}><Icon name="keyboard" /></button>
+        <div className="toolbar-actions">
+          <MenuDropdown
+            splitAction={primaryStep}
+            items={actionItems}
+            title="Workflow actions"
+            align="right"
+          />
+          <MenuDropdown
+            label="Manage shoot"
+            variant="ghost"
+            items={manageItems}
+            align="right"
+          />
+          <button className="ghost icon" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={onHelp}><Icon name="keyboard" /></button>
+        </div>
       </div>
-      <PipelineStepper job={currentJob} scanning={scanning} identified={!eligible || review.detections.some((d) => d.reviewed)} identifying={identifying} written={false} />
+      <div className="pipeline-row">
+        <label className="pipeline-workflow" title="What this album runs: culling, identification, or both">
+          <span>Workflow</span>
+          <select aria-label="Workflow" value={workflow} onChange={(e) => pickWorkflow(e.target.value)}>
+            {WORKFLOW_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+        </label>
+        <PipelineStepper steps={steps} />
+        {identifying && (
+          <button type="button" className="ghost small pipeline-watch" onClick={onWatchIdentify}
+            title="Open the live identification trace">
+            <Icon name="eye" size={13} /> Watch identification
+          </button>
+        )}
+      </div>
       <ShootSettingsModal
-        jobId={jobId}
         jobLabel={currentJob?.label ?? ''}
         initialProfile={currentProfile}
-        initialSettings={settings}
+        initialSettings={albumSettings}
         visible={shootSettingsOpen}
         onClose={() => setShootSettingsOpen(false)}
         onSave={async (patch) => {
           await engine.updateJobSettings(jobId, patch);
-          await call('save_settings', {
-            ...settings,
-            scan_profile: patch.scan_profile,
-            read_numbers: patch.read_numbers,
-            read_plates: patch.read_plates,
-            group_vehicles: patch.group_vehicles,
-          });
+          // A grouping choice only shows once the album is regrouped; a preset or detection change is safe to regroup too.
+          await call('regroup', { jobId });
+          await onJobsChanged();
           await rv.refresh();
-          toast('Shoot settings updated.');
+          toast('Shoot settings updated for this album and its stacks regrouped.');
         }}
+      />
+      <ShootStatsModal
+        visible={statsOpen}
+        jobId={jobId}
+        jobLabel={currentJob?.label ?? ''}
+        onClose={() => setStatsOpen(false)}
+        onStatsLoaded={() => void rv.refresh()}
+      />
+      <Identifications
+        visible={idsOpen}
+        jobId={jobId}
+        albumLabel={currentJob?.label ?? ''}
+        identifying={identifying}
+        onClose={() => setIdsOpen(false)}
+        onOpenFrame={(id) => { setIdsOpen(false); rv.setSelected(id); setView('grid'); }}
+        onAccepted={() => { void onJobsChanged(); void rv.refresh(); }}
+        toast={toast}
+      />
+      <ExportSheet
+        visible={exportOpen}
+        albumLabel={currentJob?.label ?? ''}
+        frames={review.frames}
+        keepers={rv.keepers}
+        dryRunFirst={false}
+        onClose={() => setExportOpen(false)}
+        onWrite={onWrite}
       />
       {confirmReset === 'reset_ratings' && (
         <Confirm
@@ -560,22 +835,56 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, onPi
           <p>This removes all detections, bounding boxes, and cached crop images for this album. Original photograph files stay untouched.</p>
         </Confirm>
       )}
+      {confirmReset === 'rescan' && (
+        <Confirm
+          title="Rescan this album?"
+          action="Rescan"
+          onCancel={() => setConfirmReset(null)}
+          onConfirm={() => {
+            void run(async () => {
+              await call('rescan', { jobId });
+              await rv.refresh();
+              toast('Rescan started. Progress in Activity.');
+            });
+            setConfirmReset(null);
+          }}
+        >
+          <p>This re-reads every photograph in this album and re-measures its sharpness, so it can take a while. Boxes, stars, rejections, reviews, numbers and names are kept.</p>
+        </Confirm>
+      )}
       {identifyTask && <IdentificationBanner task={identifyTask} settings={settings} onSkip={onSkipIdentify} />}
       <div className="review-main">
-        <Facets facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
-        {grouping === 'bursts' || filters.view === 'stacks'
-          ? <BurstStacks rv={rv} onOpenViewer={onOpenViewer} />
-          : grouping === 'vehicles' || filters.view === 'vehicles' ? <VehicleStacks rv={rv} onOpenViewer={onOpenViewer} identifying={identifying} />
-          : <PhotoGrid frames={frames} facts={facts} selected={selected} onSelect={rv.setSelected} onOpen={onOpenViewer}
-              onReject={(id, rejected) => void rv.mark({ rejected }, id)}
-              empty={
-                <Empty icon="images" title={review.frames.length ? 'Nothing matches these filters.' : scanning ? 'Waiting for the first frames…' : 'No photographs to show yet.'}>
-                  {filtered && <button className="ghost" onClick={() => patchFilters({ ...defaultFilters })}>Clear filters</button>}
-                </Empty>
-              } />}
+        <Facets preset={currentProfile} facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
+        {stacked
+          ? <StackGrid stacks={shown} selectedKey={selectedKey} selectedId={selected} expandedKey={expandedKey} keeperIds={keepers} suggestions={suggestions} softBursts={softBursts}
+              culled={(f) => Boolean(facts.get(f.id)?.cull)} onToggle={toggleStack} onSelect={rv.setSelected} onOpen={openViewer} onPick={acceptSuggestion}
+              onDecide={(id, values) => void rv.mark(values, id)} onStackAction={(stack, mode) => stackAction(mode, stack)}
+              ariaLabel={groupingNow === 'dupes' ? 'Duplicate stacks' : groupingNow === 'vehicles' ? 'Vehicle stacks' : 'Burst stacks'}
+              empty={emptyState} />
+          : <PhotoGrid frames={frames} facts={facts} ranks={ranks} keepers={keepers} suggestions={suggestions} selected={selected} onSelect={rv.setSelected} onOpen={openViewer} onCols={setCols}
+              onReject={(id, rejected) => void rv.mark({ rejected }, id)} onPick={acceptSuggestion} onDecide={(id, values) => void rv.mark(values, id)} empty={emptyState} />}
         <Inspector frame={frame} detections={frame ? facts.get(frame.id)?.dets ?? [] : []} allDetections={review.detections} allFrames={review.frames} known={known} scanning={scanning} kind={kind}
-          onMark={(values) => void rv.mark(values)} onOpen={onOpenViewer} onEdit={onEdit} />
+          onMark={(values) => void rv.mark(values)} onOpen={openViewer} onEdit={onEdit} />
       </div>
+      {view === 'loupe' && frame && (
+        <Viewer rv={rv} run={run} showBoxes={showBoxes} onToggleBoxes={onToggleBoxes} onClose={() => setView('grid')}
+          stack={viewerStack} keeperIds={keepers} onStep={(d) => verbs.current.stepFrame(d)} position={viewerPosition} />
+      )}
+      {view === 'compare' && frame && (
+        <Compare
+          rv={rv}
+          run={run}
+          showBoxes={showBoxes}
+          onToggleBoxes={onToggleBoxes}
+          right={compareRight}
+          activePane={comparePane}
+          onSetActivePane={setComparePane}
+          onPickFilmstrip={setCompareRightId}
+          onClose={() => setView('grid')}
+          stack={compareStack}
+          keeperIds={keepers}
+        />
+      )}
     </div>
   );
 }

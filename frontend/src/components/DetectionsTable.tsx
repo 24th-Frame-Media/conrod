@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { asset } from '../lib/api';
 import { parseAttributes } from '../lib/review';
+import { Icon, type IconName } from './basics';
+import { KeeperMark } from './Stars';
 import {
   ATTRIBUTE_KEYS,
   type AttributeKey,
@@ -35,16 +37,16 @@ export function getCategory(d: Detection): 'vehicle' | 'person' | 'plate' | 'lan
   return 'vehicle';
 }
 
-function categoryIcon(cat: 'vehicle' | 'person' | 'plate' | 'landmark'): string {
+function categoryIcon(cat: 'vehicle' | 'person' | 'plate' | 'landmark'): IconName {
   switch (cat) {
     case 'vehicle':
-      return '🚗';
+      return 'car';
     case 'person':
-      return '👤';
+      return 'person';
     case 'plate':
-      return '🔢';
+      return 'plate';
     case 'landmark':
-      return '👁';
+      return 'eye';
   }
 }
 
@@ -245,6 +247,7 @@ export function DetectionsTable({
           filtered.map((d, idx) => {
             const cat = getCategory(d);
             const a = parseAttributes(d);
+            const modelSuggested = a.model_suggested === true;
             const isSelected = selectedId === d.id;
             const isHovered = hoveredId === d.id;
             const vehicleName = [a.make, a.model].filter(Boolean).join(' ');
@@ -299,7 +302,7 @@ export function DetectionsTable({
                       />
                     ) : (
                       <span className="det-avatar-icon" title={cat}>
-                        {categoryIcon(cat)}
+                        <Icon name={categoryIcon(cat)} size={20} />
                       </span>
                     )}
                   </div>
@@ -309,7 +312,8 @@ export function DetectionsTable({
                     <div className="det-title-row">
                       <span className={`det-pill pill-${cat}`}>{d.cls}</span>
                       {a.plate && <span className="det-chip-plate">{a.plate}</span>}
-                      {d.burst_pick ? <span className="det-badge badge-keeper">★ Best</span> : null}
+                      {a.number_source === 'ocr' && <span className="det-badge badge-ocr" title="Only OCR read this number; the vision model has not confirmed it.">OCR</span>}
+                      {d.burst_pick ? <span className="det-badge badge-keeper"><KeeperMark inline />Best</span> : null}
                       {d.panning ? <span className="det-badge badge-panned">panned</span> : null}
                       {d.cull_reason ? <span className="det-badge badge-culled">{d.cull_reason}</span> : null}
                     </div>
@@ -466,10 +470,20 @@ export function DetectionsTable({
                                 const val = a[key] ?? '';
                                 return (
                                   <label className="det-edit-field" key={`${d.id}-${key}-${val}`}>
-                                    <span className="det-edit-lbl">{LABELS[key]}</span>
+                                    <span className="det-edit-lbl">
+                                      {LABELS[key]}
+                                      {key === 'model' && modelSuggested && (
+                                        <span
+                                          className="tag suggested"
+                                          title="Judged from the car's shape only — check before relying on it"
+                                        >
+                                          suggested
+                                        </span>
+                                      )}
+                                    </span>
                                     <input
                                       type="text"
-                                      className="det-edit-input"
+                                      className={key === 'model' && modelSuggested ? 'det-edit-input det-model-suggested' : 'det-edit-input'}
                                       defaultValue={val}
                                       placeholder="—"
                                       autoComplete="off"
@@ -565,7 +579,17 @@ export function DetectionsTable({
                         {a.model && (
                           <div className="det-meta-item">
                             <dt>Model</dt>
-                            <dd>{a.model}</dd>
+                            <dd className={modelSuggested ? 'det-model-suggested' : undefined}>
+                              {a.model}
+                              {modelSuggested && (
+                                <span
+                                  className="tag suggested"
+                                  title="Judged from the car's shape only — check before relying on it"
+                                >
+                                  suggested
+                                </span>
+                              )}
+                            </dd>
                           </div>
                         )}
                         {a.team && (

@@ -26,6 +26,13 @@ fn looks_like_plate_matches_recorded_snapshot() {
 }
 
 #[test]
+fn looks_like_plate_accepts_six_letter_personalised_plates() {
+    assert!(looks_like_plate("SRBGTR"), "a custom all-letter issue");
+    assert!(!looks_like_plate("NSW"), "the state code is not a plate");
+    assert!(!looks_like_plate("GTR"), "a short badge is not a plate");
+}
+
+#[test]
 fn trim_to_format_matches_recorded_snapshot() {
     for case in fixture()["trim_to_format"].as_array().unwrap() {
         let token = case["token"].as_str().unwrap();

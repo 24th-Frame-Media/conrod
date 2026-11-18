@@ -1,0 +1,276 @@
+// The shape of the Settings page: tabs, sections, field labels and the small pure
+// helpers the page needs (search, dirty state, per-album override counts).
+// Setting names are the engine's wire format and must never change here.
+
+export const TABS = [
+  { id: 'culling', label: 'Culling', hint: 'What counts as a keeper' },
+  { id: 'identification', label: 'Identification', hint: 'Plates, numbers and vision models' },
+  { id: 'metadata', label: 'Metadata', hint: 'What is written next to your files' },
+  { id: 'system', label: 'System', hint: 'Models, cache and library data' },
+];
+
+/** Fields in page order. `kind` picks the control; `album` marks a per-album override. */
+export const FIELDS = {
+  // ── culling ──
+  blur_strictness: {
+    label: 'Blur strictness', kind: 'segmented', album: true,
+    hint: 'How much softness to accept before a photo is rated soft or culled. Moderate suits long-lens and heat-haze shots; strict flags any softness.',
+    options: [{ id: 'critical', name: 'Critical' }, { id: 'strict', name: 'Strict' }, { id: 'moderate', name: 'Moderate' }, { id: 'lenient', name: 'Lenient' }],
+  },
+  burst_gap: {
+    label: 'Burst gap', kind: 'number', album: true, unit: 's',
+    hint: 'Frames taken closer together than this belong to one pass.',
+  },
+  sharp_at: {
+    label: 'Sharp at', kind: 'number',
+    hint: 'A subject scoring at or above this counts as sharp.',
+  },
+  blurred_below: {
+    label: 'Blurred below', kind: 'number',
+    hint: 'A subject scoring below this is treated as blurred.',
+  },
+  auto_reject_below_stars: {
+    label: 'Auto-reject below (stars)', kind: 'number',
+    hint: '0 never rejects on its own.',
+  },
+  cull_blurred: {
+    label: 'Cull blurred frames', kind: 'toggle',
+    hint: 'A red rating, never a deletion.',
+  },
+  scan_profile: {
+    label: 'Default shoot type', kind: 'profile', album: true,
+    hint: 'The import sheet starts on this. Each album can choose another.',
+  },
+  include_cars: { label: 'Cars', kind: 'toggle' },
+  include_bikes: { label: 'Bikes', kind: 'toggle' },
+  include_trucks: { label: 'Trucks', kind: 'toggle' },
+  detect_conf: {
+    label: 'Detection confidence', kind: 'number',
+    hint: 'Lower finds more vehicles, and more false ones.',
+  },
+  min_box_fraction: {
+    label: 'Smallest subject', kind: 'number',
+    hint: 'As a fraction of the frame. Smaller values find more distant subjects.',
+  },
+  max_vehicles_per_frame: {
+    label: 'Vehicles per frame', kind: 'number',
+    hint: 'Ignore extra subjects beyond this in one frame.',
+  },
+
+  // ── identification ──
+  read_plates: {
+    label: 'Read licence plates', kind: 'toggle', album: true,
+    hint: 'OCR registration plates.',
+  },
+  read_numbers: {
+    label: 'Read race numbers', kind: 'toggle', album: true,
+    hint: 'Competition numbers on cars and bikes.',
+  },
+  read_text: {
+    label: 'Read other text', kind: 'toggle',
+    hint: 'Signage, sponsor boards and anything else in frame.',
+  },
+  read_action: {
+    label: 'Read action', kind: 'toggle', album: true,
+    hint: 'Dust, tyre smoke, airborne, flames and contact, from the vision model.',
+  },
+  use_known_vehicles: {
+    label: 'Use known vehicles', kind: 'toggle',
+    hint: 'Fill blanks from cars you have met before.',
+  },
+  normalise_names: {
+    label: 'Tidy make and model names', kind: 'toggle',
+    hint: 'Spelling and capitalisation are normalised.',
+  },
+  entry_list: {
+    label: 'Entry list', kind: 'text',
+    hint: 'Optional CSV or JSON (number, team, drivers, make, model, sponsors). Team and drivers are filled from the car number instead of guessed.',
+  },
+  vlm_strategy: {
+    label: 'Load balancing', kind: 'segmented',
+    hint: 'How work is spread across the enabled providers.',
+    options: [{ id: 'least_busy', name: 'Least busy' }, { id: 'round_robin', name: 'Round robin' }, { id: 'random', name: 'Random' }],
+  },
+  use_vlm: {
+    label: 'Use a vision model', kind: 'toggle',
+    hint: 'Ask a vision model for make, model, colour and team.',
+  },
+  vlm_timeout: { label: 'Timeout', kind: 'number', unit: 's', hint: 'Give up on one request after this long.' },
+  vlm_max_retries: { label: 'Retries', kind: 'number', hint: 'How many times to retry a failed request.' },
+  vlm_input_edge: {
+    label: 'Longest image edge', kind: 'number', unit: 'px',
+    hint: 'Images are resized so their longest edge fits this before upload.',
+  },
+
+  // ── metadata ──
+  write_rating: { label: 'Write star rating', kind: 'toggle', hint: 'An XMP rating that Lightroom reads.' },
+  write_label: { label: 'Write colour label', kind: 'toggle' },
+  write_caption: { label: 'Write caption', kind: 'toggle' },
+  write_plate_keyword: { label: 'Write plate as a keyword', kind: 'toggle' },
+  write_sidecar_for_raw: { label: 'Write sidecars next to RAW files', kind: 'toggle' },
+  keyword_prefix: { label: 'Keyword prefix', kind: 'text', hint: 'Prepended to every keyword Conrod writes.' },
+  overwrite_rating: { label: 'Overwrite existing stars', kind: 'toggle', hint: 'Off keeps the rating already in the file.' },
+  overwrite_label: { label: 'Overwrite existing colour labels', kind: 'toggle' },
+  overwrite_caption: { label: 'Overwrite existing captions', kind: 'toggle' },
+  close_to_tray: { label: 'Keep running in the tray when closed', kind: 'toggle' },
+};
+
+// Each definition carries its own key, so rows and search results are self-describing.
+for (const [key, field] of Object.entries(FIELDS)) field.key = key;
+
+/** Page order. `advanced` sections are folded until opened. */export const SECTIONS = [
+  {
+    id: 'culling', tab: 'culling', title: 'Culling',
+    hint: 'How soft a frame may be before it is rated soft or culled. These are the controls a photographer actually changes.',
+    keys: ['blur_strictness', 'burst_gap', 'sharp_at', 'blurred_below', 'auto_reject_below_stars', 'cull_blurred'],
+  },
+  {
+    id: 'new-scans', tab: 'culling', title: 'New scans',
+    hint: 'Where the import sheet starts.',
+    keys: ['scan_profile'],
+  },
+  {
+    id: 'subjects', tab: 'culling', title: 'What to detect',
+    hint: 'The subjects Conrod looks for in every frame.',
+    keys: ['include_cars', 'include_bikes', 'include_trucks'],
+  },
+  {
+    id: 'detection-tuning', tab: 'culling', title: 'Detection tuning', advanced: true,
+    hint: 'Rarely worth changing unless a shoot is being missed or over-detected.',
+    keys: ['detect_conf', 'min_box_fraction', 'max_vehicles_per_frame'],
+  },
+  {
+    id: 'reading', tab: 'identification', title: 'What to read',
+    hint: 'Identification runs after sharpness, so culling is never held up by OCR.',
+    keys: ['read_plates', 'read_numbers', 'read_text', 'read_action'],
+  },
+  {
+    id: 'known-fill', tab: 'identification', title: 'Known vehicles and names',
+    hint: 'Fill in what the model misses, without guessing over a fresh reading.',
+    keys: ['use_known_vehicles', 'normalise_names', 'entry_list'],
+  },
+  {
+    id: 'vision-providers', tab: 'identification', title: 'Vision providers',
+    hint: 'One or more servers that read make, model, colour and team.',
+    keys: ['vlm_strategy'],
+  },
+  {
+    id: 'vision-model', tab: 'identification', title: 'Vision model',
+    keys: ['use_vlm'],
+  },
+  {
+    id: 'vision-limits', tab: 'identification', title: 'Vision limits', advanced: true,
+    hint: 'Only worth changing when a host is slow or rejects large images.',
+    keys: ['vlm_timeout', 'vlm_max_retries', 'vlm_input_edge'],
+  },
+  {
+    id: 'metadata-write', tab: 'metadata', title: 'Written on export',
+    hint: 'Decisions are written as XMP sidecars, or into the file. Your originals are never modified.',
+    keys: ['write_rating', 'write_label', 'write_caption', 'write_plate_keyword', 'write_sidecar_for_raw', 'keyword_prefix'],
+  },
+  {
+    id: 'metadata-overwrite', tab: 'metadata', title: 'Overwrite existing metadata', advanced: true,
+    hint: 'Off keeps whatever is already in the file.',
+    keys: ['overwrite_rating', 'overwrite_label', 'overwrite_caption'],
+  },
+  {
+    id: 'desktop', tab: 'metadata', title: 'Desktop',
+    keys: ['close_to_tray'],
+  },
+];
+
+/** Settings an album can carry its own value for, in the order the sidebar lists them. */
+export const OVERRIDABLE = [
+  { key: 'scan_profile', label: 'Shoot type' },
+  { key: 'blur_strictness', label: 'Blur strictness' },
+  { key: 'burst_gap', label: 'Burst gap' },
+  { key: 'read_plates', label: 'Licence plates' },
+  { key: 'read_numbers', label: 'Race numbers' },
+  { key: 'read_action', label: 'Action effects' },
+];
+
+/** Whole objects that behave like one field on the page, and the tab they dirty. */
+const EXTRA_KEY_TABS = { vlm_services: 'identification' };
+
+const sectionOf = new Map();
+for (const section of SECTIONS) for (const key of section.keys) sectionOf.set(key, section);
+
+export function tabById(id) {
+  return TABS.find((tab) => tab.id === id) ?? null;
+}
+
+export function keyTab(key) {
+  return sectionOf.get(key)?.tab ?? EXTRA_KEY_TABS[key] ?? null;
+}
+
+export function fieldsOf(sectionId) {
+  const section = SECTIONS.find((s) => s.id === sectionId);
+  return (section?.keys ?? []).map((key) => FIELDS[key]).filter(Boolean);
+}
+
+function sameValue(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a && b && typeof a === 'object') {
+    try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
+  }
+  return false;
+}
+
+/** Every key whose draft value differs from the saved one. */
+export function dirtyKeys(draft, saved) {
+  const keys = new Set([...Object.keys(draft ?? {}), ...Object.keys(saved ?? {})]);
+  return [...keys].filter((key) => !sameValue(draft?.[key], saved?.[key]));
+}
+
+/** Unsaved-change counts per tab, so each tab can show its own dot. */
+export function dirtyTabs(draft, saved) {
+  const counts = Object.fromEntries(TABS.map((tab) => [tab.id, 0]));
+  for (const key of dirtyKeys(draft, saved)) {
+    const tab = keyTab(key);
+    if (tab) counts[tab] += 1;
+  }
+  return counts;
+}
+
+/** Search every field by name, key, hint and the section it lives in. */
+export function searchFields(query) {
+  const needle = String(query ?? '').trim().toLowerCase();
+  if (!needle) return [];
+  const out = [];
+  for (const section of SECTIONS) {
+    const tab = tabById(section.tab);
+    const where = [section.title, section.hint, tab?.label].filter(Boolean).join(' ').toLowerCase();
+    for (const key of section.keys) {
+      const field = FIELDS[key];
+      if (!field) continue;
+      const haystack = [key, field.label, field.hint, where].filter(Boolean).join(' ').toLowerCase();
+      if (haystack.includes(needle)) {
+        out.push({ key, label: field.label, tab: section.tab, section: section.id, sectionTitle: section.title });
+      }
+    }
+  }
+  return out;
+}
+
+function ownAlbumValue(job, key) {
+  let own;
+  try { own = job?.settings_json ? JSON.parse(job.settings_json)[key] : undefined; } catch { own = undefined; }
+  if (own !== undefined) return own;
+  if (job && Object.prototype.hasOwnProperty.call(job, key)) return job[key];
+  return undefined;
+}
+
+/** How many albums carry their own value for each overridable default. */
+export function albumOverrideCounts(jobs, settings) {
+  const list = Array.isArray(jobs) ? jobs : [];
+  return OVERRIDABLE.map(({ key, label }) => {
+    let count = 0;
+    for (const job of list) {
+      const own = ownAlbumValue(job, key);
+      if (own === undefined) continue;
+      if (!sameValue(own, settings?.[key])) count += 1;
+    }
+    return { key, label, count };
+  });
+}

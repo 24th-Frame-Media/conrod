@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Icon } from './basics';
-import { PROFILE_GROUPS, MIXED_PROFILE, type Settings } from '../lib/types';
+import { Icon, Portal, useBackdropClose } from './basics';
+import { type Scope, type Settings } from '../lib/types';
+import { ShootTypeSelect } from './ShootTypeSelect';
+import { GroupingFields, groupingOf, type GroupingValues } from './GroupingFields';
+import { IDENTIFY_SCOPE_OPTIONS, identifyScopeOf } from '../lib/identify.mjs';
 
 type Props = {
-  jobId: number;
   jobLabel: string;
   initialProfile: string;
   initialSettings: Settings;
@@ -13,12 +15,14 @@ type Props = {
     scan_profile: string;
     read_numbers: boolean;
     read_plates: boolean;
+    read_action: boolean;
     group_vehicles: boolean;
-  }) => Promise<void>;
+    /** Which subjects identification reads; does not need a regroup. */
+    identify_scope: Scope;
+  } & GroupingValues) => Promise<void>;
 };
 
 export function ShootSettingsModal({
-  jobId,
   jobLabel,
   initialProfile,
   initialSettings,
@@ -29,15 +33,22 @@ export function ShootSettingsModal({
   const [profile, setProfile] = useState(initialProfile || 'motorsport');
   const [readNumbers, setReadNumbers] = useState(initialSettings.read_numbers !== false);
   const [readPlates, setReadPlates] = useState(initialSettings.read_plates !== false);
+  const [readAction, setReadAction] = useState(initialSettings.read_action !== false);
   const [groupVehicles, setGroupVehicles] = useState(initialSettings.group_vehicles !== false);
+  const [identifyScope, setIdentifyScope] = useState<Scope>(() => identifyScopeOf(initialSettings.identify_scope));
+  const [grouping, setGrouping] = useState<GroupingValues>(() => groupingOf(initialSettings));
   const [saving, setSaving] = useState(false);
+  const backdrop = useBackdropClose(onClose);
 
   useEffect(() => {
     if (visible) {
       setProfile(initialProfile || 'motorsport');
       setReadNumbers(initialSettings.read_numbers !== false);
       setReadPlates(initialSettings.read_plates !== false);
+      setReadAction(initialSettings.read_action !== false);
       setGroupVehicles(initialSettings.group_vehicles !== false);
+      setIdentifyScope(identifyScopeOf(initialSettings.identify_scope));
+      setGrouping(groupingOf(initialSettings));
       setSaving(false);
     }
   }, [visible, initialProfile, initialSettings]);
@@ -51,7 +62,10 @@ export function ShootSettingsModal({
         scan_profile: profile,
         read_numbers: readNumbers,
         read_plates: readPlates,
+        read_action: readAction,
         group_vehicles: groupVehicles,
+        identify_scope: identifyScope,
+        ...grouping,
       });
       onClose();
     } finally {
@@ -60,12 +74,8 @@ export function ShootSettingsModal({
   };
 
   return (
-    <div
-      className="import-overlay"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
+    <Portal>
+    <div className="import-overlay" {...backdrop}>
       <div className="import-dialog shoot-settings-modal" style={{ maxWidth: 540 }}>
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}>
           <Icon name="x" />
@@ -75,26 +85,23 @@ export function ShootSettingsModal({
 
         <div className="shoot-settings-body">
           <div className="field-group">
-            <label className="field-label">Type of shoot</label>
+            <label className="field-label" htmlFor="shoot-type">Type of shoot</label>
+            <ShootTypeSelect id="shoot-type" value={profile} onChange={setProfile} />
+          </div>
+
+          <div className="field-group">
+            <label className="field-label" htmlFor="shoot-identify-scope">Identify</label>
             <select
-              className="shoot-preset-select"
-              value={profile}
-              onChange={(e) => setProfile(e.target.value)}
+              id="shoot-identify-scope"
+              value={identifyScope}
+              disabled={saving}
+              onChange={(e) => setIdentifyScope(identifyScopeOf(e.target.value))}
             >
-              {PROFILE_GROUPS.map((group) => (
-                <optgroup key={group.id} label={group.title}>
-                  <option value={group.id}>{group.title} (General)</option>
-                  {group.children.map((child) => (
-                    <option key={child.id} value={child.id}>
-                      {group.title} · {child.title}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-              <optgroup label="Other">
-                <option value={MIXED_PROFILE.id}>{MIXED_PROFILE.title} (Unspecialised)</option>
-              </optgroup>
+              {IDENTIFY_SCOPE_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
             </select>
+            <small className="muted">
+              {(IDENTIFY_SCOPE_OPTIONS.find((option) => option.id === identifyScope) ?? IDENTIFY_SCOPE_OPTIONS[0]).hint}
+            </small>
           </div>
 
           <div className="field-group toggles-group">
@@ -128,6 +135,18 @@ export function ShootSettingsModal({
             <label className="shoot-toggle-row">
               <input
                 type="checkbox"
+                checked={readAction}
+                onChange={(e) => setReadAction(e.target.checked)}
+              />
+              <div className="toggle-text">
+                <b>Read action and atmosphere</b>
+                <span>Dust, tyre smoke, spray, airborne, flames, sparks, contact and wheel lift, only when clearly visible.</span>
+              </div>
+            </label>
+
+            <label className="shoot-toggle-row">
+              <input
+                type="checkbox"
                 checked={groupVehicles}
                 onChange={(e) => setGroupVehicles(e.target.checked)}
               />
@@ -136,6 +155,10 @@ export function ShootSettingsModal({
                 <span>Link identical vehicles across passes and burst stacks.</span>
               </div>
             </label>
+          </div>
+
+          <div className="field-group">
+            <GroupingFields value={grouping} onChange={(patch) => setGrouping((current) => ({ ...current, ...patch }))} disabled={saving} idPrefix="album-grouping" />
           </div>
         </div>
 
@@ -149,5 +172,6 @@ export function ShootSettingsModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

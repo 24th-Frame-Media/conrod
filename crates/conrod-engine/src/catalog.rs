@@ -63,7 +63,7 @@ pub fn seed(d: &Desktop, job: Option<i64>) -> Result<Value> {
     }
     let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
-    let found = rows(&tx, "SELECT d.*,i.job_id FROM detections d JOIN images i ON i.id=d.image_id WHERE (?1 IS NULL OR i.job_id=?1) AND d.plate IS NOT NULL AND d.plate!='' AND d.attributes IS NOT NULL ORDER BY d.id", [job])?;
+    let found = rows(&tx, "SELECT d.*,i.job_id FROM detections d JOIN images i ON i.id=d.image_id WHERE (?1 IS NULL OR i.job_id=?1) AND COALESCE(i.copy_of,0)=0 AND d.plate IS NOT NULL AND d.plate!='' AND d.attributes IS NOT NULL ORDER BY d.id", [job])?;
     let mut cars: BTreeMap<(i64, String), Vec<Member>> = BTreeMap::new();
     let mut loose = Vec::new();
     let mut order = Vec::new();

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getCurrentWindow, type Window } from '@tauri-apps/api/window';
 import { inTauri, mocked } from '../lib/api';
 import { etaText, pct, plural } from '../lib/format';
+import { applyTheme, storedTheme } from '../lib/theme.mjs';
 import type { Job, ModelInfo, Page, Status } from '../lib/types';
 import { profileLabel } from '../lib/types';
 import { Icon, Mark } from './basics';
@@ -12,6 +13,9 @@ const TABS: [Page, string, string][] = [
   ['Train', 'Train', 'Teach it your eye'],
   ['Settings', 'Settings', 'Settings and vehicles'],
 ];
+
+const SCAN_TAB: [Page, string, string] = ['Scan', 'Scan', 'Watch the scan'];
+const IDENTIFY_TAB: [Page, string, string] = ['Identify', 'Identify', 'Watch the identification'];
 
 export type StatusActions = { pause: () => void; resume: () => void; stop: () => void; cancel: (key: string) => void };
 
@@ -58,7 +62,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
   useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
   useEffect(() => { if (status.activeJob == null) setStopping(false); }, [status.activeJob]);
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
-  const failed = status.tasks.find((t) => t.state === 'failed' && t.error !== 'stopped');
+  const failed = status.tasks.find((t) => t.state === 'failed');
   const tone = active ? (active.state === 'paused' ? 'warn' : 'busy') : failed ? 'error' : 'ok';
   const label = active ? (active.state === 'paused' ? 'Paused' : workLabel(active.label)) : failed ? 'Error' : 'Ready';
   const activeTasks = status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').sort((a, b) => b.id - a.id);
@@ -93,7 +97,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
           </div>
           {activeJob && active?.total ? <div className="bar scan-overall" title="Overall scan progress"><div className="fill" style={{ width: `${pct(active.done, active.total)}%` }} /></div> : null}
           <div className="activity-section"><span>Running now</span><span>{activeTasks.length}</span></div>
-          {activeTasks.length === 0 && <p className="muted activity-empty">No background tasks.</p>}
+          {activeTasks.length === 0 && <p className="muted activity-empty">No background tasks</p>}
           {activeTasks.map((t) => (
             <div className="task" key={t.id}>
               <div className="task-row"><b>{workLabel(t.label)}</b><span className={`state ${t.state}`}>{t.state}</span></div>
@@ -125,7 +129,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
                 <small className="muted">{t.error || t.detail || (t.total > 0 ? `${t.done.toLocaleString()} of ${t.total.toLocaleString()}` : '')}</small>
               </div>
             ))}
-            {!finishedTasks.length && <p className="muted activity-empty">Nothing finished yet.</p>}
+            {!finishedTasks.length && <p className="muted activity-empty">Nothing finished yet</p>}
             <details><summary>Event log</summary><pre className="log mono">{status.log.join('\n') || 'Nothing yet.'}</pre></details>
           </details>
         </div>
@@ -143,6 +147,16 @@ type Props = {
 export function TitleBar({ page, setPage, jobs, models, status, profile, actions, popoverOpen }: Props) {
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const photos = jobs.reduce((n, j) => n + j.total, 0);
+  const [theme, setTheme] = useState(storedTheme);
+  // The Scan and Identify tabs exist only while their run is live, or while their screen is open (to read the summary).
+  const scanning = status.activeJob != null;
+  const identifying = status.operations.some((key) => key.startsWith('Identifying:'));
+  const tabs = [
+    TABS[0],
+    ...(scanning || page === 'Scan' ? [SCAN_TAB] : []),
+    ...(identifying || page === 'Identify' ? [IDENTIFY_TAB] : []),
+    ...TABS.slice(1),
+  ];
   return (
     <header className="topbar" data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region>
@@ -150,14 +164,27 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, actions
         <h1>Conrod</h1>
       </div>
       <nav className="tabs" aria-label="Screens">
-        {TABS.map(([id, label, title]) => (
-          <button key={id} className={page === id ? 'active' : ''} title={title} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>{label}</button>
+        {tabs.map(([id, label, title]) => (
+          <button key={id} className={page === id ? 'active' : ''} title={title} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>
+            {label}
+            {id === 'Scan' && scanning && <i className="tab-live" aria-label="running" />}
+            {id === 'Identify' && identifying && <i className="tab-live" aria-label="identifying" />}
+          </button>
         ))}
       </nav>
       <div className="spacer" data-tauri-drag-region />
       <div className="stats" data-tauri-drag-region>
         <span><b>{plural(jobs.length, 'album')}</b></span><span><b>{photos.toLocaleString()}</b> photos</span>
       </div>
+      <button
+        type="button"
+        className="theme-toggle"
+        title={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
+        aria-label={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
+        onClick={() => setTheme(applyTheme(theme === 'dark' ? 'light' : 'dark'))}
+      >
+        <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
+      </button>
       <StatusPill status={status} jobs={jobs} models={models} actions={actions} defaultOpen={popoverOpen} />
       <WindowControls />
       {active && active.total > 0 && <i className="topbar-progress" style={{ width: `${pct(active.done, active.total)}%` }} />}
