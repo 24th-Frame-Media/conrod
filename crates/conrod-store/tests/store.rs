@@ -33,6 +33,27 @@ fn fresh_conn(label: &str) -> Connection {
 // --- round trips ---------------------------------------------------------------
 
 #[test]
+fn an_existing_library_gets_the_hand_pick_index() {
+    // Build a normal library, then remove the index to mimic one created before
+    // the identify scopes existed. The next connect on a fresh path must add it.
+    let first = temp_db_path("index_old");
+    let conn = conrod_store::connect(Some(&first)).unwrap();
+    conn.execute_batch("DROP INDEX idx_images_hand_pick").unwrap();
+    drop(conn);
+    let second = first.with_file_name("index_migrated.db");
+    std::fs::copy(&first, &second).unwrap();
+    let conn = conrod_store::connect(Some(&second)).unwrap();
+    let found: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_images_hand_pick'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(found, 1, "the migration adds the hand-pick index");
+}
+
+#[test]
 fn round_trip_job_and_images() {
     let conn = fresh_conn("job_and_images");
     let settings = serde_json::json!({"detect_conf": 0.25});

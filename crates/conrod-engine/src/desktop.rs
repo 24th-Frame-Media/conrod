@@ -494,6 +494,7 @@ impl Desktop {
             }
             Command::Summary(a) => crate::library::summary(self, a.job_id),
             Command::ShootStats(a) => self.shoot_stats(a.job_id),
+            Command::GlobalStats {} => self.global_stats(),
             Command::Filling(a) => crate::library::filling(self, a.job_id),
             Command::Cover(a) => crate::library::cover(self, a.job_id),
             Command::CacheInfo {} => crate::housekeeping::cache_info(self),
@@ -1309,6 +1310,355 @@ impl Desktop {
             "stars": stars,
             "taken_from": totals["taken_from"].clone(),
             "taken_to": totals["taken_to"].clone(),
+        }))
+    }
+
+    /// The whole library in one set of numbers: every album's frames, space,
+    /// keepers and quality, and -- across the albums that record all of them --
+    /// what was used and how it was exposed.
+    ///
+    /// An album is "complete" when every one of its visible frames has a
+    /// non-empty camera and lens and a non-null ISO, f-number, shutter and
+    /// focal length. Gear and exposure lists count complete albums only, so an
+    /// album whose headers lacked a lens cannot skew the library's camera
+    /// list; every other number covers all albums. Nothing is read from disk:
+    /// only the columns a scan already stored are aggregated.
+    pub fn global_stats(&self) -> Result<Value> {
+        // The blur bar is the app's global one: an album's own strictness is
+        // not stored per frame, so it cannot be applied library-wide.
+        let blurred_below = lock(&self.settings).blurred_below;
+        let db = lock(&self.reader);
+        // What every count is about: a frame the scan finished, never a hidden
+        // copy of another import.
+        const VISIBLE: &str = "i.status='done' AND COALESCE(i.copy_of,0)=0";
+        let albums = scalar(
+            &db,
+            &format!("SELECT COUNT(DISTINCT i.job_id) FROM images i WHERE {VISIBLE}"),
+            [],
+        )?;
+        let frames = scalar(
+            &db,
+            &format!("SELECT COUNT(*) FROM images i WHERE {VISIBLE}"),
+            [],
+        )?;
+        let copies_hidden = scalar(
+            &db,
+            "SELECT COUNT(*) FROM images WHERE COALESCE(copy_of,0)<>0",
+            [],
+        )?;
+        let size_bytes = scalar(
+            &db,
+            &format!("SELECT COALESCE(SUM(i.file_size),0) FROM images i WHERE {VISIBLE}"),
+            [],
+        )?;
+        // The albums whose visible frames all record what a gear list needs.
+        // An album with no visible frame is not in the table at all.
+        let complete: Vec<i64> = rows(
+            &db,
+            &format!(
+                "SELECT i.job_id AS job FROM images i WHERE {VISIBLE}
+                  GROUP BY i.job_id
+                 HAVING SUM(CASE WHEN i.camera IS NULL OR i.camera='' THEN 1 ELSE 0 END)=0
+                    AND SUM(CASE WHEN i.lens IS NULL OR i.lens='' THEN 1 ELSE 0 END)=0
+                    AND SUM(CASE WHEN i.iso IS NULL THEN 1 ELSE 0 END)=0
+                    AND SUM(CASE WHEN i.f_number IS NULL THEN 1 ELSE 0 END)=0
+                    AND SUM(CASE WHEN i.exposure_time IS NULL THEN 1 ELSE 0 END)=0
+                    AND SUM(CASE WHEN i.focal_length IS NULL THEN 1 ELSE 0 END)=0"
+            ),
+            [],
+        )?
+        .iter()
+        .filter_map(|row| row["job"].as_i64())
+        .collect();
+        // Only these job ids narrow a gear query; an empty list must never
+        // become an empty `IN ()` (which SQLite rejects).
+        let scope = if complete.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " AND i.job_id IN ({})",
+                complete
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        };
+        let complete_frames = if complete.is_empty() {
+            0
+        } else {
+            scalar(
+                &db,
+                &format!("SELECT COUNT(*) FROM images i WHERE {VISIBLE}{scope}"),
+                [],
+            )?
+        };
+        let (cameras, lenses, most_used, f_numbers, shutters, isos, focal_lengths) =
+            if complete.is_empty() {
+                (
+                    Vec::new(),
+                    Vec::new(),
+                    json!({
+                        "camera": Value::Null,
+                        "lens": Value::Null,
+                        "f_number": Value::Null,
+                        "shutter": Value::Null,
+                        "iso": Value::Null,
+                        "focal_length": Value::Null,
+                    }),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                )
+            } else {
+                let cameras = rows(
+                    &db,
+                    &format!(
+                        "SELECT i.camera AS name, COUNT(*) AS count FROM images i
+                          WHERE {VISIBLE}{scope} AND i.camera IS NOT NULL AND i.camera<>''
+                          GROUP BY i.camera ORDER BY count DESC, name"
+                    ),
+                    [],
+                )?;
+                let lenses = rows(
+                    &db,
+                    &format!(
+                        "SELECT i.lens AS name, COUNT(*) AS count FROM images i
+                          WHERE {VISIBLE}{scope} AND i.lens IS NOT NULL AND i.lens<>''
+                          GROUP BY i.lens ORDER BY count DESC, name"
+                    ),
+                    [],
+                )?;
+                // The most common value of a setting. Ties go to the smaller
+                // value, as `shoot_stats` does.
+                let mode = |column: &str| -> Result<Value> {
+                    let sql = format!(
+                        "SELECT i.{column} AS value FROM images i
+                          WHERE {VISIBLE}{scope} AND i.{column} IS NOT NULL
+                          GROUP BY i.{column} ORDER BY COUNT(*) DESC, value LIMIT 1"
+                    );
+                    Ok(rows(&db, &sql, [])?
+                        .pop()
+                        .and_then(|mut row| {
+                            row.as_object_mut().and_then(|object| object.remove("value"))
+                        })
+                        .unwrap_or(Value::Null))
+                };
+                let histogram = |column: &str| -> Result<Vec<Value>> {
+                    rows(
+                        &db,
+                        &format!(
+                            "SELECT i.{column} AS value, COUNT(*) AS count FROM images i
+                              WHERE {VISIBLE}{scope} AND i.{column} IS NOT NULL
+                              GROUP BY i.{column} ORDER BY count DESC, value"
+                        ),
+                        [],
+                    )
+                };
+                let most_used = json!({
+                    "camera": mode("camera")?,
+                    "lens": mode("lens")?,
+                    "f_number": mode("f_number")?,
+                    "shutter": mode("exposure_time")?,
+                    "iso": mode("iso")?,
+                    "focal_length": mode("focal_length")?,
+                });
+                (
+                    cameras,
+                    lenses,
+                    most_used,
+                    histogram("f_number")?,
+                    histogram("exposure_time")?,
+                    histogram("iso")?,
+                    histogram("focal_length")?,
+                )
+            };
+        let pans = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(DISTINCT d.image_id) FROM detections d
+                   JOIN images i ON i.id=d.image_id
+                  WHERE {VISIBLE} AND COALESCE(d.panning,0)=1"
+            ),
+            [],
+        )?;
+        // A burst is one `(album, time_burst)` row: the same burst number in
+        // two albums is two bursts. SQLite has no tuple DISTINCT, hence the
+        // subquery.
+        let bursts = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM (
+                     SELECT DISTINCT i.job_id, i.time_burst FROM images i
+                      WHERE {VISIBLE} AND i.time_burst IS NOT NULL
+                 )"
+            ),
+            [],
+        )?;
+        let verdicts = rows(
+            &db,
+            &format!(
+                "SELECT d.sharpness_verdict AS verdict, COUNT(*) AS count
+                   FROM detections d JOIN images i ON i.id=d.image_id
+                  WHERE {VISIBLE} AND d.sharpness_verdict IS NOT NULL
+                  GROUP BY d.sharpness_verdict"
+            ),
+            [],
+        )?;
+        let verdict = |word: &str| -> i64 {
+            verdicts
+                .iter()
+                .find(|row| row["verdict"].as_str() == Some(word))
+                .and_then(|row| row["count"].as_i64())
+                .unwrap_or(0)
+        };
+        let af_missing = scalar(
+            &db,
+            &format!("SELECT COUNT(*) FROM images i WHERE {VISIBLE} AND i.af_x1 IS NULL"),
+            [],
+        )?;
+        let af_soft = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM images i WHERE {VISIBLE}
+                    AND i.af_sharpness IS NOT NULL AND i.af_sharpness < ?"
+            ),
+            params![blurred_below],
+        )?;
+        // Whether the camera's focus area landed on a subject: the same centre
+        // rule and per-image grouping `shoot_stats` uses, over every album.
+        let af_boxes = rows(
+            &db,
+            &format!(
+                "SELECT i.id, i.af_x1, i.af_y1, i.af_x2, i.af_y2, i.width, i.height,
+                        d.x1 AS dx1, d.y1 AS dy1, d.x2 AS dx2, d.y2 AS dy2
+                   FROM images i
+              LEFT JOIN detections d ON d.image_id=i.id
+                    AND COALESCE(d.region_type,'vehicle') IN ('vehicle','person')
+                  WHERE {VISIBLE} AND i.af_x1 IS NOT NULL AND i.af_y1 IS NOT NULL
+                    AND i.af_x2 IS NOT NULL AND i.af_y2 IS NOT NULL"
+            ),
+            [],
+        )?;
+        let mut found: std::collections::HashMap<i64, (bool, bool)> =
+            std::collections::HashMap::new();
+        for row in af_boxes {
+            let id = row["id"].as_i64().unwrap_or_default();
+            let entry = found.entry(id).or_insert((false, false));
+            let (Some(dx1), Some(dy1), Some(dx2), Some(dy2)) = (
+                row["dx1"].as_f64(),
+                row["dy1"].as_f64(),
+                row["dx2"].as_f64(),
+                row["dy2"].as_f64(),
+            ) else {
+                continue;
+            };
+            entry.0 = true;
+            let af = [
+                row["af_x1"].as_f64().unwrap_or_default(),
+                row["af_y1"].as_f64().unwrap_or_default(),
+                row["af_x2"].as_f64().unwrap_or_default(),
+                row["af_y2"].as_f64().unwrap_or_default(),
+            ];
+            let (w, h) = (
+                row["width"].as_f64().unwrap_or_default(),
+                row["height"].as_f64().unwrap_or_default(),
+            );
+            if w > 0.0 && h > 0.0 && holds_middle([dx1 / w, dy1 / h, dx2 / w, dy2 / h], af) {
+                entry.1 = true;
+            }
+        }
+        let af_no_subject = found.values().filter(|(detected, _)| !detected).count() as i64;
+        let af_off_subject = found
+            .values()
+            .filter(|(detected, holds)| *detected && !holds)
+            .count() as i64;
+        // The effective keeper, as identification reads it: a hand pick, or --
+        // when no frame of its burst was picked by hand -- the engine's
+        // suggestion. A NULL burst key matches no other NULL, so burstless
+        // frames never suppress each other.
+        let keepers = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM images i WHERE {VISIBLE}
+                    AND (COALESCE(i.picked,0)=1
+                     OR (NOT EXISTS (SELECT 1 FROM images p
+                                      WHERE p.job_id=i.job_id AND p.burst_key=i.burst_key
+                                        AND COALESCE(p.picked,0)=1)
+                         AND (COALESCE(i.burst_pick,0)=1
+                           OR EXISTS (SELECT 1 FROM detections d
+                                       WHERE d.image_id=i.id
+                                         AND COALESCE(d.burst_pick,0)=1))))"
+            ),
+            [],
+        )?;
+        let rejected = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM images i WHERE {VISIBLE} AND COALESCE(i.rejected,0)=1"
+            ),
+            [],
+        )?;
+        // Time in the field: the span from a job's first to its last frame,
+        // for the jobs that have at least two timed frames. `taken_at` is wall
+        // clock encoded as an epoch, and only differences are used.
+        let spans: Vec<f64> = rows(
+            &db,
+            &format!(
+                "SELECT i.job_id AS job, COUNT(i.taken_at) AS timed,
+                        MIN(i.taken_at) AS first, MAX(i.taken_at) AS last
+                   FROM images i WHERE {VISIBLE} AND i.taken_at IS NOT NULL
+                  GROUP BY i.job_id"
+            ),
+            [],
+        )?
+        .iter()
+        .filter_map(|row| {
+            if row["timed"].as_i64().unwrap_or_default() < 2 {
+                return None;
+            }
+            Some(row["last"].as_f64()? - row["first"].as_f64()?)
+        })
+        .collect();
+        let total_span: f64 = spans.iter().sum();
+        let timed_albums = spans.len() as i64;
+        Ok(json!({
+            "albums": albums,
+            "complete_albums": complete.len(),
+            "frames": frames,
+            "complete_frames": complete_frames,
+            "copies_hidden": copies_hidden,
+            "size_bytes": size_bytes,
+            "cameras": cameras,
+            "lenses": lenses,
+            "most_used": most_used,
+            "f_numbers": f_numbers,
+            "shutters": shutters,
+            "isos": isos,
+            "focal_lengths": focal_lengths,
+            "pans": pans,
+            "bursts": bursts,
+            "blurred": verdict("blurred"),
+            "soft": verdict("soft"),
+            "sharp": verdict("sharp"),
+            "af": {
+                "frames": frames,
+                "missing": af_missing,
+                "off_subject": af_off_subject,
+                "no_subject": af_no_subject,
+                "soft": af_soft,
+            },
+            "keepers": keepers,
+            "rejected": rejected,
+            "shooting_seconds": total_span.round() as i64,
+            "average_shoot_seconds": if timed_albums == 0 {
+                0
+            } else {
+                (total_span / timed_albums as f64).round() as i64
+            },
+            "longest_shoot_seconds": spans.iter().copied().fold(0.0, f64::max).round() as i64,
+            "timed_albums": timed_albums,
         }))
     }
 
@@ -2982,5 +3332,235 @@ mod tests {
         let again = lib.run("shoot_stats", json!({"jobId": lib.job})).unwrap();
         assert_eq!(again["backfilled"], 0);
         assert_eq!(again["size_bytes"], out["size_bytes"]);
+    }
+
+    #[test]
+    fn global_stats_aggregates_every_album_and_only_complete_gear() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("global-stats");
+        // `Lib` only opens one album; the second is this library's own next job
+        // in the same database.
+        let job2 = conrod_store::create_job(
+            &lib.db(),
+            &lib.root,
+            Some("Second"),
+            &json!(Settings::default()),
+        )
+        .unwrap();
+        let frame = |job: i64, name: &str, burst: Option<i64>| -> i64 {
+            let db = lib.db();
+            db.execute(
+                "INSERT INTO images(job_id,path,status,width,height,burst_key,time_burst)
+                 VALUES(?,?,'done',6000,4000,?,?)",
+                params![job, lib.root.join(name).to_string_lossy(), burst, burst],
+            )
+            .unwrap();
+            db.last_insert_rowid()
+        };
+        let job1 = lib.job;
+        let (a1, a2, a3, a4, a5, a6) = (
+            frame(job1, "a1.cr3", Some(1)),
+            frame(job1, "a2.cr3", Some(2)),
+            frame(job1, "a3.cr3", Some(2)),
+            frame(job1, "a4.cr3", None),
+            frame(job1, "a5.cr3", None),
+            frame(job1, "a6.cr3", Some(3)),
+        );
+        let (b1, b2) = (frame(job2, "b1.cr3", Some(1)), frame(job2, "b2.cr3", Some(1)));
+
+        // Album 1 records the whole gear chain on every visible frame, so it is
+        // the one album the gear and exposure lists may count.
+        let canon = "UPDATE images SET camera='Canon EOS R7 358', lens='RF-S 18-150mm',
+                iso=?, f_number=?, exposure_time=?, focal_length=?, file_size=?,
+                taken_at=?, stars=? WHERE id=?";
+        lib.sql(canon, params![100, 6.3, 0.008, 50.0, 1000, 1000, 0, a1]);
+        lib.sql(canon, params![100, 6.3, 0.008, 50.0, 1000, 1010, 0, a2]);
+        lib.sql(canon, params![100, 6.3, 0.008, 50.0, 1000, 1020, 0, a3]);
+        lib.sql(canon, params![100, 6.3, 0.008, 150.0, 1000, 1030, 0, a4]);
+        lib.sql(canon, params![200, 8.0, 0.004, 150.0, 1000, 1040, 0, a5]);
+        lib.sql(canon, params![200, 8.0, 0.004, 150.0, 1000, 1050, 5, a6]);
+        // Album 2 is incomplete: its second frame lost the lens in the header,
+        // so none of its gear or exposure may reach the library lists.
+        let nikon = "UPDATE images SET camera='Nikon Z9', lens=?, iso=800, f_number=4.0,
+                exposure_time=0.002, focal_length=400.0, file_size=?, taken_at=?,
+                rejected=? WHERE id=?";
+        lib.sql(nikon, params!["NIKKOR Z 400mm", 2000, 2000, 0, b1]);
+        lib.sql(nikon, params![None::<String>, 3000, 2300, 1, b2]);
+
+        // Picks: a3 overrides the engine's suggestion in its burst (a2); a4 is
+        // picked with no burst at all; a5 is suggested in the same NULL burst
+        // and must not be suppressed by a4; a6 is only hand-starred.
+        lib.sql("UPDATE images SET picked=1 WHERE id=?", [a3]);
+        lib.sql("UPDATE images SET picked=1 WHERE id=?", [a4]);
+        // A hidden copy is counted apart and never in the library's totals.
+        let copy = frame(job1, "a1-copy.cr3", None);
+        lib.sql(
+            "UPDATE images SET copy_of=?, camera='Canon EOS R7 358', lens='RF-S 18-150mm',
+                    iso=100, f_number=6.3, exposure_time=0.008, focal_length=50.0,
+                    file_size=9999, taken_at=5000 WHERE id=?",
+            params![a1, copy],
+        );
+
+        // Autofocus: a1/a3/a5/a6/b1 inside their subject, a2 beside it, b2 with
+        // no subject at all, a4 without an AF area.
+        let af_on = "UPDATE images SET af_x1=0.20, af_y1=0.30, af_x2=0.30, af_y2=0.40,
+                af_sharpness=? WHERE id=?";
+        lib.sql(af_on, params![0.3, a1]);
+        lib.sql(af_on, params![0.9, a3]);
+        lib.sql(af_on, params![None::<f64>, a5]);
+        lib.sql(af_on, params![None::<f64>, a6]);
+        lib.sql(af_on, params![0.9, b1]);
+        lib.sql(af_on, params![None::<f64>, b2]);
+        lib.sql(
+            "UPDATE images SET af_x1=0.70, af_y1=0.70, af_x2=0.80, af_y2=0.80 WHERE id=?",
+            [a2],
+        );
+
+        let (d1, d2, d3, d4, d5, d6) = (
+            lib.detection(a1, "vehicle", 0.9),
+            lib.detection(a2, "vehicle", 0.9),
+            lib.detection(a3, "vehicle", 0.9),
+            lib.detection(a5, "vehicle", 0.9),
+            lib.detection(a6, "vehicle", 0.9),
+            lib.detection(b1, "vehicle", 0.9),
+        );
+        lib.sql(
+            "UPDATE detections SET sharpness_verdict='sharp', panning=1 WHERE id=?",
+            [d1],
+        );
+        lib.sql(
+            "UPDATE detections SET sharpness_verdict='soft', burst_pick=1 WHERE id=?",
+            [d2],
+        );
+        lib.sql("UPDATE detections SET sharpness_verdict='sharp' WHERE id=?", [d3]);
+        lib.sql(
+            "UPDATE detections SET sharpness_verdict='soft', burst_pick=1 WHERE id=?",
+            [d4],
+        );
+        lib.sql(
+            "UPDATE detections SET sharpness_verdict='blurred' WHERE id=?",
+            [d5],
+        );
+        lib.sql(
+            "UPDATE detections SET sharpness_verdict='sharp', burst_pick=1 WHERE id=?",
+            [d6],
+        );
+
+        let out = lib.run("global_stats", json!({})).unwrap();
+        assert_eq!(
+            out,
+            json!({
+                "albums": 2,
+                "complete_albums": 1,
+                "frames": 8,
+                "complete_frames": 6,
+                "copies_hidden": 1,
+                "size_bytes": 11000,
+                "cameras": [{"name": "Canon EOS R7 358", "count": 6}],
+                "lenses": [{"name": "RF-S 18-150mm", "count": 6}],
+                "most_used": {
+                    "camera": "Canon EOS R7 358",
+                    "lens": "RF-S 18-150mm",
+                    "f_number": 6.3,
+                    "shutter": 0.008,
+                    "iso": 100,
+                    "focal_length": 50.0,
+                },
+                "f_numbers": [
+                    {"value": 6.3, "count": 4},
+                    {"value": 8.0, "count": 2}
+                ],
+                "shutters": [
+                    {"value": 0.008, "count": 4},
+                    {"value": 0.004, "count": 2}
+                ],
+                "isos": [
+                    {"value": 100, "count": 4},
+                    {"value": 200, "count": 2}
+                ],
+                "focal_lengths": [
+                    {"value": 50.0, "count": 3},
+                    {"value": 150.0, "count": 3}
+                ],
+                "pans": 1,
+                "bursts": 4,
+                "blurred": 1,
+                "soft": 2,
+                "sharp": 3,
+                "af": {
+                    "frames": 8,
+                    "missing": 1,
+                    "off_subject": 1,
+                    "no_subject": 1,
+                    "soft": 1
+                },
+                "keepers": 4,
+                "rejected": 1,
+                "shooting_seconds": 350,
+                "average_shoot_seconds": 175,
+                "longest_shoot_seconds": 300,
+                "timed_albums": 2
+            })
+        );
+    }
+
+    #[test]
+    fn global_stats_without_a_complete_album_has_no_gear() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("global-stats-empty");
+        let frame = lib.frame("only.cr3", Some(1));
+        // One missing lens is enough to keep the album out of the gear lists.
+        lib.sql(
+            "UPDATE images SET camera='Canon EOS R7 358', lens=NULL, iso=100, f_number=6.3,
+                    exposure_time=0.008, focal_length=50.0, file_size=500, taken_at=10,
+                    time_burst=1
+              WHERE id=?",
+            [frame],
+        );
+        lib.detection(frame, "vehicle", 0.9);
+        let out = lib.run("global_stats", json!({})).unwrap();
+        assert_eq!(
+            out,
+            json!({
+                "albums": 1,
+                "complete_albums": 0,
+                "frames": 1,
+                "complete_frames": 0,
+                "copies_hidden": 0,
+                "size_bytes": 500,
+                "cameras": [],
+                "lenses": [],
+                "most_used": {
+                    "camera": null,
+                    "lens": null,
+                    "f_number": null,
+                    "shutter": null,
+                    "iso": null,
+                    "focal_length": null,
+                },
+                "f_numbers": [],
+                "shutters": [],
+                "isos": [],
+                "focal_lengths": [],
+                "pans": 0,
+                "bursts": 1,
+                "blurred": 0,
+                "soft": 0,
+                "sharp": 0,
+                "af": {
+                    "frames": 1,
+                    "missing": 1,
+                    "off_subject": 0,
+                    "no_subject": 0,
+                    "soft": 0
+                },
+                "keepers": 0,
+                "rejected": 0,
+                "shooting_seconds": 0,
+                "average_shoot_seconds": 0,
+                "longest_shoot_seconds": 0,
+                "timed_albums": 0
+            })
+        );
     }
 }

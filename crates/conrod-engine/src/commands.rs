@@ -456,6 +456,10 @@ pub enum Command {
     /// The shoot's own statistics card: what was used, how it was exposed,
     /// what the cull measured. Backfills an old album's shot columns first.
     ShootStats(JobArgs),
+    /// The same numbers for the whole library: every album's frames, space,
+    /// keepers and quality, with gear and exposure only from the albums whose
+    /// frames all record them.
+    GlobalStats {},
     Cover(JobArgs),
     Filling(JobArgs),
     CacheInfo {},
@@ -527,6 +531,15 @@ mod tests {
             (scan.read_plates, scan.read_numbers),
             (Some(false), Some(true))
         );
+        // The library-wide card takes no arguments, like `status`.
+        assert!(matches!(
+            Command::parse("global_stats", json!({})),
+            Ok(Command::GlobalStats {})
+        ));
+        assert!(matches!(
+            Command::parse("global_stats", Value::Null),
+            Ok(Command::GlobalStats {})
+        ));
     }
 
     #[test]

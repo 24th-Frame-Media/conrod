@@ -17,7 +17,7 @@ type Props = {
 };
 
 /** The top values of one exposure bucket: a label, a count and a thin share bar. */
-function Distribution({ title, rows }: { title: string; rows: BucketRow[] }) {
+export function Distribution({ title, rows }: { title: string; rows: BucketRow[] }) {
   return (
     <div className="shoot-stats-dist">
       <h4>{title}</h4>

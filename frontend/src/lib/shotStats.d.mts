@@ -1,4 +1,25 @@
-import type { ShootStats, StatValue } from './shot.mjs';
+import type { ShootStats, StatName, StatValue } from './shot.mjs';
+
+/**
+ * The fields the tile, row and segment helpers read. `shoot_stats` and `global_stats` both carry
+ * them; the library's totals simply add albums and leave the per-shoot timestamps out.
+ */
+export type StatsLike = {
+  frames?: number;
+  cameras?: StatName[];
+  lenses?: StatName[];
+  most_used?: ShootStats['most_used'];
+  f_numbers?: StatValue[];
+  shutters?: StatValue[];
+  isos?: StatValue[];
+  focal_lengths?: StatValue[];
+  pans?: number;
+  bursts?: number;
+  blurred?: number;
+  soft?: number;
+  sharp?: number;
+  af?: ShootStats['af'];
+};
 
 /** One hero or exposure tile: a label above a big mono value, with an optional sub-line. */
 export type StatsTile = { key: string; label: string; value: string; sub?: string | null };
@@ -66,11 +87,11 @@ export function takenRange(from: number | null | undefined, to: number | null | 
 /** The four hero tiles: frames, size, duration and keepers, each with its one-line sub. */
 export function shootTiles(stats: ShootStats | null | undefined): StatsTile[];
 /** The camera rows, biggest first. */
-export function cameraRows(stats: ShootStats | null | undefined): GearRow[];
+export function cameraRows(stats: StatsLike | null | undefined): GearRow[];
 /** The lens rows, biggest first, with the most-used flag. */
-export function lensRows(stats: ShootStats | null | undefined, limit?: number): LensRows;
+export function lensRows(stats: StatsLike | null | undefined, limit?: number): LensRows;
 /** The most-used exposure values as tiles. */
-export function exposureTiles(stats: ShootStats | null | undefined): StatsTile[];
+export function exposureTiles(stats: StatsLike | null | undefined): StatsTile[];
 /** The top values of one bucket as labelled rows with a share bar each. */
 export function bucketRows(
   items: StatValue[] | null | undefined,
@@ -84,10 +105,10 @@ export function rangeChip(
   format: (value: number) => string | null,
 ): string | null;
 /** The small chips under the exposure rows. */
-export function exposureChips(stats: ShootStats | null | undefined): string[];
+export function exposureChips(stats: StatsLike | null | undefined): string[];
 /** Sharp, soft and blurred subjects as stacked segments. */
-export function qualityParts(stats: ShootStats | null | undefined): QualitySegment[];
+export function qualityParts(stats: StatsLike | null | undefined): QualitySegment[];
 /** The AF misses, split by cause; null when the album has no AF pass. */
-export function afParts(stats: ShootStats | null | undefined): AfParts | null;
+export function afParts(stats: StatsLike | null | undefined): AfParts | null;
 /** Pans, bursts and AF misses as small stats. */
-export function shootMiniStats(stats: ShootStats | null | undefined): MiniStat[];
+export function shootMiniStats(stats: StatsLike | null | undefined): MiniStat[];
