@@ -56,8 +56,8 @@ export function stackedSegments(parts) {
 }
 
 /**
- * A shoot's ends as one compact line: "8 Oct 2026 · 06:40 pm–01:19 am" on one
- * day, "8–9 Oct 2026 · 06:40 pm–01:19 am" across midnight. The date is written
+ * A shoot's ends as one compact line: "8 Oct 2026 · 09:12–15:51" on one
+ * day, "8–9 Oct 2026 · 23:00–01:00" across midnight. The date is written
  * once so the tile's sub stays two lines instead of three.
  */
 export function takenRange(from, to) {
@@ -74,12 +74,15 @@ export function takenRange(from, to) {
     && start.getUTCDate() === end.getUTCDate();
   const sameYear = start.getUTCFullYear() === end.getUTCFullYear();
   const sameMonth = sameDay || (sameYear && start.getUTCMonth() === end.getUTCMonth());
-  const utc = { timeZone: 'UTC' };
-  const day = (value) => value.toLocaleDateString(undefined, { day: 'numeric', ...utc });
-  const month = (value) => value.toLocaleDateString(undefined, { month: 'short', ...utc });
+  // Fixed English month names and 24-hour clocks instead of the machine locale:
+  // the same shoot must read the same way on an en-AU laptop and a CI runner.
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const day = (value) => String(value.getUTCDate());
+  const month = (value) => MONTHS[value.getUTCMonth()];
+  const pad = (value) => String(value).padStart(2, '0');
   let date;
   if (sameDay) {
-    date = start.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', ...utc });
+    date = `${day(start)} ${month(start)} ${start.getUTCFullYear()}`;
   } else if (sameMonth) {
     date = `${day(start)}–${day(end)} ${month(start)} ${start.getUTCFullYear()}`;
   } else if (sameYear) {
@@ -89,7 +92,7 @@ export function takenRange(from, to) {
     const e = formatTaken(b);
     return s != null && e != null ? `${s} → ${e}` : null;
   }
-  const clock = (value) => value.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false, ...utc });
+  const clock = (value) => `${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())}`;
   return `${date} · ${clock(start)}–${clock(end)}`;
 }
 

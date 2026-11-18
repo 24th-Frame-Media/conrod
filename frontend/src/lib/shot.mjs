@@ -74,10 +74,11 @@ export function formatTaken(epoch) {
   if (!Number.isFinite(date.getTime())) return null;
   // EXIF has no time zone: `taken_at` is the camera's wall clock encoded as UTC. Reading it back
   // in UTC shows the time the photographer saw; the viewer's own zone would shift it by hours.
-  return date.toLocaleString(undefined, {
-    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-    timeZone: 'UTC',
-  });
+  // The words are fixed English rather than the machine locale, so a shoot reads the same
+  // on every machine.
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}, ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
 }
 
 /** "45 min", "2 h 14 min", "3 d 2 h"; null for no duration. */
