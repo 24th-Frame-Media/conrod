@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { Confirm, Empty } from '../components/basics';
 import { coverTint, etaText, hiddenCopies, jobState, pct, plural, shortDate } from '../lib/format';
 import { overallEta, overallFraction } from '../lib/scan.mjs';
+import { albumSetting } from '../lib/album.mjs';
+import { identifyScopeOf } from '../lib/identify.mjs';
 import type { ScanLive } from '../state/useScanProgress';
 import { profileParent, type Job, type ModelInfo } from '../lib/types';
 
@@ -25,6 +27,8 @@ function JobCard({ job, scanning, active, live, onOpen, onIdentify, onResume, on
   useEffect(() => { let live = true; void call<{path: string} | null>('cover', {jobId: job.id}).then(c => { if(live) setCover(asset(c?.path)); }).catch(() => undefined); return () => { live = false; }; }, [job.id, job.done]);
   const left = job.total - job.done;
   const resumable = left > 0 && job.status !== 'scanning' && !scanning;
+  // The album's own scope, so the card's button names what the run will read.
+  const identifyScope = identifyScopeOf(albumSetting(job, 'identify_scope', undefined));
   return (
     <article className="job-card" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) onOpen(); }}>
       <div className="shot" style={{ background: coverTint(job.id), backgroundImage: cover ? `url("${cover}")` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
@@ -49,7 +53,9 @@ function JobCard({ job, scanning, active, live, onOpen, onIdentify, onResume, on
       <div className="steps">
         <button className="step" onClick={(e) => { e.stopPropagation(); onOpen(); }}>{active ? 'Watch scan' : 'Review'}</button>
         {job.status === 'done' && !active && (
-          <button className="step" title="Name what survived the cull. This is the slow one." onClick={(e) => { e.stopPropagation(); onIdentify(); }}>Identify kept photos</button>
+          <button className="step" title={`Name what this album's identify scope covers: ${identifyScope === 'everything' ? 'every subject' : 'the suggested keeper of each burst'}.`} onClick={(e) => { e.stopPropagation(); onIdentify(); }}>
+            Identify {identifyScope === 'everything' ? 'everything' : 'keepers'}
+          </button>
         )}
       </div>
     </article>

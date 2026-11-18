@@ -15,9 +15,9 @@ with a nonzero exit code if a task fails.
 | status | none | revision, tasks, log, activeJob, operations |
 | jobs | none | Albums with total/done frame counts and hidden `copies`, folder-name fallback for unnamed albums |
 | review | jobId | frames and detections |
-| scan | root?, jobId?, label?, profile?, recursive=true, stage="cull", blurStrictness?, burstGap?, groupingSensitivity?, groupingPause?, groupingKeepPans?, groupingFocusAnchor?, groupingStacks?, workflowMode? | New/resumed jobId; stage index, cull, all, or identify (existing job required). The sheet's choices are stored on the new album only; a grouping word is normalised to off/gentle/normal/eager and a pause to 0–10. `workflowMode` ("both", "cull" or "identify") is normalised and stored on the new album; "cull" runs no identification lane, "identify" clears the scan's automatic cull and identifies every subject |
+| scan | root?, jobId?, label?, profile?, recursive=true, stage="cull", blurStrictness?, burstGap?, groupingSensitivity?, groupingPause?, groupingKeepPans?, groupingFocusAnchor?, groupingStacks?, workflowMode?, identifyScope? | New/resumed jobId; stage index, cull, all, or identify (existing job required). The sheet's choices are stored on the new album only; a grouping word is normalised to off/gentle/normal/eager and a pause to 0–10. `workflowMode` ("both", "cull" or "identify") is normalised and stored on the new album; "cull" runs no identification lane, "identify" clears the scan's automatic cull. `identifyScope` ("keepers" or "everything") is normalised and stored on the new album; the automatic identification at the end of a scan then works on that scope |
 | pause / resume_scan / stop | none | Control current cull; return status |
-| identify | jobId | operation; readers, grouping consensus and registry seeding |
+| identify | jobId, scope? | operation; readers, grouping consensus and registry seeding. `scope` ("keepers" or "everything") overrides the album's `identify_scope` for this run; omitted, the album's setting applies (default "keepers"). "keepers" identifies the effective keeper: a frame picked by hand (which suppresses the suggestion for its burst), or, with no hand pick in the burst, the engine's suggested pick (`d.burst_pick=1 OR i.burst_pick=1`); "everything" identifies every unreviewed non-bystander subject, culled or not |
 | write | jobId, dryRun=false, embedInRaw=false | operation; dry run logs proposed keywords without changing files or written timestamps |
 | cancel_operation | key | Signal background cancellation |
 | install_models | none | Install missing pinned model/tool assets, reporting task progress |
@@ -80,8 +80,8 @@ allows manual zero. Numbers retain digits, plates are normalized, sponsor lists 
 fields, in snake_case like every settings key. Each defaults to the behaviour an
 album had before it existed, so an older `settings_json` keeps grouping exactly
 as it did. A change to any of them regroups the album in place, like a burst gap
--- `workflow_mode` is the exception: it changes what the next scan or identify
-run does and never regroups on its own.
+-- `workflow_mode` and `identify_scope` are the exceptions: they change what the
+next scan or identify run does and never regroup on their own.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -91,7 +91,8 @@ run does and never regroups on its own.
 | grouping_keep_pans | true | `false` compares a panning frame's box like any other, instead of allowing it to travel further |
 | grouping_focus_anchor | true | `false` leaves a frame the detector missed with no subject, rather than anchoring it on the camera's focus area (`af_*`) |
 | grouping_stacks | true | `false` gives every frame a stack of its own (dense keys, in moment order, and stable across regroups) and suggests no keeper: a "best of stack" pick would mark every frame, which says nothing |
-| workflow_mode | "both" | What this album's scans do: "both" is scan, cull and identify; "cull" is scan and cull with no identification lane; "identify" identifies every subject and clears the automatic cull after a scan. Trimmed and lowercased when read; an unknown or missing word is "both" |
+| workflow_mode | "both" | What this album's scans do: "both" is scan, cull and identify; "cull" is scan and cull with no identification lane; "identify" clears the automatic cull after a scan. Trimmed and lowercased when read; an unknown or missing word is "both" |
+| identify_scope | "keepers" | Which subjects this album's identify lane works on: "keepers" is the effective keeper the UI shows -- the frame the photographer picked by hand when its burst has one (which suppresses the suggestion), otherwise the engine's suggested pick (`d.burst_pick=1 OR i.burst_pick=1`); a hand star alone is not a keeper. "everything" is every unreviewed non-bystander subject, culled or not. Independent of `workflow_mode`, which decides whether the lane runs at all. Trimmed and lowercased when read; an unknown or missing word is "keepers" |
 
 ## Events and previews
 

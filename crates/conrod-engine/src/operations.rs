@@ -42,17 +42,36 @@ pub(crate) fn ml_eligible(d: &Desktop, id: i64) -> Result<bool> {
     ).map_err(err)
 }
 
-/// The eligibility rule the identify lane's pending query appends, by the
-/// album's workflow. An "identify" album wants every subject identified -- a
-/// cull measured by an earlier scan (or any leftover flag) must not hide one --
-/// so only a bystander is skipped there. "both" and "cull" keep the shared
-/// rule: never a hand reject, and a culled subject only when someone starred it.
-pub(crate) fn pending_eligibility(mode: &str) -> &'static str {
-    if conrod_core::settings::workflow_mode_word(mode) == conrod_core::settings::WORKFLOW_IDENTIFY {
-        "COALESCE(d.bystander,0)=0"
+/// The eligibility rule the identify lane's pending query appends, by scope.
+/// "keepers" is the *effective* keeper the UI shows (`keepersOf`): a frame the
+/// photographer picked by hand (`images.picked`) identifies its own subjects
+/// and suppresses the engine's suggestion for its burst; with no hand pick in
+/// the burst, the suggestion (`burst_pick` on the detection or its frame) is
+/// the keeper. A hand pick on a frame with no burst is still a keeper, and a
+/// hand star alone is not. "everything" is every unreviewed, non-bystander
+/// subject, culled or not, so a cull measured by an earlier scan cannot hide
+/// one. The base filters (`job_id`, `region_type`, `reviewed`, `copy_of`) are
+/// in the query itself.
+pub(crate) const KEEPERS_ELIGIBLE: &str = "COALESCE(d.bystander,0)=0 AND (COALESCE(i.picked,0)=1 \
+     OR (NOT EXISTS (SELECT 1 FROM images p WHERE p.job_id=i.job_id \
+     AND p.burst_key=i.burst_key AND COALESCE(p.copy_of,0)=0 AND COALESCE(p.picked,0)=1) \
+     AND (COALESCE(d.burst_pick,0)=1 OR COALESCE(i.burst_pick,0)=1)))";
+pub(crate) const EVERYTHING_ELIGIBLE: &str = "COALESCE(d.bystander,0)=0";
+
+pub(crate) fn identify_eligibility(scope: &str) -> &'static str {
+    if conrod_core::settings::identify_scope_word(scope)
+        == conrod_core::settings::IDENTIFY_EVERYTHING
+    {
+        EVERYTHING_ELIGIBLE
     } else {
-        ML_ELIGIBLE
+        KEEPERS_ELIGIBLE
     }
+}
+
+/// The scope one identify run uses: the command's own argument when it has
+/// one, otherwise the album's stored setting (keepers by default).
+pub(crate) fn run_scope(album_scope: &str, arg: Option<&str>) -> &'static str {
+    conrod_core::settings::identify_scope_word(arg.unwrap_or(album_scope))
 }
 pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
     crate::library::require_job(d, job)?; // "No such album", not a bare "Query returned no rows"
@@ -342,7 +361,7 @@ fn load_readers(settings: &Settings, ocr: &Option<Arc<ocr::Ocr>>) -> Result<Read
     })
 }
 
-pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
+pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value> {
     let settings = settings(d, job)?;
     let profile = conrod_core::profile::ScanProfile::parse(&settings.scan_profile);
     let finds_faces = conrod_core::profile::ShootPreset::parse(&settings.scan_profile)
@@ -350,7 +369,10 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
     if !profile.identifies_vehicles() && !finds_faces {
         return Err("There are no identifiable subjects in this shoot preset".into());
     }
-    let eligibility = pending_eligibility(settings.workflow());
+    // The command's scope overrides the album's setting for this run only;
+    // the scan's own auto-identify passes none and follows the album.
+    let scope = run_scope(&settings.identify_scope, scope);
+    let eligibility = identify_eligibility(scope);
     launch(d, job, "Identifying", move |d, stop, task| {
         if !wait_for_cull(d, stop, task) {
             return Ok(());
@@ -363,7 +385,11 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
         if pending.is_empty() {
             crate::passes::embed_faces_missing(d, job, stop, task)?;
-            task.detail("No kept subjects need identification");
+            task.detail(if scope == conrod_core::settings::IDENTIFY_EVERYTHING {
+                "No subjects need identification"
+            } else {
+                "No keepers need identification"
+            });
             return Ok(());
         }
         let reads_text = settings.read_plates || settings.read_numbers || settings.read_text;
@@ -690,43 +716,141 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
 mod tests {
     use super::*;
 
+    /// The identify lane's pending query, with only the scope rule swapped.
+    fn pending(db: &rusqlite::Connection, job: i64, scope: &str) -> Vec<i64> {
+        let mut stmt = db
+            .prepare(&format!(
+                "SELECT d.id FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {} ORDER BY d.id",
+                identify_eligibility(scope)
+            ))
+            .unwrap();
+        let ids = stmt
+            .query_map([job], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        ids
+    }
+
     #[test]
-    fn identify_takes_a_culled_subject_that_both_skips() {
+    fn keepers_are_the_suggested_pick_and_everything_takes_the_rest() {
         use crate::testkit::Lib;
-        let lib = Lib::new("identify-eligibility");
-        let kept = lib.detection(lib.frame("1.jpg", None), "vehicle", 0.9);
-        let culled = lib.detection(lib.frame("2.jpg", None), "vehicle", 0.2);
+        let lib = Lib::new("identify-scope");
+        // One frame each, so a frame's pick and a detection's pick never
+        // collide and the query's order is just the order they were seeded.
+        let suggested = lib.detection(lib.frame("1.jpg", None), "vehicle", 0.9);
+        let frame_pick = lib.detection(lib.frame("2.jpg", None), "vehicle", 0.9);
+        let picked = lib.detection(lib.frame("3.jpg", None), "vehicle", 0.9);
+        let starred = lib.detection(lib.frame("4.jpg", None), "vehicle", 0.9);
+        let plain = lib.detection(lib.frame("5.jpg", None), "vehicle", 0.9);
+        let culled = lib.detection(lib.frame("6.jpg", None), "vehicle", 0.2);
+        let reviewed = lib.detection(lib.frame("7.jpg", None), "vehicle", 0.9);
+        let bystander = lib.detection(lib.frame("8.jpg", None), "vehicle", 0.9);
+        // The engine's suggested pick: on the detection or on its frame.
+        lib.sql("UPDATE detections SET burst_pick=1 WHERE id=?", [suggested]);
         lib.sql(
-            "UPDATE detections SET cull_reason='too blurred' WHERE id=?",
-            [culled],
+            "UPDATE images SET burst_pick=1 WHERE id=(SELECT image_id FROM detections WHERE id=?)",
+            [frame_pick],
         );
-        // The same query the identify lane runs, with only the rule swapped.
-        let pending = |mode: &str| -> Vec<i64> {
-            let db = lib.db();
-            let mut stmt = db
-                .prepare(&format!(
-                    "SELECT d.id FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {} ORDER BY d.id",
-                    pending_eligibility(mode)
-                ))
-                .unwrap();
-            let ids = stmt
-                .query_map([lib.job], |r| r.get(0))
-                .unwrap()
-                .map(|r| r.unwrap())
-                .collect();
-            ids
-        };
-        assert_eq!(pending("both"), vec![kept], "a culled subject is skipped");
-        assert_eq!(
-            pending("identify"),
-            vec![kept, culled],
-            "identify works on every subject, culled or not"
+        // Hand choices: a pick on a frame with no burst is a keeper of its own,
+        // a hand star alone is not.
+        lib.sql(
+            "UPDATE images SET picked=1 WHERE id=(SELECT image_id FROM detections WHERE id=?)",
+            [picked],
         );
-        assert_eq!(pending("cull"), vec![kept]);
+        lib.sql("UPDATE detections SET stars=5 WHERE id=?", [starred]);
+        lib.sql("UPDATE detections SET cull_reason='too blurred' WHERE id=?", [culled]);
+        lib.sql("UPDATE detections SET reviewed=1 WHERE id=?", [reviewed]);
+        lib.sql("UPDATE detections SET bystander=1 WHERE id=?", [bystander]);
+
+        let query = |scope: &str| pending(&lib.db(), lib.job, scope);
         assert_eq!(
-            pending("nonsense"),
-            pending("both"),
-            "an unknown word must not behave like identify"
+            query("keepers"),
+            vec![suggested, frame_pick, picked],
+            "a keeper is the engine's pick, plus a hand pick that is in no burst"
+        );
+        assert_eq!(
+            query(" EVERYTHING "),
+            vec![suggested, frame_pick, picked, starred, plain, culled],
+            "everything takes every unreviewed subject, culled too, but never a bystander"
+        );
+        assert_eq!(
+            query("nonsense"),
+            query("keepers"),
+            "an unknown word is keepers"
+        );
+    }
+
+    #[test]
+    fn the_command_scope_overrides_the_albums_setting_for_one_run() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("identify-override");
+        let plain = lib.detection(lib.frame("a.jpg", None), "vehicle", 0.9);
+        let culled = lib.detection(lib.frame("b.jpg", None), "vehicle", 0.2);
+        let suggested = lib.detection(lib.frame("c.jpg", None), "vehicle", 0.9);
+        lib.sql("UPDATE detections SET burst_pick=1 WHERE id=?", [suggested]);
+        lib.sql("UPDATE detections SET cull_reason='too blurred' WHERE id=?", [culled]);
+
+        // A new album carries the default: keepers.
+        let album = crate::operations::settings(lib.d(), lib.job).unwrap();
+        assert_eq!(album.identify_scope(), "keepers");
+        let query = |scope: &str| pending(&lib.db(), lib.job, scope);
+        assert_eq!(
+            query(run_scope(&album.identify_scope, None)),
+            vec![suggested],
+            "with no argument the album's setting applies"
+        );
+        assert_eq!(
+            query(run_scope(&album.identify_scope, Some("everything"))),
+            vec![plain, culled, suggested],
+            "the command's scope overrides keepers for this run"
+        );
+
+        // The other way round: an "everything" album, and an argument of
+        // keepers narrows one run.
+        lib.run(
+            "update_job_settings",
+            serde_json::json!({"jobId": lib.job, "patch": {"identify_scope": "everything"}}),
+        )
+        .unwrap();
+        let album = crate::operations::settings(lib.d(), lib.job).unwrap();
+        assert_eq!(album.identify_scope(), "everything");
+        assert_eq!(
+            query(run_scope(&album.identify_scope, None)),
+            vec![plain, culled, suggested]
+        );
+        assert_eq!(
+            query(run_scope(&album.identify_scope, Some("keepers"))),
+            vec![suggested]
+        );
+    }
+
+    #[test]
+    fn a_hand_pick_takes_over_the_suggestion_for_its_burst() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("identify-keeper-override");
+        // One burst: A carries the engine's suggestion, B is its burstmate.
+        let a = lib.frame("a.jpg", Some(7));
+        let b = lib.frame("b.jpg", Some(7));
+        let suggested = lib.detection(a, "vehicle", 0.9);
+        let manual = lib.detection(b, "vehicle", 0.9);
+        lib.sql("UPDATE detections SET burst_pick=1 WHERE id=?", [suggested]);
+        let query = |scope: &str| pending(&lib.db(), lib.job, scope);
+        assert_eq!(
+            query("keepers"),
+            vec![suggested],
+            "with no hand pick the engine's suggestion is the keeper"
+        );
+        lib.sql("UPDATE images SET picked=1 WHERE id=?", [b]);
+        assert_eq!(
+            query("keepers"),
+            vec![manual],
+            "a hand pick on any frame of the burst replaces the suggestion"
+        );
+        assert_eq!(
+            query("everything"),
+            vec![suggested, manual],
+            "everything still takes both frames"
         );
     }
 

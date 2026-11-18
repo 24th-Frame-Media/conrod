@@ -96,7 +96,7 @@ export function Identifications({ visible, jobId, albumLabel, identifying, onClo
         <div className="identified-list">
           {rows.length === 0 ? (
             <p className="muted identified-empty">
-              {data == null ? 'Loading what was read…' : onlyNew ? 'Nothing is waiting for a look.' : 'Nothing has been read yet. Run “Identify kept photos” first.'}
+              {data == null ? 'Loading what was read…' : onlyNew ? 'Nothing is waiting for a look.' : 'Nothing has been read yet. Run identification first.'}
             </p>
           ) : rows.map((r) => {
             const read = readOf(r);

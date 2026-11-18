@@ -121,6 +121,23 @@ pub struct ScanArgs {
     /// Left out (as a resume does) keeps the saved default.
     #[serde(default)]
     pub workflow_mode: Option<String>,
+    /// What a *new* album's identify lane works on: "keepers" (the effective
+    /// keeper -- a hand pick, or the engine's suggestion when the burst has no
+    /// hand pick; the default) or "everything". Left out (as a resume does)
+    /// keeps the saved default.
+    #[serde(default)]
+    pub identify_scope: Option<String>,
+}
+
+/// Identify an album. `scope` overrides the album's `identify_scope` for this
+/// run only: "keepers" or "everything".
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdentifyArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -382,7 +399,7 @@ pub enum Command {
     ResumeScan {},
     Stop {},
     DeleteJob(JobArgs),
-    Identify(JobArgs),
+    Identify(IdentifyArgs),
     Identified(JobArgs),
     ProviderModels(ProviderModelsArgs),
     Write(WriteArgs),
@@ -576,6 +593,43 @@ mod tests {
             panic!()
         };
         assert_eq!(scan.workflow_mode, None);
+    }
+
+    #[test]
+    fn a_scan_carries_the_albums_identify_scope_in_camel_case() {
+        for word in ["keepers", "everything"] {
+            let Ok(Command::Scan(scan)) =
+                Command::parse("scan", json!({"root": "C:\\\\Photos", "identifyScope": word}))
+            else {
+                panic!()
+            };
+            assert_eq!(scan.identify_scope.as_deref(), Some(word));
+        }
+        // Missing keeps None: a new album then keeps the stored default.
+        let Ok(Command::Scan(scan)) = Command::parse("scan", json!({"root": "C:\\\\Photos"})) else {
+            panic!()
+        };
+        assert_eq!(scan.identify_scope, None);
+        // The settings key spelling is not a scan arg.
+        let Ok(Command::Scan(scan)) =
+            Command::parse("scan", json!({"root": "C:\\\\Photos", "identify_scope": "everything"}))
+        else {
+            panic!()
+        };
+        assert_eq!(scan.identify_scope, None);
+
+        // The identify command's own scope is optional, and absent is None.
+        let Ok(Command::Identify(a)) = Command::parse("identify", json!({"jobId": 3})) else {
+            panic!()
+        };
+        assert_eq!(a.job_id, 3);
+        assert_eq!(a.scope, None);
+        let Ok(Command::Identify(a)) =
+            Command::parse("identify", json!({"jobId": 3, "scope": "everything"}))
+        else {
+            panic!()
+        };
+        assert_eq!(a.scope.as_deref(), Some("everything"));
     }
 
     #[test]

@@ -1,14 +1,5 @@
-/** One label/value line: the viewer's shot rows, and each row of the statistics card. */
+/** One label/value line: the full-frame viewer's shot rows. */
 export type ShotRow = { label: string; value: string };
-
-/** A card group: Gear, Exposure (with its distribution lines) or Shoot. */
-export type ShotGroup = {
-  key: 'gear' | 'exposure' | 'shoot';
-  title: string;
-  rows: ShotRow[];
-  /** One-line value distributions under the rows: "ƒ/5.6 × 3,120 · ƒ/4 × 2,010". */
-  lines?: ShotRow[];
-};
 
 /** How many frames used one value: an f-stop, shutter, ISO or focal length. */
 export type StatValue = { value: number; count: number };
@@ -83,5 +74,3 @@ export function formatTaken(epoch: number | null | undefined): string | null;
 export function formatDuration(seconds: number | null | undefined): string | null;
 /** The frame's shot details, present values only, in the viewer's order. */
 export function shotRows(frame: ShotFrame | null | undefined): ShotRow[];
-/** The card's groups with formatted strings; empty groups are dropped. */
-export function statSections(stats: ShootStats | null | undefined): ShotGroup[];

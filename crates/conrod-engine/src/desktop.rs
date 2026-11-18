@@ -354,6 +354,7 @@ impl Desktop {
             grouping_keep_pans: None,
             grouping_focus_anchor: None,
             workflow_mode: None,
+            identify_scope: None,
         })
         .map(|_| ())
     }
@@ -409,7 +410,9 @@ impl Desktop {
                 self.control(Scan::cancel)
             }
             Command::DeleteJob(a) => self.delete_job(a.job_id),
-            Command::Identify(a) => crate::operations::identify(self, a.job_id),
+            Command::Identify(a) => {
+                crate::operations::identify(self, a.job_id, a.scope.as_deref())
+            }
             Command::Identified(a) => self.identified(a.job_id),
             Command::ProviderModels(a) => Ok(
                 match conrod_io::vlm::list_models(&a.provider, &a.host, &a.api_key) {
@@ -762,9 +765,13 @@ impl Desktop {
     fn start_scan(self: &Arc<Self>, a: &ScanArgs) -> Result<Value> {
         use crate::commands::ScanStage;
         if a.stage == ScanStage::Identify {
+            // The album's own scope applies: the scan sheet's `identifyScope`
+            // belongs to a new album's settings, and the identify command
+            // carries the one-off override.
             return crate::operations::identify(
                 self,
                 a.job_id.ok_or("Identify requires an existing album")?,
+                None,
             );
         }
         let mut active = lock(&self.active);
@@ -854,6 +861,10 @@ impl Desktop {
             }
             if let Some(word) = a.workflow_mode.as_deref() {
                 settings.workflow_mode = conrod_core::settings::workflow_mode_word(word).to_string();
+            }
+            if let Some(word) = a.identify_scope.as_deref() {
+                settings.identify_scope =
+                    conrod_core::settings::identify_scope_word(word).to_string();
             }
             settings.extra.insert(
                 "native_scan_stage".into(),
@@ -990,7 +1001,9 @@ impl Desktop {
                         )
                     });
                 if wants_identify {
-                    if let Err(e) = crate::operations::identify(&desktop, job) {
+                    // No scope argument: the album's own setting applies
+                    // (keepers unless it chose everything).
+                    if let Err(e) = crate::operations::identify(&desktop, job, None) {
                         desktop.hub.start("Identification", 0).fail(e);
                     } else {
                         // `identify` runs as its own operation; hold the scan
@@ -2092,6 +2105,29 @@ mod tests {
     }
 
     #[test]
+    fn the_identify_lane_stays_on_the_workflow_gate_whatever_the_scope() {
+        // Scope picks which subjects the lane works on, never whether it runs:
+        // a "cull" album runs neither, an "everything" album still runs.
+        for scope in ["keepers", "everything", " EVERYTHING "] {
+            let mut settings = Settings::default();
+            settings.identify_scope = scope.into();
+            assert!(wants_identify(settings.workflow(), true, true));
+            assert!(
+                !wants_identify("cull", true, true),
+                "{scope} does not turn identification on for a cull album"
+            );
+            assert_eq!(
+                settings.identify_scope(),
+                if scope.trim().eq_ignore_ascii_case("everything") {
+                    "everything"
+                } else {
+                    "keepers"
+                }
+            );
+        }
+    }
+
+    #[test]
     fn an_identify_album_stores_its_workflow_and_clears_the_automatic_cull() {
         let root = std::env::temp_dir().join(format!(
             "conrod-workflow-sheet-{}-{}",
@@ -2111,6 +2147,7 @@ mod tests {
                     "label": "Identify album",
                     "stage": "index",
                     "workflowMode": " IDENTIFY ",
+                    "identifyScope": " Everything ",
                 }),
             )
             .unwrap();
@@ -2124,6 +2161,16 @@ mod tests {
         assert_eq!(
             map["workflow_mode"], "identify",
             "the sheet's word is stored normalised"
+        );
+        assert_eq!(
+            map["identify_scope"], "everything",
+            "the sheet's scope is stored normalised, and it is separate from the workflow"
+        );
+        assert_eq!(
+            crate::operations::settings(&desktop, job)
+                .unwrap()
+                .identify_scope(),
+            "everything"
         );
         assert_eq!(
             crate::operations::settings(&desktop, job).unwrap().workflow(),

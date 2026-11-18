@@ -1218,6 +1218,7 @@ fn settings_match_snapshot() {
         m.remove("blur_strictness"); // Rust-only
         m.remove("entry_list"); // Rust-only
         m.remove("workflow_mode"); // Rust-only: album-level scan/identify workflow
+        m.remove("identify_scope"); // Rust-only: which subjects the identify lane takes
         // Rust-only: per-album stacking choices; the Python app has no such fields.
         m.remove("grouping_sensitivity");
         m.remove("grouping_pause");

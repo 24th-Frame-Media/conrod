@@ -45,11 +45,3 @@ export function pipelineSteps(mode, state) {
   }
   return steps;
 }
-
-/** `Identify kept photos (n)` on a culling shoot, `Identify all photos (n)` when every subject is read; null in cull-only. */
-export function identifyActionLabel(value, n) {
-  const mode = workflowModeOf(value);
-  if (mode === 'cull') return null;
-  const count = Number.isFinite(n) ? Number(n) : 0;
-  return `${mode === 'identify' ? 'Identify all photos' : 'Identify kept photos'} (${count.toLocaleString()})`;
-}

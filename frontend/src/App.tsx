@@ -6,7 +6,7 @@ import { call, engine, inTauri, mocked } from './lib/api';
 import { filename } from './lib/review';
 import { subjectExcluded } from './review.mjs';
 import type { DevStart } from './lib/mock';
-import type { Page, ScanArgs, Status } from './lib/types';
+import type { Page, ScanArgs, Scope, Status } from './lib/types';
 import { Library } from './screens/Library';
 import { noReviewVerbs, ReviewScreen, type ReviewVerbs } from './screens/Review';
 import { ImportDialog, type ImportDefaults, type ScanDraft } from './screens/Import';
@@ -86,7 +86,7 @@ export function App() {
             ...args, scanProfile: defaults.scan_profile, blurStrictness: defaults.blur_strictness, burstGap: defaults.burst_gap,
             groupingStacks: defaults.grouping_stacks, groupingSensitivity: defaults.grouping_sensitivity, groupingPause: defaults.grouping_pause,
             groupingKeepPans: defaults.grouping_keep_pans, groupingFocusAnchor: defaults.grouping_focus_anchor,
-            workflowMode: defaults.workflow_mode,
+            workflowMode: defaults.workflow_mode, identifyScope: defaults.identify_scope,
           }
         : args;
       const { jobId: id } = await engine.scan(scan);
@@ -99,7 +99,8 @@ export function App() {
     });
     setStarting(false);
   };
-  const identify = (id: number) => void run(async () => { await engine.identify(id); toast('Identification started. Progress is in the activity menu.'); });
+  /** `scope` is the run's override; absent, the engine reads the album's own `identify_scope`. */
+  const identify = (id: number, scope?: Scope) => void run(async () => { await engine.identify(id, scope); toast('Identification started. Progress is in the activity menu.'); });
   const write = (id: number, dryRun: boolean) => void run(async () => {
     await engine.write(id, dryRun);
     toast(dryRun ? 'Checking what would be written. The activity menu lists it and no file is touched.' : 'Writing started. Progress is in the activity menu.');
@@ -168,7 +169,7 @@ export function App() {
         {view === 'Review' && (
           <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} status={status} settings={eng.settings}
             showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} verbs={reviewVerbs}
-            onJobsChanged={eng.refreshJobs} onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={() => jobId != null && identify(jobId)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
+            onJobsChanged={eng.refreshJobs} onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={(scope) => jobId != null && identify(jobId, scope)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
               onLibrary={() => setPage('Library')}
               onAcceptAll={() => void run(async () => {
                 const ids = rv.review.detections.filter((d) => !d.reviewed && rv.review.frames.some((f) => f.id === d.image_id && !subjectExcluded(f, d))).map((d) => d.id);
