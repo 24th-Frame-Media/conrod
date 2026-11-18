@@ -144,9 +144,7 @@ fn tray_tooltip(desktop: &Desktop) -> String {
         .iter()
         .find(|task| matches!(task.state, State::Running | State::Paused))
     else {
-        let has_failed = tasks
-            .iter()
-            .any(|task| task.state == State::Failed && task.error.as_deref() != Some("stopped"));
+        let has_failed = tasks.iter().any(|task| task.state == State::Failed);
         if has_failed {
             return "Conrod · Error".into();
         }
@@ -241,6 +239,12 @@ fn main() {
                     // thread; the pools themselves never emit.
                     if let Some(progress) = worker.progress_snapshot() {
                         let _ = handle.emit("scan-progress", progress);
+                    }
+                    // The identify screen's feed: which car is being read, what
+                    // was asked and answered, and the fields it ended with. One
+                    // snapshot per tick while it is live, then one final one.
+                    if let Some(snapshot) = worker.identify_snapshot() {
+                        let _ = handle.emit("identify-progress", snapshot);
                     }
                     if version == seen {
                         continue;

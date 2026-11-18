@@ -15,6 +15,7 @@ const TABS: [Page, string, string][] = [
 ];
 
 const SCAN_TAB: [Page, string, string] = ['Scan', 'Scan', 'Watch the scan'];
+const IDENTIFY_TAB: [Page, string, string] = ['Identify', 'Identify', 'Watch the identification'];
 
 export type StatusActions = { pause: () => void; resume: () => void; stop: () => void; cancel: (key: string) => void };
 
@@ -61,7 +62,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
   useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
   useEffect(() => { if (status.activeJob == null) setStopping(false); }, [status.activeJob]);
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
-  const failed = status.tasks.find((t) => t.state === 'failed' && t.error !== 'stopped');
+  const failed = status.tasks.find((t) => t.state === 'failed');
   const tone = active ? (active.state === 'paused' ? 'warn' : 'busy') : failed ? 'error' : 'ok';
   const label = active ? (active.state === 'paused' ? 'Paused' : workLabel(active.label)) : failed ? 'Error' : 'Ready';
   const activeTasks = status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').sort((a, b) => b.id - a.id);
@@ -147,8 +148,15 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, actions
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const photos = jobs.reduce((n, j) => n + j.total, 0);
   const [theme, setTheme] = useState(storedTheme);
-  // The Scan tab exists only while a scan runs, or while its screen is open (to read the summary).
-  const tabs = status.activeJob != null || page === 'Scan' ? [TABS[0], SCAN_TAB, ...TABS.slice(1)] : TABS;
+  // The Scan and Identify tabs exist only while their run is live, or while their screen is open (to read the summary).
+  const scanning = status.activeJob != null;
+  const identifying = status.operations.some((key) => key.startsWith('Identifying:'));
+  const tabs = [
+    TABS[0],
+    ...(scanning || page === 'Scan' ? [SCAN_TAB] : []),
+    ...(identifying || page === 'Identify' ? [IDENTIFY_TAB] : []),
+    ...TABS.slice(1),
+  ];
   return (
     <header className="topbar" data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region>
@@ -158,7 +166,9 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, actions
       <nav className="tabs" aria-label="Screens">
         {tabs.map(([id, label, title]) => (
           <button key={id} className={page === id ? 'active' : ''} title={title} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>
-            {label}{id === 'Scan' && status.activeJob != null && <i className="tab-live" aria-label="running" />}
+            {label}
+            {id === 'Scan' && scanning && <i className="tab-live" aria-label="running" />}
+            {id === 'Identify' && identifying && <i className="tab-live" aria-label="identifying" />}
           </button>
         ))}
       </nav>

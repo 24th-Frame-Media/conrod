@@ -34,7 +34,8 @@ const VLM_PROVIDERS: { id: VlmProvider; name: string; defaultModel: string }[] =
   { id: 'openai', name: 'OpenAI (GPT-4o and newer)', defaultModel: 'gpt-4o' },
   { id: 'anthropic', name: 'Anthropic (Claude 3.5 / 3.7)', defaultModel: 'claude-3-7-sonnet-20250219' },
   { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini-1.5-flash' },
-  { id: 'opencode', name: 'OpenCode (Console / Go key)', defaultModel: 'qwen3.8-max' },
+  { id: 'opencode', name: 'OpenCode (Console credits)', defaultModel: 'qwen3.8-max' },
+  { id: 'opencode-go', name: 'OpenCode Go (subscription)', defaultModel: 'glm-5.3-flash' },
 ];
 
 const KEY_KINDS = [
@@ -56,7 +57,7 @@ function serverTitle(service: VlmService): string {
 }
 
 /** The cloud providers whose key can list its models. The others only take a typed name. */
-const LISTABLE_PROVIDERS: VlmProvider[] = ['openai', 'opencode'];
+const LISTABLE_PROVIDERS: VlmProvider[] = ['openai', 'opencode', 'opencode-go'];
 /** Sentinel for the "Other…" choice in a model select; never a real model id. */
 const CUSTOM_MODEL = '__other__';
 

@@ -26,6 +26,12 @@ pub const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
 /// `inference/v1`.
 pub const OPENCODE_CHAT_URL: &str = "https://opencode.ai/inference/openai/v1/chat/completions";
 pub const OPENCODE_MODELS_URL: &str = "https://opencode.ai/inference/v1/models";
+/// OpenCode Go (the subscription): the same key, billed to the Go plan instead
+/// of pay-as-you-go credits. This base only routes requests that carry a
+/// stable session id, and a client user agent rather than a library default.
+pub const OPENCODE_GO_CHAT_URL: &str = "https://opencode.ai/inference/go/v1/chat/completions";
+pub const OPENCODE_GO_MODELS_URL: &str = "https://opencode.ai/inference/go/v1/models";
+const OPENCODE_USER_AGENT: &str = concat!("conrod/", env!("CARGO_PKG_VERSION"));
 pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 const GEMINI_URL: &str =
@@ -672,19 +678,22 @@ pub fn openai_request_at(
     }
 }
 
-/// Where an OpenCode service talks: the configured endpoint if there is one
-/// (a proxy, or a self-hosted gateway), else the Console/Go default. An
-/// endpoint given without a path is completed with `/chat/completions`.
 /// The models a provider key can call, as `(id, name)` pairs. Uses the
 /// provider's own list endpoint; anything that is not an OpenAI-shaped
 /// `{"data":[{"id":…}]}` (or `{"models":[…]}`) is reported as an error rather
 /// than guessed at.
 pub fn list_models(provider: &str, host: &str, api_key: &str) -> Result<Vec<(String, String)>, String> {
-    let (url, auth) = match provider.to_lowercase().as_str() {
-        "opencode" => {
+    let provider = provider.to_lowercase();
+    let (url, auth) = match provider.as_str() {
+        "opencode" | "opencode-go" => {
+            let default = if provider == "opencode-go" {
+                OPENCODE_GO_MODELS_URL
+            } else {
+                OPENCODE_MODELS_URL
+            };
             let host = host.trim().trim_end_matches('/');
             if host.is_empty() {
-                (OPENCODE_MODELS_URL.to_string(), true)
+                (default.to_string(), true)
             } else if host.ends_with("/models") {
                 (host.to_string(), true)
             } else {
@@ -698,6 +707,12 @@ pub fn list_models(provider: &str, host: &str, api_key: &str) -> Result<Vec<(Str
     let mut request = agent.get(&url);
     if auth {
         request = request.header("Authorization", &format!("Bearer {api_key}"));
+    }
+    if provider.starts_with("opencode") {
+        request = request.header("User-Agent", OPENCODE_USER_AGENT);
+        if provider == "opencode-go" {
+            request = request.header("x-opencode-session", opencode_session());
+        }
     }
     let response = request.call().map_err(|e| e.to_string())?;
     let body: Value = response
@@ -722,16 +737,42 @@ pub fn list_models(provider: &str, host: &str, api_key: &str) -> Result<Vec<(Str
     Ok(models)
 }
 
-pub fn opencode_chat_url(host: &str) -> String {
+/// Where an OpenCode service talks: the configured endpoint if there is one
+/// (a proxy, or a self-hosted gateway), else the default for this provider. An
+/// endpoint given without a path is completed with `/chat/completions`.
+fn opencode_url(host: &str, default: &str) -> String {
     let host = host.trim().trim_end_matches('/');
     if host.is_empty() {
-        return OPENCODE_CHAT_URL.into();
+        return default.into();
     }
     if host.ends_with("/chat/completions") {
         host.into()
     } else {
         format!("{host}/chat/completions")
     }
+}
+
+pub fn opencode_chat_url(host: &str) -> String {
+    opencode_url(host, OPENCODE_CHAT_URL)
+}
+
+pub fn opencode_go_chat_url(host: &str) -> String {
+    opencode_url(host, OPENCODE_GO_CHAT_URL)
+}
+
+/// A stable id for this app run, sent as `x-opencode-session`: OpenCode Go uses
+/// it to route one client's requests and reuse its prompt cache. One per process
+/// is what "per conversation" means here -- Conrod keeps one long conversation
+/// with the model for the whole session.
+fn opencode_session() -> &'static str {
+    static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SESSION.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("conrod-{:x}-{nanos:x}", std::process::id())
+    })
 }
 
 /// Claude Code's tokens are prefixed distinctly enough to recognise, which
@@ -843,6 +884,7 @@ pub fn display_name(provider: &str) -> String {
         "anthropic" => "Anthropic".into(),
         "gemini" => "Gemini".into(),
         "opencode" => "OpenCode".into(),
+        "opencode-go" => "OpenCode Go".into(),
         other => other.to_string(),
     }
 }
@@ -893,16 +935,44 @@ pub fn build_request(
             images,
             num_predict,
         )),
-        "opencode" => Ok(openai_request_at(
-            &opencode_chat_url(&settings.vlm_host),
-            false,
-            &settings.vlm_model,
-            &settings.vlm_api_key,
-            prompt,
-            images,
-            schema,
-            num_predict,
-        )),
+        "opencode" => {
+            let mut request = openai_request_at(
+                &opencode_chat_url(&settings.vlm_host),
+                false,
+                &settings.vlm_model,
+                &settings.vlm_api_key,
+                prompt,
+                images,
+                schema,
+                num_predict,
+            );
+            request
+                .headers
+                .push(("User-Agent".into(), OPENCODE_USER_AGENT.into()));
+            Ok(request)
+        }
+        "opencode-go" => {
+            // The Go plan routes by provider and conversation: the request must
+            // carry a stable session id, and identify the client rather than the
+            // HTTP library, or it is billed as pay-as-you-go and refused.
+            let mut request = openai_request_at(
+                &opencode_go_chat_url(&settings.vlm_host),
+                false,
+                &settings.vlm_model,
+                &settings.vlm_api_key,
+                prompt,
+                images,
+                schema,
+                num_predict,
+            );
+            request
+                .headers
+                .push(("User-Agent".into(), OPENCODE_USER_AGENT.into()));
+            request
+                .headers
+                .push(("x-opencode-session".into(), opencode_session().into()));
+            Ok(request)
+        }
         other => Err(VlmError::UnknownProvider(other.to_string())),
     }
 }
@@ -940,13 +1010,26 @@ fn first_json(text: &str) -> Option<Value> {
 }
 
 pub fn parse_openai_response(body: &Value) -> Result<Value, VlmError> {
-    let content = body
+    let choice = body
         .get("choices")
         .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
+        .ok_or_else(|| VlmError::BadReply("no choices[0] in the reply".into()))?;
+    let content = choice
+        .get("message")
         .and_then(|m| m.get("content"))
         .and_then(Value::as_str)
-        .ok_or_else(|| VlmError::BadReply("no choices[0].message.content in the reply".into()))?;
+        .unwrap_or("");
+    if content.trim().is_empty() {
+        // A reasoning model can spend the whole budget thinking and send no
+        // answer at all; say which happened instead of "EOF at line 1".
+        let finish = choice
+            .get("finish_reason")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        return Err(VlmError::BadReply(format!(
+            "the model returned no answer (finish_reason {finish})"
+        )));
+    }
     serde_json::from_str(content).map_err(|e| VlmError::BadReply(e.to_string()))
 }
 
@@ -982,7 +1065,7 @@ fn parse_response(provider: &str, body: &Value) -> Result<Value, VlmError> {
         "openai" => parse_openai_response(body),
         "anthropic" => parse_anthropic_response(body),
         // The gateway speaks the OpenAI envelope.
-        "opencode" => parse_openai_response(body),
+        "opencode" | "opencode-go" => parse_openai_response(body),
         "gemini" => parse_gemini_response(body),
         other => Err(VlmError::UnknownProvider(other.to_string())),
     }
@@ -1857,6 +1940,59 @@ mod tests {
             .expect("a text part");
         assert!(text.contains("read the number"));
         assert!(text.contains("\"number\""));
+    }
+
+    #[test]
+    fn an_empty_openai_reply_names_the_finish_reason() {
+        let body = json!({"choices": [{"finish_reason": "length", "message": {"content": ""}}]});
+        let err = parse_openai_response(&body).expect_err("empty content is not an answer");
+        assert!(
+            format!("{err}").contains("finish_reason length"),
+            "the error should say the budget ran out, not 'EOF at line 1': {err}"
+        );
+    }
+
+    #[test]
+    fn the_opencode_go_provider_routes_to_go_with_a_session() {
+        let mut settings = Settings::default();
+        settings.vlm_provider = "opencode-go".into();
+        settings.vlm_model = "deepseek-v4.1-flash".into();
+        settings.vlm_api_key = "sk-test".into();
+        settings.vlm_host = String::new();
+        let schema = json!({"type": "object", "properties": {"number": {"type": "string"}}});
+        let request = build_request(&settings, "read the number", &["abc".into()], &schema, 100)
+            .expect("opencode-go is a provider");
+        assert_eq!(request.url, OPENCODE_GO_CHAT_URL, "Go has its own base");
+        // The Go plan refuses a request without these two headers.
+        let header = |name: &str| {
+            request
+                .headers
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(header("Authorization"), Some("Bearer sk-test"));
+        assert_eq!(header("User-Agent"), Some(OPENCODE_USER_AGENT));
+        assert!(
+            header("x-opencode-session").is_some_and(|id| id.starts_with("conrod-")),
+            "a stable session id is required for Go routing"
+        );
+        // The model is the plain id at the Go base, not the opencode-go/ prefix
+        // OpenCode's own config uses.
+        assert_eq!(request.json["model"], "deepseek-v4.1-flash");
+        assert_eq!(request.json["response_format"]["type"], "json_object");
+        // Parsing is the OpenAI envelope, like the pay-as-you-go provider.
+        let reply = json!({"choices": [{"message": {"content": "{\"number\":\"96\"}"}}]});
+        assert_eq!(parse_response("opencode-go", &reply).unwrap()["number"], "96");
+    }
+
+    #[test]
+    fn an_opencode_go_endpoint_is_completed_with_the_chat_path() {
+        assert_eq!(opencode_go_chat_url(""), OPENCODE_GO_CHAT_URL);
+        assert_eq!(
+            opencode_go_chat_url("https://proxy.local/go/v1/"),
+            "https://proxy.local/go/v1/chat/completions"
+        );
     }
 
     #[test]

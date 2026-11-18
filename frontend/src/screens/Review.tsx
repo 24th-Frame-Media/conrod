@@ -111,6 +111,8 @@ type Props = {
   onHelp: () => void; onOpenViewer: () => void; onLibrary: () => void;
   onEdit: (detectionId: number, updates: Record<string, string | string[] | null>) => unknown;
   onAcceptAll: () => void; onSkipIdentify: () => void; onWrite: (dryRun: boolean) => void;
+  /** Reopen the live identification flow from the stepper while a run is going. */
+  onWatchIdentify: () => void;
   /** Album settings changed (preset, toggles): reload the job list so the new values show. */
   onJobsChanged: () => Promise<unknown> | void;
 };
@@ -132,7 +134,7 @@ const byFrame = (stacks: StackView[]) => {
 };
 
 /** Toolbar (album, view, search, stars, sort, actions), facets, the card grid and the inspector. */
-export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite, onJobsChanged }: Props) {
+export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite, onJobsChanged, onWatchIdentify }: Props) {
   const [known, setKnown] = useState<KnownVehicle[]>([]);
   const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
@@ -733,6 +735,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           </select>
         </label>
         <PipelineStepper steps={steps} />
+        {identifying && (
+          <button type="button" className="ghost small pipeline-watch" onClick={onWatchIdentify}
+            title="Open the live identification trace">
+            <Icon name="eye" size={13} /> Watch identification
+          </button>
+        )}
       </div>
       <ShootSettingsModal
         jobLabel={currentJob?.label ?? ''}

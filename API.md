@@ -103,6 +103,23 @@ Preview/crop paths are exposed through Tauri's scoped asset protocol. A native f
 replaces the Python web folder-browsing routes. Index-only albums extract thumbnails when
 opened without running detection. Full previews are generated when viewed.
 
+`identify-progress` is one JSON snapshot of the live identification feed, emitted about four
+times a second while an identify run is live and once more after it ends. It carries the run
+(`job_id`, `state` = `running`/`done`/`stopped`/`error`, `done`/`total`, `started_at`,
+`elapsed_ms`, coarse `stage`, the `model` the VISION node should name, and run-wide
+`errors`), the `current` car being read, up to
+8 cars still in flight in `active` (one per identify worker, newest first, including
+`current`), and up to 16 finished items in `recent` (newest first, never including
+`current`). An item is
+`detection_id`, `image_id`, `path`, `thumb_path`, `preview_path`, `crop_path`, its own
+`stage` (`read`/`crop`/`vision`/`merge`/`done`), the vision model's `prompt` (current only)
+and `reply`, the reader `trace` and `failures`, the final `number`, `number_source`,
+`number_conf` (0..1; null until the car is read), `plate`, `make`, `model`, `team`,
+`colour`, `ms` and `at`. Paths are
+passed through the same `asset()` scope as previews. A run with the vision model off still
+reports OCR and entry-list fields, with `prompt`/`reply` null. The feed stays available after
+the run so the screen can show its summary; the next run replaces it.
+
 ## Isolation and releases
 
 Set CONROD_HOME to an isolated directory for tests. Never exercise writing on originals.

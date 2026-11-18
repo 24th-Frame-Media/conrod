@@ -1,0 +1,159 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  FLOW_NODES, IDENTIFY_STAGES, activeStage, confidencePercent, confidenceTone, displayItem,
+  displayPath, elapsed, flowNodes, justFinished, prettyReply, progressPercent, rateLabel, sourceLabel,
+} from '../src/lib/identifyFlow.mjs';
+
+test('the stages are the engine contract, in flow order', () => {
+  assert.deepEqual(IDENTIFY_STAGES, ['read', 'crop', 'vision', 'merge', 'done']);
+  assert.equal(FLOW_NODES.length, 6);
+  assert.deepEqual(FLOW_NODES.map((node) => node.label), ['LOAD', 'CROP', 'READ', 'VISION', 'ENTRY LIST', 'RESULT']);
+  assert.deepEqual(FLOW_NODES.map((node) => node.number), ['01', '02', '03', '04', '05', '06']);
+});
+
+test('a stage maps onto the node that is lit', () => {
+  assert.equal(activeStage('read'), 0);
+  assert.equal(activeStage('crop'), 1);
+  assert.equal(activeStage('vision'), 2);
+  assert.equal(activeStage('merge'), 4);
+  assert.equal(activeStage('done'), 5);
+  assert.equal(activeStage(null), 0, 'before the first car the flow is at the start');
+  assert.equal(activeStage(undefined), 0);
+  assert.equal(activeStage('nonsense'), 0);
+});
+
+test('flow nodes mark done, active and pending; vision lights both AI nodes', () => {
+  const nodes = flowNodes({ stage: 'vision', state: 'running' });
+  assert.deepEqual(nodes.map((node) => node.state), ['done', 'done', 'active', 'active', 'pending', 'pending']);
+  assert.equal(nodes[2].label, 'READ');
+  assert.equal(nodes[3].label, 'VISION');
+  assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b')[3].sub, 'qwen2.5vl:7b', 'the VISION node names the model when known');
+  assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b')[2].sub, 'plate + OCR', 'the other sublines stay put');
+});
+
+test('a finished run has nothing left to pulse, and no snapshot starts at LOAD', () => {
+  assert.ok(flowNodes({ stage: 'done', state: 'done' }).every((node) => node.state === 'done'));
+  assert.ok(flowNodes({ stage: 'done', state: 'stopped' }).every((node) => node.state === 'done'));
+  assert.deepEqual(flowNodes(null).map((node) => node.state), ['active', 'pending', 'pending', 'pending', 'pending', 'pending']);
+  assert.equal(flowNodes(undefined)[0].label, 'LOAD');
+});
+
+test('the flow follows the car on screen, and a held result completes it', () => {
+  // The live car's own stage wins over the run-wide stage while it is being read.
+  const live = { stage: 'vision', current: { detection_id: 1, stage: 'crop' }, state: 'running' };
+  assert.deepEqual(flowNodes(live).map((node) => node.state), ['done', 'active', 'pending', 'pending', 'pending', 'pending']);
+  // A held finished car shows every node done, even while other workers read on.
+  assert.ok(flowNodes({ ...live, current: { detection_id: 2, stage: 'vision' } }, null, 'done').every((node) => node.state === 'done'));
+});
+
+test('a fresh result is held for a moment, an old one is not', () => {
+  const now = 1_800_000_000_000;
+  const live = { recent: [{ detection_id: 9, at: now / 1000 - 0.4 }], current: { detection_id: 10 } };
+  assert.equal(justFinished(live, now)?.detection_id, 9, 'a result that just landed stays on screen');
+  assert.equal(justFinished({ recent: [{ detection_id: 9, at: now / 1000 - 30 }] }, now), null, 'an old result yields to the live car');
+  assert.equal(justFinished({ recent: [] }, now), null);
+  assert.equal(justFinished({ recent: [{ detection_id: 9, at: null }] }, now), null);
+  assert.equal(justFinished(null, now), null);
+  assert.equal(justFinished(live, now - 60_000), null, 'the same snapshot ages out on the next render');
+});
+
+test('an in-flight car can be pinned before it finishes', () => {
+  const live = {
+    current: { detection_id: 10 },
+    active: [{ detection_id: 10 }, { detection_id: 11 }],
+    recent: [{ detection_id: 9 }],
+  };
+  assert.equal(displayItem(live, 11).detection_id, 11, 'a pinned worker car shows while it is read');
+  assert.equal(displayItem(live, 9).detection_id, 9, 'a finished car still shows');
+  assert.equal(displayItem(live, 99).detection_id, 10, 'a stale pick falls back to the narrated car');
+});
+
+test('nothing to show stays empty instead of crashing', () => {
+  assert.equal(displayPath(null), '');
+  assert.equal(displayPath(undefined), '');
+  assert.equal(displayPath({}), '');
+  assert.equal(displayItem(null), null);
+  assert.equal(displayItem(undefined, 42), null);
+  assert.equal(displayItem({ current: null, recent: [] }), null);
+  assert.equal(prettyReply(null), '');
+  assert.equal(prettyReply(undefined), '');
+  assert.equal(rateLabel(0, 1000), '');
+  assert.equal(rateLabel(12, 0), '');
+});
+
+test('the stage prefers the crop, then the preview, then the thumb', () => {
+  const item = { crop_path: 'crop.jpg', preview_path: 'preview.jpg', thumb_path: 'thumb.jpg', path: 'raw.cr3' };
+  assert.equal(displayPath(item), 'crop.jpg');
+  assert.equal(displayPath({ ...item, crop_path: null }), 'preview.jpg');
+  assert.equal(displayPath({ ...item, crop_path: null, preview_path: null }), 'thumb.jpg');
+  assert.equal(displayPath({ ...item, crop_path: null, preview_path: null, thumb_path: null }), 'raw.cr3');
+  assert.equal(displayPath({ crop_path: '', preview_path: 'preview.jpg' }), 'preview.jpg');
+});
+
+test('percent helpers clamp to 0..100 and never print NaN', () => {
+  assert.equal(progressPercent(12, 1090), 1);
+  assert.equal(progressPercent(545, 1090), 50);
+  assert.equal(progressPercent(1090, 1090), 100);
+  assert.equal(progressPercent(2000, 1090), 100);
+  assert.equal(progressPercent(-5, 100), 0);
+  assert.equal(progressPercent(1, 0), 0);
+  assert.equal(progressPercent(null, null), 0);
+  assert.equal(progressPercent(undefined, undefined), 0);
+  assert.equal(confidencePercent(0.95), 95);
+  assert.equal(confidencePercent(1.2), 100);
+  assert.equal(confidencePercent(-0.2), 0);
+  assert.equal(confidencePercent(null), null);
+  assert.equal(confidencePercent(undefined), null);
+});
+
+test('confidence tone crosses at 0.8 and 0.5', () => {
+  assert.equal(confidenceTone(0.95), 'good');
+  assert.equal(confidenceTone(0.8), 'good');
+  assert.equal(confidenceTone(0.79), 'warn');
+  assert.equal(confidenceTone(0.5), 'warn');
+  assert.equal(confidenceTone(0.49), 'bad');
+  assert.equal(confidenceTone(0), 'bad');
+  assert.equal(confidenceTone(null), 'none');
+});
+
+test('the model reply prints as pretty JSON, null-safe', () => {
+  assert.equal(prettyReply({ number: '96', make: 'Toyota' }), '{\n  "number": "96",\n  "make": "Toyota"\n}');
+  assert.equal(prettyReply('{"number":"96"}'), '{\n  "number": "96"\n}');
+  assert.equal(prettyReply('not json'), 'not json');
+  assert.equal(prettyReply(null), '');
+});
+
+test('the source chip says where the number came from', () => {
+  assert.equal(sourceLabel('vlm'), 'VLM');
+  assert.equal(sourceLabel('ocr+entry'), 'OCR+entry');
+  assert.equal(sourceLabel('entry'), 'entry');
+  assert.equal(sourceLabel(''), '');
+  assert.equal(sourceLabel(null), '');
+  assert.equal(sourceLabel(undefined), '');
+});
+
+const live = {
+  current: { detection_id: 55, number: '96' },
+  recent: [{ detection_id: 54, number: '5' }, { detection_id: 53, number: '7' }],
+};
+
+test('the strip can pin a finished car, and falls back to the live one', () => {
+  assert.equal(displayItem(live, null).detection_id, 55);
+  assert.equal(displayItem(live, undefined).detection_id, 55);
+  assert.equal(displayItem(live, 54).detection_id, 54);
+  assert.equal(displayItem(live, 999).detection_id, 55, 'a stale pick falls back to the current car');
+  assert.equal(displayItem({ current: null, recent: live.recent }, null).detection_id, 54, 'before the first live car, the newest finished one shows');
+});
+
+test('elapsed and rate read like a stopwatch, not a debug dump', () => {
+  assert.equal(elapsed(1234), '1.2 s');
+  assert.equal(elapsed(42000), '42 s');
+  assert.equal(elapsed(123456), '2 min 03 s');
+  assert.equal(elapsed(3723000), '1 h 02 min');
+  assert.equal(elapsed(null), '');
+  assert.equal(elapsed(-5), '');
+  assert.equal(rateLabel(12, 30000), '24 cars/min');
+  assert.equal(rateLabel(1, 8000), '8.0 s/car');
+  assert.equal(rateLabel(0, 8000), '');
+});

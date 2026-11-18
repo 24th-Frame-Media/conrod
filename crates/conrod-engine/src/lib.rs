@@ -36,6 +36,7 @@ pub mod copies;
 pub mod desktop;
 pub mod edits;
 pub mod housekeeping;
+pub mod identify_live;
 pub mod library;
 mod looks;
 pub mod operations;
@@ -1308,7 +1309,7 @@ pub(crate) fn scan_files_filtered(
             }
         });
         if flag.load(Ordering::Relaxed) {
-            task.fail("stopped");
+            task.cancel();
         } else {
             task.finish();
         }

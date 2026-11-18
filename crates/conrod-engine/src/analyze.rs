@@ -47,6 +47,8 @@ pub struct Analysed {
     pub vlm_reply: serde_json::Value,
     /// How many asks the model's answer took (a truncated reply is re-asked).
     pub vlm_attempts: u32,
+    /// The exact question the vision model was asked; null when it was not asked.
+    pub vlm_prompt: Option<String>,
 }
 
 pub fn analyze(
@@ -56,6 +58,20 @@ pub fn analyze(
     is_bike: bool,
     ctx: &Context,
     readers: &mut Readers,
+) -> Result<Analysed, String> {
+    analyze_with(crop, native, kind, is_bike, ctx, readers, None)
+}
+
+/// [`analyze`], with a callback for the vision prompt: it fires just before the
+/// model is asked, so a live feed can show the question while the model thinks.
+pub fn analyze_with(
+    crop: &Rgb,
+    native: Option<&Rgb>,
+    kind: &str,
+    is_bike: bool,
+    ctx: &Context,
+    readers: &mut Readers,
+    on_prompt: Option<&dyn Fn(&str)>,
 ) -> Result<Analysed, String> {
     let s = ctx.settings;
     let mut a = VehicleAnalysis {
@@ -126,6 +142,7 @@ pub fn analyze(
     let mut described = VehicleDescription::default();
     let mut vlm_reply = serde_json::Value::Null;
     let mut vlm_attempts = 0;
+    let mut vlm_prompt = None;
     let mut vlm_ran = false;
     if let (true, Some((client, io))) = (s.use_vlm, describer.as_ref()) {
         let hints = vlm::VlmHints {
@@ -135,6 +152,14 @@ pub fn analyze(
                 .map(EntryList::candidates)
                 .unwrap_or_default(),
         };
+        // Build the question here as well as inside `describe_with_reply`, so a
+        // live feed can show it while the model is still thinking. It is a pure
+        // function of the settings and hints, so the two copies are identical.
+        let prompt = vlm::vehicle_prompt(io, is_bike, &hints);
+        if let Some(on_prompt) = on_prompt {
+            on_prompt(&prompt);
+        }
+        vlm_prompt = Some(prompt);
         match vlm::describe_with_reply(client, crop, io, is_bike, &hints) {
             Ok((d, reply, attempts)) => {
                 vlm_ran = true;
@@ -342,6 +367,7 @@ pub fn analyze(
         trace,
         vlm_reply,
         vlm_attempts,
+        vlm_prompt,
     })
 }
 
