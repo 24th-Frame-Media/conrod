@@ -359,6 +359,12 @@ fn migrate(conn: &Connection) -> Result<()> {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind}"))?;
         }
     }
+    // Existing albums need the hand-pick index too: the first identify-scope
+    // or library-stats query would otherwise scan the album once per frame.
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_images_hand_pick ON images(job_id, burst_key)
+             WHERE COALESCE(picked,0)=1;",
+    )?;
     Ok(())
 }
 

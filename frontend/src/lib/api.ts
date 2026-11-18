@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type {
-  Bootstrap, Job, MarkValues, Region, Review, ScanArgs, Settings, Status, KnownVehicle, Training,
+  Bootstrap, GlobalStats, Job, MarkValues, Region, Review, ScanArgs, Settings, Status, KnownVehicle, Training,
 } from './types';
 
 /** `?mock=1` under `vite dev` only. The whole branch is dead code in production builds. */
@@ -25,6 +25,7 @@ export const engine = {
   bootstrap: () => call<Bootstrap>('bootstrap'),
   status: () => call<Status>('status'),
   jobs: () => call<Job[]>('jobs'),
+  globalStats: () => call<GlobalStats>('global_stats'),
   review: (jobId: number) => call<Review>('review', { jobId }),
   scan: (args: ScanArgs) => call<{ jobId: number }>('scan', args),
   pause: () => call('pause'),

@@ -2,6 +2,7 @@ import { useRun } from '../state/hooks';
 import { asset, call } from '../lib/api';
 import { useEffect, useState } from 'react';
 import { Confirm, Empty } from '../components/basics';
+import { GlobalStatsModal } from '../components/GlobalStatsModal';
 import { coverTint, etaText, hiddenCopies, jobState, pct, plural, shortDate } from '../lib/format';
 import { overallEta, overallFraction } from '../lib/scan.mjs';
 import { albumSetting } from '../lib/album.mjs';
@@ -66,6 +67,7 @@ function JobCard({ job, scanning, active, live, onOpen, onIdentify, onResume, on
 export function Library({ jobs, models, scanning, live, activeJob, onOpen, onNewScan, onIdentify, onResume, onDelete, onToggleIncludePeople }: Props) {
   const run = useRun();
   const [doomed, setDoomed] = useState<Job | null>(null);
+  const [statsOpen, setStatsOpen] = useState(false);
   const scanned = jobs.reduce((n, j) => n + j.done, 0);
   const ready = models.filter((m) => m.ready).length;
   return (
@@ -104,6 +106,11 @@ export function Library({ jobs, models, scanning, live, activeJob, onOpen, onNew
               <div><div className="n">{jobs.length}</div><div className="big-label">Albums</div></div>
               <div><div className="n">{jobs.filter((j) => j.status === 'done').length}</div><div className="big-label">Ready to review</div></div>
             </div>
+            {jobs.length > 0 && (
+              <div className="rail-actions">
+                <button className="ghost" onClick={() => setStatsOpen(true)}>View statistics…</button>
+              </div>
+            )}
           </div>
           <div className="rail-card">
             <h4>Setup</h4>
@@ -123,6 +130,7 @@ export function Library({ jobs, models, scanning, live, activeJob, onOpen, onNew
           <p><b>{doomed.label}</b>: its results and cached crops go. Your photographs and any XMP already written are not touched.</p>
         </Confirm>
       )}
+      <GlobalStatsModal visible={statsOpen} onClose={() => setStatsOpen(false)} />
     </div>
   );
 }

@@ -41,6 +41,7 @@ with a nonzero exit code if a task fails.
 | rename_job | jobId, label? | Trim label; blank/null restores folder name |
 | summary | jobId | job, counts, images, numbers (with entry-list descriptions), plates, map_size, by_region |
 | shoot_stats | jobId | The shoot's statistics card: frames/copies, size, cameras, lenses, most-used camera/lens/aperture/shutter/ISO/focal length, per-value histograms, pans, bursts, blur verdicts, AF summary, keepers, rejects, stars, capture range. Backfills an old album's lens/ISO/file size first (`backfilled`: rows read) |
+| global_stats | none | The same numbers for the whole library: albums/complete albums, frames/complete frames, copies hidden, size, effective keepers, rejects, pans, bursts, blur verdicts, AF summary, shooting time (sum/average/longest span and timed-album count). Gear and exposure lists (`cameras`, `lenses`, `most_used`, `f_numbers`, `shutters`, `isos`, `focal_lengths`) count **only complete albums** -- those whose every visible frame has a non-empty camera and lens and a non-null ISO, f-number, shutter and focal length. `af.soft` uses the app's global `settings.blurred_below` (per-album strictness is not stored per frame). Nothing is backfilled from the files |
 | cover | jobId | {path, source} or null; existing crop or best thumbnail |
 | known | none | Known-vehicle records |
 | save_known | plate, make?, model?, colour?, team?, race_number? | Save a vehicle |

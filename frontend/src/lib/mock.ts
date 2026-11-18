@@ -1,6 +1,6 @@
 /* Dev-only engine stand-in: `vite dev` + `?mock=1`. Imported dynamically behind import.meta.env.DEV, so it is not in `dist`.
    Extra params: page=library|scan|review|train|known|settings, viewer, popover, scan (a scan is running), profile=<shoot preset id>. */
-import type { Bootstrap, Detection, Frame, Job, KnownVehicle, Page, PipelineStage, PipelineWorker, ScanProgress, ScanRecentFrame, Settings, Status, WorkerLimits } from './types';
+import type { Bootstrap, Detection, Frame, GlobalStats, Job, KnownVehicle, Page, PipelineStage, PipelineWorker, ScanProgress, ScanRecentFrame, Settings, Status, WorkerLimits } from './types';
 
 export type DevStart = { page?: Page; jobId?: number; viewer?: boolean; popover?: boolean };
 const params = () => new URLSearchParams(location.search);
@@ -287,6 +287,60 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       return out({ jobs: db.jobs, settings: db.settings, status: status(db), models: [{ name: 'Vehicle detector', file: 'yolo.onnx', ready: true }, { name: 'Plate reader', file: 'plates.onnx', ready: true }, { name: 'Vision model', file: 'qwen', ready: false }] } satisfies Bootstrap);
     case 'status': return out(status(db));
     case 'jobs': return out(db.jobs);
+    case 'global_stats': {
+      const albums = db.jobs.length;
+      const frames = db.jobs.reduce((n, job) => n + job.total, 0);
+      const complete = Math.max(0, albums - 1);
+      const shot = complete > 0 ? Math.round(frames * 0.98) : 0;
+      const subjects = Math.round(frames * 3.6);
+      const sharp = Math.round(subjects * 0.38);
+      const soft = Math.round(subjects * 0.58);
+      const shooting = frames * 30;
+      return out({
+        albums, complete_albums: complete, frames, complete_frames: shot,
+        copies_hidden: 2437, size_bytes: frames * 24300000,
+        cameras: [
+          { name: 'Canon EOS R7', count: Math.round(shot * 0.96) },
+          { name: 'Canon EOS R5', count: shot - Math.round(shot * 0.96) },
+        ],
+        lenses: [
+          { name: 'RF-S 18-150mm', count: Math.round(shot * 0.52) },
+          { name: 'EF100-400mm', count: Math.round(shot * 0.28) },
+          { name: 'RF24-70mm', count: Math.round(shot * 0.12) },
+          { name: '50mm', count: Math.round(shot * 0.05) },
+          { name: '85mm', count: Math.round(shot * 0.02) },
+          { name: '24mm', count: Math.round(shot * 0.01) },
+        ],
+        most_used: { camera: 'Canon EOS R7', lens: 'RF-S 18-150mm', f_number: 6.3, shutter: 0.008, iso: 800, focal_length: 150 },
+        f_numbers: [
+          { value: 6.3, count: Math.round(shot * 0.42) },
+          { value: 5.6, count: Math.round(shot * 0.31) },
+          { value: 4, count: Math.round(shot * 0.18) },
+        ],
+        shutters: [
+          { value: 0.001, count: Math.round(shot * 0.46) },
+          { value: 0.002, count: Math.round(shot * 0.33) },
+        ],
+        isos: [
+          { value: 100, count: Math.round(shot * 0.5) },
+          { value: 400, count: Math.round(shot * 0.3) },
+          { value: 1600, count: Math.round(shot * 0.2) },
+        ],
+        focal_lengths: [
+          { value: 18, count: Math.round(shot * 0.2) },
+          { value: 150, count: Math.round(shot * 0.55) },
+          { value: 400, count: Math.round(shot * 0.25) },
+        ],
+        pans: Math.round(frames * 0.28), bursts: Math.round(frames / 8),
+        blurred: Math.max(0, subjects - sharp - soft), soft, sharp,
+        af: { frames, missing: 0, off_subject: Math.round(frames * 0.04), no_subject: Math.round(frames * 0.01), soft: Math.round(frames * 0.02) },
+        keepers: Math.round(frames * 0.15), rejected: 3,
+        shooting_seconds: shooting,
+        average_shoot_seconds: albums > 0 ? Math.round(shooting / albums) : 0,
+        longest_shoot_seconds: Math.round(shooting / 5),
+        timed_albums: albums,
+      } satisfies GlobalStats);
+    }
     case 'update_job_settings': {
       const job = db.jobs.find((j) => j.id === a.jobId);
       if (job) {

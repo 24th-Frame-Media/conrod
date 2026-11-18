@@ -80,6 +80,47 @@ export type Task = { id: number; label: string; detail: string; state: string; d
 export type Status = { revision?: number; tasks: Task[]; log: string[]; activeJob: number | null; operations: string[] };
 export type Review = { frames: Frame[]; detections: Detection[]; tasteHead?: boolean };
 
+/**
+ * The `global_stats` command's payload: the whole library's totals, plus gear and exposure
+ * gathered only from the albums whose every visible frame has complete shot data.
+ */
+export type GlobalStats = {
+  albums: number;
+  complete_albums: number;
+  frames: number;
+  complete_frames: number;
+  copies_hidden: number;
+  size_bytes: number;
+  cameras: import('./shot.mjs').StatName[];
+  lenses: import('./shot.mjs').StatName[];
+  most_used: {
+    camera?: string | null;
+    lens?: string | null;
+    f_number?: number | null;
+    shutter?: number | null;
+    iso?: number | null;
+    focal_length?: number | null;
+  };
+  f_numbers: import('./shot.mjs').StatValue[];
+  shutters: import('./shot.mjs').StatValue[];
+  isos: import('./shot.mjs').StatValue[];
+  focal_lengths: import('./shot.mjs').StatValue[];
+  pans: number;
+  bursts: number;
+  blurred: number;
+  soft: number;
+  sharp: number;
+  af: { frames: number; missing: number; off_subject: number; no_subject: number; soft: number };
+  keepers: number;
+  rejected: number;
+  /** Sum of every timed album's first-to-last frame span, in seconds. */
+  shooting_seconds: number;
+  /** Per timed album. */
+  average_shoot_seconds: number;
+  longest_shoot_seconds: number;
+  timed_albums: number;
+};
+
 export type SettingValue = string | number | boolean;
 /** Global defaults; an album's `settings_json` overrides the same keys. */
 export type Settings = Record<string, SettingValue> & {
