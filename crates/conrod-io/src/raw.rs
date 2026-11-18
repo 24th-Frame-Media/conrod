@@ -53,6 +53,10 @@ pub struct Exposure {
     pub aeb: Option<bool>,
     /// The sub-second part of the capture time, as text.
     pub subsec: Option<String>,
+    /// The lens as the file names it (EXIF `LensModel`). Carried here as well
+    /// as in the frame's tags, so an old album can backfill its lens column
+    /// from [`exposure_meta`] without decoding a preview.
+    pub lens: Option<String>,
 }
 
 impl Exposure {
@@ -74,7 +78,8 @@ impl Exposure {
             focal_length,
             focus_distance,
             aeb,
-            subsec
+            subsec,
+            lens
         );
     }
 }
@@ -169,9 +174,9 @@ pub fn read(path: &Path) -> Result<Frame> {
     })
 }
 
-/// Only the exposure settings, read from the same header the preview walk
-/// touches: no decode and no image data, so it is cheap enough to call across
-/// a whole scan.
+/// Only the exposure settings and the lens, read from the same header the
+/// preview walk touches: no decode and no image data, so it is cheap enough to
+/// call across a whole scan (or a backfill of an old album).
 pub fn exposure_meta(path: &Path) -> Result<Exposure> {
     let ext = path
         .extension()
@@ -239,6 +244,12 @@ fn exposure_from_tiff(header: &[u8]) -> Exposure {
         .get(&tiff::SUB_SEC_TIME_ORIGINAL)
         .and_then(tiff::Value::text)
         .map(str::to_string);
+    out.lens = exif
+        .get(&tiff::LENS_MODEL)
+        .and_then(tiff::Value::text)
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string);
     out
 }
 
@@ -291,6 +302,10 @@ fn rawler_metadata(path: &Path, tags: Option<&mut Tags>) -> Exposure {
     out.focus_distance = recorded(ratio(exif.subject_distance)).filter(|v| *v < 10_000.0);
     out.subsec = exif
         .sub_sec_time_original
+        .map(|s| s.trim_end_matches('\0').trim().to_string())
+        .filter(|s| !s.is_empty());
+    out.lens = exif
+        .lens_model
         .map(|s| s.trim_end_matches('\0').trim().to_string())
         .filter(|s| !s.is_empty());
     out
@@ -555,5 +570,41 @@ mod exposure_tests {
         jpeg.extend_from_slice(&tiff);
         let exif = jpeg_exif(&jpeg).expect("APP1 segment");
         assert_eq!(exposure_from_tiff(exif).focal_length, Some(35.0));
+    }
+
+    /// IFD0 pointing at an EXIF IFD with one ASCII entry, `LensModel`.
+    fn lens_tiff(lens: &str) -> Vec<u8> {
+        let text = format!("{lens}\0");
+        let mut out = Vec::new();
+        out.extend_from_slice(b"II");
+        out.extend_from_slice(&42u16.to_le_bytes());
+        out.extend_from_slice(&8u32.to_le_bytes()); // IFD0 at 8
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&tiff::EXIF_IFD.to_le_bytes());
+        out.extend_from_slice(&4u16.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&26u32.to_le_bytes()); // EXIF IFD at 26
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&tiff::LENS_MODEL.to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes()); // ASCII
+        out.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        out.extend_from_slice(&44u32.to_le_bytes()); // text past the table
+        out.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(out.len(), 44);
+        out.extend_from_slice(text.as_bytes());
+        out
+    }
+
+    #[test]
+    fn the_lens_model_is_read_from_the_exif_ifd() {
+        let got = exposure_from_tiff(&lens_tiff("EF100-400mm F4.5-5.6L IS II USM"));
+        assert_eq!(
+            got.lens.as_deref(),
+            Some("EF100-400mm F4.5-5.6L IS II USM")
+        );
+        // A header with a lens still has no other reading recorded.
+        assert_eq!(got.iso, None);
+        assert_eq!(got.exposure_time, None);
     }
 }

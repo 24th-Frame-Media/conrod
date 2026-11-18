@@ -12,12 +12,23 @@ use conrod_vision::{imageops::Rgb, similarity};
 use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub type Result<T> = std::result::Result<T, String>;
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
+}
+/// The single number a counting query returns.
+fn scalar(db: &Connection, sql: &str, args: impl rusqlite::Params) -> Result<i64> {
+    db.query_row(sql, args, |row| row.get(0)).map_err(err)
+}
+/// Does `subject` contain the centre of `af`? Both are fractions of the frame.
+/// The same rule as `rescore::holds_middle`, which decides whether the camera
+/// focused on a stored subject.
+fn holds_middle(subject: [f64; 4], af: [f64; 4]) -> bool {
+    let (cx, cy) = ((af[0] + af[2]) / 2.0, (af[1] + af[3]) / 2.0);
+    cx >= subject[0] && cx <= subject[2] && cy >= subject[1] && cy <= subject[3]
 }
 fn now() -> f64 {
     std::time::SystemTime::now()
@@ -210,7 +221,7 @@ pub fn rows_compact(
 /// embedding are matched against the known vehicles and people here, and the
 /// embedding itself never leaves this function.
 pub fn review_payload(db: &Connection, job: i64) -> Result<Value> {
-    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2 FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path",[job])?;
+    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path",[job])?;
     let mut detections = rows_compact(db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY d.image_id,d.id",[job])?;
     let known: Vec<(Value, Vec<f32>)> = rows(db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
         .into_iter()
@@ -479,6 +490,7 @@ impl Desktop {
                 crate::passes::set_include_people(self, a.job_id, a.value)
             }
             Command::Summary(a) => crate::library::summary(self, a.job_id),
+            Command::ShootStats(a) => self.shoot_stats(a.job_id),
             Command::Filling(a) => crate::library::filling(self, a.job_id),
             Command::Cover(a) => crate::library::cover(self, a.job_id),
             Command::CacheInfo {} => crate::housekeeping::cache_info(self),
@@ -1028,6 +1040,341 @@ impl Desktop {
         Ok(json!({"jobId":job}))
     }
 
+    /// The shoot's own numbers, for the statistics card in the settings sheet:
+    /// what it was taken with, how it was exposed, how the frames and their
+    /// detections came out, and how much space the files take.
+    ///
+    /// An album scanned before the lens/ISO/file-size columns existed is
+    /// backfilled here, once: the headers are read with a small disk-bound
+    /// pool and each row is written as it is read. A file that has moved is
+    /// skipped, never failing the card. Nothing is rounded; the frontend
+    /// formats.
+    pub fn shoot_stats(&self, job: i64) -> Result<Value> {
+        crate::library::require_job(self, job)?;
+        let settings = crate::operations::settings(self, job)?;
+        let backfilled = self.backfill_shot_details(job)?;
+        let db = lock(&self.reader);
+        // What every count is about: the album's frames that are done and are
+        // not hidden copies of another import.
+        const VISIBLE: &str = "i.job_id=? AND i.status='done' AND COALESCE(i.copy_of,0)=0";
+        let frames = scalar(
+            &db,
+            &format!("SELECT COUNT(*) FROM images i WHERE {VISIBLE}"),
+            [job],
+        )?;
+        let copies_hidden = scalar(
+            &db,
+            "SELECT COUNT(*) FROM images WHERE job_id=? AND COALESCE(copy_of,0)<>0",
+            [job],
+        )?;
+        let totals = rows(
+            &db,
+            &format!(
+                "SELECT COALESCE(SUM(i.file_size),0) AS size_bytes,
+                        MIN(i.taken_at) AS taken_from, MAX(i.taken_at) AS taken_to
+                   FROM images i WHERE {VISIBLE}"
+            ),
+            [job],
+        )?
+        .pop()
+        .unwrap_or(Value::Null);
+        let cameras = rows(
+            &db,
+            &format!(
+                "SELECT i.camera AS name, COUNT(*) AS count FROM images i
+                  WHERE {VISIBLE} AND i.camera IS NOT NULL AND i.camera<>''
+                  GROUP BY i.camera ORDER BY count DESC, name"
+            ),
+            [job],
+        )?;
+        let lenses = rows(
+            &db,
+            &format!(
+                "SELECT i.lens AS name, COUNT(*) AS count FROM images i
+                  WHERE {VISIBLE} AND i.lens IS NOT NULL AND i.lens<>''
+                  GROUP BY i.lens ORDER BY count DESC, name"
+            ),
+            [job],
+        )?;
+        // The most common value of a setting, or null when the album records
+        // none. Ties go to the smaller value, so the card does not flutter
+        // between two equally used lenses.
+        let mode = |column: &str, skip_blank: bool| -> Result<Value> {
+            let blank = if skip_blank {
+                format!(" AND i.{column}<>''")
+            } else {
+                String::new()
+            };
+            let sql = format!(
+                "SELECT i.{column} AS value FROM images i
+                  WHERE {VISIBLE} AND i.{column} IS NOT NULL{blank}
+                  GROUP BY i.{column} ORDER BY COUNT(*) DESC, value LIMIT 1"
+            );
+            Ok(rows(&db, &sql, [job])?
+                .pop()
+                .and_then(|mut row| {
+                    row.as_object_mut()
+                        .and_then(|object| object.remove("value"))
+                })
+                .unwrap_or(Value::Null))
+        };
+        let histogram = |column: &str| -> Result<Vec<Value>> {
+            rows(
+                &db,
+                &format!(
+                    "SELECT i.{column} AS value, COUNT(*) AS count FROM images i
+                      WHERE {VISIBLE} AND i.{column} IS NOT NULL
+                      GROUP BY i.{column} ORDER BY count DESC, value"
+                ),
+                [job],
+            )
+        };
+        let pans = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(DISTINCT d.image_id) FROM detections d
+                   JOIN images i ON i.id=d.image_id
+                  WHERE {VISIBLE} AND COALESCE(d.panning,0)=1"
+            ),
+            [job],
+        )?;
+        // A burst is the time burst grouping found: frames shot within the
+        // album's gap of each other, per camera. It is what `regroup` reports.
+        let bursts = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(DISTINCT i.time_burst) FROM images i
+                  WHERE {VISIBLE} AND i.time_burst IS NOT NULL"
+            ),
+            [job],
+        )?;
+        let verdicts = rows(
+            &db,
+            &format!(
+                "SELECT d.sharpness_verdict AS verdict, COUNT(*) AS count
+                   FROM detections d JOIN images i ON i.id=d.image_id
+                  WHERE {VISIBLE} AND d.sharpness_verdict IS NOT NULL
+                  GROUP BY d.sharpness_verdict"
+            ),
+            [job],
+        )?;
+        let verdict = |word: &str| -> i64 {
+            verdicts
+                .iter()
+                .find(|row| row["verdict"].as_str() == Some(word))
+                .and_then(|row| row["count"].as_i64())
+                .unwrap_or(0)
+        };
+        let af_missing = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM images i WHERE {VISIBLE} AND i.af_x1 IS NULL"
+            ),
+            [job],
+        )?;
+        let af_soft = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM images i WHERE {VISIBLE}
+                    AND i.af_sharpness IS NOT NULL AND i.af_sharpness < ?"
+            ),
+            params![job, settings.blurred_below],
+        )?;
+        // Whether the camera's focus area landed on a subject: the same centre
+        // rule `rescore.rs` uses. Geometry needs the preview's size, which a
+        // scanned frame always has.
+        let af_boxes = rows(
+            &db,
+            &format!(
+                "SELECT i.id, i.af_x1, i.af_y1, i.af_x2, i.af_y2, i.width, i.height,
+                        d.x1 AS dx1, d.y1 AS dy1, d.x2 AS dx2, d.y2 AS dy2
+                   FROM images i
+              LEFT JOIN detections d ON d.image_id=i.id
+                    AND COALESCE(d.region_type,'vehicle') IN ('vehicle','person')
+                  WHERE {VISIBLE} AND i.af_x1 IS NOT NULL AND i.af_y1 IS NOT NULL
+                    AND i.af_x2 IS NOT NULL AND i.af_y2 IS NOT NULL"
+            ),
+            [job],
+        )?;
+        let mut found: std::collections::HashMap<i64, (bool, bool)> =
+            std::collections::HashMap::new();
+        for row in af_boxes {
+            let id = row["id"].as_i64().unwrap_or_default();
+            let entry = found.entry(id).or_insert((false, false));
+            let (Some(dx1), Some(dy1), Some(dx2), Some(dy2)) = (
+                row["dx1"].as_f64(),
+                row["dy1"].as_f64(),
+                row["dx2"].as_f64(),
+                row["dy2"].as_f64(),
+            ) else {
+                continue;
+            };
+            entry.0 = true;
+            let af = [
+                row["af_x1"].as_f64().unwrap_or_default(),
+                row["af_y1"].as_f64().unwrap_or_default(),
+                row["af_x2"].as_f64().unwrap_or_default(),
+                row["af_y2"].as_f64().unwrap_or_default(),
+            ];
+            let (w, h) = (
+                row["width"].as_f64().unwrap_or_default(),
+                row["height"].as_f64().unwrap_or_default(),
+            );
+            if w > 0.0 && h > 0.0 && holds_middle([dx1 / w, dy1 / h, dx2 / w, dy2 / h], af) {
+                entry.1 = true;
+            }
+        }
+        let af_no_subject = found.values().filter(|(detected, _)| !detected).count() as i64;
+        let af_off_subject = found
+            .values()
+            .filter(|(detected, holds)| *detected && !holds)
+            .count() as i64;
+        let keepers = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM images i WHERE {VISIBLE}
+                    AND (COALESCE(i.burst_pick,0)=1
+                     OR EXISTS (SELECT 1 FROM detections d
+                                 WHERE d.image_id=i.id AND COALESCE(d.burst_pick,0)=1))"
+            ),
+            [job],
+        )?;
+        let rejected = scalar(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM images i WHERE {VISIBLE} AND COALESCE(i.rejected,0)=1"
+            ),
+            [job],
+        )?;
+        // A hand star wins over any subject's; no star anywhere is zero, which
+        // is a value the card shows rather than an absence.
+        let stars = rows(
+            &db,
+            &format!(
+                "SELECT COALESCE(i.stars,
+                                (SELECT MAX(d.stars) FROM detections d WHERE d.image_id=i.id),
+                                0) AS value,
+                        COUNT(*) AS count
+                   FROM images i WHERE {VISIBLE} GROUP BY value ORDER BY value"
+            ),
+            [job],
+        )?;
+        let most_used = json!({
+            "camera": mode("camera", true)?,
+            "lens": mode("lens", true)?,
+            "f_number": mode("f_number", false)?,
+            "shutter": mode("exposure_time", false)?,
+            "iso": mode("iso", false)?,
+            "focal_length": mode("focal_length", false)?,
+        });
+        Ok(json!({
+            "frames": frames,
+            "copies_hidden": copies_hidden,
+            "size_bytes": totals["size_bytes"].clone(),
+            "backfilled": backfilled,
+            "cameras": cameras,
+            "lenses": lenses,
+            "most_used": most_used,
+            "f_numbers": histogram("f_number")?,
+            "shutters": histogram("exposure_time")?,
+            "isos": histogram("iso")?,
+            "focal_lengths": histogram("focal_length")?,
+            "pans": pans,
+            "bursts": bursts,
+            "blurred": verdict("blurred"),
+            "soft": verdict("soft"),
+            "sharp": verdict("sharp"),
+            "af": {
+                "frames": frames,
+                "missing": af_missing,
+                "off_subject": af_off_subject,
+                "no_subject": af_no_subject,
+                "soft": af_soft,
+            },
+            "keepers": keepers,
+            "rejected": rejected,
+            "stars": stars,
+            "taken_from": totals["taken_from"].clone(),
+            "taken_to": totals["taken_to"].clone(),
+        }))
+    }
+
+    /// Read the lens, ISO and file size of the frames that are missing them.
+    /// Resumable by design: every row is written as it is read, so an
+    /// interrupted backfill leaves the rest for the next `shoot_stats`.
+    fn backfill_shot_details(&self, job: i64) -> Result<i64> {
+        let todo = rows(
+            &lock(&self.reader),
+            "SELECT id, path, lens, iso, file_size FROM images
+              WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0
+                AND (lens IS NULL OR iso IS NULL OR file_size IS NULL)
+              ORDER BY id",
+            [job],
+        )?;
+        if todo.is_empty() {
+            return Ok(0);
+        }
+        // Disk-bound, like the preview pool: a little under the cores.
+        let workers = std::thread::available_parallelism()
+            .map_or(4, |n| n.get() * 4 / 5)
+            .clamp(2, 16)
+            .min(todo.len());
+        let next = AtomicUsize::new(0);
+        let done = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                let todo = &todo;
+                let (next, done) = (&next, &done);
+                scope.spawn(move || loop {
+                    let n = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(row) = todo.get(n) else { break };
+                    let Some(id) = row["id"].as_i64() else {
+                        continue;
+                    };
+                    let Some(path) = row["path"].as_str().map(Path::new) else {
+                        continue;
+                    };
+                    let Ok(meta) = std::fs::metadata(path) else {
+                        // Moved, renamed or on an unplugged card: skip it and
+                        // let a later attempt try again.
+                        continue;
+                    };
+                    let file_size = meta.len() as i64;
+                    let exposure = conrod_io::raw::exposure_meta(path).ok();
+                    let lens = exposure.as_ref().and_then(|e| e.lens.as_deref());
+                    let iso = exposure.as_ref().and_then(|e| e.iso);
+                    // Only a value that actually fills a missing column counts:
+                    // a header with no lens or ISO leaves those null, and the
+                    // card reports the frames it really learned something from.
+                    let new_lens = row["lens"].is_null() && lens.is_some();
+                    let new_iso = row["iso"].is_null() && iso.is_some();
+                    let new_size = row["file_size"].is_null();
+                    if !(new_lens || new_iso || new_size) {
+                        continue;
+                    }
+                    let changed = lock(&self.db)
+                        .execute(
+                            "UPDATE images
+                                SET lens=COALESCE(?, lens), iso=COALESCE(?, iso),
+                                    file_size=COALESCE(?, file_size)
+                              WHERE id=?",
+                            params![
+                                exposure.as_ref().and_then(|e| e.lens.as_deref()),
+                                exposure.as_ref().and_then(|e| e.iso),
+                                file_size,
+                                id
+                            ],
+                        )
+                        .unwrap_or(0);
+                    if changed != 0 {
+                        done.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+            }
+        });
+        Ok(done.load(Ordering::Relaxed) as i64)
+    }
+
     /// Save one scanned frame. `report` tells the scan screen, which a one-off
     /// pass such as a re-detect must not: its counts are not a scan's.
     pub(crate) fn persist_frame(
@@ -1059,7 +1406,7 @@ impl Desktop {
             insert_subject(&tx, image, s)?;
         }
         let rating = f.rating;
-        tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=? WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,image]).map_err(err)?;
+        tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=?,lens=?,iso=?,file_size=? WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,f.lens,f.exif.iso,f.file_size,image]).map_err(err)?;
         tx.commit().map_err(err)?;
         if report {
             self.report_frame(image, &thumb, f, settings);
@@ -2387,7 +2734,7 @@ mod tests {
             .unwrap_or(106);
         let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .expect("open the album read-only");
-        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2 FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path";
+        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path";
         const DET_SQL: &str = "SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY d.image_id,d.id";
 
         let mut sql = f64::MAX;
@@ -2421,5 +2768,172 @@ mod tests {
             payload < 1.0,
             "the review payload takes {payload:.2} s (target under 1 s)"
         );
+    }
+
+    #[test]
+    fn the_review_payload_carries_the_shot_details() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("review-shot-details");
+        let image = lib.frame("1.jpg", None);
+        lib.sql(
+            "UPDATE images SET camera='Canon EOS R7 358',lens='EF100-400mm F4.5-5.6L IS II USM',
+                    iso=400,file_size=123456,exposure_time=0.001,exposure_bias=-0.3,
+                    f_number=5.6,focal_length=400,focus_distance=7.5,taken_at=1760000000
+              WHERE id=?",
+            params![image],
+        );
+        let out = lib.run("review", json!({"jobId": lib.job})).unwrap();
+        let frame = &out["frames"][0];
+        assert_eq!(frame["camera"], "Canon EOS R7 358");
+        assert_eq!(frame["lens"], "EF100-400mm F4.5-5.6L IS II USM");
+        assert_eq!(frame["iso"], 400);
+        assert_eq!(frame["file_size"], 123456);
+        assert_eq!(frame["exposure_time"].as_f64(), Some(0.001));
+        assert_eq!(frame["exposure_bias"].as_f64(), Some(-0.3));
+        assert_eq!(frame["f_number"].as_f64(), Some(5.6));
+        assert_eq!(frame["focal_length"].as_f64(), Some(400.0));
+        assert_eq!(frame["focus_distance"].as_f64(), Some(7.5));
+        assert_eq!(frame["taken_at"].as_f64(), Some(1760000000.0));
+    }
+
+    #[test]
+    fn shoot_stats_counts_the_album_and_backfills_an_old_row() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("shoot-stats");
+        let (f1, f2, f3) = (
+            lib.frame("1.jpg", Some(1)),
+            lib.frame("2.jpg", Some(2)),
+            lib.frame("3.jpg", Some(2)),
+        );
+        lib.sql(
+            "UPDATE images SET camera='Canon EOS R7 358',lens='EF100-400mm',iso=400,
+                    file_size=1000,f_number=5.6,exposure_time=0.001,focal_length=400,
+                    taken_at=100,stars=5,af_x1=0.20,af_y1=0.30,af_x2=0.30,af_y2=0.40,
+                    af_sharpness=0.9,time_burst=1
+              WHERE id=?",
+            params![f1],
+        );
+        lib.sql(
+            "UPDATE images SET camera='Nikon Z9',lens='NIKKOR Z 400mm',iso=800,
+                    file_size=2000,f_number=4.0,exposure_time=0.002,focal_length=400,
+                    taken_at=200,rejected=1,af_x1=0.70,af_y1=0.70,af_x2=0.80,af_y2=0.80,
+                    af_sharpness=0.3,time_burst=2
+              WHERE id=?",
+            params![f2],
+        );
+        lib.sql(
+            "UPDATE images SET camera='Canon EOS R7 358',lens='EF100-400mm',iso=400,
+                    file_size=4000,f_number=5.6,exposure_time=0.001,focal_length=400,
+                    burst_pick=1,af_x1=0.10,af_y1=0.10,af_x2=0.20,af_y2=0.20,
+                    time_burst=2
+              WHERE id=?",
+            params![f3],
+        );
+        // A hidden copy is counted apart and never in the shoot's own totals.
+        let copy = lib.frame("copy.jpg", Some(1));
+        lib.sql(
+            "UPDATE images SET copy_of=?,camera='Canon EOS R7 358',file_size=9999 WHERE id=?",
+            params![f1, copy],
+        );
+        // A row an older scan left without shot details, backed by a real file.
+        std::fs::write(lib.root.join("old.jpg"), b"backfill").unwrap();
+        let old = lib.frame("old.jpg", None);
+        let (d1, d2, d3) = (
+            lib.detection(f1, "vehicle", 0.9),
+            lib.detection(f2, "vehicle", 0.9),
+            lib.detection(f1, "vehicle", 0.9),
+        );
+        lib.sql(
+            "UPDATE detections SET panning=1,sharpness_verdict='sharp',burst_pick=1,stars=4 WHERE id=?",
+            [d1],
+        );
+        lib.sql(
+            "UPDATE detections SET sharpness_verdict='soft',stars=2 WHERE id=?",
+            [d2],
+        );
+        lib.sql(
+            "UPDATE detections SET sharpness_verdict='blurred',stars=3 WHERE id=?",
+            [d3],
+        );
+
+        let out = lib.run("shoot_stats", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(out["frames"], 4, "four visible done originals");
+        assert_eq!(out["copies_hidden"], 1);
+        assert_eq!(out["size_bytes"], 7008, "the old row's real 8-byte file");
+        assert_eq!(out["backfilled"], 1, "only the old row had to be read");
+        assert_eq!(
+            out["cameras"],
+            json!([
+                {"name": "Canon EOS R7 358", "count": 2},
+                {"name": "Nikon Z9", "count": 1}
+            ])
+        );
+        assert_eq!(
+            out["lenses"],
+            json!([
+                {"name": "EF100-400mm", "count": 2},
+                {"name": "NIKKOR Z 400mm", "count": 1}
+            ])
+        );
+        assert_eq!(
+            out["most_used"],
+            json!({
+                "camera": "Canon EOS R7 358",
+                "lens": "EF100-400mm",
+                "f_number": 5.6,
+                "shutter": 0.001,
+                "iso": 400,
+                "focal_length": 400.0
+            })
+        );
+        assert_eq!(
+            out["f_numbers"],
+            json!([{"value": 5.6, "count": 2}, {"value": 4.0, "count": 1}])
+        );
+        assert_eq!(
+            out["isos"],
+            json!([{"value": 400, "count": 2}, {"value": 800, "count": 1}])
+        );
+        assert_eq!(out["focal_lengths"], json!([{"value": 400.0, "count": 3}]));
+        assert_eq!(
+            out["shutters"],
+            json!([{"value": 0.001, "count": 2}, {"value": 0.002, "count": 1}])
+        );
+        assert_eq!(out["pans"], 1, "one frame has a panning detection");
+        assert_eq!(out["bursts"], 2, "two distinct burst keys");
+        assert_eq!(out["blurred"], 1);
+        assert_eq!(out["soft"], 1);
+        assert_eq!(out["sharp"], 1);
+        assert_eq!(
+            out["af"],
+            json!({"frames": 4, "missing": 1, "off_subject": 1, "no_subject": 1, "soft": 1})
+        );
+        assert_eq!(out["keepers"], 2, "a picked frame and a picked subject");
+        assert_eq!(out["rejected"], 1);
+        assert_eq!(
+            out["stars"],
+            json!([
+                {"value": 0, "count": 2},
+                {"value": 2, "count": 1},
+                {"value": 5, "count": 1}
+            ]),
+            "a hand star outranks a subject's, and both outrank nothing"
+        );
+        assert_eq!(out["taken_from"].as_f64(), Some(100.0));
+        assert_eq!(out["taken_to"].as_f64(), Some(200.0));
+
+        // The old row now knows its size, and a second call has nothing to do.
+        let (size, lens, iso): (i64, Option<String>, Option<i64>) = lib
+            .db()
+            .query_row(
+                "SELECT file_size, lens, iso FROM images WHERE id=?",
+                [old],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((size, lens, iso), (8, None, None));
+        let again = lib.run("shoot_stats", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(again["backfilled"], 0);
+        assert_eq!(again["size_bytes"], out["size_bytes"]);
     }
 }

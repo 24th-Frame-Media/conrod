@@ -436,6 +436,9 @@ pub enum Command {
     UpdateJobSettings(UpdateJobSettingsArgs),
     SetIncludePeople(IncludePeopleArgs),
     Summary(JobArgs),
+    /// The shoot's own statistics card: what was used, how it was exposed,
+    /// what the cull measured. Backfills an old album's shot columns first.
+    ShootStats(JobArgs),
     Cover(JobArgs),
     Filling(JobArgs),
     CacheInfo {},
