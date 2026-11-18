@@ -86,6 +86,7 @@ export function App() {
             ...args, scanProfile: defaults.scan_profile, blurStrictness: defaults.blur_strictness, burstGap: defaults.burst_gap,
             groupingStacks: defaults.grouping_stacks, groupingSensitivity: defaults.grouping_sensitivity, groupingPause: defaults.grouping_pause,
             groupingKeepPans: defaults.grouping_keep_pans, groupingFocusAnchor: defaults.grouping_focus_anchor,
+            workflowMode: defaults.workflow_mode,
           }
         : args;
       const { jobId: id } = await engine.scan(scan);

@@ -80,7 +80,7 @@ export type Page = 'Library' | 'Scan' | 'Review' | 'Train' | 'Known vehicles' | 
 export type View = 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook';
 export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick' | 'taste';
 export type Facet = { kind: import('./facets.mjs').FacetKind; value: string };
-export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean; scanProfile?: string; blurStrictness?: string; burstGap?: number; groupingStacks?: boolean; groupingSensitivity?: string; groupingPause?: number; groupingKeepPans?: boolean; groupingFocusAnchor?: boolean } | { jobId: number };
+export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean; scanProfile?: string; blurStrictness?: string; burstGap?: number; groupingStacks?: boolean; groupingSensitivity?: string; groupingPause?: number; groupingKeepPans?: boolean; groupingFocusAnchor?: boolean; workflowMode?: string } | { jobId: number };
 export type MarkValues = { stars?: number | null; rejected?: boolean; picked?: boolean };
 export type Toaster = (message: string, options?: { tone?: 'error' | 'ok'; ms?: number }) => void;
 
