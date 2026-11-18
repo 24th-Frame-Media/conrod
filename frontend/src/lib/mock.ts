@@ -257,6 +257,16 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
         { name: 'minicpm-v:8b', size: 5473838466, vision: true, parameter_size: '7.6B' },
       ],
     });
+    case 'provider_models': {
+      const provider = String(a.provider ?? '');
+      if (provider !== 'openai' && provider !== 'opencode') {
+        return out({ models: [], error: `'${provider}' does not list models; type the model name` });
+      }
+      const models = provider === 'opencode'
+        ? [{ id: 'qwen3.8-max', name: 'qwen3.8-max' }, { id: 'claude-sonnet-4-5', name: 'claude-sonnet-4-5' }, { id: 'kimi-k2', name: 'kimi-k2' }]
+        : [{ id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }, { id: 'o4-mini', name: 'o4-mini' }];
+      return out({ models });
+    }
     case 'summary': return out({images: {scanned: db.frames.length, written: 0, errors: 0}, counts: {numbered: 48, plated: 48, to_review: 12}});
     case 'rename_job': { const job = db.jobs.find(j => j.id === a.jobId); if(job) job.label = String(a.label || 'Album'); return out(null); }
     case 'bulk_edit': { for(const d of db.dets.filter(d => (a.ids as number[]).includes(d.id))) { if('number' in a) d.number = String(a.number); if('reviewed' in a) d.reviewed = a.reviewed ? 1 : 0; } return out({updated: (a.ids as number[]).length}); }

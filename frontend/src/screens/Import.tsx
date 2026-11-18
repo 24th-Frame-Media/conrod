@@ -6,6 +6,7 @@ import { StrictnessSlider } from '../components/StrictnessSlider';
 import { GroupingFields, groupingOf, type GroupingValues } from '../components/GroupingFields';
 import { call, chooseFolder } from '../lib/api';
 import { filename } from '../lib/review';
+import { WORKFLOW_OPTIONS, workflowModeOf } from '../lib/workflow.mjs';
 import { profileParent, type ScanArgs, type Settings, type Status } from '../lib/types';
 
 export type ScanDraft = { root: string; label: string };
@@ -14,6 +15,8 @@ export type ImportDefaults = {
   scan_profile: string; blur_strictness?: string; burst_gap: number;
   grouping_stacks: boolean; grouping_sensitivity: string; grouping_pause: number;
   grouping_keep_pans: boolean; grouping_focus_anchor: boolean;
+  /** `both` | `cull` | `identify`; travels with the scan and becomes the album's own setting. */
+  workflow_mode: string;
 };
 type Props = {
   draft: ScanDraft; setDraft: (d: ScanDraft) => void; profile: string; setProfile: (p: string) => void;
@@ -33,6 +36,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const [strictnessTouched, setStrictnessTouched] = useState(false);
   const [burstGap, setBurstGap] = useState(String(DEFAULT_GAP));
   const [grouping, setGrouping] = useState<GroupingValues>(groupingOf(settings));
+  const [workflow, setWorkflow] = useState(() => workflowModeOf(settings.workflow_mode));
   const [readPlates, setReadPlates] = useState(true);
   const [readNumbers, setReadNumbers] = useState(true);
   const [includePeople, setIncludePeople] = useState(false);
@@ -43,6 +47,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
     setStrictnessTouched(false);
     setBurstGap(String(Number(settings.burst_gap) > 0 ? settings.burst_gap : DEFAULT_GAP));
     setGrouping(groupingOf(settings));
+    setWorkflow(workflowModeOf(settings.workflow_mode));
     setReadPlates(settings.read_plates !== false);
     setReadNumbers(settings.read_numbers !== false);
     setEntries('');
@@ -63,7 +68,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const start = () => {
     onStart(
       { root: draft.root.trim(), label: draft.label.trim() || filename(draft.root), profile, recursive, stage: 'all', readPlates: vehicles && readPlates, readNumbers: vehicles && readNumbers, includePeople: parent === 'motorsport' && includePeople },
-      { scan_profile: profile, blur_strictness: strictnessTouched ? strictness : undefined, burst_gap: gapOk ? gap : DEFAULT_GAP, ...grouping },
+      { scan_profile: profile, blur_strictness: strictnessTouched ? strictness : undefined, burst_gap: gapOk ? gap : DEFAULT_GAP, ...grouping, workflow_mode: workflow },
     );
     onClose();
   };
@@ -91,6 +96,13 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
         <div className="import-field">
           <label htmlFor="import-shoot">Shoot type</label>
           <ShootTypeSelect id="import-shoot" value={profile} onChange={setProfile} />
+        </div>
+        <div className="import-field">
+          <label htmlFor="import-workflow">Workflow</label>
+          <select id="import-workflow" value={workflow} onChange={(e) => setWorkflow(workflowModeOf(e.target.value))}>
+            {WORKFLOW_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+          <small className="muted">{(WORKFLOW_OPTIONS.find((option) => option.id === workflow) ?? WORKFLOW_OPTIONS[0]).hint}</small>
         </div>
         <div className="import-field">
           <label>Strictness</label>

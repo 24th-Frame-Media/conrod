@@ -10,6 +10,7 @@ import { edgeFrameId, stepInStack } from '../lib/navigation.mjs';
 import { reviewedStacks, stackDecision } from '../lib/decisions.mjs';
 import { tasteStacks } from '../lib/taste.mjs';
 import { albumSetting } from '../lib/album.mjs';
+import { WORKFLOW_OPTIONS, identifyActionLabel, pipelineSteps, workflowIncludesCull, workflowIncludesIdentify, workflowLabel, workflowModeOf, type PipelineStep } from '../lib/workflow.mjs';
 import { call, engine } from '../lib/api';
 import { useLocalFlag, useRun } from '../state/hooks';
 import { useToast } from '../state/toast';
@@ -88,13 +89,8 @@ function IdentificationBanner({ task, settings, onSkip }: { task: Task; settings
   );
 }
 
-function PipelineStepper({ job, scanning, identified, identifying, written }: { job: Job | undefined; scanning: boolean; identified: boolean; identifying: boolean; written: boolean }) {
-  const steps = [
-    { key: 'scan', label: 'Scanned', done: Boolean(job && job.status !== 'scanning'), active: scanning },
-    { key: 'cull', label: 'Culled', done: Boolean(job && (job.status === 'done' || job.status === 'indexed')), active: false },
-    { key: 'identify', label: 'Identified', done: identified && !identifying, active: identifying },
-    { key: 'write', label: 'XMP written', done: written, active: false },
-  ];
+/** The steps the album's workflow actually runs: the mode decides which exist, the data decides what is done. */
+function PipelineStepper({ steps }: { steps: PipelineStep[] }) {
   return (
     <nav className="pipeline" aria-label="Processing pipeline">
       {steps.map((step, i) => (
@@ -411,18 +407,28 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     await onJobsChanged();
     await rv.refresh();
   };
+  const workflow = workflowModeOf(albumSetting(currentJob, 'workflow_mode', settings));
+  // The stepper reads the album's own data, not `job.status`: a long-finished album can still say "scanning".
+  const scanned = Boolean(currentJob && currentJob.total > 0 && currentJob.done >= currentJob.total) && !scanning;
+  const identified = eligible === 0 && review.detections.length > 0;
+  const steps = pipelineSteps(workflow, { scanned, identified, identifying, scanning });
+  const pickWorkflow = (value: string) => {
+    void run(async () => {
+      await saveAlbum({ workflow_mode: workflowModeOf(value) });
+      toast(`Workflow: ${workflowLabel(value)}.`);
+    });
+  };
+  // One label for the split button and its menu, so the two cannot disagree.
+  const identifyLabel = identifyActionLabel(workflow, eligible);
+  const identifyTitle = workflow === 'identify'
+    ? 'Read plates, numbers, and vehicle data on every subject, kept or culled'
+    : 'Run plate, number, and vision model identification on kept photos';
 
-  const primaryStep = !busy && pending > 0
+  const primaryStep = !busy && pending > 0 && workflowIncludesCull(workflow)
     ? {
         label: `Suggest culls (${pending.toLocaleString()})`,
         onClick: onCull,
         title: 'Run AI sharpness scoring and keeper selection on unculled photos',
-      }
-    : !busy && pending === 0 && eligible > 0 && !identifying
-    ? {
-        label: `Identify kept photos (${eligible.toLocaleString()})`,
-        onClick: onIdentify,
-        title: 'Run plate, number, and vision model identification on kept photos',
       }
     : identifying
     ? {
@@ -431,7 +437,13 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         onClick: () => {},
         title: 'Identification is currently running',
       }
-    : !identifying && review.detections.some((d) => !d.reviewed)
+    : !busy && eligible > 0 && workflowIncludesIdentify(workflow)
+    ? {
+        label: identifyLabel ?? `Identify kept photos (${eligible.toLocaleString()})`,
+        onClick: onIdentify,
+        title: identifyTitle,
+      }
+    : !identifying && workflowIncludesIdentify(workflow) && review.detections.some((d) => !d.reviewed)
     ? {
         label: 'Accept all',
         onClick: onAcceptAll,
@@ -444,36 +456,38 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       };
 
   const actionItems: MenuItem[] = [
-    {
+    ...(workflowIncludesCull(workflow) ? [{
       id: 'cull',
       label: 'Suggest culls',
       hint: 'Re-evaluate sharpness and keepers for unculled photos',
       badge: pending > 0 ? pending : undefined,
       disabled: busy || pending === 0,
       onClick: onCull,
-    },
-    {
-      id: 'identify',
-      label: 'Identify kept photos',
-      hint: 'Run plates, numbers, and VLM on unreviewed kept photos',
-      badge: eligible > 0 ? eligible : undefined,
-      disabled: busy || identifying || eligible === 0,
-      onClick: onIdentify,
-    },
-    {
-      id: 'identified',
-      label: 'Identifications…',
-      hint: 'See what was read on each photo, and accept it one by one',
-      disabled: !review.detections.some((d) => d.number || d.plate || (d.attributes && d.attributes !== '{}')),
-      onClick: () => setIdsOpen(true),
-    },
-    {
-      id: 'accept_all',
-      label: 'Accept all identifications',
-      hint: 'Mark all unreviewed detections in this shoot as accepted',
-      disabled: !review.detections.some((d) => !d.reviewed),
-      onClick: onAcceptAll,
-    },
+    }] : []),
+    ...(workflowIncludesIdentify(workflow) ? [
+      {
+        id: 'identify',
+        label: identifyLabel ?? 'Identify',
+        hint: workflow === 'identify' ? 'Read plates, numbers, and VLM on every subject, kept or culled' : 'Run plates, numbers, and VLM on unreviewed kept photos',
+        badge: eligible > 0 ? eligible : undefined,
+        disabled: busy || identifying || eligible === 0,
+        onClick: onIdentify,
+      },
+      {
+        id: 'identified',
+        label: 'Identifications…',
+        hint: 'See what was read on each photo, and accept it one by one',
+        disabled: !review.detections.some((d) => d.number || d.plate || (d.attributes && d.attributes !== '{}')),
+        onClick: () => setIdsOpen(true),
+      },
+      {
+        id: 'accept_all',
+        label: 'Accept all identifications',
+        hint: 'Mark all unreviewed detections in this shoot as accepted',
+        disabled: !review.detections.some((d) => !d.reviewed),
+        onClick: onAcceptAll,
+      },
+    ] : []),
     {
       id: 'write',
       label: 'Export…',
@@ -657,7 +671,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         <select aria-label="Photo filter" value={filters.view} onChange={(e) => patchFilters({ view: e.target.value as typeof filters.view })}>
           <option value="all">All photos</option><option value="keepers">Keepers</option><option value="undecided">Undecided</option><option value="rejected">Rejected</option><option value="top3">Top 3 per burst</option><option value="review">Needs review</option>{(vehicleBrowse || filters.view === 'needsLook') && <option value="needsLook">Needs a look</option>}
         </select>
-        {stacked && (
+        {stacked && workflow !== 'identify' && (
           <span className="reviewed-count" title="Bursts where every frame is kept or culled, over the whole album">
             reviewed {progress.reviewed.toLocaleString()} / {progress.total.toLocaleString()} bursts
           </span>
@@ -684,7 +698,15 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           <button className="ghost icon" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={onHelp}><Icon name="keyboard" /></button>
         </div>
       </div>
-      <PipelineStepper job={currentJob} scanning={scanning} identified={!eligible || review.detections.some((d) => d.reviewed)} identifying={identifying} written={false} />
+      <div className="pipeline-row">
+        <label className="pipeline-workflow" title="What this album runs: culling, identification, or both">
+          <span>Workflow</span>
+          <select aria-label="Workflow" value={workflow} onChange={(e) => pickWorkflow(e.target.value)}>
+            {WORKFLOW_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+        </label>
+        <PipelineStepper steps={steps} />
+      </div>
       <ShootSettingsModal
         jobId={jobId}
         jobLabel={currentJob?.label ?? ''}

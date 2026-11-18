@@ -55,20 +55,129 @@ function serverTitle(service: VlmService): string {
   return `Ollama · ${host}`;
 }
 
-/** A cloud model text field that only commits on blur or Enter, not on every keystroke. */
-function CloudModelInput({ model, title, onCommit }: { model: string; title: string; onCommit: (model: string) => void }) {
-  const [value, setValue] = useState(model);
-  useEffect(() => setValue(model), [model]);
-  return (
+/** The cloud providers whose key can list its models. The others only take a typed name. */
+const LISTABLE_PROVIDERS: VlmProvider[] = ['openai', 'opencode'];
+/** Sentinel for the "Other…" choice in a model select; never a real model id. */
+const CUSTOM_MODEL = '__other__';
+
+/** An error line safe for the DOM: the API key can never be echoed back into it. */
+function safeError(error: unknown, apiKey: string): string {
+  const text = error instanceof Error ? error.message : String(error);
+  const key = apiKey.trim();
+  return key ? text.split(key).join('***') : text;
+}
+
+type CloudModelControlProps = {
+  provider: VlmProvider;
+  model: string;
+  title: string;
+  host?: string;
+  apiKey?: string;
+  /** Fetch as soon as the control appears (a saved card), not only on refresh. */
+  autoLoad?: boolean;
+  /** Commit every keystroke; the add form's Add button needs a live value. */
+  live?: boolean;
+  onChange: (model: string) => void;
+};
+
+/**
+ * The model field for a cloud provider. OpenAI and OpenCode can list their models, so they
+ * get a native picker with "Other…" for an id the list does not know. Anthropic and Gemini
+ * have no list endpoint here, so they keep a clearly labelled text field.
+ */
+function CloudModelControl({ provider, model, title, host, apiKey, autoLoad = false, live = false, onChange }: CloudModelControlProps) {
+  const listable = LISTABLE_PROVIDERS.includes(provider);
+  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [custom, setCustom] = useState(false);
+  const [draft, setDraft] = useState(model);
+  const customRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { setDraft(model); }, [model]);
+  // The add form reuses this control when the provider changes; a stale list would lie.
+  useEffect(() => { setModels([]); setError(null); setCustom(false); }, [provider]);
+  useEffect(() => { if (custom) customRef.current?.focus(); }, [custom]);
+
+  const load = useCallback(() => {
+    const key = (apiKey ?? '').trim();
+    if (!listable || !key) return;
+    setLoading(true);
+    setError(null);
+    void engine.providerModels(provider, host, key)
+      .then((res) => {
+        setModels(res.models);
+        if (res.error) setError(safeError(res.error, key));
+        else if (!res.models.length) setError('The provider returned no models; type the model name.');
+      })
+      .catch((e) => { setModels([]); setError(safeError(e, key)); })
+      .finally(() => setLoading(false));
+  }, [provider, host, apiKey, listable]);
+
+  useEffect(() => { if (autoLoad) load(); }, [autoLoad, load]);
+
+  const commit = () => {
+    const next = draft.trim();
+    if (next && next !== model) onChange(next);
+  };
+
+  const pick = (next: string) => {
+    if (next === CUSTOM_MODEL) {
+      setDraft(model);
+      setCustom(true);
+      return;
+    }
+    setCustom(false);
+    if (next) onChange(next);
+  };
+
+  const textField = (
     <input
+      ref={customRef}
       type="text"
-      aria-label={`Model for ${title}`}
-      value={value}
+      aria-label={custom ? `Custom model for ${title}` : `Model for ${title}`}
+      value={draft}
       spellCheck={false}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={() => { if (value.trim() && value !== model) onCommit(value.trim()); }}
+      placeholder="Type the model name"
+      onChange={(e) => { setDraft(e.target.value); if (live) onChange(e.target.value); }}
+      onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
     />
+  );
+  const note = loading ? 'Loading models…' : error;
+
+  return (
+    <div className="cloud-model">
+      {listable ? (
+        <>
+          <div className="model-input-row">
+            <select aria-label={`Model for ${title}`} value={custom ? CUSTOM_MODEL : model} onChange={(e) => pick(e.target.value)}>
+              {!model && !custom && <option value="">Select a model…</option>}
+              {model && !custom && !models.some((m) => m.id === model) && <option value={model}>{model}</option>}
+              {models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              <option value={CUSTOM_MODEL}>Other…</option>
+            </select>
+            <button
+              type="button"
+              className="ghost small refresh-models-btn"
+              disabled={loading || !(apiKey ?? '').trim()}
+              onClick={load}
+              aria-label={`Refresh models for ${title}`}
+              title="Refresh models"
+            >
+              {loading ? '…' : '↻'}
+            </button>
+          </div>
+          {custom && textField}
+        </>
+      ) : (
+        <>
+          {textField}
+          <span className="muted vlm-server-detail">Type the model name; this provider does not list models.</span>
+        </>
+      )}
+      {note && <span className="muted vlm-server-detail">{note}</span>}
+    </div>
   );
 }
 
@@ -117,7 +226,15 @@ function VlmServerCard({ service, status, onChangeModel, onToggleEnabled, onRemo
           </button>
         </div>
       ) : (
-        <CloudModelInput model={service.model} title={title} onCommit={onChangeModel} />
+        <CloudModelControl
+          provider={service.provider}
+          model={service.model}
+          title={title}
+          host={service.host}
+          apiKey={service.api_key}
+          autoLoad
+          onChange={onChangeModel}
+        />
       )}
       {status?.detail && <p className="muted vlm-server-detail">{status.detail}</p>}
       <div className="vlm-server-foot">
@@ -140,8 +257,6 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
   const [apiKey, setApiKey] = useState('');
   const [keyKind, setKeyKind] = useState('auto');
   const [models, setModels] = useState<OllamaModel[]>([]);
-  const [providerModels, setProviderModels] = useState<{ id: string; name: string }[]>([]);
-  const [providerError, setProviderError] = useState<string | null>(null);
   const [online, setOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -158,22 +273,6 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
       setLoading(false);
     }
   }, []);
-
-  const loadProvider = useCallback(async () => {
-    setLoading(true);
-    setProviderError(null);
-    try {
-      const res = await engine.providerModels(provider, host, apiKey);
-      setProviderModels(res.models);
-      if (res.error) setProviderError(res.error);
-      if (!res.models.length && !res.error) setProviderError('The provider returned no models.');
-    } catch (e) {
-      setProviderError(String(e));
-      setProviderModels([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [provider, host, apiKey]);
 
   useEffect(() => {
     if (open && provider === 'ollama') void load(host);
@@ -214,8 +313,6 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
             setProvider(next);
             setModel(VLM_PROVIDERS.find((item) => item.id === next)?.defaultModel || '');
             setHost(next === 'ollama' ? DEFAULT_OLLAMA_HOST : '');
-            setProviderModels([]);
-            setProviderError(null);
           }}
         >
           {VLM_PROVIDERS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -266,25 +363,15 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
           )}
           <label className="setting">
             <span className="label">Model</span>
-            <div className="model-input-row">
-              <input
-                type="text"
-                list={`models-${provider}`}
-                value={model}
-                spellCheck={false}
-                placeholder={VLM_PROVIDERS.find((p) => p.id === provider)?.defaultModel}
-                onChange={(e) => setModel(e.target.value)}
-              />
-              {(provider === 'opencode' || provider === 'openai') && (
-                <button type="button" className="ghost small refresh-models-btn" disabled={loading || !apiKey.trim()} onClick={() => void loadProvider()} aria-label="Load the provider's models">
-                  {loading ? '…' : '↻'}
-                </button>
-              )}
-              <datalist id={`models-${provider}`}>
-                {providerModels.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </datalist>
-            </div>
-            {providerError && <span className="muted vlm-server-detail">{providerError}</span>}
+            <CloudModelControl
+              provider={provider}
+              model={model}
+              title="the new server"
+              host={host}
+              apiKey={apiKey}
+              live
+              onChange={setModel}
+            />
           </label>
         </>
       )}
