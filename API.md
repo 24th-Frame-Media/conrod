@@ -40,6 +40,7 @@ with a nonzero exit code if a task fails.
 | group / regroup | jobId | operation; embeddings, groups and consensus |
 | rename_job | jobId, label? | Trim label; blank/null restores folder name |
 | summary | jobId | job, counts, images, numbers (with entry-list descriptions), plates, map_size, by_region |
+| shoot_stats | jobId | The shoot's statistics card: frames/copies, size, cameras, lenses, most-used camera/lens/aperture/shutter/ISO/focal length, per-value histograms, pans, bursts, blur verdicts, AF summary, keepers, rejects, stars, capture range. Backfills an old album's lens/ISO/file size first (`backfilled`: rows read) |
 | cover | jobId | {path, source} or null; existing crop or best thumbnail |
 | known | none | Known-vehicle records |
 | save_known | plate, make?, model?, colour?, team?, race_number? | Save a vehicle |

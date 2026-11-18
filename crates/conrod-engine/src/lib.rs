@@ -169,6 +169,10 @@ pub struct FrameResult {
     pub exposure: Option<exposure::Exposure>,
     /// EXIF exposure settings, so a regroup can find keep-together sets.
     pub exif: raw::Exposure,
+    /// The lens as the file names it, when it names one.
+    pub lens: Option<String>,
+    /// The file's size on disk in bytes; 0 when it could not be read.
+    pub file_size: i64,
     /// Tilt/convergence, for the presets where a crooked frame is worth
     /// flagging. `None` elsewhere.
     pub level: Option<level::Level>,
@@ -654,6 +658,22 @@ fn deliver_most_reason(cull_blurred: bool, focus: &sharpness::Sharpness, rating_
     }
 }
 
+/// The file's own details, as opposed to what is in it: the lens the file
+/// names (its EXIF tags first, the exposure walk as a fallback) and its size on
+/// disk. A frame whose file cannot be stat'ed keeps a size of 0 rather than
+/// failing a scan that has already read it.
+fn source_details(path: &Path, frame: &raw::Frame) -> (Option<String>, i64) {
+    let lens = ["LensModel", "LensID"]
+        .into_iter()
+        .find_map(|tag| frame.tags.get(tag).and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|lens| !lens.is_empty())
+        .map(str::to_string)
+        .or_else(|| frame.exposure.lens.clone());
+    let file_size = std::fs::metadata(path).map_or(0, |meta| meta.len() as i64);
+    (lens, file_size)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn cull_frame(
     path: &Path,
@@ -968,6 +988,7 @@ pub fn cull_frame(
             ]
         });
     let exposure = Some(exposure::measure(&image, subject_box));
+    let (lens, file_size) = source_details(path, &frame);
     Ok(FrameResult {
         path: path.to_path_buf(),
         camera: frame.camera("camera"),
@@ -980,6 +1001,8 @@ pub fn cull_frame(
         rating,
         exposure,
         exif: frame.exposure.clone(),
+        lens,
+        file_size,
         level,
         eye_open_min,
         smile_max,
@@ -1312,6 +1335,26 @@ mod tests {
         assert_eq!(deliver_most_reason(false, &focus, "poor"), "", "culling off");
         let held = sharpness::Sharpness { panning: true, ..focus };
         assert_eq!(deliver_most_reason(true, &held, "poor"), "", "a held pan stays");
+    }
+
+    #[test]
+    fn a_scanned_frame_carries_the_files_size_and_a_bare_jpeg_names_no_lens() {
+        let dir = std::env::temp_dir().join(format!("conrod-frame-details-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bare.jpg");
+        // A real file on disk, encoded the way a scan's thumbnail is: the size
+        // comes from its metadata, not from anything the JPEG carries.
+        let pixels: Vec<u8> = (0..8 * 8 * 3).map(|i| (i * 7) as u8).collect();
+        crate::desktop::save_jpeg(&Rgb::new(8, 8, pixels), &path).unwrap();
+        let frame = raw::read(&path).expect("a written JPEG reads back");
+        assert_eq!(frame.exposure.lens, None, "a synthetic JPEG names no lens");
+        assert_eq!(frame.exposure.iso, None);
+        let (lens, file_size) = source_details(&path, &frame);
+        assert_eq!(lens, None);
+        assert_eq!(file_size, std::fs::metadata(&path).unwrap().len() as i64);
+        assert!(file_size > 0, "the frame records the file it came from");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Deterministic value noise, for a synthetic background.

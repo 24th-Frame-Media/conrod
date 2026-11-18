@@ -237,6 +237,12 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("images", "f_number", "REAL"),
     ("images", "focal_length", "REAL"),
     ("images", "focus_distance", "REAL"),
+    // What the photograph was taken with: the lens as the file names it, the
+    // ISO, and the file's size on disk. Filled at scan time, and backfilled by
+    // `shoot_stats` for an album scanned before these columns existed.
+    ("images", "lens", "TEXT"),
+    ("images", "iso", "INTEGER"),
+    ("images", "file_size", "INTEGER"),
     // Measured exposure: a flag, and the only exposure cull (`dark_frame`).
     ("images", "exposure_verdict", "TEXT"),
     ("images", "highlight_clip", "REAL"),
