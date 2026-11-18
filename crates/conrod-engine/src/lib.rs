@@ -603,7 +603,11 @@ pub struct SubjectBlur {
 /// This can only lower a subject whose centre is blurred: the centre of a sharp
 /// subject is sharp too, so the subject is never penalised for the margin it
 /// happens to sit against. A centre too small to measure (NaN, or a region that
-/// clamps empty) keeps the whole-box value.
+/// clamps empty) keeps the whole-box value. A patch with no edges above the
+/// noise floor (`EdgeBlur::flat`, contrast under
+/// [`conrod_vision::edgeblur::MIN_CONTRAST`]) is unmeasured rather than sharp:
+/// otherwise its relative floor pins sigma at the minimum and a completely
+/// blurred subject is praised for it.
 #[doc(hidden)]
 pub fn subject_blur(grey: &Gray, bbox: [f64; 4], long_edge: usize) -> SubjectBlur {
     let (fw, fh) = (grey.width, grey.height);
@@ -611,9 +615,16 @@ pub fn subject_blur(grey: &Gray, bbox: [f64; 4], long_edge: usize) -> SubjectBlu
     let (x0, y0) = (px(bbox[0], fw), px(bbox[1], fh));
     let (x1, y1) = (px(bbox[2], fw).max(x0), px(bbox[3], fh).max(y0));
     let between = |a: usize, b: usize, t: f64| a + ((b - a) as f64 * t) as usize;
-    let whole = conrod_vision::edgeblur::measure(grey, Some([x0, y0, x1, y1]))
-        .sigma_worst_at_reference(long_edge);
-    let centre = conrod_vision::edgeblur::measure(
+    // A patch with no edges above the noise floor (a completely blurred or
+    // featureless subject) must read as *unmeasured*, not as perfectly sharp:
+    // its relative edge floor otherwise pins sigma to the minimum.
+    let edges = conrod_vision::edgeblur::measure(grey, Some([x0, y0, x1, y1]));
+    let whole = if edges.flat() {
+        f64::NAN
+    } else {
+        edges.sigma_worst_at_reference(long_edge)
+    };
+    let edges = conrod_vision::edgeblur::measure(
         grey,
         Some([
             between(x0, x1, 0.2),
@@ -621,8 +632,12 @@ pub fn subject_blur(grey: &Gray, bbox: [f64; 4], long_edge: usize) -> SubjectBlu
             between(x0, x1, 0.8),
             between(y0, y1, 0.8),
         ]),
-    )
-    .sigma_worst_at_reference(long_edge);
+    );
+    let centre = if edges.flat() {
+        f64::NAN
+    } else {
+        edges.sigma_worst_at_reference(long_edge)
+    };
     // `f64::max` ignores a NaN, so the centre keeps the whole-box value when it
     // could not be measured, and an unmeasured whole box leaves the centre.
     let worst = if centre.is_nan() {
