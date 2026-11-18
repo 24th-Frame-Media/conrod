@@ -429,7 +429,10 @@ mod tests {
         let g = frame(texture(W, H, 3), W, H, px(BOX), 7);
         let pan = background_pan(&g, BOX).expect("texture measured");
         assert!(pan.coherence < PAN_COHERENCE, "{pan:?}");
-        assert!(pan.consistency < 0.5, "a still frame looked parallel: {pan:?}");
+        assert!(
+            pan.consistency < 0.5,
+            "a still frame looked parallel: {pan:?}"
+        );
     }
 
     #[test]

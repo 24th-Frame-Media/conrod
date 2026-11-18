@@ -67,9 +67,7 @@ fn set_kind_name(kind: conrod_core::sets::SetKind) -> &'static str {
 /// Which keep-together set each image belongs to, from the EXIF the scan
 /// stored. An album scanned before those columns existed reads the headers
 /// once; that is the only slow path in a regroup, and only for old albums.
-fn keep_sets(
-    images: &[Value],
-) -> Vec<Option<(i64, conrod_core::sets::SetKind)>> {
+fn keep_sets(images: &[Value]) -> Vec<Option<(i64, conrod_core::sets::SetKind)>> {
     use conrod_core::sets::{find_sets, SetFrame};
     let mut out = vec![None; images.len()];
     if images.is_empty() {
@@ -125,7 +123,9 @@ fn keep_sets(
     let found = find_sets(&frames);
     for (n, set) in found.into_iter().enumerate() {
         out[order[n]] = set.map(|(first, kind)| {
-            let key = images[order[first as usize]]["id"].as_i64().unwrap_or_default();
+            let key = images[order[first as usize]]["id"]
+                .as_i64()
+                .unwrap_or_default();
             (key, kind)
         });
     }
@@ -426,9 +426,7 @@ impl Desktop {
                 self.control(Scan::cancel)
             }
             Command::DeleteJob(a) => self.delete_job(a.job_id),
-            Command::Identify(a) => {
-                crate::operations::identify(self, a.job_id, a.scope.as_deref())
-            }
+            Command::Identify(a) => crate::operations::identify(self, a.job_id, a.scope.as_deref()),
             Command::Identified(a) => self.identified(a.job_id),
             Command::ProviderModels(a) => Ok(
                 match conrod_io::vlm::list_models(&a.provider, &a.host, &a.api_key) {
@@ -498,7 +496,10 @@ impl Desktop {
                     "grouping_stacks",
                 ];
                 let groupings = a.patch.keys().any(|k| GROUPING.contains(&k.as_str()));
-                let already = a.patch.keys().any(|k| LIBRARY_REGROUPS.contains(&k.as_str()));
+                let already = a
+                    .patch
+                    .keys()
+                    .any(|k| LIBRARY_REGROUPS.contains(&k.as_str()));
                 let out = crate::library::update_job_settings(self, &a)?;
                 if groupings && !already && !self.scanning() {
                     let _ = self.regroup(a.job_id);
@@ -630,9 +631,7 @@ impl Desktop {
     pub fn worker_limits(&self) -> Value {
         let settings = lock(&self.settings);
         let caps = conrod_core::settings::worker_caps();
-        let pool = |current: i64, max: i64, default: i64| {
-            json!({"current": current, "min": 1, "max": max, "default": default, "live": false})
-        };
+        let pool = |current: i64, max: i64, default: i64| json!({"current": current, "min": 1, "max": max, "default": default, "live": false});
         json!({
             "cores": caps.cores,
             "cull": pool(settings.cull_workers(), caps.cull, (caps.cores - 2).max(2).min(caps.cull)),
@@ -877,7 +876,8 @@ impl Desktop {
                 settings.grouping_focus_anchor = anchor;
             }
             if let Some(word) = a.workflow_mode.as_deref() {
-                settings.workflow_mode = conrod_core::settings::workflow_mode_word(word).to_string();
+                settings.workflow_mode =
+                    conrod_core::settings::workflow_mode_word(word).to_string();
             }
             if let Some(word) = a.identify_scope.as_deref() {
                 settings.identify_scope =
@@ -1197,9 +1197,7 @@ impl Desktop {
         };
         let af_missing = scalar(
             &db,
-            &format!(
-                "SELECT COUNT(*) FROM images i WHERE {VISIBLE} AND i.af_x1 IS NULL"
-            ),
+            &format!("SELECT COUNT(*) FROM images i WHERE {VISIBLE} AND i.af_x1 IS NULL"),
             [job],
         )?;
         let af_soft = scalar(
@@ -1271,9 +1269,7 @@ impl Desktop {
         )?;
         let rejected = scalar(
             &db,
-            &format!(
-                "SELECT COUNT(*) FROM images i WHERE {VISIBLE} AND COALESCE(i.rejected,0)=1"
-            ),
+            &format!("SELECT COUNT(*) FROM images i WHERE {VISIBLE} AND COALESCE(i.rejected,0)=1"),
             [job],
         )?;
         // A hand star wins over any subject's; no star anywhere is zero, which
@@ -1457,7 +1453,8 @@ impl Desktop {
                     Ok(rows(&db, &sql, [])?
                         .pop()
                         .and_then(|mut row| {
-                            row.as_object_mut().and_then(|object| object.remove("value"))
+                            row.as_object_mut()
+                                .and_then(|object| object.remove("value"))
                         })
                         .unwrap_or(Value::Null))
                 };
@@ -1611,9 +1608,7 @@ impl Desktop {
         )?;
         let rejected = scalar(
             &db,
-            &format!(
-                "SELECT COUNT(*) FROM images i WHERE {VISIBLE} AND COALESCE(i.rejected,0)=1"
-            ),
+            &format!("SELECT COUNT(*) FROM images i WHERE {VISIBLE} AND COALESCE(i.rejected,0)=1"),
             [],
         )?;
         // Time in the field: the span from a job's first to its last frame,
@@ -2088,7 +2083,9 @@ impl Desktop {
                 .map_err(err)?;
             0
         };
-        task.detail(format!("{bursts} bursts · {moments} moments · {keepers} keepers"));
+        task.detail(format!(
+            "{bursts} bursts · {moments} moments · {keepers} keepers"
+        ));
         if let Some(progress) = self.progress() {
             progress.add_found(|found| {
                 found.bursts = bursts as u64;
@@ -2198,10 +2195,7 @@ mod tests {
         let counts = lib.d().regroup(lib.job).unwrap();
         assert_eq!(counts["bursts"], 1);
         assert_eq!(counts["moments"], 1, "the bracket is one stack");
-        let kind: String = lib.one(
-            "SELECT set_kind FROM images WHERE id=?",
-            [images[0]],
-        );
+        let kind: String = lib.one("SELECT set_kind FROM images WHERE id=?", [images[0]]);
         assert_eq!(kind, "bracket");
         let set_ids: i64 = lib.one(
             "SELECT count(DISTINCT set_id) FROM images WHERE job_id=? AND set_id IS NOT NULL",
@@ -2252,9 +2246,8 @@ mod tests {
             lib.detection(image, "vehicle", 0.6);
         }
         lib.d().regroup(lib.job).unwrap();
-        let time = |id: i64| -> Option<i64> {
-            lib.one("SELECT time_burst FROM images WHERE id=?", [id])
-        };
+        let time =
+            |id: i64| -> Option<i64> { lib.one("SELECT time_burst FROM images WHERE id=?", [id]) };
         assert!(time(a).is_some(), "a regrouped frame has a time burst");
         assert_eq!(time(a), time(b), "0.2 s apart is one time burst");
         assert_ne!(
@@ -2347,15 +2340,23 @@ mod tests {
         let job = out["jobId"].as_i64().unwrap();
 
         let stored: String = lock(&desktop.db)
-            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| r.get(0))
+            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                r.get(0)
+            })
             .unwrap();
         let map: Map<String, Value> = serde_json::from_str(&stored).unwrap();
         assert!(
-            map["scan_profile"].as_str().unwrap().starts_with("portrait"),
+            map["scan_profile"]
+                .as_str()
+                .unwrap()
+                .starts_with("portrait"),
             "{map:?}"
         );
         assert_eq!(map["blur_strictness"], "lenient");
-        assert_eq!(map["blur_explicit"], true, "a sheet choice must beat the preset's default");
+        assert_eq!(
+            map["blur_explicit"], true,
+            "a sheet choice must beat the preset's default"
+        );
         assert_eq!(map["burst_gap"], 2.5);
 
         let after = lock(&desktop.settings).clone();
@@ -2462,7 +2463,10 @@ mod tests {
             !wants_identify(" CULL ", true, true),
             "the word is normalised before it is judged"
         );
-        assert!(!wants_identify("identify", false, true), "the preset says so");
+        assert!(
+            !wants_identify("identify", false, true),
+            "the preset says so"
+        );
         assert!(
             !wants_identify("identify", true, false),
             "identification without plates or numbers reads nothing"
@@ -2539,7 +2543,9 @@ mod tests {
             "everything"
         );
         assert_eq!(
-            crate::operations::settings(&desktop, job).unwrap().workflow(),
+            crate::operations::settings(&desktop, job)
+                .unwrap()
+                .workflow(),
             "identify"
         );
 
@@ -2571,18 +2577,22 @@ mod tests {
         );
         assert_eq!(
             lock(&desktop.db)
-                .query_row("SELECT cull_reason FROM detections WHERE id=?", [soft], |r| {
-                    r.get::<_, Option<String>>(0)
-                })
+                .query_row(
+                    "SELECT cull_reason FROM detections WHERE id=?",
+                    [soft],
+                    |r| { r.get::<_, Option<String>>(0) }
+                )
                 .unwrap(),
             None,
             "no detection is left culled"
         );
         assert_eq!(
             lock(&desktop.db)
-                .query_row("SELECT rejected FROM detections WHERE id=?", [rejected], |r| {
-                    r.get::<_, i64>(0)
-                })
+                .query_row(
+                    "SELECT rejected FROM detections WHERE id=?",
+                    [rejected],
+                    |r| { r.get::<_, i64>(0) }
+                )
                 .unwrap(),
             1,
             "a hand reject is not an automatic cull"
@@ -2725,10 +2735,20 @@ mod tests {
             let detection = lib.detection(image, "vehicle", 0.8);
             let scale = 0.1_f64.sqrt();
             let (w, h) = (6000.0 * scale, 4000.0 * scale);
-            let (cx, cy) = if i < 4 { (3000.0, 2000.0) } else { (800.0, 3200.0) };
+            let (cx, cy) = if i < 4 {
+                (3000.0, 2000.0)
+            } else {
+                (800.0, 3200.0)
+            };
             lib.sql(
                 "UPDATE detections SET x1=?,y1=?,x2=?,y2=? WHERE id=?",
-                params![cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0, detection],
+                params![
+                    cx - w / 2.0,
+                    cy - h / 2.0,
+                    cx + w / 2.0,
+                    cy + h / 2.0,
+                    detection
+                ],
             );
         }
         lib.d().regroup(lib.job).unwrap();
@@ -2761,10 +2781,20 @@ mod tests {
             let detection = lib.detection(image, "vehicle", 0.8);
             let scale = 0.1_f64.sqrt();
             let (w, h) = (6000.0 * scale, 4000.0 * scale);
-            let (cx, cy) = if i < 4 { (3000.0, 2000.0) } else { (800.0, 3200.0) };
+            let (cx, cy) = if i < 4 {
+                (3000.0, 2000.0)
+            } else {
+                (800.0, 3200.0)
+            };
             lib.sql(
                 "UPDATE detections SET x1=?,y1=?,x2=?,y2=? WHERE id=?",
-                params![cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0, detection],
+                params![
+                    cx - w / 2.0,
+                    cy - h / 2.0,
+                    cx + w / 2.0,
+                    cy + h / 2.0,
+                    detection
+                ],
             );
         }
         let keys = |lib: &Lib| -> i64 {
@@ -2824,7 +2854,10 @@ mod tests {
         stacks(false);
         let counts = lib.d().regroup(lib.job).unwrap();
         let off = keys();
-        assert_eq!(counts["moments"], 3, "every frame is its own stack: {counts}");
+        assert_eq!(
+            counts["moments"], 3,
+            "every frame is its own stack: {counts}"
+        );
         assert_eq!(
             off,
             vec![1, 2, 3],
@@ -2892,9 +2925,8 @@ mod tests {
         );
 
         lib.d().regroup(lib.job).unwrap();
-        let key = |image: i64| -> i64 {
-            lib.one("SELECT burst_key FROM images WHERE id=?", [image])
-        };
+        let key =
+            |image: i64| -> i64 { lib.one("SELECT burst_key FROM images WHERE id=?", [image]) };
         assert_ne!(key(a), key(b), "two cars, two moments");
         assert_eq!(
             key(bare),
@@ -2942,9 +2974,8 @@ mod tests {
         )
         .unwrap();
         lib.d().regroup(lib.job).unwrap();
-        let key = |image: i64| -> i64 {
-            lib.one("SELECT burst_key FROM images WHERE id=?", [image])
-        };
+        let key =
+            |image: i64| -> i64 { lib.one("SELECT burst_key FROM images WHERE id=?", [image]) };
         assert_eq!(
             key(bare),
             key(a),
@@ -3058,7 +3089,10 @@ mod tests {
         let copy = lib.frame("copy.jpg", Some(1));
         lib.detection(frame, "vehicle", 0.9);
         lib.detection(copy, "vehicle", 0.8);
-        lib.sql("UPDATE images SET copy_of=? WHERE id=?", params![frame, copy]);
+        lib.sql(
+            "UPDATE images SET copy_of=? WHERE id=?",
+            params![frame, copy],
+        );
 
         let review = lib.run("review", json!({"jobId": lib.job})).unwrap();
         let frames = review["frames"].as_array().unwrap();
@@ -3382,7 +3416,10 @@ mod tests {
             frame(job1, "a5.cr3", None),
             frame(job1, "a6.cr3", Some(3)),
         );
-        let (b1, b2) = (frame(job2, "b1.cr3", Some(1)), frame(job2, "b2.cr3", Some(1)));
+        let (b1, b2) = (
+            frame(job2, "b1.cr3", Some(1)),
+            frame(job2, "b2.cr3", Some(1)),
+        );
 
         // Album 1 records the whole gear chain on every visible frame, so it is
         // the one album the gear and exposure lists may count.
@@ -3448,7 +3485,10 @@ mod tests {
             "UPDATE detections SET sharpness_verdict='soft', burst_pick=1 WHERE id=?",
             [d2],
         );
-        lib.sql("UPDATE detections SET sharpness_verdict='sharp' WHERE id=?", [d3]);
+        lib.sql(
+            "UPDATE detections SET sharpness_verdict='sharp' WHERE id=?",
+            [d3],
+        );
         lib.sql(
             "UPDATE detections SET sharpness_verdict='soft', burst_pick=1 WHERE id=?",
             [d4],

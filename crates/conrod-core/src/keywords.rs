@@ -133,10 +133,18 @@ mod suggested_model_tests {
     #[test]
     fn suggested_model_is_left_out_of_keywords() {
         let options = KeywordOptions::default();
-        let suggested = VehicleAnalysis::from_map(json!({"make": "Ford", "model": "Focus", "model_suggested": true}).as_object().unwrap());
+        let suggested = VehicleAnalysis::from_map(
+            json!({"make": "Ford", "model": "Focus", "model_suggested": true})
+                .as_object()
+                .unwrap(),
+        );
         let keywords = for_vehicle(&suggested, &options, None);
         assert_eq!(keywords, vec!["Ford".to_string()]);
-        let confirmed = VehicleAnalysis::from_map(json!({"make": "Ford", "model": "Focus"}).as_object().unwrap());
+        let confirmed = VehicleAnalysis::from_map(
+            json!({"make": "Ford", "model": "Focus"})
+                .as_object()
+                .unwrap(),
+        );
         let keywords = for_vehicle(&confirmed, &options, None);
         assert!(keywords.contains(&"Focus".to_string()));
         assert!(keywords.contains(&"Ford Focus".to_string()));

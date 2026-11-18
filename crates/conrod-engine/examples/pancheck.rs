@@ -16,7 +16,11 @@ use serde_json::{Map, Value};
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let db_path = args.first().ok_or("db path")?;
-    let job: i64 = args.get(1).ok_or("job")?.parse().map_err(|e| format!("{e}"))?;
+    let job: i64 = args
+        .get(1)
+        .ok_or("job")?
+        .parse()
+        .map_err(|e| format!("{e}"))?;
     let needle = args.get(2).ok_or("file name part")?;
     let db = Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|e| e.to_string())?;
@@ -45,7 +49,9 @@ fn main() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     let box_sql = "SELECT d.x1,d.y1,d.x2,d.y2 FROM detections d JOIN images i ON i.id=d.image_id WHERE i.path=?1 ORDER BY (d.x2-d.x1)*(d.y2-d.y1) DESC LIMIT 1";
     let bbox: Option<[f64; 4]> = db
-        .query_row(box_sql, [&path], |r| Ok([r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?]))
+        .query_row(box_sql, [&path], |r| {
+            Ok([r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?])
+        })
         .ok();
     let stored_det: Option<f64> = db
         .query_row(

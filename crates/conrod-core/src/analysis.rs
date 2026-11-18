@@ -324,8 +324,7 @@ mod merge_number_tests {
 
     #[test]
     fn a_confident_vlm_number_keeps_its_own_confidence() {
-        let (number, source, confidence) =
-            merge_number(&ocr(None, 0.0), Some("88"), 0.95, 0.8);
+        let (number, source, confidence) = merge_number(&ocr(None, 0.0), Some("88"), 0.95, 0.8);
         assert_eq!(number.as_deref(), Some("88"));
         assert_eq!(source.as_deref(), Some("vlm"));
         assert_eq!(confidence, 0.95, "a 0.95 read can clear review");
@@ -333,8 +332,7 @@ mod merge_number_tests {
 
     #[test]
     fn a_weak_vlm_number_is_kept_but_stays_uncertain() {
-        let (number, source, confidence) =
-            merge_number(&ocr(None, 0.0), Some("88"), 0.2, 0.8);
+        let (number, source, confidence) = merge_number(&ocr(None, 0.0), Some("88"), 0.2, 0.8);
         assert_eq!(number.as_deref(), Some("88"));
         assert_eq!(source.as_deref(), Some("vlm"));
         assert_eq!(confidence, 0.2, "a weak read stays visibly uncertain");
@@ -366,11 +364,14 @@ mod suggested_model_tests {
 
     #[test]
     fn suggested_model_is_left_out_of_title() {
-        let suggested = parse(json!({"make": "Ford", "model": "Focus", "colour": "red", "model_suggested": true}));
+        let suggested = parse(
+            json!({"make": "Ford", "model": "Focus", "colour": "red", "model_suggested": true}),
+        );
         assert_eq!(suggested.title(), "Red Ford");
         let confirmed = parse(json!({"make": "Ford", "model": "Focus", "colour": "red"}));
         assert_eq!(confirmed.title(), "Red Ford Focus");
-        let missing_flag = parse(json!({"make": "Ford", "model": "Focus", "model_suggested": false}));
+        let missing_flag =
+            parse(json!({"make": "Ford", "model": "Focus", "model_suggested": false}));
         assert_eq!(missing_flag.title(), "Ford Focus");
     }
 }

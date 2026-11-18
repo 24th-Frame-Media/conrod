@@ -18,5 +18,5 @@ pub mod plates;
 pub mod quality;
 pub mod sharpness;
 pub mod similarity;
-pub mod taste;
 pub mod streaks;
+pub mod taste;

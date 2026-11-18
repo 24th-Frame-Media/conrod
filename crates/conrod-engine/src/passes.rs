@@ -1,4 +1,4 @@
-﻿//! Passes over a whole album that work from what is already stored and read no
+//! Passes over a whole album that work from what is already stored and read no
 //! photograph: which frame of each pass is the keeper (`pick_of_pass`), and which
 //! vehicles are one car (`consolidate`, behind the Group action). Ports
 //! `pipeline.pick_of_pass`, `pipeline.embed_missing` and `grouping.consolidate`.
@@ -260,18 +260,28 @@ impl Candidate {
         Key {
             by_hand: self.by_hand,
             unculled: i64::from(!self.culled),
-            subject: i64::from(!self.on_frame && self.score >= conrod_vision::sharpness::KEEPER_MIN_RATING),
+            subject: i64::from(
+                !self.on_frame && self.score >= conrod_vision::sharpness::KEEPER_MIN_RATING,
+            ),
             rating_band: bucket(Some(self.score), band_width),
             bright: i64::from(self.bright),
             soft: self.soft,
-            buck: if r.buck { bucket(self.buck, BUCK_BUCKET) } else { 0 },
+            buck: if r.buck {
+                bucket(self.buck, BUCK_BUCKET)
+            } else {
+                0
+            },
             cut_sides: -i64::from(self.sides),
             framing: if r.framing {
                 bucket(self.framing, FRAMING_BUCKET)
             } else {
                 0
             },
-            eyes: if r.eyes { bucket(self.eyes, EYES_BUCKET) } else { 0 },
+            eyes: if r.eyes {
+                bucket(self.eyes, EYES_BUCKET)
+            } else {
+                0
+            },
             smile: if r.smile {
                 bucket(self.smile, SMILE_BUCKET)
             } else {
@@ -345,7 +355,9 @@ pub fn pick_of_pass(
     // so every caller (scan end, regroup, re-pick) gets the same order.
     let preset = {
         let stored: Option<String> = conn
-            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| r.get(0))
+            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                r.get(0)
+            })
             .ok();
         stored
             .and_then(|json| serde_json::from_str::<Map<String, Value>>(&json).ok())
@@ -830,8 +842,7 @@ pub fn focus_points(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         // frame of their car. In this order, because each step reads the one
         // before: a rating needs a measurement, and the regroup needs the rating
         // for its keeper.
-        let (measured, unmeasured) =
-            crate::rescore::measure_af_frames(d, job, &cfg, task)?;
+        let (measured, unmeasured) = crate::rescore::measure_af_frames(d, job, &cfg, task)?;
         if stop.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -855,7 +866,11 @@ pub(crate) fn exiftool_path() -> Result<std::path::PathBuf> {
         return Ok(path);
     }
     let data = conrod_core::settings::data_root();
-    for dir in [data.join("bin"), data.join("tools"), data.join("tools/exiftool")] {
+    for dir in [
+        data.join("bin"),
+        data.join("tools"),
+        data.join("tools/exiftool"),
+    ] {
         for name in ["exiftool.exe", "exiftool(-k).exe", "exiftool"] {
             let path = dir.join(name);
             if path.is_file() {
@@ -983,8 +998,15 @@ pub fn redetect(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         std::thread::scope(|scope| {
             for lane in 0..lanes {
                 let detector = &detectors[lane];
-                let (frames, low, profile, models, faces, expression, quality) =
-                    (&frames, &low, profile, &models, &faces, &expression, &quality);
+                let (frames, low, profile, models, faces, expression, quality) = (
+                    &frames,
+                    &low,
+                    profile,
+                    &models,
+                    &faces,
+                    &expression,
+                    &quality,
+                );
                 let (next, done, inserted, empty, unread, failed) =
                     (&next, &done, &inserted, &empty, &unread, &failed);
                 let first_error = &first_error;
@@ -997,8 +1019,15 @@ pub fn redetect(d: &Arc<Desktop>, job: i64) -> Result<Value> {
                     }
                     let path = std::path::Path::new(frame["path"].as_str().unwrap_or_default());
                     match crate::cull_frame(
-                        path, detector, low, profile, models, faces.as_ref(),
-                        expression.as_ref(), quality.as_ref(), |_| {},
+                        path,
+                        detector,
+                        low,
+                        profile,
+                        models,
+                        faces.as_ref(),
+                        expression.as_ref(),
+                        quality.as_ref(),
+                        |_| {},
                     ) {
                         Ok(result) if result.subjects.is_empty() => {
                             empty.fetch_add(1, Ordering::Relaxed);
@@ -2020,7 +2049,13 @@ mod tests {
             for b in &candidates {
                 for c in &candidates {
                     if a.beats(b, &r) && b.beats(c, &r) {
-                        assert!(a.beats(c, &r), "{} > {} > {} but not >", a.frame, b.frame, c.frame);
+                        assert!(
+                            a.beats(c, &r),
+                            "{} > {} > {} but not >",
+                            a.frame,
+                            b.frame,
+                            c.frame
+                        );
                     }
                 }
             }
@@ -2291,15 +2326,17 @@ mod tests {
                 params![rating, image],
             );
         }
-        let out = lib
-            .run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        let out = lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(
             (out["passes"].as_i64(), out["picks"].as_i64()),
             (Some(1), Some(1)),
             "a pass without subjects still gets exactly one keeper"
         );
-        assert_eq!(frame_picks(&lib), vec![f2], "the frame's own rating decides");
+        assert_eq!(
+            frame_picks(&lib),
+            vec![f2],
+            "the frame's own rating decides"
+        );
         assert!(picks(&lib).is_empty(), "there is no subject to mark");
         // The review grid carries that pick on the frame the UI already reads.
         let review = lib.run("review", json!({"jobId": lib.job})).unwrap();
@@ -2326,8 +2363,7 @@ mod tests {
             lib.detection(f3, "vehicle", 0.5),
         );
         lib.sql("UPDATE images SET rating=0.9 WHERE id=?", [f2]);
-        lib.run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(
             picks(&lib),
             vec![a],
@@ -2340,8 +2376,7 @@ mod tests {
             "UPDATE detections SET group_key=7 WHERE id IN(?,?)",
             params![a, c],
         );
-        lib.run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(picks(&lib), vec![a]);
         assert!(frame_picks(&lib).is_empty());
     }
@@ -2352,8 +2387,7 @@ mod tests {
         let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
         let car = lib.detection(f1, "vehicle", 0.94);
         lib.sql("UPDATE images SET rating=1.0 WHERE id=?", [f2]);
-        lib.run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(
             picks(&lib),
             vec![car],
@@ -2372,8 +2406,7 @@ mod tests {
         let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
         let _soft = lib.detection(f1, "vehicle", 0.60);
         lib.sql("UPDATE images SET rating=0.95 WHERE id=?", [f2]);
-        lib.run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(frame_picks(&lib), vec![f2]);
         assert_eq!(
             picks(&lib),
@@ -2389,8 +2422,7 @@ mod tests {
         let soft = lib.detection(f1, "vehicle", 0.60);
         let sharp = lib.detection(f2, "vehicle", 0.95);
         lib.sql("UPDATE detections SET stars=2 WHERE id=?", [soft]);
-        lib.run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(
             picks(&lib),
             vec![sharp],
@@ -2405,16 +2437,15 @@ mod tests {
         let car = lib.detection(f1, "vehicle", 0.94);
         lib.sql("UPDATE detections SET group_key=7 WHERE id=?", [car]);
         lib.sql("UPDATE images SET rating=1.0 WHERE id=?", [f2]);
-        let out = lib
-            .run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        let out = lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(picks(&lib), vec![car], "the car's frame is the one keeper");
         assert_eq!(frame_picks(&lib), Vec::<i64>::new());
         assert_eq!(out["passes"].as_i64(), Some(1));
     }
 
     #[test]
-    fn a_culled_frame_loses_to_an_unculled_one_and_a_pass_with_nothing_worth_keeping_picks_nothing() {
+    fn a_culled_frame_loses_to_an_unculled_one_and_a_pass_with_nothing_worth_keeping_picks_nothing()
+    {
         let lib = Lib::new("pick-cull");
         let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
         let (f3, f4) = (lib.frame("3.jpg", Some(2)), lib.frame("4.jpg", Some(2)));
@@ -2433,9 +2464,7 @@ mod tests {
         );
         let starred = lib.detection(f4, "vehicle", 0.66);
         lib.sql("UPDATE detections SET stars=1 WHERE id=?", [starred]);
-        let out = lib
-            .run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        let out = lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(
             picks(&lib),
             vec![clean],
@@ -2457,9 +2486,7 @@ mod tests {
         let a = lib.detection(f1, "vehicle", 0.66);
         let b = lib.detection(f2, "vehicle", 0.67);
         lib.detection(f3, "vehicle", 0.64);
-        let out = lib
-            .run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        let out = lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(out["passes"].as_i64(), Some(1));
         assert_eq!(out["picks"].as_i64(), Some(0), "no keeper is the answer");
         assert_eq!(out["unpicked"].as_i64(), Some(1));
@@ -2467,8 +2494,7 @@ mod tests {
 
         // A hand star of three is the photographer's own word and wins the pass.
         lib.sql("UPDATE detections SET stars=3 WHERE id=?", [a]);
-        lib.run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(picks(&lib), vec![a]);
         let _ = b;
     }
@@ -2527,8 +2553,7 @@ mod tests {
             "UPDATE jobs SET settings_json=? WHERE id=?",
             params![json!({"scan_profile": "portrait"}).to_string(), lib.job],
         );
-        lib.run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(
             picks(&lib),
             vec![open],
@@ -2537,12 +2562,8 @@ mod tests {
         // Both open: the sharper portrait wins although the other's box is
         // larger and the two sit inside the coarse vehicle band.
         lib.sql("UPDATE detections SET cull_reason='' WHERE id=?", [shut]);
-        lib.sql(
-            "UPDATE detections SET x2=5000, y2=4000 WHERE id=?",
-            [open],
-        );
-        lib.run("pick_keepers", json!({"jobId": lib.job}))
-            .unwrap();
+        lib.sql("UPDATE detections SET x2=5000, y2=4000 WHERE id=?", [open]);
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
         assert_eq!(
             picks(&lib),
             vec![blink],
@@ -2605,10 +2626,16 @@ mod tests {
         assert_eq!(rating, 0.66, "a missed shot is rated on the whole frame");
 
         // Alone in its burst it is a detail shot: its in-focus area stands.
-        lib.sql("UPDATE images SET burst_key=2,rating=1.0 WHERE id=?", [bare]);
+        lib.sql(
+            "UPDATE images SET burst_key=2,rating=1.0 WHERE id=?",
+            [bare],
+        );
         assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
         let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare]);
-        assert_eq!(rating, 1.0, "no burst mate with a subject: sharpness stands");
+        assert_eq!(
+            rating, 1.0,
+            "no burst mate with a subject: sharpness stands"
+        );
 
         // Moved back beside the car, it is a missed frame again.
         lib.sql("UPDATE images SET burst_key=1 WHERE id=?", [bare]);
@@ -2632,15 +2659,24 @@ mod tests {
             [b],
         );
         assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
-        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [a]), 0.9);
-        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [b]), 0.7);
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [a]),
+            0.9
+        );
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [b]),
+            0.7
+        );
 
         // A hidden copy is not a visible burst mate.
         let bare = lib.frame("bare.jpg", Some(2));
         let original = lib.frame("original.jpg", Some(2));
         let copy = lib.frame("copy.jpg", Some(2));
         lib.detection(copy, "vehicle", 0.9);
-        lib.sql("UPDATE images SET copy_of=? WHERE id=?", params![original, copy]);
+        lib.sql(
+            "UPDATE images SET copy_of=? WHERE id=?",
+            params![original, copy],
+        );
         lib.sql(
             "UPDATE images SET sharpness=1.0,rating=1.0,sharpness_whole=0.66 WHERE id=?",
             [bare],
@@ -2653,7 +2689,10 @@ mod tests {
         let bare2 = lib.frame("bare2.jpg", Some(3));
         let mate = lib.frame("mate.jpg", Some(3));
         lib.detection(mate, "vehicle", 0.9);
-        lib.sql("UPDATE images SET sharpness=1.0,rating=1.0 WHERE id=?", [bare2]);
+        lib.sql(
+            "UPDATE images SET sharpness=1.0,rating=1.0 WHERE id=?",
+            [bare2],
+        );
         assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
         let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare2]);
         assert_eq!(rating, 1.0, "no whole-frame score: sharpness stands");
@@ -2748,14 +2787,20 @@ mod tests {
         let lib = Lib::new("af-store");
         let (with, without) = (lib.frame("1.cr3", None), lib.frame("2.cr3", None));
 
-        store_af(&lib.db(), lib.job, &[(with, Some(af_box(0.2))), (without, None)])
-            .unwrap();
-        let stored: (f64, f64, f64, f64, i64) = lib.db().query_row(
-            "SELECT af_x1,af_y1,af_x2,af_y2,af_mode FROM images WHERE id=?",
-            [with],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        store_af(
+            &lib.db(),
+            lib.job,
+            &[(with, Some(af_box(0.2))), (without, None)],
         )
         .unwrap();
+        let stored: (f64, f64, f64, f64, i64) = lib
+            .db()
+            .query_row(
+                "SELECT af_x1,af_y1,af_x2,af_y2,af_mode FROM images WHERE id=?",
+                [with],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
         assert!((stored.0 - 0.2).abs() < 1e-9, "{stored:?}");
         assert!((stored.4 as f64 - 9.0).abs() < 1e-9, "{stored:?}");
         let none: Option<f64> = lib.one("SELECT af_x1 FROM images WHERE id=?", [without]);
@@ -2790,7 +2835,10 @@ mod tests {
 
         // Without an AF box the old time-burst rule speaks.
         assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
-        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]), 0.66);
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
+            0.66
+        );
 
         // The camera's box outranks the whole frame, even in a burst with a car.
         lib.sql(
@@ -2798,7 +2846,10 @@ mod tests {
             [bare],
         );
         assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
-        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]), 0.42);
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
+            0.42
+        );
 
         // The AF score alone is enough: no burst mate, no whole-frame score.
         lib.sql(
@@ -2806,12 +2857,21 @@ mod tests {
             [bare],
         );
         assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
-        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]), 0.42);
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
+            0.42
+        );
 
         // Without the AF score it is a detail shot again: sharpness stands.
-        lib.sql("UPDATE images SET af_sharpness=NULL,rating=1.0 WHERE id=?", [bare]);
+        lib.sql(
+            "UPDATE images SET af_sharpness=NULL,rating=1.0 WHERE id=?",
+            [bare],
+        );
         assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 0);
-        assert_eq!(lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]), 1.0);
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
+            1.0
+        );
     }
 
     #[test]
@@ -2823,7 +2883,10 @@ mod tests {
         let hidden = lib.frame("copy.cr3", Some(3));
         lib.detection(car, "vehicle", 0.9);
         lib.sql("UPDATE images SET rejected=1 WHERE id=?", [rejected]);
-        lib.sql("UPDATE images SET copy_of=? WHERE id=?", params![bare, hidden]);
+        lib.sql(
+            "UPDATE images SET copy_of=? WHERE id=?",
+            params![bare, hidden],
+        );
 
         let ids: Vec<i64> = frames_to_redetect(&lib.db(), lib.job)
             .unwrap()
@@ -2916,12 +2979,14 @@ mod tests {
                 .contains("1 frames with a focus point, 1 read, 0 without"),
             "{task}"
         );
-        let stored: (f64, f64, f64, f64) = lib.db().query_row(
-            "SELECT af_x1,af_y1,af_x2,af_y2 FROM images WHERE id=?",
-            [image],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )
-        .unwrap();
+        let stored: (f64, f64, f64, f64) = lib
+            .db()
+            .query_row(
+                "SELECT af_x1,af_y1,af_x2,af_y2 FROM images WHERE id=?",
+                [image],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
         assert!(
             stored.2 > stored.0 && stored.3 > stored.1,
             "an empty AF box: {stored:?}"

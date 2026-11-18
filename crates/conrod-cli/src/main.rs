@@ -151,8 +151,8 @@ fn main() {
         hub.clone(),
         None,
         move |result| {
-        let Ok(f) = result else { return };
-        let subjects: Vec<_> = f
+            let Ok(f) = result else { return };
+            let subjects: Vec<_> = f
             .subjects
             .iter()
             .map(|s| {
@@ -160,10 +160,11 @@ fn main() {
                        "panning": s.panning, "rating": s.rating, "stars": s.stars, "cull": s.cull_reason})
             })
             .collect();
-        let line = json!({"path": f.path, "camera": f.camera, "taken": f.taken, "size": [f.size.0, f.size.1],
+            let line = json!({"path": f.path, "camera": f.camera, "taken": f.taken, "size": [f.size.0, f.size.1],
                           "stars": f.stars, "whole": f.whole, "vehicles": subjects});
-        let _ = writeln!(stdout.lock().unwrap(), "{line}");
-    });
+            let _ = writeln!(stdout.lock().unwrap(), "{line}");
+        },
+    );
     // Report from the hub, as the app's status area does, until nothing runs.
     loop {
         std::thread::sleep(Duration::from_millis(500));

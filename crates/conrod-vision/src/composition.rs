@@ -364,7 +364,13 @@ impl PxBox {
 
 /// Keep a box inside the frame, swap reversed edges, drop non-finite corners.
 fn sanitise_box(b: [f64; 4]) -> [f64; 4] {
-    let clean = |v: f64| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+    let clean = |v: f64| {
+        if v.is_finite() {
+            v.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    };
     let (mut x0, mut x1) = (clean(b[0]), clean(b[2]));
     let (mut y0, mut y1) = (clean(b[1]), clean(b[3]));
     if x1 < x0 {
@@ -549,11 +555,8 @@ fn clutter(
             let ox = x * image.width / w;
             let oy = y * image.height / h;
             let at = (oy * image.width + ox) * 3;
-            let (hue, saturation) = hue_saturation(
-                image.data[at],
-                image.data[at + 1],
-                image.data[at + 2],
-            );
+            let (hue, saturation) =
+                hue_saturation(image.data[at], image.data[at + 1], image.data[at + 2]);
             if saturation > 0.0 {
                 hist[((hue * HUES as f64) as usize).min(HUES - 1)] += saturation;
             }
@@ -632,12 +635,7 @@ fn hue_entropy(hist: &[f64; HUES]) -> f64 {
 ///   side of the frame does not lead to the subject);
 /// * some of its support lies outside the padded subject box (an edge traced
 ///   along the subject's own outline is not a leading line).
-fn hough_lines(
-    gradient: &Sobel,
-    threshold: f64,
-    subject: Option<PxBox>,
-    point: (f64, f64),
-) -> u8 {
+fn hough_lines(gradient: &Sobel, threshold: f64, subject: Option<PxBox>, point: (f64, f64)) -> u8 {
     let (w, h) = (gradient.mag.w, gradient.mag.h);
     let diag = (w as f64).hypot(h as f64);
     let points = edge_points(gradient, threshold);
@@ -979,10 +977,9 @@ mod tests {
         let mut sat = vec![0.0; (w + 1) * (h + 1)];
         for y in 0..h {
             for x in 0..w {
-                sat[(y + 1) * (w + 1) + x + 1] = gradient.mag.at(x, y)
-                    + sat[y * (w + 1) + x + 1]
-                    + sat[(y + 1) * (w + 1) + x]
-                    - sat[y * (w + 1) + x];
+                sat[(y + 1) * (w + 1) + x + 1] =
+                    gradient.mag.at(x, y) + sat[y * (w + 1) + x + 1] + sat[(y + 1) * (w + 1) + x]
+                        - sat[y * (w + 1) + x];
             }
         }
         let bw = ((0.2 * w as f64).round() as usize).clamp(2, w);
@@ -990,7 +987,8 @@ mod tests {
         let mut best = (f64::NEG_INFINITY, 0usize, 0usize);
         for y in 0..=h - bh {
             for x in 0..=w - bw {
-                let sum = sat[(y + bh) * (w + 1) + x + bw] - sat[y * (w + 1) + x + bw]
+                let sum = sat[(y + bh) * (w + 1) + x + bw]
+                    - sat[y * (w + 1) + x + bw]
                     - sat[(y + bh) * (w + 1) + x]
                     + sat[y * (w + 1) + x];
                 if sum > best.0 {

@@ -437,7 +437,11 @@ fn review_sheet() {
         );
     }
     // score.js (copied beside the sheet, not generated) adds the 1-5 buttons.
-    std::fs::write(out.join("index.html"), html + "\n<script src=score.js></script>\n").unwrap();
+    std::fs::write(
+        out.join("index.html"),
+        html + "\n<script src=score.js></script>\n",
+    )
+    .unwrap();
     std::fs::write(out.join("ratings.csv"), csv).unwrap();
     println!("sheet: {} subjects at {}", rated.len(), out.display());
 }

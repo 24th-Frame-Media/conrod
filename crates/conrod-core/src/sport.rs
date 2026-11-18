@@ -254,8 +254,14 @@ pub enum RodeoSubject {
         animal: usize,
         bbox: [f64; 4],
     },
-    Animal { index: usize, bbox: [f64; 4] },
-    Person { index: usize, bbox: [f64; 4] },
+    Animal {
+        index: usize,
+        bbox: [f64; 4],
+    },
+    Person {
+        index: usize,
+        bbox: [f64; 4],
+    },
 }
 
 impl RodeoSubject {
@@ -451,7 +457,10 @@ mod tests {
     #[test]
     fn the_rider_is_the_subject_then_the_largest_animal_then_the_largest_person() {
         let people = [person(620.0, 250.0), person(1200.0, 100.0)];
-        let herd = [bull(500.0, 400.0), (HORSE, 0.9, [1400.0, 300.0, 2400.0, 1200.0])];
+        let herd = [
+            bull(500.0, 400.0),
+            (HORSE, 0.9, [1400.0, 300.0, 2400.0, 1200.0]),
+        ];
         let ridden = rodeo_subject(&people, &herd).expect("a subject");
         assert_eq!(ridden.kind(), "rider");
         assert_eq!(ridden.bbox(), [500.0, 250.0, 900.0, 900.0]);

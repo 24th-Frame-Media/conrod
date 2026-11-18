@@ -625,29 +625,65 @@ mod tests {
     fn an_axis_gives_lead_room_without_guessing_the_direction() {
         // The car left of centre with the line running along x: the room ahead
         // (to the right) is bigger, so lead room is positive.
-        let left = framing(FRAME, [200.0, 400.0, 400.0, 600.0], &[], Some(Motion::AxisDeg(0.0)), None);
+        let left = framing(
+            FRAME,
+            [200.0, 400.0, 400.0, 600.0],
+            &[],
+            Some(Motion::AxisDeg(0.0)),
+            None,
+        );
         assert!((left.lead_room.unwrap() - 0.4).abs() < 1e-5);
         // The mirror image: the same car right of centre, the room ahead (left)
         // is bigger again, and the same positive number comes out. A frame
         // cannot say which way the car travelled, so neither result may be
         // penalised as "room behind".
-        let right = framing(FRAME, [600.0, 400.0, 800.0, 600.0], &[], Some(Motion::AxisDeg(0.0)), None);
+        let right = framing(
+            FRAME,
+            [600.0, 400.0, 800.0, 600.0],
+            &[],
+            Some(Motion::AxisDeg(0.0)),
+            None,
+        );
         assert!((right.lead_room.unwrap() - 0.4).abs() < 1e-5);
         // 0 and 180 degrees are the same line.
-        let turned = framing(FRAME, [200.0, 400.0, 400.0, 600.0], &[], Some(Motion::AxisDeg(180.0)), None);
+        let turned = framing(
+            FRAME,
+            [200.0, 400.0, 400.0, 600.0],
+            &[],
+            Some(Motion::AxisDeg(180.0)),
+            None,
+        );
         assert_eq!(turned.lead_room, left.lead_room);
         // And a vertical pan measures the height, not the width.
-        let up = framing(FRAME, [400.0, 0.0, 600.0, 200.0], &[], Some(Motion::AxisDeg(90.0)), None);
+        let up = framing(
+            FRAME,
+            [400.0, 0.0, 600.0, 200.0],
+            &[],
+            Some(Motion::AxisDeg(90.0)),
+            None,
+        );
         assert!((up.lead_room.unwrap() - 0.8).abs() < 1e-5);
         // An arrow along the same line still mirrors.
-        let along = framing(FRAME, [200.0, 400.0, 400.0, 600.0], &[], Some(Motion::AngleDeg(180.0)), None);
+        let along = framing(
+            FRAME,
+            [200.0, 400.0, 400.0, 600.0],
+            &[],
+            Some(Motion::AngleDeg(180.0)),
+            None,
+        );
         assert!((along.lead_room.unwrap() + 0.4).abs() < 1e-5);
     }
 
     #[test]
     fn a_centred_subject_on_the_motion_line_drops_the_lead_term() {
         // A head-on car: centred along the pan line, no lead question to answer.
-        let centred = framing(FRAME, [400.0, 400.0, 600.0, 600.0], &[], Some(Motion::AxisDeg(0.0)), None);
+        let centred = framing(
+            FRAME,
+            [400.0, 400.0, 600.0, 600.0],
+            &[],
+            Some(Motion::AxisDeg(0.0)),
+            None,
+        );
         assert!(centred.lead_room.unwrap().abs() < LEAD_NEUTRAL);
         let sport = FramingPolicy::sport();
         let no_lead = FramingPolicy {
@@ -660,7 +696,13 @@ mod tests {
             "a centred subject is not penalised for being centred"
         );
         // But a subject clearly behind its room is scored, and scores lower.
-        let behind = framing(FRAME, [600.0, 400.0, 800.0, 600.0], &[], Some(Motion::AngleDeg(0.0)), None);
+        let behind = framing(
+            FRAME,
+            [600.0, 400.0, 800.0, 600.0],
+            &[],
+            Some(Motion::AngleDeg(0.0)),
+            None,
+        );
         assert!(framing_score(&behind, &sport) < framing_score(&centred, &sport));
     }
 

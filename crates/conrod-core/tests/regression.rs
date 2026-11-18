@@ -1220,7 +1220,7 @@ fn settings_match_snapshot() {
         m.remove("entry_list"); // Rust-only
         m.remove("workflow_mode"); // Rust-only: album-level scan/identify workflow
         m.remove("identify_scope"); // Rust-only: which subjects the identify lane takes
-        // Rust-only: per-album stacking choices; the Python app has no such fields.
+                                    // Rust-only: per-album stacking choices; the Python app has no such fields.
         m.remove("grouping_sensitivity");
         m.remove("grouping_pause");
         m.remove("grouping_keep_pans");
@@ -1249,7 +1249,10 @@ fn settings_match_snapshot() {
         }) && a.as_object().unwrap().len() == b.as_object().unwrap().len()
     };
     assert!(
-        same(&as_map(&Settings::default()), &prune(fixture["defaults"].clone())),
+        same(
+            &as_map(&Settings::default()),
+            &prune(fixture["defaults"].clone())
+        ),
         "defaults differ"
     );
     let dir = std::env::temp_dir().join(format!("conrod-settings-{}", std::process::id()));

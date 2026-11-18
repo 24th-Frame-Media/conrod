@@ -102,7 +102,10 @@ fn json_entry(item: &Value) -> Result<Entry, String> {
     }
     let car = obj.get("car").and_then(Value::as_object);
     let make = str_of(car.and_then(|c| c.get("make")).or_else(|| obj.get("make")));
-    let model = str_of(car.and_then(|c| c.get("model")).or_else(|| obj.get("model")));
+    let model = str_of(
+        car.and_then(|c| c.get("model"))
+            .or_else(|| obj.get("model")),
+    );
     let sponsors = match obj.get("sponsors") {
         Some(Value::Array(_)) => strings(obj.get("sponsors")),
         _ => str_of(obj.get("primary_sponsor"))
@@ -272,11 +275,13 @@ mod tests {
     fn driver_evidence_finds_one_entry_but_a_shared_team_does_not() {
         let list = parse(BATHURST_EXCERPT).unwrap();
         assert_eq!(
-            list.from_evidence(&["Wood".into()]).map(|e| e.number.as_str()),
+            list.from_evidence(&["Wood".into()])
+                .map(|e| e.number.as_str()),
             Some("2")
         );
         assert_eq!(
-            list.from_evidence(&["Mostert".into()]).map(|e| e.number.as_str()),
+            list.from_evidence(&["Mostert".into()])
+                .map(|e| e.number.as_str()),
             Some("1")
         );
         assert_eq!(
@@ -298,7 +303,8 @@ mod tests {
         let list = parse(json).unwrap();
         assert!(list.from_evidence(&["Jones".into()]).is_none());
         assert_eq!(
-            list.from_evidence(&["Alex Jones".into()]).map(|e| e.number.as_str()),
+            list.from_evidence(&["Alex Jones".into()])
+                .map(|e| e.number.as_str()),
             Some("1")
         );
     }
@@ -334,7 +340,10 @@ mod tests {
         assert_eq!(one.make.as_deref(), Some("Toyota"));
         assert_eq!(one.model.as_deref(), Some("GR Supra"));
         assert_eq!(one.sponsors, ["Mobil 1", "Optus"]);
-        assert_eq!(list.get("3").unwrap().model.as_deref(), Some("Mustang S650"));
+        assert_eq!(
+            list.get("3").unwrap().model.as_deref(),
+            Some("Mustang S650")
+        );
     }
 
     #[test]
@@ -370,10 +379,7 @@ mod tests {
     #[test]
     fn candidates_and_sponsors_are_distinct_and_sorted() {
         let list = parse(BATHURST_EXCERPT).unwrap();
-        assert_eq!(
-            list.candidates(),
-            ["Ford Mustang S650", "Toyota GR Supra"]
-        );
+        assert_eq!(list.candidates(), ["Ford Mustang S650", "Toyota GR Supra"]);
         assert_eq!(
             list.sponsors(),
             ["Blahst", "Liqui Moly", "Mobil 1", "Optus", "Truck Assist"]

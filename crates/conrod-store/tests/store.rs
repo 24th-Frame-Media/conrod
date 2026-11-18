@@ -38,7 +38,8 @@ fn an_existing_library_gets_the_hand_pick_index() {
     // the identify scopes existed. The next connect on a fresh path must add it.
     let first = temp_db_path("index_old");
     let conn = conrod_store::connect(Some(&first)).unwrap();
-    conn.execute_batch("DROP INDEX idx_images_hand_pick").unwrap();
+    conn.execute_batch("DROP INDEX idx_images_hand_pick")
+        .unwrap();
     drop(conn);
     let second = first.with_file_name("index_migrated.db");
     std::fs::copy(&first, &second).unwrap();
@@ -468,7 +469,11 @@ fn the_schema_keeps_every_column_of_the_legacy_schema() {
 fn the_shot_detail_columns_are_added_to_an_existing_database() {
     let conn = fresh_conn("shot_details");
     let columns = table_info(&conn, "images");
-    for (column, kind) in [("lens", "TEXT"), ("iso", "INTEGER"), ("file_size", "INTEGER")] {
+    for (column, kind) in [
+        ("lens", "TEXT"),
+        ("iso", "INTEGER"),
+        ("file_size", "INTEGER"),
+    ] {
         assert!(
             columns
                 .iter()

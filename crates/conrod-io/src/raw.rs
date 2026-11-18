@@ -599,10 +599,7 @@ mod exposure_tests {
     #[test]
     fn the_lens_model_is_read_from_the_exif_ifd() {
         let got = exposure_from_tiff(&lens_tiff("EF100-400mm F4.5-5.6L IS II USM"));
-        assert_eq!(
-            got.lens.as_deref(),
-            Some("EF100-400mm F4.5-5.6L IS II USM")
-        );
+        assert_eq!(got.lens.as_deref(), Some("EF100-400mm F4.5-5.6L IS II USM"));
         // A header with a lens still has no other reading recorded.
         assert_eq!(got.iso, None);
         assert_eq!(got.exposure_time, None);

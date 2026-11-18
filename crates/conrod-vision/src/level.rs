@@ -240,11 +240,9 @@ fn working_plane(gray: &Gray) -> Gray {
     }
     let coarse = box_average(gray, k);
     match crate::imageops::thumbnail_size(coarse.width, coarse.height, FEATURE_EDGE) {
-        Some((w, h)) => coarse.resize_bilinear_box(
-            w,
-            h,
-            [0.0, 0.0, coarse.width as f64, coarse.height as f64],
-        ),
+        Some((w, h)) => {
+            coarse.resize_bilinear_box(w, h, [0.0, 0.0, coarse.width as f64, coarse.height as f64])
+        }
         None => coarse,
     }
 }
@@ -485,14 +483,7 @@ mod tests {
     fn facade() -> Gray {
         let mut data = vec![190u8; W * H];
         line(&mut data, W, H, (150.0, 20.0), (90.0, H as f64 - 20.0), 40);
-        line(
-            &mut data,
-            W,
-            H,
-            (600.0, 20.0),
-            (660.0, H as f64 - 20.0),
-            40,
-        );
+        line(&mut data, W, H, (600.0, 20.0), (660.0, H as f64 - 20.0), 40);
         for x in 0..W {
             data[(H / 2) * W + x] = 70;
             data[(H / 2 + 1) * W + x] = 70;
@@ -562,7 +553,13 @@ mod tests {
 
     #[test]
     fn a_tiny_frame_is_unknown() {
-        assert_eq!(measure(&Gray::new(64, 48, vec![0; 64 * 48])).verdict, "unknown");
-        assert_eq!(measure(&Gray::new(400, 300, vec![128; 400 * 300])).verdict, "unknown");
+        assert_eq!(
+            measure(&Gray::new(64, 48, vec![0; 64 * 48])).verdict,
+            "unknown"
+        );
+        assert_eq!(
+            measure(&Gray::new(400, 300, vec![128; 400 * 300])).verdict,
+            "unknown"
+        );
     }
 }

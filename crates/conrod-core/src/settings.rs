@@ -81,8 +81,7 @@ pub fn migrate_burst_gap(map: &mut Map<String, Value>) -> bool {
     if map.get("burst_gap_scale").and_then(Value::as_i64) == Some(BURST_GAP_SCALE) {
         return false;
     }
-    let legacy = map.get("burst_gap").and_then(Value::as_f64)
-        == Some(LEGACY_IGNORED_BURST_GAP);
+    let legacy = map.get("burst_gap").and_then(Value::as_f64) == Some(LEGACY_IGNORED_BURST_GAP);
     if legacy {
         map.insert(
             "burst_gap".into(),
@@ -621,13 +620,18 @@ mod tests {
     fn an_album_workflow_is_both_unless_it_says_cull_or_identify() {
         assert_eq!(Settings::default().workflow(), "both");
         assert_eq!(
-            Settings::default().workflow_mode, "both",
+            Settings::default().workflow_mode,
+            "both",
             "the stored default is the full pipeline"
         );
         assert_eq!(workflow_mode_word(" IDENTIFY "), "identify");
         assert_eq!(workflow_mode_word("Cull"), "cull");
         assert_eq!(workflow_mode_word("both"), "both");
-        assert_eq!(workflow_mode_word("later"), "both", "an unknown word is both");
+        assert_eq!(
+            workflow_mode_word("later"),
+            "both",
+            "an unknown word is both"
+        );
         assert_eq!(workflow_mode_word(""), "both");
 
         // A patch stores the album's own choice, and the loader normalises it.
@@ -641,7 +645,10 @@ mod tests {
         let path = root.join("settings.json");
         std::fs::write(&path, r#"{"workflow_mode":" Identify "}"#).unwrap();
         let loaded = Settings::load(&path);
-        assert_eq!(loaded.workflow_mode, "identify", "the loader normalises it once");
+        assert_eq!(
+            loaded.workflow_mode, "identify",
+            "the loader normalises it once"
+        );
         std::fs::write(&path, r#"{"workflow_mode":"sometimes"}"#).unwrap();
         assert_eq!(Settings::load(&path).workflow(), "both");
         std::fs::remove_dir_all(&root).unwrap();
@@ -676,7 +683,10 @@ mod tests {
         let path = root.join("settings.json");
         std::fs::write(&path, r#"{"identify_scope":" Everything "}"#).unwrap();
         let loaded = Settings::load(&path);
-        assert_eq!(loaded.identify_scope, "everything", "the loader normalises it once");
+        assert_eq!(
+            loaded.identify_scope, "everything",
+            "the loader normalises it once"
+        );
         std::fs::write(&path, r#"{"identify_scope":"all of them"}"#).unwrap();
         assert_eq!(Settings::load(&path).identify_scope(), "keepers");
         std::fs::remove_dir_all(&root).unwrap();
@@ -717,19 +727,34 @@ mod tests {
     fn the_preset_default_blur_applies_until_the_album_chooses() {
         let mut s = Settings::default();
         s.scan_profile = "portrait".into();
-        assert_eq!(s.effective_blur(), "strict", "nothing chosen: the preset's default");
+        assert_eq!(
+            s.effective_blur(),
+            "strict",
+            "nothing chosen: the preset's default"
+        );
         s.blur_strictness = "lenient".into();
-        assert_eq!(s.effective_blur(), "lenient", "an album saved before the flag keeps its choice");
+        assert_eq!(
+            s.effective_blur(),
+            "lenient",
+            "an album saved before the flag keeps its choice"
+        );
         s.blur_strictness = "moderate".into();
         s.blur_explicit = true;
-        assert_eq!(s.effective_blur(), "moderate", "an explicit moderate beats a strict preset");
+        assert_eq!(
+            s.effective_blur(),
+            "moderate",
+            "an explicit moderate beats a strict preset"
+        );
     }
 
     #[test]
     fn the_old_ignored_burst_gap_becomes_the_one_default_exactly_once() {
         let mut old: Map<String, Value> = serde_json::from_str(r#"{"burst_gap": 4.0}"#).unwrap();
         assert!(migrate_burst_gap(&mut old));
-        assert_eq!(old["burst_gap"], 1.5, "existing albums keep grouping at 1.5 s");
+        assert_eq!(
+            old["burst_gap"], 1.5,
+            "existing albums keep grouping at 1.5 s"
+        );
         assert_eq!(old["burst_gap_scale"], BURST_GAP_SCALE);
         assert!(!migrate_burst_gap(&mut old), "the marker makes it one-time");
         // From now on 4.0 is a real choice and is left alone.
@@ -758,8 +783,11 @@ mod tests {
         assert_eq!(rewritten["burst_gap"], 1.5, "the migration is persisted");
         assert_eq!(rewritten["burst_gap_scale"], BURST_GAP_SCALE);
         // A later deliberate 4.0 survives a reload.
-        std::fs::write(&path, r#"{"burst_gap": 4.0, "burst_gap_scale": 1, "focus_scale": 3}"#)
-            .unwrap();
+        std::fs::write(
+            &path,
+            r#"{"burst_gap": 4.0, "burst_gap_scale": 1, "focus_scale": 3}"#,
+        )
+        .unwrap();
         assert_eq!(Settings::load(&path).burst_gap, 4.0);
         std::fs::remove_dir_all(&root).unwrap();
     }

@@ -602,7 +602,16 @@ pub fn openai_request(
     schema: &Value,
     num_predict: i64,
 ) -> ProviderRequest {
-    openai_request_at(OPENAI_URL, true, model, api_key, prompt, images, schema, num_predict)
+    openai_request_at(
+        OPENAI_URL,
+        true,
+        model,
+        api_key,
+        prompt,
+        images,
+        schema,
+        num_predict,
+    )
 }
 
 /// An OpenAI-shaped chat request against any compatible gateway. `strict` asks
@@ -682,7 +691,11 @@ pub fn openai_request_at(
 /// provider's own list endpoint; anything that is not an OpenAI-shaped
 /// `{"data":[{"id":…}]}` (or `{"models":[…]}`) is reported as an error rather
 /// than guessed at.
-pub fn list_models(provider: &str, host: &str, api_key: &str) -> Result<Vec<(String, String)>, String> {
+pub fn list_models(
+    provider: &str,
+    host: &str,
+    api_key: &str,
+) -> Result<Vec<(String, String)>, String> {
     let provider = provider.to_lowercase();
     let (url, auth) = match provider.as_str() {
         "opencode" | "opencode-go" => {
@@ -701,7 +714,11 @@ pub fn list_models(provider: &str, host: &str, api_key: &str) -> Result<Vec<(Str
             }
         }
         "openai" => ("https://api.openai.com/v1/models".to_string(), true),
-        other => return Err(format!("'{other}' does not list models; type the model name")),
+        other => {
+            return Err(format!(
+                "'{other}' does not list models; type the model name"
+            ))
+        }
     };
     let agent = ureq::Agent::new_with_defaults();
     let mut request = agent.get(&url);
@@ -727,7 +744,10 @@ pub fn list_models(provider: &str, host: &str, api_key: &str) -> Result<Vec<(Str
     let mut models: Vec<(String, String)> = list
         .iter()
         .filter_map(|item| {
-            let id = item.get("id").or_else(|| item.get("name")).and_then(Value::as_str)?;
+            let id = item
+                .get("id")
+                .or_else(|| item.get("name"))
+                .and_then(Value::as_str)?;
             let name = item.get("name").and_then(Value::as_str).unwrap_or(id);
             Some((id.to_string(), name.to_string()))
         })
@@ -998,8 +1018,7 @@ pub fn parse_ollama_response(body: &Value) -> Result<Value, VlmError> {
 fn first_json(text: &str) -> Option<Value> {
     let mut from = text.find('{')?;
     loop {
-        let mut values =
-            serde_json::Deserializer::from_str(&text[from..]).into_iter::<Value>();
+        let mut values = serde_json::Deserializer::from_str(&text[from..]).into_iter::<Value>();
         if let Some(Ok(value)) = values.next() {
             if value.is_object() {
                 return Some(value);
@@ -1125,7 +1144,14 @@ impl VlmClient {
     ) -> Result<Value, VlmError> {
         let enabled: Vec<_> = settings.vlm_services.iter().filter(|s| s.enabled).collect();
         if enabled.is_empty() {
-            return self.call_one(settings, prompt, images, schema, num_predict, repeat_penalty);
+            return self.call_one(
+                settings,
+                prompt,
+                images,
+                schema,
+                num_predict,
+                repeat_penalty,
+            );
         }
         let ids: Vec<String> = enabled.iter().map(|s| s.id.clone()).collect();
         let pool = self.services.pool_for(ids.clone());
@@ -1699,15 +1725,13 @@ pub fn describe_with_reply(
     };
     let (parsed, attempts) = match ask(&prompt, None) {
         Ok(reply) => (reply, 1),
-        Err(VlmError::BadReply(_)) => {
-            match ask(&prompt, Some(1.1)) {
-                Ok(reply) => (reply, 2),
-                Err(err) => {
-                    note_unless_fatal(client, settings, &err)?;
-                    return Err(err);
-                }
+        Err(VlmError::BadReply(_)) => match ask(&prompt, Some(1.1)) {
+            Ok(reply) => (reply, 2),
+            Err(err) => {
+                note_unless_fatal(client, settings, &err)?;
+                return Err(err);
             }
-        }
+        },
         Err(err) => {
             note_unless_fatal(client, settings, &err)?;
             return Err(err);
@@ -1936,10 +1960,16 @@ mod tests {
         });
         assert_eq!(
             map_vehicle(&reply, &settings, true, false).action,
-            vec!["airborne".to_string(), "tyre_smoke".to_string(), "flames".to_string()]
+            vec![
+                "airborne".to_string(),
+                "tyre_smoke".to_string(),
+                "flames".to_string()
+            ]
         );
         settings.read_action = false;
-        assert!(map_vehicle(&reply, &settings, true, false).action.is_empty());
+        assert!(map_vehicle(&reply, &settings, true, false)
+            .action
+            .is_empty());
         // A reply from before this field existed is not an error.
         assert!(map_vehicle(&json!({"number": "7"}), &settings, true, false)
             .action
@@ -2047,7 +2077,10 @@ mod tests {
         assert_eq!(request.json["response_format"]["type"], "json_object");
         // Parsing is the OpenAI envelope, like the pay-as-you-go provider.
         let reply = json!({"choices": [{"message": {"content": "{\"number\":\"96\"}"}}]});
-        assert_eq!(parse_response("opencode-go", &reply).unwrap()["number"], "96");
+        assert_eq!(
+            parse_response("opencode-go", &reply).unwrap()["number"],
+            "96"
+        );
     }
 
     #[test]

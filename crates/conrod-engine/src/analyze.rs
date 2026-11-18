@@ -582,7 +582,11 @@ fn same_sponsor(read: &str, known: &str) -> bool {
     if r.is_empty() || k.is_empty() {
         return false;
     }
-    let (short, long) = if r.len() <= k.len() { (&r, &k) } else { (&k, &r) };
+    let (short, long) = if r.len() <= k.len() {
+        (&r, &k)
+    } else {
+        (&k, &r)
+    };
     (short.len() >= 4 && long.contains(short.as_str())) || similar(&r, &k)
 }
 
@@ -775,7 +779,10 @@ mod tests {
             ..VehicleDescription::default()
         };
         let none = OcrReading::default();
-        assert_eq!(trusted_vlm_number(&road_car, &[], &none, None, &[], None), None);
+        assert_eq!(
+            trusted_vlm_number(&road_car, &[], &none, None, &[], None),
+            None
+        );
         // ...unless OCR read the same number, or a roundel was found.
         let same = OcrReading {
             number: Some("220".into()),
@@ -814,7 +821,10 @@ mod tests {
             trusted_vlm_number(&racer, &[], &none, None, &tok, Some(&list)).as_deref(),
             Some("142")
         );
-        assert_eq!(trusted_vlm_number(&racer, &[], &none, None, &tok, None), None);
+        assert_eq!(
+            trusted_vlm_number(&racer, &[], &none, None, &tok, None),
+            None
+        );
     }
 
     #[test]
@@ -837,11 +847,17 @@ mod tests {
             is_competition: true,
             ..VehicleDescription::default()
         };
-        assert_eq!(trusted_vlm_number(&year_car, &[], &none, None, &[], None), None);
+        assert_eq!(
+            trusted_vlm_number(&year_car, &[], &none, None, &[], None),
+            None
+        );
 
         // Rejected uncorroborated 3-digit number when OCR tokens are present
         let tok = vec![token("FORD", 0.9)];
-        assert_eq!(trusted_vlm_number(&racer, &[], &none, None, &tok, None), None);
+        assert_eq!(
+            trusted_vlm_number(&racer, &[], &none, None, &tok, None),
+            None
+        );
     }
 
     #[test]

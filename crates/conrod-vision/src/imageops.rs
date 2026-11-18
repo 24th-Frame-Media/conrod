@@ -367,7 +367,11 @@ mod tests {
                     };
                     let s = (sy * w + sx) * 3;
                     let d = (y * nw + x) * 3;
-                    assert_eq!(&got.data[d..d + 3], &src.data[s..s + 3], "ori={ori} ({x},{y})");
+                    assert_eq!(
+                        &got.data[d..d + 3],
+                        &src.data[s..s + 3],
+                        "ori={ori} ({x},{y})"
+                    );
                 }
             }
         }

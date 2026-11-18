@@ -259,7 +259,14 @@ fn downscale_factor(w: usize, h: usize, max_pixels: usize) -> usize {
 
 /// `k` x `k` area average of the window straight from the grey bytes (no
 /// full-resolution f32 copy); the remainder columns and rows are dropped.
-fn average_window(g: &Gray, x0: usize, y0: usize, x1: usize, y1: usize, k: usize) -> (Vec<f32>, usize, usize) {
+fn average_window(
+    g: &Gray,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+    k: usize,
+) -> (Vec<f32>, usize, usize) {
     let (dw, dh) = ((x1 - x0) / k, (y1 - y0) / k);
     let inv = 1.0 / (k * k) as f32;
     let mut out = vec![0f32; dw * dh];
@@ -461,7 +468,9 @@ fn estimate(
             let before = (gx[i] * gx[i] + gy[i] * gy[i]).sqrt();
             let r = (before / m).clamp(R_MIN, R_MAX);
             let sp = SIGMA0 / (r * r - 1.0).sqrt();
-            let st = (sp * sp - PRE_SMOOTH * PRE_SMOOTH).max(MIN_SIGMA * MIN_SIGMA).sqrt();
+            let st = (sp * sp - PRE_SMOOTH * PRE_SMOOTH)
+                .max(MIN_SIGMA * MIN_SIGMA)
+                .sqrt();
             // Below the analysis resolution's own floor the answer is "sharper
             // than this plane can say", never zero.
             let st = (st * st - extra_var).max(MIN_SIGMA * MIN_SIGMA).sqrt();
@@ -578,7 +587,13 @@ mod tests {
         let src: Vec<f32> = img.data.iter().map(|&v| f32::from(v)).collect();
         let k = gauss(sigma);
         let out = blur(&src, w, h, &k);
-        Gray::new(w, h, out.iter().map(|v| v.round().clamp(0.0, 255.0) as u8).collect())
+        Gray::new(
+            w,
+            h,
+            out.iter()
+                .map(|v| v.round().clamp(0.0, 255.0) as u8)
+                .collect(),
+        )
     }
 
     /// Horizontal box of `len` px: camera shake along x.
@@ -604,7 +619,10 @@ mod tests {
         let sharp = blocks(384, 384, 140.0, 4.0, 7);
         for &s in &[1.0f32, 2.0, 3.0, 5.0] {
             let m = measure(&blurred(&sharp, s), None);
-            println!("gauss {s}: sigma {:.3}, dirs {:?}, edges {}", m.sigma, m.dirs, m.edges);
+            println!(
+                "gauss {s}: sigma {:.3}, dirs {:?}, edges {}",
+                m.sigma, m.dirs, m.edges
+            );
             assert!(m.edges >= 80, "sigma {s}: only {} edges", m.edges);
             assert!(
                 (m.sigma - f64::from(s)).abs() <= 0.25 * f64::from(s),
@@ -729,7 +747,13 @@ mod tests {
             full.sigma, full.sigma_worst, full.edges, full.dirs, half.sigma, half.sigma_worst, half.edges, half.dirs
         );
         let d = (full.sigma - half.sigma).abs() / full.sigma;
-        assert!(d <= 0.20, "sigma {:.3} vs {:.3}: {:.1}% apart", full.sigma, half.sigma, d * 100.0);
+        assert!(
+            d <= 0.20,
+            "sigma {:.3} vs {:.3}: {:.1}% apart",
+            full.sigma,
+            half.sigma,
+            d * 100.0
+        );
         let w = (full.sigma_worst - half.sigma_worst).abs() / full.sigma_worst;
         assert!(
             w <= 0.20,

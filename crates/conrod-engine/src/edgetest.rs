@@ -256,9 +256,8 @@ fn fig(v: f64) -> String {
 #[test]
 #[ignore]
 fn edge_blur_experiment() {
-    let labels_path = std::env::var("CONROD_EVAL_LABELS").unwrap_or_else(|_| {
-        String::from(r"E:\code\photo\conrod\target\groundtruth\labels.json")
-    });
+    let labels_path = std::env::var("CONROD_EVAL_LABELS")
+        .unwrap_or_else(|_| String::from(r"E:\code\photo\conrod\target\groundtruth\labels.json"));
     let max = env_usize("CONROD_EVAL_MAX", 120);
     let labels: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&labels_path).expect("labels.json"))
@@ -311,9 +310,8 @@ fn edge_blur_experiment() {
     type Snap = (PathBuf, Vec<(String, u64, u128)>);
     let before: Vec<Snap> = watched.iter().map(|d| (d.clone(), snapshot(d))).collect();
 
-    let detector = Mutex::new(
-        Detector::load(&detector_model(), Device::Auto).expect("load the detector"),
-    );
+    let detector =
+        Mutex::new(Detector::load(&detector_model(), Device::Auto).expect("load the detector"));
     println!("device {}", lock(&detector).device);
     let dopts = DetectOptions {
         classes: (0..80).collect(),
@@ -378,8 +376,7 @@ fn edge_blur_experiment() {
                     b[2].clamp(0.0, iw as f64),
                     b[3].clamp(0.0, ih as f64),
                 ];
-                let frac =
-                    ((b[2] - b[0]).max(0.0) * (b[3] - b[1]).max(0.0)) / area;
+                let frac = ((b[2] - b[0]).max(0.0) * (b[3] - b[1]).max(0.0)) / area;
                 (0.005..=0.8).contains(&frac).then_some((*conf, b, frac))
             })
             .max_by(|a, b| a.0.total_cmp(&b.0));
@@ -541,13 +538,10 @@ fn edge_blur_experiment() {
         "orig", "gauss1", "gauss2", "gauss4", "shake8", "shake16", "shake32", "pan32",
     ];
     let of = |names: &[&str]| -> Vec<&Row> {
-        rows.iter()
-            .filter(|r| names.contains(&r.variant))
-            .collect()
+        rows.iter().filter(|r| names.contains(&r.variant)).collect()
     };
-    let metric = |v: &[&Row], f: &dyn Fn(&Row) -> f64| -> Vec<f64> {
-        v.iter().map(|r| f(r)).collect()
-    };
+    let metric =
+        |v: &[&Row], f: &dyn Fn(&Row) -> f64| -> Vec<f64> { v.iter().map(|r| f(r)).collect() };
 
     // 1. Per variant: median [p10, p90].
     println!("\n1. per variant: median [p10, p90]");
@@ -585,12 +579,17 @@ fn edge_blur_experiment() {
     let mild_pos: Vec<&Row> = of(&["orig"]);
     let mild_neg: Vec<&Row> = of(&["gauss1", "shake8"]);
     fn within<'a>(v: &[&'a Row], want: bool) -> Vec<&'a Row> {
-        v.iter().copied().filter(|r| r.subject_box == want).collect()
+        v.iter()
+            .copied()
+            .filter(|r| r.subject_box == want)
+            .collect()
     }
     let scores = |v: &[&Row]| metric(v, &|r| r.score);
     let neg_sigma = |v: &[&Row]| metric(v, &|r| -r.inside.sigma);
     let neg_worst = |v: &[&Row]| metric(v, &|r| -r.inside.sigma_worst);
-    println!("\n2. ROC AUC, positives {{orig, pan32}} vs negatives {{gauss2, gauss4, shake16, shake32}}");
+    println!(
+        "\n2. ROC AUC, positives {{orig, pan32}} vs negatives {{gauss2, gauss4, shake16, shake32}}"
+    );
     println!(
         "{:<26} {:>19} {:>19} {:>19}",
         "metric", "all", "box=1", "box=0"
@@ -607,14 +606,12 @@ fn edge_blur_experiment() {
                 Some(b) => (within(&pos2, b), within(&neg2, b)),
             };
             let a = auc(&f(&p), &f(&n));
-            cells.push(format!(
-                "{:.3} ({}/{})",
-                a,
-                p.len(),
-                n.len()
-            ));
+            cells.push(format!("{:.3} ({}/{})", a, p.len(), n.len()));
         }
-        println!("{label:<26} {:>19} {:>19} {:>19}", cells[0], cells[1], cells[2]);
+        println!(
+            "{label:<26} {:>19} {:>19} {:>19}",
+            cells[0], cells[1], cells[2]
+        );
     }
     println!(
         "mild, {{orig}} vs {{gauss1, shake8}}: score {:.3}, -sigma {:.3}, -sigma_worst {:.3}",

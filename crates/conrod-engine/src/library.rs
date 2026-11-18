@@ -87,9 +87,7 @@ pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Val
     } else {
         None
     };
-    Ok(
-        json!({ "ok": true, "jobId": a.job_id, "settings": map, "regroup": regroup }),
-    )
+    Ok(json!({ "ok": true, "jobId": a.job_id, "settings": map, "regroup": regroup }))
 }
 
 const VEHICLE: &str = "COALESCE(d.region_type,'vehicle')='vehicle'";
@@ -232,7 +230,8 @@ pub fn filling(d: &std::sync::Arc<Desktop>, job: i64) -> Result<Value> {
                     if stop.load(std::sync::atomic::Ordering::Relaxed) {
                         break;
                     }
-                    let Some(row) = todo.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                    let Some(row) =
+                        todo.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
                     else {
                         break;
                     };
@@ -262,10 +261,8 @@ pub fn filling(d: &std::sync::Arc<Desktop>, job: i64) -> Result<Value> {
                         Ok(())
                     })();
                     if let Err(e) = result {
-                        let _ = lock(&d.db).execute(
-                            "UPDATE images SET error=? WHERE id=?",
-                            params![e, id],
-                        );
+                        let _ = lock(&d.db)
+                            .execute("UPDATE images SET error=? WHERE id=?", params![e, id]);
                     }
                     let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     task.progress(n as u64, todo.len() as u64);
@@ -475,7 +472,10 @@ mod tests {
                 json!({"jobId": lib.job, "patch": {"burst_gap": 0.5}}),
             )
             .unwrap();
-        assert_eq!(out["regroup"]["bursts"], 3, "one second apart, half a second gap");
+        assert_eq!(
+            out["regroup"]["bursts"], 3,
+            "one second apart, half a second gap"
+        );
         assert_eq!(out["regroup"]["moments"], 3);
         let tight: i64 = lib.one(
             "SELECT count(DISTINCT burst_key) FROM images WHERE job_id=?",
@@ -489,7 +489,10 @@ mod tests {
                 json!({"jobId": lib.job, "patch": {"burst_gap": 5.0}}),
             )
             .unwrap();
-        assert_eq!(out["regroup"]["bursts"], 1, "five seconds swallows the lull");
+        assert_eq!(
+            out["regroup"]["bursts"], 1,
+            "five seconds swallows the lull"
+        );
 
         let out = lib
             .run(

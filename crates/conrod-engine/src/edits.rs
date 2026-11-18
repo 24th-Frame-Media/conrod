@@ -70,7 +70,9 @@ mod manual_model_tests {
 
     #[test]
     fn manual_model_clears_suggestion() {
-        let mut attrs = attributes_of(Some(r#"{"model":"Focus","model_suggested":true,"model_evidence":"design"}"#));
+        let mut attrs = attributes_of(Some(
+            r#"{"model":"Focus","model_suggested":true,"model_evidence":"design"}"#,
+        ));
         manual_model(&mut attrs, Some("Fiesta".into()));
         assert_eq!(attrs["model"], json!("Fiesta"));
         assert_eq!(attrs["model_suggested"], json!(false));
