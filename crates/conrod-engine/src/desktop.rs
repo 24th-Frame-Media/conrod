@@ -31,6 +31,15 @@ fn burst_gap(setting: f64) -> f64 {
     conrod_core::settings::burst_gap_or_default(setting)
 }
 
+/// Whether a one-shot scan should run the identification lane at its end:
+/// every workflow but "cull", and only when the shoot's preset identifies
+/// subjects and reads numbers or plates. "cull" is today's scan without it.
+fn wants_identify(mode: &str, profile_identifies: bool, reads_text: bool) -> bool {
+    conrod_core::settings::workflow_mode_word(mode) != conrod_core::settings::WORKFLOW_CULL
+        && profile_identifies
+        && reads_text
+}
+
 /// Burst keys stay small and positive; a keep-set's key is offset past them so
 /// a bracket never collides with a burst number.
 const SET_KEY_BASE: i64 = 1_000_000;
@@ -333,6 +342,7 @@ impl Desktop {
             grouping_pause: None,
             grouping_keep_pans: None,
             grouping_focus_anchor: None,
+            workflow_mode: None,
         })
         .map(|_| ())
     }
@@ -830,6 +840,9 @@ impl Desktop {
             if let Some(anchor) = a.grouping_focus_anchor {
                 settings.grouping_focus_anchor = anchor;
             }
+            if let Some(word) = a.workflow_mode.as_deref() {
+                settings.workflow_mode = conrod_core::settings::workflow_mode_word(word).to_string();
+            }
             settings.extra.insert(
                 "native_scan_stage".into(),
                 json!(match a.stage {
@@ -932,6 +945,16 @@ impl Desktop {
             };
             let mut final_status = status;
             if !stopped {
+                // An identify-only album was not scanned to cull: the automatic
+                // cull the scan just measured is cleared before regrouping picks
+                // keepers, and before the identification lane, so a rescan
+                // cannot put it back. A hand reject, the stars and the measured
+                // scores are left exactly as they are.
+                if one_shot && final_status == "done" {
+                    if let Err(e) = desktop.clear_automatic_culls_if_identify(job) {
+                        desktop.hub.start("Clearing automatic culls", 0).fail(e);
+                    }
+                }
                 if let Some(p) = &desktop.progress() {
                     p.phase("group");
                 }
@@ -948,8 +971,11 @@ impl Desktop {
                 let wants_identify = one_shot
                     && final_status == "done"
                     && crate::operations::settings(&desktop, job).is_ok_and(|cfg| {
-                        ScanProfile::parse(&cfg.scan_profile).identifies_vehicles()
-                            && (cfg.read_plates || cfg.read_numbers)
+                        wants_identify(
+                            cfg.workflow(),
+                            ScanProfile::parse(&cfg.scan_profile).identifies_vehicles(),
+                            cfg.read_plates || cfg.read_numbers,
+                        )
                     });
                 if wants_identify {
                     if let Err(e) = crate::operations::identify(&desktop, job) {
@@ -1085,6 +1111,34 @@ impl Desktop {
             panning,
             label: None,
         });
+    }
+
+    /// In an "identify" album, clear the automatic cull a scan measured: the
+    /// photographer asked for identification, not culling. Only `cull_reason`
+    /// is cleared -- a hand reject (`images.rejected`/`detections.rejected`),
+    /// the stars, the framing and the measured scores stay as they were.
+    /// Returns the number of detections the clear let back in.
+    pub(crate) fn clear_automatic_culls(&self, job: i64) -> Result<usize> {
+        self.db
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .execute(
+                "UPDATE detections SET cull_reason=NULL WHERE image_id IN (SELECT id FROM images WHERE job_id=?)",
+                [job],
+            )
+            .map_err(err)
+    }
+
+    /// The scan's finish path: after a one-shot scan of an "identify" album has
+    /// finished, drop the automatic cull. "both" and "cull" albums keep it.
+    /// Returns whether anything was cleared.
+    pub(crate) fn clear_automatic_culls_if_identify(&self, job: i64) -> Result<bool> {
+        let cfg = crate::operations::settings(self, job)?;
+        if cfg.workflow() != conrod_core::settings::WORKFLOW_IDENTIFY {
+            return Ok(false);
+        }
+        self.clear_automatic_culls(job)?;
+        Ok(true)
     }
 
     /// Group the album's bursts and moments again, in place: no pixels are
@@ -1666,6 +1720,162 @@ mod tests {
         assert!(plain.grouping_keep_pans);
         assert!(plain.grouping_focus_anchor);
         assert!(plain.grouping_stacks);
+        drop(desktop);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn only_cull_mode_skips_the_identification_lane() {
+        assert!(wants_identify("both", true, true));
+        assert!(wants_identify("identify", true, true));
+        assert!(
+            !wants_identify("cull", true, true),
+            "cull mode is today's scan without identification"
+        );
+        assert!(
+            !wants_identify(" CULL ", true, true),
+            "the word is normalised before it is judged"
+        );
+        assert!(!wants_identify("identify", false, true), "the preset says so");
+        assert!(
+            !wants_identify("identify", true, false),
+            "identification without plates or numbers reads nothing"
+        );
+        assert!(wants_identify("nonsense", true, true), "unknown is both");
+    }
+
+    #[test]
+    fn an_identify_album_stores_its_workflow_and_clears_the_automatic_cull() {
+        let root = std::env::temp_dir().join(format!(
+            "conrod-workflow-sheet-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.jpg"), b"x").unwrap();
+        let desktop = Desktop::open(root.clone()).unwrap();
+
+        let out = desktop
+            .dispatch(
+                "scan",
+                json!({
+                    "root": root.to_string_lossy(),
+                    "label": "Identify album",
+                    "stage": "index",
+                    "workflowMode": " IDENTIFY ",
+                }),
+            )
+            .unwrap();
+        let job = out["jobId"].as_i64().unwrap();
+        let stored: String = lock(&desktop.db)
+            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let map: Map<String, Value> = serde_json::from_str(&stored).unwrap();
+        assert_eq!(
+            map["workflow_mode"], "identify",
+            "the sheet's word is stored normalised"
+        );
+        assert_eq!(
+            crate::operations::settings(&desktop, job).unwrap().workflow(),
+            "identify"
+        );
+
+        // What the scan measured: one soft subject culled automatically, one
+        // subject a person rejected by hand.
+        let image: i64 = lock(&desktop.db)
+            .query_row("SELECT id FROM images WHERE job_id=?", [job], |r| r.get(0))
+            .unwrap();
+        let (soft, rejected) = {
+            let db = lock(&desktop.db);
+            db.execute(
+                "INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,region_type,cull_reason) VALUES(?,1000,1000,3000,2000,'car',0.9,0.2,0.2,'vehicle','too blurred')",
+                [image],
+            )
+            .unwrap();
+            let soft = db.last_insert_rowid();
+            db.execute(
+                "INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,region_type,rejected) VALUES(?,1000,1000,3000,2000,'car',0.9,0.9,0.9,'vehicle',1)",
+                [image],
+            )
+            .unwrap();
+            (soft, db.last_insert_rowid())
+        };
+
+        // The scan's finish path, before regrouping and the identify lane.
+        assert!(
+            desktop.clear_automatic_culls_if_identify(job).unwrap(),
+            "identify mode clears the automatic cull"
+        );
+        assert_eq!(
+            lock(&desktop.db)
+                .query_row("SELECT cull_reason FROM detections WHERE id=?", [soft], |r| {
+                    r.get::<_, Option<String>>(0)
+                })
+                .unwrap(),
+            None,
+            "no detection is left culled"
+        );
+        assert_eq!(
+            lock(&desktop.db)
+                .query_row("SELECT rejected FROM detections WHERE id=?", [rejected], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap(),
+            1,
+            "a hand reject is not an automatic cull"
+        );
+
+        // A sheet that sends no workflow leaves today's pipeline: a measured
+        // cull stays.
+        let plain_root = root.join("plain");
+        std::fs::create_dir_all(&plain_root).unwrap();
+        std::fs::write(plain_root.join("b.jpg"), b"x").unwrap();
+        let plain = desktop
+            .dispatch(
+                "scan",
+                json!({"root": plain_root.to_string_lossy(), "stage": "index"}),
+            )
+            .unwrap();
+        let plain_job = plain["jobId"].as_i64().unwrap();
+        assert_eq!(
+            crate::operations::settings(&desktop, plain_job)
+                .unwrap()
+                .workflow(),
+            "both",
+            "missing is today's full pipeline"
+        );
+        let plain_image: i64 = lock(&desktop.db)
+            .query_row("SELECT id FROM images WHERE job_id=?", [plain_job], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let plain_soft = {
+            let db = lock(&desktop.db);
+            db.execute(
+                "INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,region_type,cull_reason) VALUES(?,1000,1000,3000,2000,'car',0.9,0.2,0.2,'vehicle','too blurred')",
+                [plain_image],
+            )
+            .unwrap();
+            db.last_insert_rowid()
+        };
+        assert!(!desktop
+            .clear_automatic_culls_if_identify(plain_job)
+            .unwrap());
+        assert_eq!(
+            lock(&desktop.db)
+                .query_row(
+                    "SELECT cull_reason FROM detections WHERE id=?",
+                    [plain_soft],
+                    |r| r.get::<_, Option<String>>(0)
+                )
+                .unwrap(),
+            Some("too blurred".into()),
+            "both keeps the scan's cull"
+        );
+
         drop(desktop);
         std::fs::remove_dir_all(root).unwrap();
     }

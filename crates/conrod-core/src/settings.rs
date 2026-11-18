@@ -24,6 +24,25 @@ pub const LEGACY_IGNORED_BURST_GAP: f64 = 4.0;
 /// Default Ollama endpoint, shared by every crate that talks to it.
 pub const DEFAULT_VLM_HOST: &str = "http://127.0.0.1:11434";
 
+/// An album's workflow, as stored in `workflow_mode`: the full pipeline.
+pub const WORKFLOW_BOTH: &str = "both";
+/// Scan and cull, but never identify.
+pub const WORKFLOW_CULL: &str = "cull";
+/// Scan and identify every subject, with no automatic culling.
+pub const WORKFLOW_IDENTIFY: &str = "identify";
+
+/// The one normaliser for `workflow_mode`, shared by the settings loader, the
+/// scan sheet and every reader of the album's choice: surrounding space and
+/// case are ignored, and a word this build does not know reads as
+/// [`WORKFLOW_BOTH`], so an old or nonsense value keeps today's pipeline.
+pub fn workflow_mode_word(word: &str) -> &'static str {
+    match word.trim().to_ascii_lowercase().as_str() {
+        WORKFLOW_CULL => WORKFLOW_CULL,
+        WORKFLOW_IDENTIFY => WORKFLOW_IDENTIFY,
+        _ => WORKFLOW_BOTH,
+    }
+}
+
 /// The gap to group with: a positive, finite setting is honoured as-is;
 /// anything else is [`crate::bursts::DEFAULT_BURST_GAP_SECONDS`].
 pub fn burst_gap_or_default(gap: f64) -> f64 {
@@ -196,6 +215,11 @@ pub struct Settings {
     /// Give every frame a stack of its own. Off, a regroup stops stacking at
     /// all: no burst or moment key is shared, and no keeper is suggested.
     pub grouping_stacks: bool,
+    /// What this album's scan does: "both" (scan, cull and identify),
+    /// "cull" (no identification lane) or "identify" (no automatic cull, and
+    /// every subject identified). Normalised by [`workflow_mode_word`]; an
+    /// album saved without it keeps today's "both".
+    pub workflow_mode: String,
     pub sharp_at: f64,
     pub blurred_below: f64,
     pub focus_scale: i64,
@@ -309,6 +333,7 @@ impl Default for Settings {
             grouping_keep_pans: true,
             grouping_focus_anchor: true,
             grouping_stacks: true,
+            workflow_mode: WORKFLOW_BOTH.into(),
             sharp_at: SHARP_AT,
             blurred_below: BLURRED_BELOW,
             focus_scale: FOCUS_SCALE,
@@ -407,6 +432,9 @@ impl Settings {
         // (1.5 s), not four seconds. Rewrite it once, in place.
         let migrated = !stored.is_empty() && migrate_burst_gap(&mut stored);
         let mut settings = Settings::default().apply(&stored);
+        // One spelling of the workflow word, whatever the file holds: an album
+        // saved before the field existed stays "both", a nonsense word too.
+        settings.workflow_mode = settings.workflow().to_string();
         // A threshold is a number about a scale; one set against an older
         // scale now means something nobody asked for, so it is retired.
         if stored.get("focus_scale").and_then(Value::as_i64) != Some(FOCUS_SCALE) {
@@ -448,6 +476,12 @@ impl Settings {
                 ..VlmService::default()
             });
         }
+    }
+
+    /// This album's workflow, normalised: [`WORKFLOW_BOTH`] unless the album
+    /// says "cull" or "identify".
+    pub fn workflow(&self) -> &'static str {
+        workflow_mode_word(&self.workflow_mode)
     }
 
     /// The blur strictness a scan applies: the album's own choice when one was
@@ -543,6 +577,36 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_album_workflow_is_both_unless_it_says_cull_or_identify() {
+        assert_eq!(Settings::default().workflow(), "both");
+        assert_eq!(
+            Settings::default().workflow_mode, "both",
+            "the stored default is the full pipeline"
+        );
+        assert_eq!(workflow_mode_word(" IDENTIFY "), "identify");
+        assert_eq!(workflow_mode_word("Cull"), "cull");
+        assert_eq!(workflow_mode_word("both"), "both");
+        assert_eq!(workflow_mode_word("later"), "both", "an unknown word is both");
+        assert_eq!(workflow_mode_word(""), "both");
+
+        // A patch stores the album's own choice, and the loader normalises it.
+        let patch: Map<String, Value> =
+            serde_json::from_str(r#"{"workflow_mode":" IDENTIFY "}"#).unwrap();
+        let chosen = Settings::default().apply(&patch);
+        assert_eq!(chosen.workflow(), "identify");
+        let root = std::env::temp_dir().join(format!("conrod-workflow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        std::fs::write(&path, r#"{"workflow_mode":" Identify "}"#).unwrap();
+        let loaded = Settings::load(&path);
+        assert_eq!(loaded.workflow_mode, "identify", "the loader normalises it once");
+        std::fs::write(&path, r#"{"workflow_mode":"sometimes"}"#).unwrap();
+        assert_eq!(Settings::load(&path).workflow(), "both");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn settings_without_blur_strictness_load_as_moderate() {

@@ -41,6 +41,19 @@ pub(crate) fn ml_eligible(d: &Desktop, id: i64) -> Result<bool> {
         [id], |r| r.get(0),
     ).map_err(err)
 }
+
+/// The eligibility rule the identify lane's pending query appends, by the
+/// album's workflow. An "identify" album wants every subject identified -- a
+/// cull measured by an earlier scan (or any leftover flag) must not hide one --
+/// so only a bystander is skipped there. "both" and "cull" keep the shared
+/// rule: never a hand reject, and a culled subject only when someone starred it.
+pub(crate) fn pending_eligibility(mode: &str) -> &'static str {
+    if conrod_core::settings::workflow_mode_word(mode) == conrod_core::settings::WORKFLOW_IDENTIFY {
+        "COALESCE(d.bystander,0)=0"
+    } else {
+        ML_ELIGIBLE
+    }
+}
 pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
     crate::library::require_job(d, job)?; // "No such album", not a bare "Query returned no rows"
     let raw: Option<String> = lock(&d.db)
@@ -337,6 +350,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
     if !profile.identifies_vehicles() && !finds_faces {
         return Err("There are no identifiable subjects in this shoot preset".into());
     }
+    let eligibility = pending_eligibility(settings.workflow());
     launch(d, job, "Identifying", move |d, stop, task| {
         if !wait_for_cull(d, stop, task) {
             return Ok(());
@@ -346,7 +360,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             task.detail(format!("Prepared {faces} faces for name suggestions"));
             return Ok(());
         }
-        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {ML_ELIGIBLE} ORDER BY i.id,d.id"), [job])?;
+        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
         if pending.is_empty() {
             crate::passes::embed_faces_missing(d, job, stop, task)?;
             task.detail("No kept subjects need identification");
@@ -675,6 +689,46 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identify_takes_a_culled_subject_that_both_skips() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("identify-eligibility");
+        let kept = lib.detection(lib.frame("1.jpg", None), "vehicle", 0.9);
+        let culled = lib.detection(lib.frame("2.jpg", None), "vehicle", 0.2);
+        lib.sql(
+            "UPDATE detections SET cull_reason='too blurred' WHERE id=?",
+            [culled],
+        );
+        // The same query the identify lane runs, with only the rule swapped.
+        let pending = |mode: &str| -> Vec<i64> {
+            let db = lib.db();
+            let mut stmt = db
+                .prepare(&format!(
+                    "SELECT d.id FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {} ORDER BY d.id",
+                    pending_eligibility(mode)
+                ))
+                .unwrap();
+            let ids = stmt
+                .query_map([lib.job], |r| r.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            ids
+        };
+        assert_eq!(pending("both"), vec![kept], "a culled subject is skipped");
+        assert_eq!(
+            pending("identify"),
+            vec![kept, culled],
+            "identify works on every subject, culled or not"
+        );
+        assert_eq!(pending("cull"), vec![kept]);
+        assert_eq!(
+            pending("nonsense"),
+            pending("both"),
+            "an unknown word must not behave like identify"
+        );
+    }
 
     #[test]
     fn metadata_marks_manual_and_automatic_culls_as_rejected() {
