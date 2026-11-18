@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type {
-  Bootstrap, Job, MarkValues, Region, Review, ScanArgs, Settings, Status, KnownVehicle, Training,
+  Bootstrap, GlobalStats, Job, MarkValues, Region, Review, ScanArgs, Settings, Status, KnownVehicle, Training,
 } from './types';
 
 /** `?mock=1` under `vite dev` only. The whole branch is dead code in production builds. */
@@ -25,6 +25,7 @@ export const engine = {
   bootstrap: () => call<Bootstrap>('bootstrap'),
   status: () => call<Status>('status'),
   jobs: () => call<Job[]>('jobs'),
+  globalStats: () => call<GlobalStats>('global_stats'),
   review: (jobId: number) => call<Review>('review', { jobId }),
   scan: (args: ScanArgs) => call<{ jobId: number }>('scan', args),
   pause: () => call('pause'),
@@ -33,10 +34,13 @@ export const engine = {
   mark: (imageId: number, values: MarkValues) => call('mark', { imageId, ...values }),
   editDetection: (detectionId: number, updates: Record<string, string | string[] | null>) => call('edit_detection', { detectionId, ...updates }),
   preview: (imageId: number) => call<string>('preview', { imageId }),
-  identify: (jobId: number) => call('identify', { jobId }),
+  identify: (jobId: number, scope?: import('./types').Scope) => call('identify', scope ? { jobId, scope } : { jobId }),
+  identified: (jobId: number) => call<import('./types').Identified>('identified', { jobId }),
+  acceptIdentifications: (ids: number[]) => call('bulk_edit', { ids, reviewed: true }),
   write: (jobId: number, dryRun = false) => call('write', { jobId, dryRun }),
   cancelOperation: (key: string) => call('cancel_operation', { key }),
   saveSettings: (settings: Settings) => call<Settings>('save_settings', settings),
+  workerLimits: () => call<import('./types').WorkerLimits>('worker_limits'),
   known: () => call<KnownVehicle[]>('known'),
   saveKnown: (vehicle: KnownVehicle) => call('save_known', vehicle),
   deleteKnown: (plate: string) => call('delete_known', { plate }),
@@ -50,7 +54,7 @@ export const engine = {
   deleteJob: (jobId: number) => call('delete_job', { jobId }),
   setIncludePeople: (jobId: number, value: boolean) => call<{ ok: boolean; jobId: number; settings: Settings; operation: string | null }>('set_include_people', { jobId, value }),
   updateJobSettings: (jobId: number, patch: Record<string, unknown>) => call('update_job_settings', { jobId, patch }),
-  checkUpdate: (force = false) => call<import('./types').UpdateInfo>('check_update', { force }),
-  installUpdate: () => call<{ operation: string }>('install_update'),
   ollamaModels: (host?: string) => call<import('./types').OllamaModelsResponse>('ollama_models', { host }),
+  providerModels: (provider: string, host?: string, apiKey?: string) =>
+    call<import('./types').ProviderModelsResponse>('provider_models', { provider, host, apiKey }),
 };

@@ -53,6 +53,17 @@ pub struct JobArgs {
     pub job_id: i64,
 }
 
+/// `taste_rank`: score every frame's cached preview, unless it already has a
+/// score -- `force` rescores the whole album.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TasteArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    #[serde(default)]
+    pub force: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageArgs {
@@ -86,6 +97,47 @@ pub struct ScanArgs {
     pub read_numbers: Option<bool>,
     /// Motorsport: look at people too. Left out keeps the saved default.
     pub include_people: Option<bool>,
+    /// The shoot type for a *new* album: stored on that album's own settings,
+    /// never written back to the global defaults.
+    pub scan_profile: Option<String>,
+    /// Blur strictness for a new album: `strict`, `moderate` or `lenient`.
+    pub blur_strictness: Option<String>,
+    /// Burst gap in seconds for a new album.
+    pub burst_gap: Option<f64>,
+    /// Grouping for a new album: every frame its own stack, no keeper.
+    #[serde(default)]
+    pub grouping_stacks: Option<bool>,
+    /// Grouping for a new album: "off", "gentle", "normal" or "eager".
+    #[serde(default)]
+    pub grouping_sensitivity: Option<String>,
+    /// Grouping for a new album: seconds that count as a pause (0 disables it).
+    #[serde(default)]
+    pub grouping_pause: Option<f64>,
+    #[serde(default)]
+    pub grouping_keep_pans: Option<bool>,
+    #[serde(default)]
+    pub grouping_focus_anchor: Option<bool>,
+    /// What a *new* album's scan should do: "both", "cull" or "identify".
+    /// Left out (as a resume does) keeps the saved default.
+    #[serde(default)]
+    pub workflow_mode: Option<String>,
+    /// What a *new* album's identify lane works on: "keepers" (the effective
+    /// keeper -- a hand pick, or the engine's suggestion when the burst has no
+    /// hand pick; the default) or "everything". Left out (as a resume does)
+    /// keeps the saved default.
+    #[serde(default)]
+    pub identify_scope: Option<String>,
+}
+
+/// Identify an album. `scope` overrides the album's `identify_scope` for this
+/// run only: "keepers" or "everything".
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdentifyArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,6 +149,7 @@ pub struct MarkArgs {
     #[serde(default, deserialize_with = "present")]
     pub stars: Option<Option<i64>>,
     pub rejected: Option<bool>,
+    pub picked: Option<bool>,
 }
 
 /// Hand edits to one vehicle's fields; a field left out is untouched, `null` clears it.
@@ -285,10 +338,15 @@ pub struct RegionArgs {
     pub region: Region,
 }
 
+/// `provider_models`: ask a provider which models its key can call.
 #[derive(Debug, Deserialize, Default)]
-pub struct CheckUpdateArgs {
+#[serde(rename_all = "camelCase")]
+pub struct ProviderModelsArgs {
+    pub provider: String,
     #[serde(default)]
-    pub force: bool,
+    pub host: String,
+    #[serde(default)]
+    pub api_key: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -341,7 +399,9 @@ pub enum Command {
     ResumeScan {},
     Stop {},
     DeleteJob(JobArgs),
-    Identify(JobArgs),
+    Identify(IdentifyArgs),
+    Identified(JobArgs),
+    ProviderModels(ProviderModelsArgs),
     Write(WriteArgs),
     CancelOperation(KeyArgs),
     InstallModels {},
@@ -365,7 +425,26 @@ pub enum Command {
     TrainTaste {},
     // Album operations (see API.md).
     Rescore(JobArgs),
+    Rescan(JobArgs),
     PickKeepers(JobArgs),
+    /// Read the camera's autofocus area for every RAW of the album, then rate
+    /// and group the frames the detector missed by it.
+    FocusPoints(JobArgs),
+    /// Run the detector again over the frames it found nothing in, at a one-off
+    /// lower bar, for the subjects it missed.
+    Redetect(JobArgs),
+    /// Measure each frame's composition -- where the subject sits, how the
+    /// frame balances, how busy the background is and whether a leading line
+    /// runs into it -- from its thumbnail.
+    Composition(JobArgs),
+    /// Hide the extra imports of one shot (the same frame under two or three
+    /// names) from bursts, picks, counts and writes.
+    CollapseCopies(JobArgs),
+    /// Show the copies `collapse_copies` hid again, then regroup the album.
+    RestoreCopies(JobArgs),
+    /// Score every frame's cached preview with the learned taste head. A sort
+    /// signal only: it never changes a pick.
+    TasteRank(TasteArgs),
     Group(JobArgs),
     /// The old name for `group`, kept so an older window still works.
     Regroup(JobArgs),
@@ -374,6 +453,13 @@ pub enum Command {
     UpdateJobSettings(UpdateJobSettingsArgs),
     SetIncludePeople(IncludePeopleArgs),
     Summary(JobArgs),
+    /// The shoot's own statistics card: what was used, how it was exposed,
+    /// what the cull measured. Backfills an old album's shot columns first.
+    ShootStats(JobArgs),
+    /// The same numbers for the whole library: every album's frames, space,
+    /// keepers and quality, with gear and exposure only from the albums whose
+    /// frames all record them.
+    GlobalStats {},
     Cover(JobArgs),
     Filling(JobArgs),
     CacheInfo {},
@@ -382,13 +468,14 @@ pub enum Command {
     ResetDetections(AlbumScope),
     ResetRatings(AlbumScope),
     ResetAll {},
-    CheckUpdate(CheckUpdateArgs),
-    InstallUpdate {},
     OllamaModels(OllamaModelsArgs),
     WatchStatus {},
     SetWatch(WatchArgs),
     BenchPick {},
     BenchRun(BenchRunArgs),
+    /// Per-stage worker counts, their documented caps and whether a change
+    /// applies live (none do: every pool is sized when the scan starts).
+    WorkerLimits {},
     DescribeImage {
         path: String,
     },
@@ -444,6 +531,126 @@ mod tests {
             (scan.read_plates, scan.read_numbers),
             (Some(false), Some(true))
         );
+        // The library-wide card takes no arguments, like `status`.
+        assert!(matches!(
+            Command::parse("global_stats", json!({})),
+            Ok(Command::GlobalStats {})
+        ));
+        assert!(matches!(
+            Command::parse("global_stats", Value::Null),
+            Ok(Command::GlobalStats {})
+        ));
+    }
+
+    #[test]
+    fn a_scan_carries_the_sheets_grouping_choices_in_camel_case() {
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({
+                "root": "C:\\\\Photos",
+                "groupingStacks": false,
+                "groupingSensitivity": "eager",
+                "groupingPause": 0.0,
+                "groupingKeepPans": false,
+                "groupingFocusAnchor": false,
+            }),
+        ) else {
+            panic!()
+        };
+        assert_eq!(scan.grouping_stacks, Some(false));
+        assert_eq!(scan.grouping_sensitivity.as_deref(), Some("eager"));
+        assert_eq!(scan.grouping_pause, Some(0.0));
+        assert_eq!(scan.grouping_keep_pans, Some(false));
+        assert_eq!(scan.grouping_focus_anchor, Some(false));
+
+        // The sheet may send none of them: absent is None, not a default.
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({"root": "C:\\\\Photos", "groupingSensitivity": "off"}),
+        ) else {
+            panic!()
+        };
+        assert_eq!(scan.grouping_sensitivity.as_deref(), Some("off"));
+        assert_eq!(scan.grouping_stacks, None);
+        assert_eq!(scan.grouping_pause, None);
+        assert_eq!(scan.grouping_keep_pans, None);
+        assert_eq!(scan.grouping_focus_anchor, None);
+        // Settings keys are snake_case on the wire only as JSON patch keys; a
+        // scan takes the camelCase arg names.
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({"root": "C:\\\\Photos", "grouping_pause": 1.0}),
+        ) else {
+            panic!()
+        };
+        assert_eq!(scan.grouping_pause, None);
+    }
+
+    #[test]
+    fn a_scan_carries_the_albums_workflow_mode_in_camel_case() {
+        for word in ["both", "cull", "identify"] {
+            let Ok(Command::Scan(scan)) = Command::parse(
+                "scan",
+                json!({"root": "C:\\\\Photos", "workflowMode": word}),
+            ) else {
+                panic!()
+            };
+            assert_eq!(scan.workflow_mode.as_deref(), Some(word));
+        }
+        // Missing keeps None: a new album then keeps the stored default.
+        let Ok(Command::Scan(scan)) = Command::parse("scan", json!({"root": "C:\\\\Photos"}))
+        else {
+            panic!()
+        };
+        assert_eq!(scan.workflow_mode, None);
+        // The settings key spelling is not a scan arg.
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({"root": "C:\\\\Photos", "workflow_mode": "cull"}),
+        ) else {
+            panic!()
+        };
+        assert_eq!(scan.workflow_mode, None);
+    }
+
+    #[test]
+    fn a_scan_carries_the_albums_identify_scope_in_camel_case() {
+        for word in ["keepers", "everything"] {
+            let Ok(Command::Scan(scan)) = Command::parse(
+                "scan",
+                json!({"root": "C:\\\\Photos", "identifyScope": word}),
+            ) else {
+                panic!()
+            };
+            assert_eq!(scan.identify_scope.as_deref(), Some(word));
+        }
+        // Missing keeps None: a new album then keeps the stored default.
+        let Ok(Command::Scan(scan)) = Command::parse("scan", json!({"root": "C:\\\\Photos"}))
+        else {
+            panic!()
+        };
+        assert_eq!(scan.identify_scope, None);
+        // The settings key spelling is not a scan arg.
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({"root": "C:\\\\Photos", "identify_scope": "everything"}),
+        ) else {
+            panic!()
+        };
+        assert_eq!(scan.identify_scope, None);
+
+        // The identify command's own scope is optional, and absent is None.
+        let Ok(Command::Identify(a)) = Command::parse("identify", json!({"jobId": 3})) else {
+            panic!()
+        };
+        assert_eq!(a.job_id, 3);
+        assert_eq!(a.scope, None);
+        let Ok(Command::Identify(a)) =
+            Command::parse("identify", json!({"jobId": 3, "scope": "everything"}))
+        else {
+            panic!()
+        };
+        assert_eq!(a.scope.as_deref(), Some("everything"));
     }
 
     #[test]
@@ -518,6 +725,23 @@ mod tests {
             Ok(Command::Group(_))
         ));
         assert!(Command::parse("rescore", json!({})).is_err());
+        assert!(matches!(
+            Command::parse("rescan", json!({"jobId": 2})),
+            Ok(Command::Rescan(_))
+        ));
+        assert!(Command::parse("rescan", json!({})).is_err());
+        let Ok(Command::TasteRank(taste)) =
+            Command::parse("taste_rank", json!({"jobId": 2, "force": true}))
+        else {
+            panic!()
+        };
+        assert_eq!((taste.job_id, taste.force), (2, true));
+        let Ok(Command::TasteRank(taste)) = Command::parse("taste_rank", json!({"jobId": 2}))
+        else {
+            panic!()
+        };
+        assert!(!taste.force, "a plain run only fills in what is missing");
+        assert!(Command::parse("taste_rank", json!({})).is_err());
         let Ok(Command::RenameJob(a)) =
             Command::parse("rename_job", json!({"jobId": 1, "label": null}))
         else {

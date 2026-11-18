@@ -38,37 +38,56 @@ pub fn rename_job(d: &Desktop, a: &RenameArgs) -> Result<Value> {
 
 pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Value> {
     require_job(d, a.job_id)?;
-    let db = lock(&d.db);
-    let current_raw: Option<String> = db
-        .query_row(
-            "SELECT settings_json FROM jobs WHERE id=?",
-            [a.job_id],
-            |r| r.get(0),
+    let regroup_keys = ["burst_gap", "scan_profile"];
+    let wants_regroup = a.patch.keys().any(|k| regroup_keys.contains(&k.as_str()));
+    let updated_json = {
+        let db = lock(&d.db);
+        let current_raw: Option<String> = db
+            .query_row(
+                "SELECT settings_json FROM jobs WHERE id=?",
+                [a.job_id],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        let mut map: Map<String, Value> = current_raw
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        // An album stored before per-album gaps carries the old ignored 4.0;
+        // rewrite it before the patch lands so a deliberate 4.0 sticks.
+        conrod_core::settings::migrate_burst_gap(&mut map);
+
+        for (k, v) in &a.patch {
+            if k == "scan_profile" {
+                if let Some(s) = v.as_str() {
+                    let preset = conrod_core::profile::ShootPreset::parse(s);
+                    map.insert(k.clone(), Value::String(preset.name().into()));
+                    continue;
+                }
+            }
+            map.insert(k.clone(), v.clone());
+        }
+        if a.patch.contains_key("blur_strictness") {
+            map.insert("blur_explicit".into(), Value::Bool(true));
+        }
+
+        let updated_json = serde_json::to_string(&map).map_err(err)?;
+        db.execute(
+            "UPDATE jobs SET settings_json=? WHERE id=?",
+            params![updated_json, a.job_id],
         )
         .map_err(err)?;
-    let mut map: Map<String, Value> = current_raw
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
-
-    for (k, v) in &a.patch {
-        if k == "scan_profile" {
-            if let Some(s) = v.as_str() {
-                let preset = conrod_core::profile::ShootPreset::parse(s);
-                map.insert(k.clone(), Value::String(preset.name().into()));
-                continue;
-            }
-        }
-        map.insert(k.clone(), v.clone());
-    }
-
-    let updated_json = serde_json::to_string(&map).map_err(err)?;
-    db.execute(
-        "UPDATE jobs SET settings_json=? WHERE id=?",
-        params![updated_json, a.job_id],
-    )
-    .map_err(err)?;
-
-    Ok(json!({ "ok": true, "jobId": a.job_id, "settings": map }))
+        updated_json
+    };
+    let map: Map<String, Value> = serde_json::from_str(&updated_json).unwrap_or_default();
+    // A burst gap or preset change needs no rescan: regroup in place now, so the
+    // album on screen changes as the control does. Not while a scan is writing
+    // the same album: it regroups at the end anyway.
+    let regroup = if wants_regroup && !d.scanning() {
+        crate::desktop::Desktop::regroup(d, a.job_id).ok()
+    } else {
+        None
+    };
+    Ok(json!({ "ok": true, "jobId": a.job_id, "settings": map, "regroup": regroup }))
 }
 
 const VEHICLE: &str = "COALESCE(d.region_type,'vehicle')='vehicle'";
@@ -96,7 +115,7 @@ pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
                     COALESCE(SUM(CASE WHEN d.rejected=1 THEN 1 END),0) AS rejected,
                     COALESCE(SUM(CASE WHEN d.reviewed=1 THEN 1 END),0) AS reviewed,
                     COALESCE(SUM(CASE WHEN {VEHICLE} AND _needs_review(d.number_conf,d.reviewed,d.rejected,d.uncertain,?2)=1 THEN 1 END),0) AS to_review
-               FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1"
+               FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(i.copy_of,0)=0"
         ),
         params![job, threshold],
     )?);
@@ -106,13 +125,13 @@ pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
                 COALESCE(SUM(CASE WHEN status='done' THEN 1 END),0) AS scanned,
                 COALESCE(SUM(CASE WHEN written_at IS NOT NULL THEN 1 END),0) AS written,
                 COALESCE(SUM(CASE WHEN status='error' THEN 1 END),0) AS errors
-           FROM images WHERE job_id=?",
+           FROM images WHERE job_id=? AND COALESCE(copy_of,0)=0",
         [job],
     )?);
     // Resolve race numbers through this album's entry list.
     let numbers: Vec<Value> = rows(
         &db,
-        &format!("SELECT d.number AS number, COUNT(*) AS frames FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {VEHICLE} AND d.number IS NOT NULL AND d.rejected=0 GROUP BY d.number ORDER BY frames DESC, d.number"),
+        &format!("SELECT d.number AS number, COUNT(*) AS frames FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {VEHICLE} AND d.number IS NOT NULL AND d.rejected=0 AND COALESCE(i.copy_of,0)=0 GROUP BY d.number ORDER BY frames DESC, d.number"),
         [job],
     )?
     .into_iter()
@@ -123,12 +142,12 @@ pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
     .collect();
     let plates = rows(
         &db,
-        &format!("SELECT d.plate AS plate, COUNT(*) AS frames FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {VEHICLE} AND d.plate IS NOT NULL AND d.rejected=0 GROUP BY d.plate ORDER BY frames DESC, d.plate"),
+        &format!("SELECT d.plate AS plate, COUNT(*) AS frames FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND {VEHICLE} AND d.plate IS NOT NULL AND d.rejected=0 AND COALESCE(i.copy_of,0)=0 GROUP BY d.plate ORDER BY frames DESC, d.plate"),
         [job],
     )?;
     let by_region: Map<String, Value> = rows(
         &db,
-        "SELECT COALESCE(d.region_type,'vehicle') AS region, COUNT(*) AS n FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? GROUP BY region",
+        "SELECT COALESCE(d.region_type,'vehicle') AS region, COUNT(*) AS n FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 GROUP BY region",
         [job],
     )?
     .into_iter()
@@ -165,7 +184,7 @@ pub fn cover(d: &Desktop, job: i64) -> Result<Value> {
     if is_motorsport {
         if let Some(path) = candidates(
             &format!(
-                "SELECT d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND d.crop_path IS NOT NULL AND d.rejected=0 AND {VEHICLE} ORDER BY d.conf * (d.x2-d.x1) * (d.y2-d.y1) * (1 + COALESCE(d.sharpness,0)) DESC LIMIT 20"
+                "SELECT d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND d.crop_path IS NOT NULL AND d.rejected=0 AND COALESCE(i.copy_of,0)=0 AND {VEHICLE} ORDER BY d.conf * (d.x2-d.x1) * (d.y2-d.y1) * (1 + COALESCE(d.sharpness,0)) DESC LIMIT 20"
             ),
             "crop_path",
         )? {
@@ -173,7 +192,7 @@ pub fn cover(d: &Desktop, job: i64) -> Result<Value> {
         }
     }
     if let Some(path) = candidates(
-        "SELECT thumb_path FROM images WHERE job_id=? AND thumb_path IS NOT NULL AND rejected=0 ORDER BY COALESCE(stars*0.2, rating, 0) DESC, id LIMIT 20",
+        "SELECT thumb_path FROM images WHERE job_id=? AND thumb_path IS NOT NULL AND rejected=0 AND COALESCE(copy_of,0)=0 ORDER BY COALESCE(stars*0.2, rating, 0) DESC, id LIMIT 20",
         "thumb_path",
     )? {
         return Ok(json!({"path": path, "source": "thumb"}));
@@ -187,43 +206,69 @@ pub fn filling(d: &std::sync::Arc<Desktop>, job: i64) -> Result<Value> {
     if d.scanning() || !lock(&d.operations).is_empty() {
         return Ok(d.status());
     }
-    let todo = rows(&lock(&d.reader), "SELECT id,path FROM images WHERE job_id=? AND thumb_path IS NULL AND error IS NULL ORDER BY id", [job])?;
+    let todo = rows(&lock(&d.reader), "SELECT id,path FROM images WHERE job_id=? AND thumb_path IS NULL AND error IS NULL AND COALESCE(copy_of,0)=0 ORDER BY id", [job])?;
     if todo.is_empty() {
         return Ok(d.status());
     }
     crate::operations::launch(d, job, "Filling thumbnails", move |d, stop, task| {
-        for (index, row) in todo.iter().enumerate() {
-            if stop.load(std::sync::atomic::Ordering::Relaxed) {
-                break;
+        // Thumbnails are disk- and JPEG-bound, not cores: a small pool is
+        // enough, and `preview_workers` sizes it (applies next scan/backfill).
+        let workers = conrod_core::settings::clamp_workers(
+            lock(&d.settings).preview_workers,
+            conrod_core::settings::worker_caps().preview,
+            4,
+        ) as usize;
+        let workers = workers.min(todo.len().max(1));
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let done = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                let todo = &todo;
+                let (next, done) = (&next, &done);
+                let stop = &stop;
+                scope.spawn(move || loop {
+                    if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let Some(row) =
+                        todo.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                    else {
+                        break;
+                    };
+                    let Ok(id) = row["id"].as_i64().ok_or("Missing image id") else {
+                        break;
+                    };
+                    let Some(path) = row["path"].as_str().map(Path::new) else {
+                        break;
+                    };
+                    let result = (|| -> Result<()> {
+                        let raw = conrod_io::raw::read(path)?;
+                        let rgb = conrod_vision::imageops::Rgb::decode_jpeg(&raw.preview, 1)?
+                            .orient(raw.orientation);
+                        let output = d.root.join(format!("cache/native/thumb-{id}.jpg"));
+                        crate::desktop::save_jpeg(&crate::thumbnail(&rgb), &output)?;
+                        lock(&d.db)
+                            .execute(
+                                "UPDATE images SET thumb_path=?,width=?,height=? WHERE id=?",
+                                params![
+                                    output.to_string_lossy(),
+                                    rgb.width as i64,
+                                    rgb.height as i64,
+                                    id
+                                ],
+                            )
+                            .map_err(err)?;
+                        Ok(())
+                    })();
+                    if let Err(e) = result {
+                        let _ = lock(&d.db)
+                            .execute("UPDATE images SET error=? WHERE id=?", params![e, id]);
+                    }
+                    let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    task.progress(n as u64, todo.len() as u64);
+                });
             }
-            let id = row["id"].as_i64().ok_or("Missing image id")?;
-            let path = Path::new(row["path"].as_str().ok_or("Missing image path")?);
-            let result = (|| -> Result<()> {
-                let raw = conrod_io::raw::read(path)?;
-                let rgb = conrod_vision::imageops::Rgb::decode_jpeg(&raw.preview, 1)?
-                    .orient(raw.orientation);
-                let output = d.root.join(format!("cache/native/thumb-{id}.jpg"));
-                crate::desktop::save_jpeg(&crate::thumbnail(&rgb), &output)?;
-                lock(&d.db)
-                    .execute(
-                        "UPDATE images SET thumb_path=?,width=?,height=? WHERE id=?",
-                        params![
-                            output.to_string_lossy(),
-                            rgb.width as i64,
-                            rgb.height as i64,
-                            id
-                        ],
-                    )
-                    .map_err(err)?;
-                Ok(())
-            })();
-            if let Err(e) = result {
-                lock(&d.db)
-                    .execute("UPDATE images SET error=? WHERE id=?", params![e, id])
-                    .map_err(err)?;
-            }
-            task.progress((index + 1) as u64, todo.len() as u64);
-        }
+        });
         Ok(())
     })
 }
@@ -406,6 +451,70 @@ mod tests {
         assert_eq!(
             out["path"].as_str().map(std::path::Path::new),
             Some(thumb.as_path())
+        );
+    }
+
+    #[test]
+    fn changing_the_burst_gap_or_preset_regroups_the_album_in_place() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("auto-regroup");
+        for (i, name) in ["1.jpg", "2.jpg", "3.jpg"].iter().enumerate() {
+            let image = lib.frame(name, None);
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                rusqlite::params![f64::from(i as u32) * 1.0, image],
+            );
+            lib.detection(image, "vehicle", 0.5);
+        }
+        let out = lib
+            .run(
+                "update_job_settings",
+                json!({"jobId": lib.job, "patch": {"burst_gap": 0.5}}),
+            )
+            .unwrap();
+        assert_eq!(
+            out["regroup"]["bursts"], 3,
+            "one second apart, half a second gap"
+        );
+        assert_eq!(out["regroup"]["moments"], 3);
+        let tight: i64 = lib.one(
+            "SELECT count(DISTINCT burst_key) FROM images WHERE job_id=?",
+            [lib.job],
+        );
+        assert_eq!(tight, 3);
+
+        let out = lib
+            .run(
+                "update_job_settings",
+                json!({"jobId": lib.job, "patch": {"burst_gap": 5.0}}),
+            )
+            .unwrap();
+        assert_eq!(
+            out["regroup"]["bursts"], 1,
+            "five seconds swallows the lull"
+        );
+
+        let out = lib
+            .run(
+                "update_job_settings",
+                json!({"jobId": lib.job, "patch": {"scan_profile": "portrait"}}),
+            )
+            .unwrap();
+        assert_eq!(out["regroup"]["bursts"], 1, "a preset change regroups too");
+        assert!(
+            out["regroup"]["keepers"].is_number(),
+            "and picks the keepers again: {out}"
+        );
+
+        let untouched = lib
+            .run(
+                "update_job_settings",
+                json!({"jobId": lib.job, "patch": {"read_plates": false}}),
+            )
+            .unwrap();
+        assert!(
+            untouched["regroup"].is_null(),
+            "a setting that needs no regrouping does not run the stage"
         );
     }
 

@@ -57,8 +57,13 @@ jobs:
           npm ci
           npm run build
 
+      # The signing key is what makes an update installable: Tauri checks the
+      # installer's minisign signature against the public key compiled into the app.
       - name: Build the app and the installer
         working-directory: crates/conrod-app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node ../../frontend/node_modules/@tauri-apps/cli/tauri.js build --ci
 
       - name: Assemble the portable folder
@@ -94,6 +99,17 @@ jobs:
           sha256sum "Conrod-${{ steps.version.outputs.value }}-win64.zip" "Conrod-${{ steps.version.outputs.value }}-win64-setup.exe" > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      # The manifest the app's updater reads: version, installer URL and the
+      # installer's signature. The installer is renamed for humans above, which is
+      # fine: the signature covers its bytes, not its name.
+      - name: Build the updater manifest
+        shell: bash
+        run: |
+          v="${{ steps.version.outputs.value }}"
+          node scripts/latest-json.mjs "$v" "$(ls target/release/bundle/nsis/*-setup.exe.sig | head -1)" \
+            "https://github.com/${{ github.repository }}/releases/download/v$v/Conrod-$v-win64-setup.exe" \
+            dist/latest.json "Conrod $v"
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Conrod-windows
@@ -101,6 +117,7 @@ jobs:
             dist/Conrod-*-win64.zip
             dist/Conrod-*-win64-setup.exe
             dist/SHA256SUMS.txt
+            dist/latest.json
 
       - name: Publish the release
         if: startsWith(github.ref, 'refs/tags/')
@@ -111,6 +128,7 @@ jobs:
             dist/Conrod-*-win64.zip
             dist/Conrod-*-win64-setup.exe
             dist/SHA256SUMS.txt
+            dist/latest.json
           generate_release_notes: true
           body: |
             ## Conrod ${{ steps.version.outputs.value }}
@@ -123,3 +141,21 @@ jobs:
             colour and team. Without it Conrod still culls, reads plates, numbers and livery text.
 
             The installer is not code-signed, so Windows SmartScreen will ask you to confirm.
+
+      # A fixed tag the app's endpoint points at:
+      #   /releases/download/updater/latest.json
+      # A pre-1.0 beta is published as a pre-release, which GitHub's /releases/latest
+      # never points at, so the manifest gets its own always-current release.
+      - name: Publish the updater manifest
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: updater
+          name: Update manifest
+          body: |
+            Machine-readable update manifest for Conrod's in-app updater.
+            Overwritten on every release; do not edit by hand.
+          make_latest: false
+          prerelease: false
+          overwrite_files: true
+          files: dist/latest.json

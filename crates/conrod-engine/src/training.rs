@@ -195,18 +195,28 @@ fn load_training_rows(d: &Desktop) -> Result<Vec<SharpnessLabelRow>> {
     conrod_store::sharpness_labels(&db, ridge::FEATURE_VERSION as i64).map_err(|e| e.to_string())
 }
 
+/// The first release's feature count; labels shorter than this are unusable.
+const OLDEST_FEATURES: usize = 18;
+
 fn valid_training_data(rows: &[SharpnessLabelRow]) -> Option<(Vec<Vec<f64>>, Vec<f64>)> {
     let mut vectors = Vec::with_capacity(rows.len());
     let mut stars = Vec::with_capacity(rows.len());
     for row in rows {
         let vector = row.features.as_ref()?.as_array()?;
         let vector: Vec<f64> = vector.iter().map(Value::as_f64).collect::<Option<_>>()?;
-        if vector.len() != sharpness::FEATURE_NAMES.len() || !vector.iter().all(|v| v.is_finite()) {
+        if vector.len() < OLDEST_FEATURES
+            || vector.len() > sharpness::FEATURE_NAMES.len()
+            || !vector.iter().all(|v| v.is_finite())
+        {
             return None;
         }
         vectors.push(vector);
         stars.push(row.stars as f64);
     }
+    // Labels made before a feature was appended are shorter; new features are
+    // always appended, so every vector keeps its leading shared part.
+    let shortest = vectors.iter().map(Vec::len).min()?;
+    vectors.iter_mut().for_each(|v| v.truncate(shortest));
     Some((vectors, stars))
 }
 

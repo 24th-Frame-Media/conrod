@@ -229,11 +229,9 @@ fn bursts_match_snapshot() {
         .iter()
         .map(|r| r.as_object().unwrap().clone())
         .collect();
-    let frames = bursts::describe(
-        &rows,
-        fixture["fallback"].as_str().unwrap(),
-        bursts::BURST_GAP_SECONDS,
-    );
+    // The fixture is the Python script's own snapshot, recorded at its gap of
+    // 4.0 s: it is a parity check of the grouping rules, not of the default.
+    let frames = bursts::describe(&rows, fixture["fallback"].as_str().unwrap(), 4.0);
     let want = fixture["frames"].as_array().unwrap();
     assert_eq!(frames.len(), want.len());
     for (got, want) in frames.iter().zip(want) {
@@ -1150,6 +1148,7 @@ fn merge_matches_snapshot() {
         let (number, source, confidence) = merge_number(
             &ocr_reading,
             opt_str(&case["vlm_number"]),
+            0.7,
             ocr_accept_confidence,
         );
         let want = case["out"].as_array().unwrap();
@@ -1210,16 +1209,35 @@ fn vlm_services_seed_from_legacy_fields() {
 fn settings_match_snapshot() {
     use conrod_core::settings::Settings;
     let fixture = fixture("settings");
-    let as_map = |s: &Settings| {
-        let mut v = serde_json::to_value(s).unwrap();
+    // Keys this build no longer shares with the Python app's settings file.
+    let prune = |mut v: Value| {
         let m = v.as_object_mut().unwrap();
         m.remove("workers");
         m.remove("scan_profile"); // Rust-only
         m.remove("include_people"); // Rust-only
+        m.remove("use_quality_score"); // Rust-only
+        m.remove("blur_strictness"); // Rust-only
+        m.remove("entry_list"); // Rust-only
+        m.remove("workflow_mode"); // Rust-only: album-level scan/identify workflow
+        m.remove("identify_scope"); // Rust-only: which subjects the identify lane takes
+                                    // Rust-only: per-album stacking choices; the Python app has no such fields.
+        m.remove("grouping_sensitivity");
+        m.remove("grouping_pause");
+        m.remove("grouping_keep_pans");
+        m.remove("grouping_focus_anchor");
+        m.remove("grouping_stacks");
         m.remove("vlm_services");
         m.remove("vlm_strategy");
+        // Rust-only: per-album burst gaps changed the one default from the
+        // Python app's ignored 4.0 to 1.5 s, and added the migration marker.
+        m.remove("burst_gap");
+        m.remove("burst_gap_scale");
+        // Rust-only: the preset's default strictness applies until an album
+        // chooses one.
+        m.remove("blur_explicit");
         v
     };
+    let as_map = |s: &Settings| prune(serde_json::to_value(s).unwrap());
     // A stored value may be 1 where 1.0 is meant, or vice versa; compare numbers as numbers.
     let same = |a: &Value, b: &Value| -> bool {
         a.as_object().unwrap().iter().all(|(k, va)| {
@@ -1231,7 +1249,10 @@ fn settings_match_snapshot() {
         }) && a.as_object().unwrap().len() == b.as_object().unwrap().len()
     };
     assert!(
-        same(&as_map(&Settings::default()), &fixture["defaults"]),
+        same(
+            &as_map(&Settings::default()),
+            &prune(fixture["defaults"].clone())
+        ),
         "defaults differ"
     );
     let dir = std::env::temp_dir().join(format!("conrod-settings-{}", std::process::id()));
@@ -1241,7 +1262,7 @@ fn settings_match_snapshot() {
         std::fs::write(&path, case["stored"].to_string()).unwrap();
         let loaded = Settings::load(&path);
         assert!(
-            same(&as_map(&loaded), &case["loaded"]),
+            same(&as_map(&loaded), &prune(case["loaded"].clone())),
             "load of {}",
             case["stored"]
         );

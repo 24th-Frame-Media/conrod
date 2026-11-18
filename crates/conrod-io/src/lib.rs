@@ -1,5 +1,6 @@
 //! Conrod's file IO: reading RAW and JPEG frames without exiftool.
 
+pub mod af;
 pub mod assets;
 pub mod raw;
 pub mod settings;

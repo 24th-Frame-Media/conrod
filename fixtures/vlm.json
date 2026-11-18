@@ -110,9 +110,11 @@
      "images": [
       "b64img"
      ],
-     "model": "qwen2.5vl:7b",
+     "keep_alive": "2m",
+      "model": "qwen2.5vl:7b",
      "options": {
-      "num_predict": 500,
+      "num_ctx": 8192,
+       "num_predict": 500,
       "temperature": 0.0
      },
      "prompt": "describe it",

@@ -53,7 +53,7 @@ pub fn describe_one(d: &Desktop, path: &str) -> Result<Value> {
     let io = IoSettings::from_core(&lock(&d.settings));
     let image = load(d, path)?;
     let client = VlmClient::new(std::sync::Arc::new(vlm::RealClock::default()));
-    let v = vlm::describe(&client, &image, &io, false).map_err(err)?;
+    let v = vlm::describe(&client, &image, &io, false, &vlm::VlmHints::default()).map_err(err)?;
     Ok(json!({"make": v.make, "model": v.model, "colour": v.colour, "number": v.race_number}))
 }
 
@@ -150,7 +150,7 @@ fn run_model(
             }
         };
         let start = Instant::now();
-        let result = vlm::describe(client, image, settings, false);
+        let result = vlm::describe(client, image, settings, false, &vlm::VlmHints::default());
         total_secs += start.elapsed().as_secs_f64();
         let (score, answer) = match result {
             Ok(d) => {

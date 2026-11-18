@@ -347,6 +347,35 @@ mod tests {
         let g = Gray::new(3, 2, vec![1, 2, 3, 4, 5, 6]);
         assert_eq!(g.resize_bilinear_box(3, 2, [0.0, 0.0, 3.0, 2.0]), g);
     }
+
+    #[test]
+    fn orient_rotates_match_reference() {
+        let (w, h) = (40usize, 35usize);
+        let data: Vec<u8> = (0..w * h * 3).map(|i| (i % 251) as u8).collect();
+        let src = Rgb::new(w, h, data);
+        for ori in [1u16, 3, 6, 8] {
+            let got = src.clone().orient(ori);
+            let (nw, nh) = if ori == 6 || ori == 8 { (h, w) } else { (w, h) };
+            assert_eq!((got.width, got.height), (nw, nh));
+            for y in 0..nh {
+                for x in 0..nw {
+                    let (sx, sy) = match ori {
+                        3 => (w - 1 - x, h - 1 - y),
+                        6 => (y, h - 1 - x),
+                        8 => (w - 1 - y, x),
+                        _ => (x, y),
+                    };
+                    let s = (sy * w + sx) * 3;
+                    let d = (y * nw + x) * 3;
+                    assert_eq!(
+                        &got.data[d..d + 3],
+                        &src.data[s..s + 3],
+                        "ori={ori} ({x},{y})"
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// An 8-bit RGB image, row-major, interleaved.
@@ -449,18 +478,54 @@ impl Rgb {
             6 | 8 => (h, w),
             _ => return self,
         };
-        let mut out = Vec::with_capacity(self.data.len());
-        for y in 0..nh {
-            for x in 0..nw {
-                // Pillow's ROTATE_180 for 3, ROTATE_270 (clockwise) for 6,
-                // ROTATE_90 for 8.
-                let (sx, sy) = match orientation {
-                    3 => (w - 1 - x, h - 1 - y),
-                    6 => (y, h - 1 - x),
-                    _ => (w - 1 - y, x),
-                };
-                let at = (sy * w + sx) * 3;
-                out.extend_from_slice(&self.data[at..at + 3]);
+        let mut out = vec![0u8; self.data.len()];
+        match orientation {
+            3 => {
+                for y in 0..nh {
+                    let sy = h - 1 - y;
+                    let src_row = &self.data[sy * w * 3..(sy + 1) * w * 3];
+                    let dst_row = &mut out[y * nw * 3..(y + 1) * nw * 3];
+                    for (x, dst_px) in dst_row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+                        let sx = (w - 1 - x) * 3;
+                        dst_px.copy_from_slice(&src_row[sx..sx + 3]);
+                    }
+                }
+            }
+            6 => {
+                const TILE: usize = 32;
+                for ty in (0..nh).step_by(TILE) {
+                    let y_end = (ty + TILE).min(nh);
+                    for tx in (0..nw).step_by(TILE) {
+                        let x_end = (tx + TILE).min(nw);
+                        for y in ty..y_end {
+                            let sx = y;
+                            for x in tx..x_end {
+                                let sy = h - 1 - x;
+                                let s = (sy * w + sx) * 3;
+                                let d = (y * nw + x) * 3;
+                                out[d..d + 3].copy_from_slice(&self.data[s..s + 3]);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                const TILE: usize = 32;
+                for ty in (0..nh).step_by(TILE) {
+                    let y_end = (ty + TILE).min(nh);
+                    for tx in (0..nw).step_by(TILE) {
+                        let x_end = (tx + TILE).min(nw);
+                        for y in ty..y_end {
+                            let sx = w - 1 - y;
+                            for x in tx..x_end {
+                                let sy = x;
+                                let s = (sy * w + sx) * 3;
+                                let d = (y * nw + x) * 3;
+                                out[d..d + 3].copy_from_slice(&self.data[s..s + 3]);
+                            }
+                        }
+                    }
+                }
             }
         }
         Rgb::new(nw, nh, out)

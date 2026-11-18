@@ -1,4 +1,30 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+
+/**
+ * Sheets live on `document.body`, not inside the screen: a transformed or scrolled
+ * ancestor turns `position: fixed` into "relative to that ancestor", which is what
+ * made the import sheet drift off screen.
+ */
+export function Portal({ children }: { children: ReactNode }) {
+  return createPortal(children, document.body);
+}
+
+/**
+ * Backdrop click that does not fire when a text selection started inside the sheet
+ * and ended on the backdrop: only a press that began on the backdrop closes.
+ */
+export function useBackdropClose(onClose: () => void) {
+  const down = useRef(false);
+  return {
+    onMouseDown: (e: ReactMouseEvent) => { down.current = e.target === e.currentTarget; },
+    onClick: (e: ReactMouseEvent) => {
+      const close = down.current && e.target === e.currentTarget;
+      down.current = false;
+      if (close) onClose();
+    },
+  };
+}
 
 const PATHS = {
   x: 'M6 6l12 12M18 6L6 18',
@@ -12,12 +38,22 @@ const PATHS = {
   plus: 'M12 5v14M5 12h14',
   check: 'M5 12.5l4.5 4.5L19 7.5',
   drop: 'M12 4v11 M7.5 10.5L12 15l4.5-4.5 M5 19h14',
+  car: 'M4 16v-4l2-5h12l2 5v4z M4 12h16 M7.5 14.2h.01 M16.5 14.2h.01',
+  person: 'M12 11a3.5 3.5 0 100-7 3.5 3.5 0 000 7z M5 20c0-3.5 3-6 7-6s7 2.5 7 6',
+  plate: 'M3 7.5h18v9H3z M7 12h10',
+  eye: 'M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z M12 14.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z',
+  sliders: 'M4 7h9 M17 7h3 M4 17h3 M11 17h9 M15 4.5v5 M9 14.5v5',
+  undo: 'M9 14L4 9l5-5 M4 9h10.5a5.5 5.5 0 010 11H11',
+  hourglass: 'M7 4h10 M7 20h10 M8 4v1c0 3.5 4 4 4 7s-4 3.5-4 7v1 M16 4v1c0 3.5-4 4-4 7s4 3.5 4 7v1',
+  sun: 'M12 16.5a4.5 4.5 0 100-9 4.5 4.5 0 000 9z M12 2v2 M12 20v2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M2 12h2 M20 12h2 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4',
+  moon: 'M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z',
 } as const;
 export type IconName = keyof typeof PATHS;
 
+/** The one icon set: 24px grid, 1.5 stroke, takes the colour of its text. */
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={PATHS[name]} />
     </svg>
@@ -36,10 +72,25 @@ export function FilePick({ label, accept, onFile }: { label: string; accept: str
   );
 }
 
+/**
+ * The connecting rod curled into a C: a big end and a small end with their
+ * bores punched through, so the mark reads as both the name and the engine
+ * part at 16 px. The mask keeps the bores transparent on light and dark.
+ */
 export function Mark() {
+  const mask = useId().replace(/:/g, '');
   return (
-    <svg className="mark" viewBox="0 0 26 72" fill="none" aria-hidden="true">
-      <path d="M19 3 L12 45 L13.5 50 L7.5 54 L7.5 59 L4 69" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+    <svg className="mark" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+      <mask id={mask}>
+        <rect width="64" height="64" fill="#fff" />
+        <circle cx="46.2" cy="43.1" r="3.4" fill="#000" />
+        <circle cx="46.2" cy="20.9" r="2.1" fill="#000" />
+      </mask>
+      <g mask={`url(#${mask})`} fill="none">
+        <path d="M46.2 20.9 A18 18 0 1 0 46.2 43.1" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
+        <circle cx="46.2" cy="43.1" r="8.5" fill="currentColor" />
+        <circle cx="46.2" cy="20.9" r="5.8" fill="currentColor" />
+      </g>
     </svg>
   );
 }
@@ -83,15 +134,21 @@ export function Modal({ label, className, onClose, children }: { label: string; 
 }
 
 const KEYS: [string, string][] = [
-  ['J  /  →  /  ↓', 'next photo'],
-  ['K  /  ←  /  ↑', 'previous photo'],
+  ['←  /  →', 'previous / next photo in the burst, and on into the next stack (flat view: previous / next photo)'],
+  ['↑  /  ↓', 'previous / next burst (flat view: one row up / down)'],
+  ['Tab  /  Shift+Tab', 'done with this burst: next / previous burst'],
+  ['N', 'next undecided burst or photo'],
+  ['Enter', 'open the burst in place; Enter again opens the full frame'],
+  ['Esc', 'close the full frame, then collapse the burst'],
+  ['P', 'keep this photo (click the ✓ segment again to clear it)'],
+  ['X  /  Del', 'cull this photo'],
+  ['U', 'clear stars, reject and keeper on this photo'],
+  ['B  /  Shift+B', 'keep this photo and cull its stack / cull the whole stack'],
   ['1 – 5', 'give it that many stars'],
   ['0', 'clear the stars, back to the measured rating'],
-  ['X  /  Del', 'reject, or put a rejected one back'],
-  ['U', 'undo your marks on this photo'],
-  ['Enter', 'open the full frame'],
-  ['B', 'show or hide detection outlines'],
-  ['Esc', 'close the full frame'],
+  ['Ctrl+Z  /  Ctrl+Shift+Z', 'undo / redo the last decision (a stack action is one step)'],
+  ['G  /  E  /  C', 'grid, full frame, compare the burst side by side'],
+  ['B (full frame, Train)', 'show or hide detection outlines'],
   ['?', 'this list'],
 ];
 
@@ -104,7 +161,7 @@ export function KeysDialog({ onClose }: { onClose: () => void }) {
           <div key={k}><dt>{k.split(/\s{2}\/\s{2}/).map((part) => <kbd key={part}>{part}</kbd>)}</dt><dd>{what}</dd></div>
         ))}
       </dl>
-      <p className="muted small-print">On Train: <kbd>1</kbd>-<kbd>5</kbd> rate, <kbd>X</kbd> can&apos;t tell, <kbd>P</kbd> pan, <kbd>U</kbd> undo, <kbd>Z</kbd> 200%.</p>
+      <p className="muted small-print">With auto-advance on (Manage shoot), P and X move on to the next burst or frame, and with cross-stack arrows on, ← and → carry on into the stack beside them. On Train: <kbd>1</kbd>-<kbd>5</kbd> rate, <kbd>X</kbd> can&apos;t tell, <kbd>P</kbd> pan, <kbd>U</kbd> undo, <kbd>Z</kbd> 200%.</p>
     </Modal>
   );
 }

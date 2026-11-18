@@ -1,12 +1,18 @@
-import { useState, useEffect, useMemo, useRef, type CSSProperties } from 'react';
+import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
 import { Modal } from '../components/basics';
 import { StarControl } from '../components/Stars';
 import { asset } from '../lib/api';
-import { boxOf, filename, frameStars, frameExcluded } from '../lib/review';
+import { compositionLabels } from '../lib/composition.mjs';
+import { actionLabel } from '../lib/identifyFlow.mjs';
+import { filename, frameStars, frameExcluded, parseAttributes } from '../lib/review';
+import { shotRows } from '../lib/shot.mjs';
+import type { Stack } from '../lib/stacks.mjs';
+import type { Frame } from '../lib/types';
 import type { ReviewModel } from '../state/useReview';
 import { usePreview, type Runner } from '../state/hooks';
-import { ZoomPanImage, type ZoomPanRef } from '../components/Media';
-import { DetectionsTable, getCategory, type CategoryFilter } from '../components/DetectionsTable';
+import { ZoomImage, type ZoomImageHandle } from '../components/ZoomImage';
+import { DetectionsTable, type CategoryFilter } from '../components/DetectionsTable';
+import { BurstFilmstrip } from '../components/BurstFilmstrip';
 
 type Props = {
   rv: ReviewModel;
@@ -14,35 +20,42 @@ type Props = {
   showBoxes: boolean;
   onToggleBoxes: () => void;
   onClose: () => void;
+  /** The current burst, the album's keepers, a step along the navigation Review owns, and where the frame sits in it. */
+  stack: Stack<Frame> | null;
+  keeperIds: ReadonlySet<number>;
+  onStep: (delta: number) => void;
+  position: string;
 };
 
 /** The full frame, with interactive detections table and color-coded outline overlay. */
-export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
-  const { frame, frames, facts, step, mark } = rv;
+export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keeperIds, onStep, position }: Props) {
+  const { frame, facts, mark } = rv;
   const preview = usePreview(frame?.id ?? null, run);
-  const zoomRef = useRef<ZoomPanRef>(null);
+  const zoomImgRef = useRef<ZoomImageHandle>(null);
   const [selectedDetId, setSelectedDetId] = useState<number | null>(null);
   const [hoveredDetId, setHoveredDetId] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
-  const [showLabels, setShowLabels] = useState(true);
 
-  // Keyboard shortcut: 'L' toggles box labels, Space/Z toggles 1:1 zoom, +/- steps zoom
+  // Keyboard shortcuts: L toggles box labels, Space/Z toggles 1:1 zoom, +/- steps zoom, F zooms to the detected box.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.key === 'l' || e.key === 'L') {
         e.preventDefault();
-        setShowLabels((v) => !v);
+        zoomImgRef.current?.toggleLabels();
       } else if (e.key === 'z' || e.key === 'Z' || e.key === ' ') {
         e.preventDefault();
-        zoomRef.current?.toggleZoom();
+        zoomImgRef.current?.toggleZoom();
       } else if (e.key === '+' || e.key === '=') {
         e.preventDefault();
-        zoomRef.current?.zoomIn();
+        zoomImgRef.current?.zoomIn();
       } else if (e.key === '-' || e.key === '_') {
         e.preventDefault();
-        zoomRef.current?.zoomOut();
+        zoomImgRef.current?.zoomOut();
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        zoomImgRef.current?.cycleBoxFocus();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -51,105 +64,42 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
 
   if (!frame) return null;
   const dets = facts.get(frame.id)?.dets ?? [];
-  const index = frames.findIndex((f) => f.id === frame.id);
-  const ratio = frame.width && frame.height ? frame.width / frame.height : 3 / 2;
   const stars = frameStars(frame);
-
-  // Filter which bounding boxes are rendered on the photo stage
-  const visibleBoxes = useMemo(() => {
-    return dets.filter((d) => {
-      const cat = getCategory(d);
-      if (categoryFilter === 'vehicles') return cat === 'vehicle' || cat === 'plate';
-      if (categoryFilter === 'people') return cat === 'person';
-      if (categoryFilter === 'landmarks') return cat === 'landmark';
-      // 'all': show vehicles, people, and plates; landmarks (eyes) are hidden by default
-      // to avoid obscuring faces with dozens of overlapping badges unless selected or in landmark tab
-      if (cat === 'landmark') return selectedDetId === d.id || hoveredDetId === d.id;
-      return true;
-    });
-  }, [dets, categoryFilter, selectedDetId, hoveredDetId]);
+  const shot = shotRows(frame);
+  // The same signals the Review inspector shows, so opening a photo here is not a step down.
+  const labels = compositionLabels(frame);
+  const vehicleDet = dets.find((d) => d.id === selectedDetId && (d.region_type ?? 'vehicle') === 'vehicle')
+    ?? dets.find((d) => (d.region_type ?? 'vehicle') === 'vehicle')
+    ?? null;
+  const attrs = vehicleDet ? parseAttributes(vehicleDet) : null;
+  const vehicleName = attrs ? [attrs.make, attrs.model].filter(Boolean).join(' ') : '';
 
   return (
     <Modal label="Photo viewer" className="viewer" onClose={onClose}>
       <div className="frame-view">
         <div className="frame-stage-big">
-          <div className="stage-inner" style={{ '--ar': ratio } as CSSProperties}>
-            <ZoomPanImage
-              ref={zoomRef}
-              src={asset(preview) ?? asset(frame.thumb_path)}
-              alt={filename(frame.path)}
-            >
-              {showBoxes && (
-                <div className="overlay">
-                  {visibleBoxes.map((d) => {
-                    const b = boxOf(d, frame);
-                    if (!b) return null;
-                    const cat = getCategory(d);
-                    const isSelected = selectedDetId === d.id;
-                    const isHovered = hoveredDetId === d.id;
-                    const shouldShowLabel = showLabels || isSelected || isHovered;
-
-                    return (
-                      <div
-                        key={d.id}
-                        className={`box box-${cat}${d.panning ? ' pan' : ''}${isSelected ? ' active-box' : ''}${isHovered ? ' hovered' : ''}`}
-                        style={{
-                          left: `${b[0] * 100}%`,
-                          top: `${b[1] * 100}%`,
-                          width: `${(b[2] - b[0]) * 100}%`,
-                          height: `${(b[3] - b[1]) * 100}%`,
-                          pointerEvents: 'auto',
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedDetId(isSelected ? null : d.id);
-                        }}
-                        onMouseEnter={() => setHoveredDetId(d.id)}
-                        onMouseLeave={() => setHoveredDetId(null)}
-                      >
-                        {shouldShowLabel && (
-                          <span className={`box-label label-${cat}`}>
-                            {d.cls} {d.sharpness.toFixed(2)}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </ZoomPanImage>
-          </div>
-
-          {/* Quick viewer controls floating over bottom of stage */}
-          <div className="viewer-stage-controls">
-            <button
-              type="button"
-              className={`stage-pill-btn${showBoxes ? ' on' : ''}`}
-              onClick={onToggleBoxes}
-              title="Toggle detection boxes (B)"
-            >
-              Outlines <kbd>B</kbd>
-            </button>
-            {showBoxes && (
-              <button
-                type="button"
-                className={`stage-pill-btn${showLabels ? ' on' : ''}`}
-                onClick={() => setShowLabels((v) => !v)}
-                title="Toggle box text labels (L)"
-              >
-                Labels <kbd>L</kbd>
-              </button>
-            )}
-          </div>
+          <ZoomImage
+            ref={zoomImgRef}
+            frame={frame}
+            dets={dets}
+            src={asset(preview) ?? asset(frame.thumb_path)}
+            alt={filename(frame.path)}
+            showBoxes={showBoxes}
+            onToggleBoxes={onToggleBoxes}
+            selectedDetId={selectedDetId}
+            hoveredDetId={hoveredDetId}
+            onSelectDet={setSelectedDetId}
+            onHoverDet={setHoveredDetId}
+            categoryFilter={categoryFilter}
+          />
 
           <div className="frame-nav previous" role="group" aria-label="Previous photos">
             <button
-              title="First frame"
+              title="First frame of the burst"
               aria-label="First frame"
-              disabled={index <= 0}
               onClick={() => {
                 setSelectedDetId(null);
-                step(Number.NEGATIVE_INFINITY);
+                onStep(Number.NEGATIVE_INFINITY);
               }}
             >
               First
@@ -158,10 +108,9 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
               className="frame-step"
               title="Previous frame (←)"
               aria-label="Previous frame"
-              disabled={index <= 0}
               onClick={() => {
                 setSelectedDetId(null);
-                step(-1);
+                onStep(-1);
               }}
             >
               ‹
@@ -172,21 +121,19 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
               className="frame-step"
               title="Next frame (→)"
               aria-label="Next frame"
-              disabled={index < 0 || index >= frames.length - 1}
               onClick={() => {
                 setSelectedDetId(null);
-                step(1);
+                onStep(1);
               }}
             >
               ›
             </button>
             <button
-              title="Last frame"
+              title="Last frame of the burst"
               aria-label="Last frame"
-              disabled={index < 0 || index >= frames.length - 1}
               onClick={() => {
                 setSelectedDetId(null);
-                step(Number.POSITIVE_INFINITY);
+                onStep(Number.POSITIVE_INFINITY);
               }}
             >
               Last
@@ -208,6 +155,66 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
               Close
             </button>
           </div>
+
+          {shot.length > 0 && (
+            <dl className="meta side-shot" aria-label="Shot details">
+              {shot.map((row) => (
+                <Fragment key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd title={row.value}>{row.value}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          )}
+
+          {attrs && (
+            <section className="viewer-vehicle" aria-label="Vehicle identification">
+              <span className="viewer-vehicle-number mono">{attrs.race_number ? `#${attrs.race_number}` : (attrs.plate ?? '—')}</span>
+              <div className="viewer-vehicle-facts">
+                <b>{vehicleName || (attrs.plate ? 'Plate read' : 'Unidentified vehicle')}</b>
+                <span className="muted">
+                  {[attrs.team, attrs.colour, vehicleName ? attrs.plate : null].filter(Boolean).join(' · ') || 'No team or colour read'}
+                </span>
+                {attrs.number_source === 'ocr' && (
+                  <span className="tag warn" title="Only OCR read this number; the vision model has not confirmed it.">OCR only</span>
+                )}
+              </div>
+            </section>
+          )}
+
+          {frame.taste != null && (
+            <p className="muted taste-score" title="Learned taste: ranks this frame against its burst. A sort signal, not a keeper.">
+              Taste {frame.taste.toFixed(2)}
+            </p>
+          )}
+
+            {labels.length > 0 && (
+            <div className="comp-labels">
+              {labels.map((label) => (
+                <span key={label.id} className={label.tone === 'ok' ? 'tag' : `tag ${label.tone}`}
+                  title="Composition: measured framing, balance, background and leading lines. Nothing is culled.">
+                  {label.text}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {attrs?.action?.length ? (
+            <div className="comp-labels viewer-action" aria-label="Action">
+              {attrs.action.map((tag) => <span className="tag" key={tag}>{actionLabel(tag)}</span>)}
+            </div>
+          ) : null}
+
+          {stack && stack.frames.length > 1 && (
+            <BurstFilmstrip
+              frames={stack.frames}
+              keeperIds={keeperIds}
+              selectedId={frame.id}
+              culled={(f) => frameExcluded(f, facts.get(f.id)?.dets ?? [])}
+              onSelect={(id) => rv.setSelected(id)}
+              onDecide={(id, values) => void rv.mark(values, id)}
+            />
+          )}
 
           <DetectionsTable
             detections={dets}
@@ -234,6 +241,14 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
             </button>
             <div className="spacer" />
             <button
+              className={`ghost small${frame.picked ? ' on' : ''}`}
+              aria-pressed={Boolean(frame.picked)}
+              title="Keeper (P)"
+              onClick={() => void mark(frame.picked ? { picked: false } : { picked: true, rejected: false })}
+            >
+              {frame.picked ? 'Keeper ✓' : 'Keeper'}
+            </button>
+            <button
               className={`ghost danger cut${frameExcluded(frame, dets) ? ' on' : ''}`}
               onClick={() => void mark({ rejected: !frameExcluded(frame, dets) })}
             >
@@ -247,7 +262,7 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose }: Props) {
               Show outlines <kbd>B</kbd>
             </label>
             <p className="muted frame-pos">
-              {index >= 0 ? `${(index + 1).toLocaleString()} / ${frames.length.toLocaleString()}` : ''}
+              {position}
             </p>
           </div>
         </aside>

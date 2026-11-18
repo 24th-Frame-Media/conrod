@@ -13,11 +13,11 @@ with a nonzero exit code if a task fails.
 | bootstrap | none | settings, jobs, models, status |
 | health | none | Model rows plus VLM availability; Ollama model lookup has a four-second timeout |
 | status | none | revision, tasks, log, activeJob, operations |
-| jobs | none | Albums, counts, folder-name fallback for unnamed albums |
+| jobs | none | Albums with total/done frame counts and hidden `copies`, folder-name fallback for unnamed albums |
 | review | jobId | frames and detections |
-| scan | root?, jobId?, label?, profile?, recursive=true, stage="cull" | New/resumed jobId; stage index, cull, all, or identify (existing job required) |
+| scan | root?, jobId?, label?, profile?, recursive=true, stage="cull", blurStrictness?, burstGap?, groupingSensitivity?, groupingPause?, groupingKeepPans?, groupingFocusAnchor?, groupingStacks?, workflowMode?, identifyScope? | New/resumed jobId; stage index, cull, all, or identify (existing job required). The sheet's choices are stored on the new album only; a grouping word is normalised to off/gentle/normal/eager and a pause to 0–10. `workflowMode` ("both", "cull" or "identify") is normalised and stored on the new album; "cull" runs no identification lane, "identify" clears the scan's automatic cull. `identifyScope` ("keepers" or "everything") is normalised and stored on the new album; the automatic identification at the end of a scan then works on that scope |
 | pause / resume_scan / stop | none | Control current cull; return status |
-| identify | jobId | operation; readers, grouping consensus and registry seeding |
+| identify | jobId, scope? | operation; readers, grouping consensus and registry seeding. `scope` ("keepers" or "everything") overrides the album's `identify_scope` for this run; omitted, the album's setting applies (default "keepers"). "keepers" identifies the effective keeper: a frame picked by hand (which suppresses the suggestion for its burst), or, with no hand pick in the burst, the engine's suggested pick (`d.burst_pick=1 OR i.burst_pick=1`); "everything" identifies every unreviewed non-bystander subject, culled or not |
 | write | jobId, dryRun=false, embedInRaw=false | operation; dry run logs proposed keywords without changing files or written timestamps |
 | cancel_operation | key | Signal background cancellation |
 | install_models | none | Install missing pinned model/tool assets, reporting task progress |
@@ -29,10 +29,19 @@ with a nonzero exit code if a task fails.
 | preview | imageId | Cached, oriented preview path |
 | filling | jobId | Start missing-thumbnail extraction; also used when opening indexed albums |
 | rescore | jobId | operation; apply learned/current scoring to stored features, preserving hand ratings |
+| rescan | jobId | operation; re-read every photo and re-measure sharpness inside the stored boxes, preserving all hand edits |
 | pick_keepers | jobId | Best subject per car per pass |
+| focus_points | jobId | operation; read the camera's autofocus area from each RAW, rate frames with no subject inside it, then regroup |
+| redetect | jobId | operation; run the detector at a one-off 0.25 confidence and 2% box over the frames with no subject, then regroup |
+| composition | jobId | operation; measure placement, balance, symmetry, background clutter and leading lines for every frame |
+| collapse_copies | jobId | operation; hide the extra imports of one shot (same time, size and sampled bytes) as `copy_of`; bursts, picks, counts and writes ignore them |
+| restore_copies | jobId | operation; show every hidden copy again, then regroup |
+| taste_rank | jobId, force? | operation; score each frame's cached preview with the learned taste head into `images.taste` (skips scored frames unless `force`); `head: false` when no head is installed |
 | group / regroup | jobId | operation; embeddings, groups and consensus |
 | rename_job | jobId, label? | Trim label; blank/null restores folder name |
 | summary | jobId | job, counts, images, numbers (with entry-list descriptions), plates, map_size, by_region |
+| shoot_stats | jobId | The shoot's statistics card: frames/copies, size, cameras, lenses, most-used camera/lens/aperture/shutter/ISO/focal length, per-value histograms, pans, bursts, blur verdicts, AF summary, keepers, rejects, stars, capture range. Backfills an old album's lens/ISO/file size first (`backfilled`: rows read) |
+| global_stats | none | The same numbers for the whole library: albums/complete albums, frames/complete frames, copies hidden, size, effective keepers, rejects, pans, bursts, blur verdicts, AF summary, shooting time (sum/average/longest span and timed-album count). Gear and exposure lists (`cameras`, `lenses`, `most_used`, `f_numbers`, `shutters`, `isos`, `focal_lengths`) count **only complete albums** -- those whose every visible frame has a non-empty camera and lens and a non-null ISO, f-number, shutter and focal length. `af.soft` uses the app's global `settings.blurred_below` (per-album strictness is not stored per frame). Nothing is backfilled from the files |
 | cover | jobId | {path, source} or null; existing crop or best thumbnail |
 | known | none | Known-vehicle records |
 | save_known | plate, make?, model?, colour?, team?, race_number? | Save a vehicle |
@@ -66,6 +75,26 @@ leaves it alone. rejected/bystander are booleans; reviewed defaults to true.
 Edit stars 1–5 sets a hand rating; 0/null restores automatic rating. `mark` deliberately
 allows manual zero. Numbers retain digits, plates are normalized, sponsor lists are deduplicated.
 
+## Grouping settings
+
+`update_job_settings` (`jobId`, `patch`) and `save_settings` take these album
+fields, in snake_case like every settings key. Each defaults to the behaviour an
+album had before it existed, so an older `settings_json` keeps grouping exactly
+as it did. A change to any of them regroups the album in place, like a burst gap
+-- `workflow_mode` and `identify_scope` are the exceptions: they change what the
+next scan or identify run does and never regroup on their own.
+
+| Key | Default | Meaning |
+|---|---|---|
+| burst_gap | 1.5 | Seconds between two frames of one camera that still belong to one burst |
+| grouping_sensitivity | "normal" | How eagerly a time burst is split into moments: "off" is one stack per burst, "gentle" moves every cut threshold 1.5x looser, "normal" is the measured default, "eager" moves them 0.7x tighter (about 1/1.4). An unknown word reads as "normal" |
+| grouping_pause | 0.8 | Seconds between two frames that count as a pause: the next frame starts a new moment if the picture also changed. Clamped to 0..10 when used; 0 disables the pause cut |
+| grouping_keep_pans | true | `false` compares a panning frame's box like any other, instead of allowing it to travel further |
+| grouping_focus_anchor | true | `false` leaves a frame the detector missed with no subject, rather than anchoring it on the camera's focus area (`af_*`) |
+| grouping_stacks | true | `false` gives every frame a stack of its own (dense keys, in moment order, and stable across regroups) and suggests no keeper: a "best of stack" pick would mark every frame, which says nothing |
+| workflow_mode | "both" | What this album's scans do: "both" is scan, cull and identify; "cull" is scan and cull with no identification lane; "identify" clears the automatic cull after a scan. Trimmed and lowercased when read; an unknown or missing word is "both" |
+| identify_scope | "keepers" | Which subjects this album's identify lane works on: "keepers" is the effective keeper the UI shows -- the frame the photographer picked by hand when its burst has one (which suppresses the suggestion), otherwise the engine's suggested pick (`d.burst_pick=1 OR i.burst_pick=1`); a hand star alone is not a keeper. "everything" is every unreviewed non-bystander subject, culled or not. Independent of `workflow_mode`, which decides whether the lane runs at all. Trimmed and lowercased when read; an unknown or missing word is "keepers" |
+
 ## Events and previews
 
 Tauri emits `status` when the TaskHub revision changes. The frontend refreshes albums and
@@ -73,6 +102,26 @@ review on changes, throttles scan refreshes to four seconds and has a five-secon
 Preview/crop paths are exposed through Tauri's scoped asset protocol. A native folder picker
 replaces the Python web folder-browsing routes. Index-only albums extract thumbnails when
 opened without running detection. Full previews are generated when viewed.
+
+`identify-progress` is one JSON snapshot of the live identification feed, emitted about four
+times a second while an identify run is live and once more after it ends. It carries the run
+(`job_id`, `state` = `running`/`done`/`stopped`/`error`, `done`/`total`, `started_at`,
+`elapsed_ms`, coarse `stage`, the `model` the VISION node should name, `workers` (how
+many run at once), and run-wide `errors`), the `current` car being read, up to
+8 cars still in flight in `active` (one per identify worker, newest first, including
+`current`; each carries its own `prompt` and its `worker` index), and up to 16 finished
+items in `recent` (newest first, never including
+`current`). An item is
+`detection_id`, `image_id`, `path`, `thumb_path`, `preview_path`, `crop_path`, its own
+`stage` (`read`/`crop`/`vision`/`merge`/`done`), `worker` (0-based lane), the vision
+model's `prompt` (the current car and every active one) and `reply`, the visible
+`action` tags, the reader `trace`
+and `failures`, the final `number`, `number_source`,
+`number_conf` (0..1; null until the car is read), `plate`, `make`, `model`, `team`,
+`colour`, `ms` and `at`. Paths are
+passed through the same `asset()` scope as previews. A run with the vision model off still
+reports OCR and entry-list fields, with `prompt`/`reply` null. The feed stays available after
+the run so the screen can show its summary; the next run replaces it.
 
 ## Isolation and releases
 

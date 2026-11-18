@@ -40,6 +40,8 @@ export type ZoomPanRef = {
   zoom2to1: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
+  /** Zoom so a fractional (0..1) box fills roughly 3/4 of the view. */
+  zoomToBox: (box: [number, number, number, number]) => void;
 };
 
 type ZoomProps = {
@@ -50,6 +52,11 @@ type ZoomProps = {
   zoomed?: boolean;
   onZoomChange?: (zoomed: boolean) => void;
   focusBox?: [number, number, number, number] | null;
+  /**
+   * A single click on the photo that was not a drag: `target` is what was pressed (a detection box, or the
+   * stage). When set, the owner handles the click-to-zoom toggle itself instead of the default one.
+   */
+  onSurfaceClick?: (clientX: number, clientY: number, target: HTMLElement | null) => void;
 };
 
 function getFitScaleAndSize(containerW: number, containerH: number, naturalW: number, naturalH: number) {
@@ -76,9 +83,30 @@ function clampPan(val: number, scale: number, imageDimension: number, containerD
   return Math.max(-max, Math.min(max, val));
 }
 
+/** Scale + pan that centers `box` (fractional 0..1 of the image) in the container. */
+function focusView(
+  box: [number, number, number, number],
+  containerW: number,
+  containerH: number,
+  imageW: number,
+  imageH: number,
+  scale1to1: number,
+) {
+  const [x1, y1, x2, y2] = box;
+  const cx = (x1 + x2) / 2;
+  const cy = (y1 + y2) / 2;
+  const bw = Math.max(0.01, x2 - x1);
+  const bh = Math.max(0.01, y2 - y1);
+  const fitSubjectScale = 0.75 / Math.max(bw, bh);
+  const scale = Math.max(scale1to1, Math.min(scale1to1 * 2, fitSubjectScale));
+  const rawX = -(cx - 0.5) * imageW * scale;
+  const rawY = -(cy - 0.5) * imageH * scale;
+  return { scale, x: clampPan(rawX, scale, imageW, containerW), y: clampPan(rawY, scale, imageH, containerH) };
+}
+
 /** Lightroom-inspired zoom & pan: single-click toggle, true 1:1 resolution, bounded panning, presets. */
 export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanImage(
-  { src, alt, children, className = '', zoomed, onZoomChange, focusBox },
+  { src, alt, children, className = '', zoomed, onZoomChange, focusBox, onSurfaceClick },
   ref,
 ) {
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
@@ -96,7 +124,8 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
     ox: number;
     oy: number;
     moved: boolean;
-    isBox: boolean;
+    /** What the press landed on, before pointer capture retargets the events. */
+    target: HTMLElement | null;
   } | null>(null);
 
   const getDimensions = useCallback(() => {
@@ -183,8 +212,13 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
       },
       zoomIn: () => zoomTo(view.scale * 1.3),
       zoomOut: () => zoomTo(view.scale / 1.3),
+      zoomToBox: (box) => {
+        const { containerW, containerH, scale1to1, imageW, imageH } = getDimensions();
+        setView(focusView(box, containerW, containerH, imageW, imageH, scale1to1));
+        onZoomChange?.(true);
+      },
     }),
-    [getDimensions, reset, toggleZoom, view.scale, zoomTo],
+    [getDimensions, onZoomChange, reset, toggleZoom, view.scale, zoomTo],
   );
 
   // Sync with external zoomed prop (e.g., Train screen)
@@ -192,18 +226,7 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
     if (zoomed) {
       const { containerW, containerH, scale1to1, imageW, imageH } = getDimensions();
       if (focusBox) {
-        const [x1, y1, x2, y2] = focusBox;
-        const cx = (x1 + x2) / 2;
-        const cy = (y1 + y2) / 2;
-        const bw = Math.max(0.01, x2 - x1);
-        const bh = Math.max(0.01, y2 - y1);
-        const fitSubjectScale = 0.75 / Math.max(bw, bh);
-        const targetScale = Math.max(scale1to1, Math.min(scale1to1 * 2, fitSubjectScale));
-        const rawX = -(cx - 0.5) * imageW * targetScale;
-        const rawY = -(cy - 0.5) * imageH * targetScale;
-        const clampedX = clampPan(rawX, targetScale, imageW, containerW);
-        const clampedY = clampPan(rawY, targetScale, imageH, containerH);
-        setView({ scale: targetScale, x: clampedX, y: clampedY });
+        setView(focusView(focusBox, containerW, containerH, imageW, imageH, scale1to1));
       } else {
         setView({ scale: scale1to1, x: 0, y: 0 });
       }
@@ -215,7 +238,6 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
   const down = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest('.zoom-tools, button, select, input, a')) return;
-    const isBox = Boolean((event.target as HTMLElement).closest('.box'));
 
     drag.current = {
       id: event.pointerId,
@@ -224,7 +246,7 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
       ox: view.x,
       oy: view.y,
       moved: false,
-      isBox,
+      target: event.target as HTMLElement,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -260,8 +282,9 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
     } catch {}
 
     if (!cur.moved) {
-      if (cur.isBox) return;
-      toggleZoom(event.clientX, event.clientY);
+      // A press that lands on a detection box is a click on the photo too; only a drag is excluded.
+      if (onSurfaceClick) onSurfaceClick(event.clientX, event.clientY, cur.target);
+      else toggleZoom(event.clientX, event.clientY);
     }
   };
 

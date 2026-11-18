@@ -144,9 +144,7 @@ fn tray_tooltip(desktop: &Desktop) -> String {
         .iter()
         .find(|task| matches!(task.state, State::Running | State::Paused))
     else {
-        let has_failed = tasks
-            .iter()
-            .any(|task| task.state == State::Failed && task.error.as_deref() != Some("stopped"));
+        let has_failed = tasks.iter().any(|task| task.state == State::Failed);
         if has_failed {
             return "Conrod · Error".into();
         }
@@ -199,6 +197,10 @@ fn main() {
     }
     let builder = builder
         .plugin(tauri_plugin_opener::init())
+        // Signed, in-place updates from the GitHub release's latest.json; the
+        // process plugin restarts the app after an install.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let desktop =
                 Desktop::open(conrod_core::settings::data_root()).map_err(std::io::Error::other)?;
@@ -232,6 +234,18 @@ fn main() {
                         return;
                     }
                     let version = worker.hub.version();
+                    // One `scan-progress` event per tick (4/s) while a scan is
+                    // running, then one final snapshot. Throttling is this
+                    // thread; the pools themselves never emit.
+                    if let Some(progress) = worker.progress_snapshot() {
+                        let _ = handle.emit("scan-progress", progress);
+                    }
+                    // The identify screen's feed: which car is being read, what
+                    // was asked and answered, and the fields it ended with. One
+                    // snapshot per tick while it is live, then one final one.
+                    if let Some(snapshot) = worker.identify_snapshot() {
+                        let _ = handle.emit("identify-progress", snapshot);
+                    }
                     if version == seen {
                         continue;
                     }

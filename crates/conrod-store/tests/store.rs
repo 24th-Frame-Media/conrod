@@ -33,6 +33,28 @@ fn fresh_conn(label: &str) -> Connection {
 // --- round trips ---------------------------------------------------------------
 
 #[test]
+fn an_existing_library_gets_the_hand_pick_index() {
+    // Build a normal library, then remove the index to mimic one created before
+    // the identify scopes existed. The next connect on a fresh path must add it.
+    let first = temp_db_path("index_old");
+    let conn = conrod_store::connect(Some(&first)).unwrap();
+    conn.execute_batch("DROP INDEX idx_images_hand_pick")
+        .unwrap();
+    drop(conn);
+    let second = first.with_file_name("index_migrated.db");
+    std::fs::copy(&first, &second).unwrap();
+    let conn = conrod_store::connect(Some(&second)).unwrap();
+    let found: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_images_hand_pick'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(found, 1, "the migration adds the hand-pick index");
+}
+
+#[test]
 fn round_trip_job_and_images() {
     let conn = fresh_conn("job_and_images");
     let settings = serde_json::json!({"detect_conf": 0.25});
@@ -431,6 +453,7 @@ fn the_schema_keeps_every_column_of_the_legacy_schema() {
     for (table, column) in [
         ("images", "stars"),
         ("images", "rejected"),
+        ("images", "picked"),
         ("detections", "region_type"),
     ] {
         assert!(
@@ -440,6 +463,36 @@ fn the_schema_keeps_every_column_of_the_legacy_schema() {
             "the Rust schema adds {table}.{column}"
         );
     }
+}
+
+#[test]
+fn the_shot_detail_columns_are_added_to_an_existing_database() {
+    let conn = fresh_conn("shot_details");
+    let columns = table_info(&conn, "images");
+    for (column, kind) in [
+        ("lens", "TEXT"),
+        ("iso", "INTEGER"),
+        ("file_size", "INTEGER"),
+    ] {
+        assert!(
+            columns
+                .iter()
+                .any(|(_, name, k, ..)| name == column && k == kind),
+            "images.{column} is a {kind} column"
+        );
+    }
+    // They are additive and nullable: an old row keeps no shot details rather
+    // than failing to read.
+    let job = create_job(&conn, Path::new("C:/album"), None, &serde_json::json!({})).unwrap();
+    add_images(&conn, job, &[PathBuf::from("C:/album/a.jpg")]).unwrap();
+    let (lens, iso, size): (Option<String>, Option<i64>, Option<i64>) = conn
+        .query_row(
+            "SELECT lens, iso, file_size FROM images WHERE job_id=?",
+            [job],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!((lens, iso, size), (None, None, None));
 }
 
 type ColumnRow = (i64, String, String, i64, Option<String>, i64);

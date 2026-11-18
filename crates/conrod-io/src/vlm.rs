@@ -21,6 +21,17 @@ use std::time::{Duration, SystemTime};
 use crate::settings::Settings;
 
 pub const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
+/// OpenCode Console / Go: one key for the models it lists, OpenAI-compatible.
+/// The chat endpoint lives under `inference/openai/v1`; the model list under
+/// `inference/v1`.
+pub const OPENCODE_CHAT_URL: &str = "https://opencode.ai/inference/openai/v1/chat/completions";
+pub const OPENCODE_MODELS_URL: &str = "https://opencode.ai/inference/v1/models";
+/// OpenCode Go (the subscription): the same key, billed to the Go plan instead
+/// of pay-as-you-go credits. This base only routes requests that carry a
+/// stable session id, and a client user agent rather than a library default.
+pub const OPENCODE_GO_CHAT_URL: &str = "https://opencode.ai/inference/go/v1/chat/completions";
+pub const OPENCODE_GO_MODELS_URL: &str = "https://opencode.ai/inference/go/v1/models";
+const OPENCODE_USER_AGENT: &str = concat!("conrod/", env!("CARGO_PKG_VERSION"));
 pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 const GEMINI_URL: &str =
@@ -548,6 +559,12 @@ pub struct ProviderRequest {
     pub json: Value,
 }
 
+/// Ollama's context window per request. One 1568 px image is about 2000
+/// tokens, the prompt and schema a few hundred, the reply at most 600: 8192
+/// fits all of it. Without this Ollama uses the model's 128k default, whose
+/// KV cache alone is several GB and spills qwen2.5vl:7b off the GPU.
+pub const OLLAMA_NUM_CTX: i64 = 8192;
+
 pub fn ollama_request(
     host: &str,
     model: &str,
@@ -567,7 +584,12 @@ pub fn ollama_request(
             "images": images,
             "stream": false,
             "format": schema,
-            "options": {"temperature": 0.0, "num_predict": num_predict},
+            "keep_alive": "2m",
+            "options": {
+                "temperature": 0.0,
+                "num_predict": num_predict,
+                "num_ctx": OLLAMA_NUM_CTX,
+            },
         }),
     }
 }
@@ -580,6 +602,38 @@ pub fn openai_request(
     schema: &Value,
     num_predict: i64,
 ) -> ProviderRequest {
+    openai_request_at(
+        OPENAI_URL,
+        true,
+        model,
+        api_key,
+        prompt,
+        images,
+        schema,
+        num_predict,
+    )
+}
+
+/// An OpenAI-shaped chat request against any compatible gateway. `strict` asks
+/// for the schema as `response_format.json_schema`; a gateway whose models do
+/// not support strict schemas gets `json_object` plus the schema in the prompt,
+/// which the reply parser already tolerates.
+#[allow(clippy::too_many_arguments)]
+pub fn openai_request_at(
+    url: &str,
+    strict: bool,
+    model: &str,
+    api_key: &str,
+    prompt: &str,
+    images: &[String],
+    schema: &Value,
+    num_predict: i64,
+) -> ProviderRequest {
+    let prompt = if strict {
+        prompt.to_string()
+    } else {
+        format!("{prompt}\n\nReply with one JSON object matching this schema:\n{schema}")
+    };
     let mut content = vec![json!({"type": "text", "text": prompt})];
     for image in images {
         content.push(json!({
@@ -611,21 +665,134 @@ pub fn openai_request(
             );
         }
     }
+    let response_format = if strict {
+        json!({
+            "type": "json_schema",
+            "json_schema": {"name": "vehicle", "schema": strict_schema, "strict": true},
+        })
+    } else {
+        json!({"type": "json_object"})
+    };
     ProviderRequest {
-        url: OPENAI_URL.into(),
+        url: url.into(),
         headers: vec![("Authorization".into(), format!("Bearer {api_key}"))],
         query: vec![],
         json: json!({
             "model": model,
             "messages": [{"role": "user", "content": content}],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "vehicle", "schema": strict_schema, "strict": true},
-            },
+            "response_format": response_format,
             "max_tokens": num_predict,
             "temperature": 0.0,
         }),
     }
+}
+
+/// The models a provider key can call, as `(id, name)` pairs. Uses the
+/// provider's own list endpoint; anything that is not an OpenAI-shaped
+/// `{"data":[{"id":…}]}` (or `{"models":[…]}`) is reported as an error rather
+/// than guessed at.
+pub fn list_models(
+    provider: &str,
+    host: &str,
+    api_key: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let provider = provider.to_lowercase();
+    let (url, auth) = match provider.as_str() {
+        "opencode" | "opencode-go" => {
+            let default = if provider == "opencode-go" {
+                OPENCODE_GO_MODELS_URL
+            } else {
+                OPENCODE_MODELS_URL
+            };
+            let host = host.trim().trim_end_matches('/');
+            if host.is_empty() {
+                (default.to_string(), true)
+            } else if host.ends_with("/models") {
+                (host.to_string(), true)
+            } else {
+                (format!("{host}/models"), true)
+            }
+        }
+        "openai" => ("https://api.openai.com/v1/models".to_string(), true),
+        other => {
+            return Err(format!(
+                "'{other}' does not list models; type the model name"
+            ))
+        }
+    };
+    let agent = ureq::Agent::new_with_defaults();
+    let mut request = agent.get(&url);
+    if auth {
+        request = request.header("Authorization", &format!("Bearer {api_key}"));
+    }
+    if provider.starts_with("opencode") {
+        request = request.header("User-Agent", OPENCODE_USER_AGENT);
+        if provider == "opencode-go" {
+            request = request.header("x-opencode-session", opencode_session());
+        }
+    }
+    let response = request.call().map_err(|e| e.to_string())?;
+    let body: Value = response
+        .into_body()
+        .read_json()
+        .map_err(|e| format!("{url}: {e}"))?;
+    let list = body
+        .get("data")
+        .or_else(|| body.get("models"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{url} did not return a model list"))?;
+    let mut models: Vec<(String, String)> = list
+        .iter()
+        .filter_map(|item| {
+            let id = item
+                .get("id")
+                .or_else(|| item.get("name"))
+                .and_then(Value::as_str)?;
+            let name = item.get("name").and_then(Value::as_str).unwrap_or(id);
+            Some((id.to_string(), name.to_string()))
+        })
+        .collect();
+    models.sort();
+    models.dedup();
+    Ok(models)
+}
+
+/// Where an OpenCode service talks: the configured endpoint if there is one
+/// (a proxy, or a self-hosted gateway), else the default for this provider. An
+/// endpoint given without a path is completed with `/chat/completions`.
+fn opencode_url(host: &str, default: &str) -> String {
+    let host = host.trim().trim_end_matches('/');
+    if host.is_empty() {
+        return default.into();
+    }
+    if host.ends_with("/chat/completions") {
+        host.into()
+    } else {
+        format!("{host}/chat/completions")
+    }
+}
+
+pub fn opencode_chat_url(host: &str) -> String {
+    opencode_url(host, OPENCODE_CHAT_URL)
+}
+
+pub fn opencode_go_chat_url(host: &str) -> String {
+    opencode_url(host, OPENCODE_GO_CHAT_URL)
+}
+
+/// A stable id for this app run, sent as `x-opencode-session`: OpenCode Go uses
+/// it to route one client's requests and reuse its prompt cache. One per process
+/// is what "per conversation" means here -- Conrod keeps one long conversation
+/// with the model for the whole session.
+fn opencode_session() -> &'static str {
+    static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SESSION.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("conrod-{:x}-{nanos:x}", std::process::id())
+    })
 }
 
 /// Claude Code's tokens are prefixed distinctly enough to recognise, which
@@ -736,6 +903,8 @@ pub fn display_name(provider: &str) -> String {
         "openai" => "OpenAI".into(),
         "anthropic" => "Anthropic".into(),
         "gemini" => "Gemini".into(),
+        "opencode" => "OpenCode".into(),
+        "opencode-go" => "OpenCode Go".into(),
         other => other.to_string(),
     }
 }
@@ -786,6 +955,44 @@ pub fn build_request(
             images,
             num_predict,
         )),
+        "opencode" => {
+            let mut request = openai_request_at(
+                &opencode_chat_url(&settings.vlm_host),
+                false,
+                &settings.vlm_model,
+                &settings.vlm_api_key,
+                prompt,
+                images,
+                schema,
+                num_predict,
+            );
+            request
+                .headers
+                .push(("User-Agent".into(), OPENCODE_USER_AGENT.into()));
+            Ok(request)
+        }
+        "opencode-go" => {
+            // The Go plan routes by provider and conversation: the request must
+            // carry a stable session id, and identify the client rather than the
+            // HTTP library, or it is billed as pay-as-you-go and refused.
+            let mut request = openai_request_at(
+                &opencode_go_chat_url(&settings.vlm_host),
+                false,
+                &settings.vlm_model,
+                &settings.vlm_api_key,
+                prompt,
+                images,
+                schema,
+                num_predict,
+            );
+            request
+                .headers
+                .push(("User-Agent".into(), OPENCODE_USER_AGENT.into()));
+            request
+                .headers
+                .push(("x-opencode-session".into(), opencode_session().into()));
+            Ok(request)
+        }
         other => Err(VlmError::UnknownProvider(other.to_string())),
     }
 }
@@ -800,17 +1007,48 @@ pub fn parse_ollama_response(body: &Value) -> Result<Value, VlmError> {
     } else {
         body.get("thinking").and_then(Value::as_str).unwrap_or("")
     };
-    serde_json::from_str(text).map_err(|e| VlmError::BadReply(e.to_string()))
+    serde_json::from_str(text)
+        .or_else(|e| first_json(text).ok_or(e))
+        .map_err(|e| VlmError::BadReply(e.to_string()))
+}
+
+/// The first complete JSON object in `text`, ignoring anything written around
+/// it. A local model sometimes wraps the object in prose even when a schema
+/// was requested; the bench reads that reply, so the app does too.
+fn first_json(text: &str) -> Option<Value> {
+    let mut from = text.find('{')?;
+    loop {
+        let mut values = serde_json::Deserializer::from_str(&text[from..]).into_iter::<Value>();
+        if let Some(Ok(value)) = values.next() {
+            if value.is_object() {
+                return Some(value);
+            }
+        }
+        from = text[from + 1..].find('{').map(|i| from + 1 + i)?;
+    }
 }
 
 pub fn parse_openai_response(body: &Value) -> Result<Value, VlmError> {
-    let content = body
+    let choice = body
         .get("choices")
         .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
+        .ok_or_else(|| VlmError::BadReply("no choices[0] in the reply".into()))?;
+    let content = choice
+        .get("message")
         .and_then(|m| m.get("content"))
         .and_then(Value::as_str)
-        .ok_or_else(|| VlmError::BadReply("no choices[0].message.content in the reply".into()))?;
+        .unwrap_or("");
+    if content.trim().is_empty() {
+        // A reasoning model can spend the whole budget thinking and send no
+        // answer at all; say which happened instead of "EOF at line 1".
+        let finish = choice
+            .get("finish_reason")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        return Err(VlmError::BadReply(format!(
+            "the model returned no answer (finish_reason {finish})"
+        )));
+    }
     serde_json::from_str(content).map_err(|e| VlmError::BadReply(e.to_string()))
 }
 
@@ -845,6 +1083,8 @@ fn parse_response(provider: &str, body: &Value) -> Result<Value, VlmError> {
         "ollama" => parse_ollama_response(body),
         "openai" => parse_openai_response(body),
         "anthropic" => parse_anthropic_response(body),
+        // The gateway speaks the OpenAI envelope.
+        "opencode" | "opencode-go" => parse_openai_response(body),
         "gemini" => parse_gemini_response(body),
         other => Err(VlmError::UnknownProvider(other.to_string())),
     }
@@ -888,9 +1128,30 @@ impl VlmClient {
         schema: &Value,
         num_predict: i64,
     ) -> Result<Value, VlmError> {
+        self.call_with(settings, prompt, images, schema, num_predict, None)
+    }
+
+    /// `call`, with an optional Ollama `repeat_penalty` for this ask only.
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_with(
+        &self,
+        settings: &Settings,
+        prompt: &str,
+        images: &[String],
+        schema: &Value,
+        num_predict: i64,
+        repeat_penalty: Option<f64>,
+    ) -> Result<Value, VlmError> {
         let enabled: Vec<_> = settings.vlm_services.iter().filter(|s| s.enabled).collect();
         if enabled.is_empty() {
-            return self.call_one(settings, prompt, images, schema, num_predict);
+            return self.call_one(
+                settings,
+                prompt,
+                images,
+                schema,
+                num_predict,
+                repeat_penalty,
+            );
         }
         let ids: Vec<String> = enabled.iter().map(|s| s.id.clone()).collect();
         let pool = self.services.pool_for(ids.clone());
@@ -899,7 +1160,7 @@ impl VlmClient {
         let start = pick_service(&settings.vlm_strategy, &ids, held.as_deref(), &self.turn);
         let ask = |i: usize| {
             let one = for_service(settings, enabled[i]);
-            self.call_one(&one, prompt, images, schema, num_predict)
+            self.call_one(&one, prompt, images, schema, num_predict, repeat_penalty)
         };
         let mut order = (start..ids.len()).chain(0..start);
         let first = ask(order.next().unwrap_or(0));
@@ -929,6 +1190,7 @@ impl VlmClient {
         images: &[String],
         schema: &Value,
         num_predict: i64,
+        repeat_penalty: Option<f64>,
     ) -> Result<Value, VlmError> {
         let provider = if settings.vlm_provider.is_empty() {
             "ollama".to_string()
@@ -942,7 +1204,7 @@ impl VlmClient {
             // waiting out.
             let pool = self.hosts.pool_for(settings.ollama_hosts());
             let host = pool.acquire();
-            let req = ollama_request(
+            let mut req = ollama_request(
                 &host,
                 &settings.vlm_model,
                 prompt,
@@ -950,6 +1212,11 @@ impl VlmClient {
                 schema,
                 num_predict,
             );
+            // Only for a retry: a penalty on the first ask costs the digits
+            // that repeat in the visible text, and the first ask rarely loops.
+            if let Some(penalty) = repeat_penalty {
+                req.json["options"]["repeat_penalty"] = json!(penalty);
+            }
             let result = self.send_once(
                 &req,
                 Duration::from_secs_f64(settings.vlm_timeout),
@@ -1026,48 +1293,101 @@ pub const CAR_PROMPT: &str = include_str!("prompts/car.txt");
 pub const BIKE_PROMPT: &str = include_str!("prompts/bike.txt");
 pub const BURST_PROMPT: &str = include_str!("prompts/burst.txt");
 
+/// What the caller already knows about the vehicle before asking.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VlmHints {
+    /// A race or track preset: the car's own race number is the identity
+    /// that matters, and a plate is left out of the question entirely.
+    pub racing: bool,
+    /// Entry-list "Make Model" strings the answer must be one of; empty when
+    /// the shoot has no list.
+    pub candidates: Vec<String>,
+}
+
+fn candidate_line(hints: &VlmHints) -> String {
+    if hints.candidates.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "make/model must be one of: {}.",
+            hints.candidates.join(", ")
+        )
+    }
+}
+
+/// Whether the question asks for a registration plate at all.
+fn wants_plate(settings: &Settings, hints: &VlmHints) -> bool {
+    settings.read_plates && !hints.racing
+}
+
 /// Add the shoot's known visual context instead of asking a local model to
 /// decide whether incidental digits are a plate or a competition number.
-pub fn vehicle_prompt(settings: &Settings, is_bike: bool) -> String {
+pub fn vehicle_prompt(settings: &Settings, is_bike: bool, hints: &VlmHints) -> String {
     let base = if is_bike { BIKE_PROMPT } else { CAR_PROMPT };
-    let preset = conrod_core::profile::ShootPreset::parse(&settings.scan_profile);
-    let targets = match (settings.read_plates, settings.read_numbers) {
-        (true, true) => "A separate reader handles registration plates. Read a competition number only from the subject and never copy plate characters.",
-        (true, false) => "A separate reader handles registration plates. Set race_number to null.",
-        (false, true) => "Read a competition number only from the subject; ignore unrelated digits.",
-        (false, false) => "Set race_number to null and ignore registration plates.",
+    let with_plate = wants_plate(settings, hints);
+    let body = base
+        .lines()
+        .filter(|line| with_plate || !line.starts_with("- plate:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("{CANDIDATES}", &candidate_line(hints));
+    let targets = if settings.read_numbers {
+        "Read a competition number only from the subject; ignore unrelated digits."
+    } else {
+        "Set number to null."
     };
+    // No shoot-preset context here. A preset sentence ("capture vehicle
+    // identity, competition details, livery, and action") makes the model
+    // spend its answer on livery and drop a windscreen number it had read, and
+    // the bench reads the same crops better without it. The closing line asking
+    // for one compact object keeps the reply short enough to finish.
     format!(
-        "{}\n\nShoot context: {} Context guides attention only; never infer unseen details. {}",
-        base.trim(),
-        preset.prompt_context(),
-        targets
+        "{}\n\nContext guides attention only; never infer unseen details. {targets}\nReply with one JSON object only.",
+        body.trim()
     )
 }
 
-pub fn schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "make": {"type": ["string", "null"]},
-            "model": {"type": ["string", "null"]},
-            "colour": {"type": ["string", "null"]},
-            "body_type": {"type": ["string", "null"]},
-            "race_number": {"type": ["string", "null"]},
-            "team": {"type": ["string", "null"]},
-            "driver": {"type": ["string", "null"]},
-            "country": {"type": ["string", "null"]},
-            "sponsors": {"type": "array", "items": {"type": "string"}},
-            "livery_text": {"type": "array", "items": {"type": "string"}},
-            "is_competition": {"type": "boolean"},
-            "confidence": {"type": "number"},
+/// The reply's shape. `with_plate` is false for a race car, or when the
+/// plate reader is off, so the model is never asked for one.
+pub fn schema(with_plate: bool) -> Value {
+    let mut properties = json!({
+        "number": {"type": ["string", "null"]},
+        "number_location": {
+            "type": "string",
+            "enum": ["door", "roof", "windscreen", "nose", "other", "none"],
         },
-        "required": [
-            "make", "model", "colour", "body_type", "race_number",
-            "team", "driver", "country", "sponsors", "livery_text",
-            "is_competition", "confidence"
-        ],
-    })
+        "visible_text": {"type": "array", "items": {"type": "string"}},
+        "action": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": ["airborne", "dust", "tyre_smoke", "spray", "flames", "sparks", "contact", "wheel_lift"],
+            },
+        },
+        "make": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "evidence": {"type": "string", "enum": ["badge", "script", "design", "none"]},
+        "colour": {"type": ["string", "null"]},
+        "is_competition": {"type": "boolean"},
+        "confidence": {"type": "number"},
+    });
+    let mut required = vec![
+        "number",
+        "number_location",
+        "visible_text",
+        "action",
+        "make",
+        "model",
+        "evidence",
+        "colour",
+        "is_competition",
+        "confidence",
+    ];
+    if with_plate {
+        properties["plate"] = json!({"type": ["string", "null"]});
+        required.push("plate");
+    }
+    json!({"type": "object", "properties": properties, "required": required})
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -1077,11 +1397,23 @@ pub struct VehicleDescription {
     pub colour: Option<String>,
     pub body_type: Option<String>,
     pub race_number: Option<String>,
+    /// How sure the model is of the race number, lowered when it was read
+    /// off the nose board, where numbers are often incidental and can
+    /// conflict with the official window number.
+    pub number_confidence: f64,
+    pub plate: Option<String>,
     pub team: Option<String>,
     pub driver: Option<String>,
     pub country: Option<String>,
     pub sponsors: Vec<String>,
     pub livery_text: Vec<String>,
+    /// Visible action effects around the car: `airborne`, `dust`, `tyre_smoke`,
+    /// `spray`, `flames`, `sparks`, `contact`, `wheel_lift`.
+    pub action: Vec<String>,
+    /// What the model based the make/model on: "badge", "script" or "design".
+    pub model_evidence: Option<String>,
+    /// The model was identified from the car's design alone, a suggestion.
+    pub model_suggested: bool,
     pub is_competition: bool,
     pub confidence: f64,
 }
@@ -1127,10 +1459,39 @@ fn text(value: Option<&Value>) -> Option<String> {
     }
 }
 
-/// Port of `vlm._text_list`.
+/// A registration plate as shown: spaces, dots and dashes dropped, upper
+/// case, 2 to 7 letters and digits with at least one letter. Letters and
+/// digits mixed is the common issue; an all-letter token must be a known
+/// six-letter personalised format (`SRBGTR`), so a badge word still cannot
+/// pass as a plate.
+fn plate_text(value: Option<&Value>) -> Option<String> {
+    let raw = text(value)?;
+    let plate: String = raw
+        .chars()
+        .filter(|c| !c.is_whitespace() && !matches!(c, '.' | '-'))
+        .collect::<String>()
+        .to_uppercase();
+    let letters = plate.bytes().any(|b| b.is_ascii_alphabetic());
+    let digits = plate.bytes().any(|b| b.is_ascii_digit());
+    let personalised = !digits && conrod_vision::plates::looks_like_plate(&plate);
+    let valid = (2..=7).contains(&plate.chars().count())
+        && plate.chars().all(|c| c.is_ascii_alphanumeric())
+        && letters
+        && (digits || personalised);
+    valid.then_some(plate)
+}
+
+/// Port of `vlm._text_list`. A reply that gave the list as one
+/// newline-separated string is split into its lines rather than refused.
 fn text_list(value: Option<&Value>) -> Vec<String> {
-    let Some(Value::Array(items)) = value else {
-        return vec![];
+    let split: Vec<Value>;
+    let items: &[Value] = match value {
+        Some(Value::Array(items)) => items,
+        Some(Value::String(s)) => {
+            split = s.lines().map(|l| Value::String(l.to_string())).collect();
+            &split
+        }
+        _ => return vec![],
     };
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -1190,31 +1551,98 @@ fn is_competition(value: Option<&Value>) -> bool {
 /// Map a provider's parsed reply onto a [`VehicleDescription`]. Shared by
 /// [`describe`] (which also reads a race number) and [`identify_burst`]
 /// (which does not ask for one).
-fn map_vehicle(parsed: &Value, settings: &Settings, with_number: bool) -> VehicleDescription {
-    let make = text(parsed.get("make"));
-    let model = text(parsed.get("model"));
+fn map_vehicle(
+    parsed: &Value,
+    settings: &Settings,
+    with_number: bool,
+    with_plate: bool,
+) -> VehicleDescription {
+    let evidence = parsed
+        .get("evidence")
+        .and_then(Value::as_str)
+        .map(|e| e.trim().to_lowercase())
+        .unwrap_or_default();
+    let model = if evidence == "none" {
+        None
+    } else {
+        text(parsed.get("model"))
+    };
     // The nameplate is read more reliably than the badge; where the two
     // contradict each other and the nameplate belongs to exactly one
     // marque, the nameplate wins. See conrod-core's marques module.
+    let make = text(parsed.get("make"));
     let make = conrod_core::marques::correct_make(make.as_deref(), model.as_deref());
+    let confidence = number(parsed.get("confidence"));
+    // A nose board can carry a different number from the official window one
+    // (the benchmark's car 2: window 2, nose 1), so it is the weak spot.
+    let weak_spot = matches!(text(parsed.get("number_location")).as_deref(), Some("nose"));
+    let model_evidence = match evidence.as_str() {
+        "badge" | "script" | "design" => Some(evidence.clone()),
+        _ => None,
+    };
+    let visible = text_list(parsed.get("visible_text"));
+    let action = if settings.read_action {
+        action_list(parsed.get("action"))
+    } else {
+        Vec::new()
+    };
     VehicleDescription {
         make,
         model,
         colour: text(parsed.get("colour")),
-        body_type: text(parsed.get("body_type")),
+        body_type: None,
         race_number: if with_number {
-            digits(parsed.get("race_number"), settings)
+            digits(parsed.get("number"), settings)
         } else {
             None
         },
-        team: text(parsed.get("team")),
-        driver: text(parsed.get("driver")),
-        country: text(parsed.get("country")),
-        sponsors: text_list(parsed.get("sponsors")),
-        livery_text: text_list(parsed.get("livery_text")),
+        number_confidence: if weak_spot {
+            confidence * 0.7
+        } else {
+            confidence
+        },
+        plate: if with_plate {
+            plate_text(parsed.get("plate"))
+        } else {
+            None
+        },
+        team: None,
+        driver: None,
+        country: None,
+        sponsors: visible.clone(),
+        livery_text: visible,
+        action,
+        model_suggested: model_evidence.as_deref() == Some("design"),
+        model_evidence,
         is_competition: is_competition(parsed.get("is_competition")),
-        confidence: number(parsed.get("confidence")),
+        confidence,
     }
+}
+
+/// The action effects the model reported, restricted to the schema's set so a
+/// free-form answer cannot put prose where the UI expects a tag.
+fn action_list(value: Option<&Value>) -> Vec<String> {
+    const KNOWN: [&str; 8] = [
+        "airborne",
+        "dust",
+        "tyre_smoke",
+        "spray",
+        "flames",
+        "sparks",
+        "contact",
+        "wheel_lift",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    for item in value.and_then(Value::as_array).into_iter().flatten() {
+        let Some(word) = item.as_str() else {
+            continue;
+        };
+        let key = word.trim().to_lowercase().replace([' ', '-'], "_");
+        if KNOWN.contains(&key.as_str()) && !out.contains(&key) {
+            out.push(key);
+        }
+    }
+    out
 }
 
 /// Downscale and JPEG-encode a crop for the model.
@@ -1260,18 +1688,70 @@ pub fn describe(
     image: &Rgb,
     settings: &Settings,
     is_bike: bool,
+    hints: &VlmHints,
 ) -> Result<VehicleDescription, VlmError> {
+    describe_with_reply(client, image, settings, is_bike, hints).map(|(vehicle, _, _)| vehicle)
+}
+
+/// `describe`, plus the parsed reply and how many asks it took, for the eval
+/// harness.
+///
+/// Even with a schema the reply runs long on a busy crop: a local model
+/// repeats one livery item until the token budget cuts it off mid-string, and
+/// a cut-off reply parses as nothing at all, losing the number, make and model
+/// together. Such a reply gets a second ask with a light repetition penalty,
+/// which breaks the loop; the penalty stays off the first ask because it costs
+/// digits that repeat in the visible text.
+pub fn describe_with_reply(
+    client: &VlmClient,
+    image: &Rgb,
+    settings: &Settings,
+    is_bike: bool,
+    hints: &VlmHints,
+) -> Result<(VehicleDescription, Value, u32), VlmError> {
     let payload_image = encode_for_model(image, settings.vlm_input_edge);
-    let prompt = vehicle_prompt(settings, is_bike);
-    match client.call(settings, &prompt, &[payload_image], &schema(), 500) {
-        Ok(parsed) => Ok(map_vehicle(&parsed, settings, settings.read_numbers)),
-        Err(VlmError::Stopped) => Err(VlmError::Stopped),
+    let prompt = vehicle_prompt(settings, is_bike, hints);
+    let with_plate = wants_plate(settings, hints);
+    let reply_schema = schema(with_plate);
+    let ask = |text: &str, penalty: Option<f64>| {
+        client.call_with(
+            settings,
+            text,
+            std::slice::from_ref(&payload_image),
+            &reply_schema,
+            600,
+            penalty,
+        )
+    };
+    let (parsed, attempts) = match ask(&prompt, None) {
+        Ok(reply) => (reply, 1),
+        Err(VlmError::BadReply(_)) => match ask(&prompt, Some(1.1)) {
+            Ok(reply) => (reply, 2),
+            Err(err) => {
+                note_unless_fatal(client, settings, &err)?;
+                return Err(err);
+            }
+        },
         Err(err) => {
-            let who = display_name(&settings.vlm_provider);
-            note_failure(&client.fatal, &who, &err)?;
-            Err(err)
+            note_unless_fatal(client, settings, &err)?;
+            return Err(err);
         }
+    };
+    let vehicle = map_vehicle(&parsed, settings, settings.read_numbers, with_plate);
+    Ok((vehicle, parsed, attempts))
+}
+
+/// Count a failed ask against the run unless it was a Stop or a config refusal,
+/// which are passed on untouched so the caller can end the run.
+fn note_unless_fatal(
+    client: &VlmClient,
+    settings: &Settings,
+    err: &VlmError,
+) -> Result<(), VlmError> {
+    if matches!(err, VlmError::Stopped | VlmError::Misconfigured(_)) {
+        return Ok(());
     }
+    note_failure(&client.fatal, &display_name(&settings.vlm_provider), err)
 }
 
 /// Ask about several views of one vehicle in a single call. Port of
@@ -1289,8 +1769,8 @@ pub fn identify_burst(
         .map(|img| encode_for_model(img, settings.vlm_input_edge))
         .collect();
     let prompt = BURST_PROMPT.replace("{count}", &encoded.len().to_string());
-    match client.call(settings, &prompt, &encoded, &schema(), 400) {
-        Ok(parsed) => Ok(map_vehicle(&parsed, settings, false)),
+    match client.call(settings, &prompt, &encoded, &schema(false), 400) {
+        Ok(parsed) => Ok(map_vehicle(&parsed, settings, false, false)),
         Err(VlmError::Stopped) => Err(VlmError::Stopped),
         Err(err) => {
             let who = display_name(&settings.vlm_provider);
@@ -1405,5 +1885,223 @@ mod tests {
             .call(&settings, "p", &[], &json!({}), 8)
             .expect("the live service answers");
         assert_eq!(answer, json!({"ok": true}));
+    }
+
+    #[test]
+    fn plates_are_cleaned_and_accept_mixed_or_six_letter_personalised() {
+        let plate = |s: &str| plate_text(Some(&json!(s)));
+        assert_eq!(plate("ab-12 cd"), Some("AB12CD".into()));
+        assert_eq!(plate("1ABC.23"), Some("1ABC23".into()));
+        assert_eq!(plate("SRB GTR"), Some("SRBGTR".into()), "personalised");
+        assert_eq!(plate("ABCDEFG"), None, "seven letters is not a format");
+        assert_eq!(plate("NISMO"), None, "a five-letter badge is not a plate");
+        assert_eq!(plate("1234"), None, "digits only");
+        assert_eq!(plate("A1"), Some("A1".into()));
+        assert_eq!(plate("A12345678"), None, "too long");
+        assert_eq!(plate("A"), None, "too short");
+        assert_eq!(plate("null"), None);
+    }
+
+    #[test]
+    fn visible_text_as_one_string_is_split_into_lines() {
+        let list = text_list(Some(&json!("SHELL\nshell\n\nPirelli")));
+        assert_eq!(list, vec!["SHELL".to_string(), "Pirelli".to_string()]);
+        assert!(text_list(Some(&json!(["Shell", " SHELL "]))).len() == 1);
+    }
+
+    #[test]
+    fn evidence_none_drops_the_model_and_design_suggests_it() {
+        let settings = Settings::default();
+        let none = json!({"make": "Ford", "model": "Mustang", "evidence": "none"});
+        let d = map_vehicle(&none, &settings, true, true);
+        assert_eq!(d.model, None);
+        assert_eq!(d.model_evidence, None);
+        assert!(!d.model_suggested);
+
+        let design = json!({"make": "Ford", "model": "Mustang", "evidence": "design"});
+        let d = map_vehicle(&design, &settings, true, true);
+        assert_eq!(d.model.as_deref(), Some("Mustang"));
+        assert_eq!(d.model_evidence.as_deref(), Some("design"));
+        assert!(d.model_suggested);
+
+        let badge = json!({"make": "Ford", "model": "Mustang", "evidence": "badge"});
+        let d = map_vehicle(&badge, &settings, true, true);
+        assert_eq!(d.model_evidence.as_deref(), Some("badge"));
+        assert!(!d.model_suggested);
+    }
+
+    #[test]
+    fn a_six_letter_personalised_plate_survives_the_vehicle_map() {
+        let settings = Settings::default();
+        let reply = json!({"plate": "SRB GTR", "evidence": "badge"});
+        assert_eq!(
+            map_vehicle(&reply, &settings, true, true).plate.as_deref(),
+            Some("SRBGTR")
+        );
+    }
+
+    #[test]
+    fn racing_replies_never_carry_a_plate() {
+        let settings = Settings::default();
+        let reply = json!({"plate": "ABC123", "evidence": "none"});
+        assert_eq!(map_vehicle(&reply, &settings, true, false).plate, None);
+        let d = map_vehicle(&reply, &settings, true, true);
+        assert_eq!(d.plate.as_deref(), Some("ABC123"));
+    }
+
+    #[test]
+    fn action_effects_are_known_tags_only() {
+        let mut settings = Settings::default();
+        assert!(settings.read_action, "action is read by default");
+        let reply = json!({
+            "number": "7",
+            "visible_text": [],
+            "action": ["airborne", "tyre smoke", "FLAMES", "nonsense", "airborne"],
+        });
+        assert_eq!(
+            map_vehicle(&reply, &settings, true, false).action,
+            vec![
+                "airborne".to_string(),
+                "tyre_smoke".to_string(),
+                "flames".to_string()
+            ]
+        );
+        settings.read_action = false;
+        assert!(map_vehicle(&reply, &settings, true, false)
+            .action
+            .is_empty());
+        // A reply from before this field existed is not an error.
+        assert!(map_vehicle(&json!({"number": "7"}), &settings, true, false)
+            .action
+            .is_empty());
+    }
+
+    #[test]
+    fn only_the_nose_number_lowers_the_number_confidence() {
+        let settings = Settings::default();
+        let door = json!({"number": "42", "number_location": "door", "confidence": 0.9});
+        let window = json!({"number": "42", "number_location": "windscreen", "confidence": 0.9});
+        let nose = json!({"number": "42", "number_location": "nose", "confidence": 0.9});
+        assert_eq!(
+            map_vehicle(&door, &settings, true, false).number_confidence,
+            0.9
+        );
+        assert_eq!(
+            map_vehicle(&window, &settings, true, false).number_confidence,
+            0.9,
+            "the window number is the official one, not a weak spot"
+        );
+        let d = map_vehicle(&nose, &settings, true, false);
+        assert!((d.number_confidence - 0.63).abs() < 1e-9);
+        assert_eq!(d.confidence, 0.9);
+    }
+
+    #[test]
+    fn candidate_line_lists_the_entry_list_or_nothing() {
+        let none = VlmHints::default();
+        assert_eq!(candidate_line(&none), "");
+        let some = VlmHints {
+            racing: false,
+            candidates: vec!["Ford Mustang S650".into(), "Toyota GR Supra".into()],
+        };
+        assert_eq!(
+            candidate_line(&some),
+            "make/model must be one of: Ford Mustang S650, Toyota GR Supra."
+        );
+    }
+
+    #[test]
+    fn the_opencode_provider_speaks_openai_with_json_object() {
+        let mut settings = Settings::default();
+        settings.vlm_provider = "opencode".into();
+        settings.vlm_model = "qwen3.8-max".into();
+        settings.vlm_api_key = "sk-test".into();
+        settings.vlm_host = String::new();
+        let schema = json!({"type": "object", "properties": {"number": {"type": "string"}}});
+        let request = build_request(&settings, "read the number", &["abc".into()], &schema, 100)
+            .expect("opencode is a provider");
+        assert_eq!(request.url, OPENCODE_CHAT_URL);
+        assert!(request
+            .headers
+            .iter()
+            .any(|(k, v)| k == "Authorization" && v == "Bearer sk-test"));
+        assert_eq!(request.json["response_format"]["type"], "json_object");
+        // The schema travels in the prompt: the gateway is not asked for a
+        // strict schema it may not support, and the reply parser reads JSON out
+        // of prose anyway.
+        let text = request.json["messages"][0]["content"][0]["text"]
+            .as_str()
+            .expect("a text part");
+        assert!(text.contains("read the number"));
+        assert!(text.contains("\"number\""));
+    }
+
+    #[test]
+    fn an_empty_openai_reply_names_the_finish_reason() {
+        let body = json!({"choices": [{"finish_reason": "length", "message": {"content": ""}}]});
+        let err = parse_openai_response(&body).expect_err("empty content is not an answer");
+        assert!(
+            format!("{err}").contains("finish_reason length"),
+            "the error should say the budget ran out, not 'EOF at line 1': {err}"
+        );
+    }
+
+    #[test]
+    fn the_opencode_go_provider_routes_to_go_with_a_session() {
+        let mut settings = Settings::default();
+        settings.vlm_provider = "opencode-go".into();
+        settings.vlm_model = "deepseek-v4.1-flash".into();
+        settings.vlm_api_key = "sk-test".into();
+        settings.vlm_host = String::new();
+        let schema = json!({"type": "object", "properties": {"number": {"type": "string"}}});
+        let request = build_request(&settings, "read the number", &["abc".into()], &schema, 100)
+            .expect("opencode-go is a provider");
+        assert_eq!(request.url, OPENCODE_GO_CHAT_URL, "Go has its own base");
+        // The Go plan refuses a request without these two headers.
+        let header = |name: &str| {
+            request
+                .headers
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(header("Authorization"), Some("Bearer sk-test"));
+        assert_eq!(header("User-Agent"), Some(OPENCODE_USER_AGENT));
+        assert!(
+            header("x-opencode-session").is_some_and(|id| id.starts_with("conrod-")),
+            "a stable session id is required for Go routing"
+        );
+        // The model is the plain id at the Go base, not the opencode-go/ prefix
+        // OpenCode's own config uses.
+        assert_eq!(request.json["model"], "deepseek-v4.1-flash");
+        assert_eq!(request.json["response_format"]["type"], "json_object");
+        // Parsing is the OpenAI envelope, like the pay-as-you-go provider.
+        let reply = json!({"choices": [{"message": {"content": "{\"number\":\"96\"}"}}]});
+        assert_eq!(
+            parse_response("opencode-go", &reply).unwrap()["number"],
+            "96"
+        );
+    }
+
+    #[test]
+    fn an_opencode_go_endpoint_is_completed_with_the_chat_path() {
+        assert_eq!(opencode_go_chat_url(""), OPENCODE_GO_CHAT_URL);
+        assert_eq!(
+            opencode_go_chat_url("https://proxy.local/go/v1/"),
+            "https://proxy.local/go/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn an_opencode_endpoint_is_completed_with_the_chat_path() {
+        assert_eq!(opencode_chat_url(""), OPENCODE_CHAT_URL);
+        assert_eq!(
+            opencode_chat_url("https://proxy.local/v1/"),
+            "https://proxy.local/v1/chat/completions"
+        );
+        assert_eq!(
+            opencode_chat_url("https://proxy.local/v1/chat/completions"),
+            "https://proxy.local/v1/chat/completions"
+        );
     }
 }

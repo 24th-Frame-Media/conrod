@@ -1,14 +1,15 @@
 /* Dev-only engine stand-in: `vite dev` + `?mock=1`. Imported dynamically behind import.meta.env.DEV, so it is not in `dist`.
-   Extra params: page=library|scan|review|train|known|settings, viewer, popover, scan (a scan is running). */
-import type { Bootstrap, Detection, Frame, Job, KnownVehicle, Page, Settings, Status } from './types';
+   Extra params: page=library|scan|identify|review|train|known|settings, viewer, popover, scan (a scan is running), profile=<shoot preset id>. */
+import type { Bootstrap, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, PipelineStage, PipelineWorker, ScanProgress, ScanRecentFrame, Settings, Status, WorkerLimits } from './types';
 
 export type DevStart = { page?: Page; jobId?: number; viewer?: boolean; popover?: boolean };
 const params = () => new URLSearchParams(location.search);
 
+/** `?mock=1&page=scan` plays a ~30 s scan of album 3 through every stage (`&speed=2` to hurry it). */
 export function devStart(): DevStart {
-  const pages: Record<string, Page> = { library: 'Library', scan: 'Scan', review: 'Review', train: 'Train', known: 'Known vehicles', settings: 'Settings' };
+  const pages: Record<string, Page> = { library: 'Library', scan: 'Scan', identify: 'Identify', review: 'Review', train: 'Train', known: 'Known vehicles', settings: 'Settings' };
   const page = pages[params().get('page') ?? ''];
-  return { page, jobId: page === 'Review' || page === 'Train' ? 1 : undefined, viewer: params().has('viewer'), popover: params().has('popover') };
+  return { page, jobId: page === 'Review' || page === 'Train' || page === 'Identify' ? 1 : page === 'Scan' ? 3 : undefined, viewer: params().has('viewer'), popover: params().has('popover') };
 }
 
 const CARS: [string, string, string, string, string, string, number][] = [
@@ -20,6 +21,7 @@ const CARS: [string, string, string, string, string, string, number][] = [
   ['BMW', 'M4 GT3', 'darkorange', 'Walkinshaw', '7', 'BMW777', 280],
 ];
 const W = 6000, H = 4000;
+const COMP_MODES = ['centre', 'thirds', 'phi'] as const;
 
 /** A landscape with a car in it, as a data URI; car box is x 0.5±s/2, y .40-.74 of the frame. */
 function scene(hue: number, cx: number, s: number, paint: string, w: number, h: number): string {
@@ -38,21 +40,31 @@ let cache: Db | undefined;
 
 function makeDb(): Db {
   const frames: Frame[] = [], dets: Detection[] = [];
-  for (let i = 0; i < 64; i += 1) {
+  const count = Math.max(8, Number(params().get('frames')) || 64);
+  for (let i = 0; i < count; i += 1) {
     const [make, model, colour, team, no, plate, hue] = CARS[i % CARS.length];
-    const id = 1000 + i, rating = 0.5 + ((i * 37) % 48) / 100;
+    // Burst 2 is all soft (two stars or less) and has no engine pick: the grid must
+    // say "No keeper" there instead of proposing the least-bad frame.
+    const soft = Math.floor(i / 5) === 2;
+    const id = 1000 + i, rating = soft ? 0.6 + ((i * 7) % 6) / 100 : 0.5 + ((i * 37) % 48) / 100;
     const cx = 0.38 + ((i * 13) % 25) / 100, s = 0.5 + ((i * 7) % 20) / 100;
     const read = i % 4 !== 3;
+    // Composition: frame 0 opens with a busy background on a pan, frame 3 is the clean pan the strip marks.
+    const clutter = i === 3 ? 0.18 : i % 3 === 0 ? 0.85 + ((i * 11) % 9) / 100 : 0.4 + ((i * 17) % 24) / 100;
     frames.push({
-      id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > 60 ? 'pending' : 'done',
+      id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > count - 4 ? 'pending' : 'done',
       thumb_path: scene(hue, cx, s, colour, 420, 280), preview_path: null, width: W, height: H, rating,
-      manual_stars: i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
+      manual_stars: soft ? null : i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, picked: i % 17 === 5 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
+      comp_placement: 0.52 + ((i * 23) % 42) / 100, comp_mode: COMP_MODES[i % 3],
+      comp_balance_x: ((i * 13 + 15) % 40 - 20) / 100, comp_balance_y: ((i * 19 + 10) % 40 - 20) / 100,
+      comp_symmetry: ((i * 29) % 80) / 100, comp_clutter: clutter,
+      comp_lines: i % 5, comp_subject_share: 0.18 + ((i * 13) % 45) / 100,
     });
     dets.push({
       id: 5000 + i, image_id: id, cls: 'car', x1: (cx - s / 2) * W, y1: 0.38 * H, x2: (cx + s / 2) * W, y2: 0.74 * H,
       sharpness: rating, panning: i % 3 === 0 ? 1 : 0, number: read ? no : null, plate: read ? plate : null,
-      cull_reason: rating < 0.6 ? `Soft: subject sharpness ${rating.toFixed(2)}` : null,
-      attributes: JSON.stringify(read ? { make, model, colour, team, race_number: no, plate } : {}), burst_pick: i % 5 === 0 ? 1 : 0, region_type: 'vehicle',
+      cull_reason: rating < 0.6 ? 'Motion blur' : null, rating, rating_verdict: rating >= 0.8 ? 'good' : rating >= 0.6 ? 'fair' : 'poor', sharp_end: i % 3 === 0 ? 'subject' : 'even',
+      attributes: JSON.stringify(read ? { make, model, colour, team, race_number: no, plate } : {}), burst_pick: soft ? 0 : i % 5 === 0 ? 1 : 0, region_type: 'vehicle',
     });
   }
   const jobs: Job[] = [
@@ -63,16 +75,243 @@ function makeDb(): Db {
   ];
   const known: KnownVehicle[] = CARS.map(([make, model, colour, team, race_number, plate]) => ({ plate, make, model, colour, team, race_number }));
   const settings: Settings = {
-    scan_profile: 'motorsport', detect_conf: 0.35, min_box_fraction: 0.04, max_vehicles_per_frame: 8, include_cars: true, include_bikes: true, include_trucks: false,
-    sharp_at: 0.8, blurred_below: 0.5, auto_reject_below_stars: 0, cull_blurred: true, burst_gap: 1.5, read_plates: true, read_numbers: true, read_text: true,
+    scan_profile: params().get('profile') ?? 'motorsport', detect_conf: 0.35, min_box_fraction: 0.04, max_vehicles_per_frame: 8, include_cars: true, include_bikes: true, include_trucks: false,
+    sharp_at: 0.8, blurred_below: 0.5, blur_strictness: 'moderate', entry_list: '', auto_reject_below_stars: 0, cull_blurred: true, burst_gap: 1.5, read_plates: true, read_numbers: true, read_text: true,
     use_vlm: true, vlm_provider: 'ollama', vlm_model: 'qwen2.5vl:7b', vlm_host: 'http://localhost:11434', vlm_extra_hosts: '', vlm_api_key: '', vlm_timeout: 120,
+    workflow_mode: 'both', identify_scope: 'keepers',
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
     overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', close_to_tray: false,
   };
   return { jobs, frames, dets, known, settings, labels: 14, ticks: 0, identifySkipped: false };
 }
 
+/* ── scan simulator: a fluid model of the real pipeline, so the scan screen can be walked without the engine ── */
+const listeners = new Set<(p: ScanProgress) => void>();
+let lastProgress: ScanProgress | null = null;
+export function subscribeScanProgress(cb: (p: ScanProgress) => void): () => void {
+  listeners.add(cb);
+  if (lastProgress) cb(lastProgress);
+  return () => { listeners.delete(cb); };
+}
+
+type StageDef = { id: string; label: string; model: string; device: string; pool: 'preview' | 'cull' | 'detect' | 'identify' | null; perWorker: number; steps: string[]; stepMs: number };
+const STAGE_DEFS: StageDef[] = [
+  { id: 'read', label: 'Read', model: 'RAW preview decoder', device: 'CPU', pool: 'preview', perWorker: 20, steps: ['decode preview', 'write thumbnail'], stepMs: 140 },
+  { id: 'detect', label: 'Detect', model: 'yolo11s-960.onnx', device: 'DirectML', pool: 'detect', perWorker: 23, steps: ['YOLO inference', 'decode boxes'], stepMs: 300 },
+  { id: 'sharpness', label: 'Sharpness', model: 'edge blur · subject crop', device: 'CPU', pool: 'cull', perWorker: 22, steps: ['crop subject', 'edge blur', 'pan check'], stepMs: 120 },
+  { id: 'faces', label: 'Faces', model: 'face + eye detector', device: 'CPU', pool: 'cull', perWorker: 23, steps: ['find faces', 'eye state'], stepMs: 150 },
+  { id: 'identify', label: 'Identify', model: 'qwen2.5vl:7b via Ollama', device: 'ollama', pool: 'identify', perWorker: 10, steps: ['reading plate', 'vision model', 'race number'], stepMs: 700 },
+  { id: 'group', label: 'Group', model: 'EXIF time + similarity', device: 'CPU', pool: null, perWorker: 0, steps: ['grouping bursts'], stepMs: 800 },
+  { id: 'pick', label: 'Pick', model: 'keeper ranker', device: 'CPU', pool: null, perWorker: 0, steps: ['ranking keepers'], stepMs: 700 },
+];
+const ID_RATIO = 0.7;
+
+type Sim = {
+  jobId: number; total: number; t: number; last: number; timer: number; finished: boolean;
+  done: number[]; rate: number[]; group: number; pick: number; overall: number; overallRate: number;
+  size: Record<string, number>; recent: ScanRecentFrame[]; seen: number; bursts: number; keepers: number;
+};
+let sim: Sim | undefined;
+let thumbs: string[] | undefined;
+const mockThumb = (k: number): string => {
+  thumbs ??= Array.from({ length: 24 }, (_, i) => { const [, , colour, , , , hue] = CARS[i % CARS.length]; return scene(hue, 0.38 + ((i * 13) % 25) / 100, 0.5 + ((i * 7) % 20) / 100, colour, 240, 160); });
+  return thumbs[k % thumbs.length];
+};
+
+function startSim(db: Db, jobId: number): void {
+  if (sim && !sim.finished) return;
+  const size = (key: string, fallback: number) => Math.max(1, Math.round(Number(db.settings[key]) || fallback));
+  const total = Math.max(60, Number(params().get('frames')) || 1200);
+  sim = {
+    jobId, total, t: 0, last: performance.now(), timer: 0, finished: false, done: [0, 0, 0, 0, 0], rate: [0, 0, 0, 0, 0], group: 0, pick: 0, overall: 0, overallRate: 0,
+    size: { preview: size('preview_workers', 4), cull: size('workers', 6), detect: size('detect_workers', 2), identify: size('analysis_workers', 3), group: 1, pick: 1 }, recent: [], seen: 0, bursts: 0, keepers: 0,
+  };
+  const job = db.jobs.find((j) => j.id === jobId);
+  if (job) { job.status = 'scanning'; job.total = total; job.done = 0; }
+  sim.timer = window.setInterval(() => tickSim(db), 250);
+  tickSim(db);
+}
+
+function tickSim(db: Db): void {
+  const s = sim;
+  if (!s || s.finished) return;
+  const speed = Number(params().get('speed')) || 1;
+  const now = performance.now();
+  const dt = Math.min(0.5, (now - s.last) / 1000) * speed;
+  s.last = now; s.t += dt;
+  const idTotal = Math.round(s.total * ID_RATIO), ramp = Math.min(1, 0.2 + s.t / 2.5);
+  const totals = [s.total, s.total, s.total, s.total, idTotal];
+  const workersOf = (d: StageDef) => (d.pool ? s.size[d.pool] : 1);
+  const prevFaces = s.done[3];
+  const flowing = [false, false, false, false, false];
+  for (let i = 0; i < 5; i += 1) {
+    const avail = i === 0 ? s.total : i === 4 ? s.done[3] * ID_RATIO : s.done[i - 1];
+    const step = Math.max(0, Math.min(workersOf(STAGE_DEFS[i]) * STAGE_DEFS[i].perWorker * ramp * dt, avail - s.done[i], totals[i] - s.done[i]));
+    s.done[i] += step; flowing[i] = step > 0;
+    s.rate[i] = s.rate[i] * 0.75 + (dt > 0 ? step / dt : 0) * 0.25;
+  }
+  const perFrameDone = s.done.every((d, i) => d >= totals[i] - 0.5);
+  if (perFrameDone) {
+    if (s.group < s.total) { s.group = Math.min(s.total, s.group + (s.total * dt) / 1.6); if (s.group >= s.total) s.bursts = Math.round(s.total / 7.3); }
+    else if (s.pick < s.total) { s.pick = Math.min(s.total, s.pick + (s.total * dt) / 1.4); if (s.pick >= s.total) s.keepers = Math.round(s.bursts * 0.7); }
+  }
+  for (let k = Math.floor(prevFaces); k < Math.floor(s.done[3]); k += 1) {
+    const labelled = s.done[4] > 0 && k % 5 < 3, car = CARS[k % CARS.length];
+    s.recent.unshift({
+      image_id: 1000 + k, thumb_url: mockThumb(k), subject: 'car',
+      verdict: k % 5 === 3 ? 'soft' : 'sharp',
+      panning: k % 5 !== 3 && k % 7 === 2,
+      label: labelled ? (k % 2 ? `#${car[4]}` : car[5]) : null,
+    });
+  }
+  s.recent = s.recent.slice(0, 24);
+  const finished = s.pick >= s.total;
+  const frac = (s.done.reduce((n, d, i) => n + d / totals[i], 0) + s.group / s.total + s.pick / s.total) / 7;
+  const overall = finished ? s.total : Math.floor(frac * s.total);
+  s.overallRate = s.overallRate * 0.8 + (dt > 0 ? (overall - s.overall) / dt : 0) * 0.2;
+  s.overall = overall;
+
+  const lanes: PipelineWorker[] = [];
+  const stages: PipelineStage[] = STAGE_DEFS.map((d, si) => {
+    const n = workersOf(d), per = si < 5;
+    const stageTotal = per ? totals[si] : s.total;
+    const stageDone = per ? s.done[si] : si === 5 ? s.group : s.pick;
+    const avail = !per ? s.total : si === 0 ? s.total : si === 4 ? s.done[3] * ID_RATIO : s.done[si - 1];
+    const queue = per ? Math.max(0, Math.floor(avail - stageDone)) : 0;
+    const phaseOn = !per && perFrameDone && stageDone < s.total && (si === 5 || s.group >= s.total);
+    const busyWant = per ? (queue >= 1 ? Math.min(n, queue) : flowing[si] ? 1 : 0) : phaseOn ? 1 : 0;
+    let busy = 0;
+    for (let w = 0; w < n; w += 1) {
+      const idx = Math.floor(stageDone) + w;
+      const lane: PipelineWorker = { stage: d.id, worker_index: w, state: 'idle', waiting_for: null, file: null, step: null, ms_in_step: 0 };
+      if (w < busyWant) {
+        lane.file = `IMG_${4200 + (idx % 3000)}.CR3`;
+        lane.step = d.steps[(Math.floor(s.t * 3) + w + si) % d.steps.length];
+        lane.ms_in_step = Math.round((s.t * 1000 + w * 173 + si * 61) % d.stepMs);
+        if (d.id === 'detect' && w === 1 && Math.floor(s.t * 2) % 5 === 0) { lane.state = 'waiting'; lane.waiting_for = 'gpu'; lane.step = 'queued for DirectML'; lane.ms_in_step += 90; }
+        else if (d.id === 'identify' && w === n - 1 && n > 1 && Math.floor(s.t) % 4 === 0) { lane.state = 'waiting'; lane.waiting_for = 'ollama'; lane.step = 'queued for the model'; }
+        else { lane.state = 'busy'; busy += 1; }
+      }
+      lanes.push(lane);
+    }
+    const rate = per ? s.rate[si] : phaseOn ? s.total / (si === 5 ? 1.6 : 1.4) : 0;
+    return { id: d.id, label: d.label, model: d.model, device: d.device, workers_total: n, workers_busy: busy, queue_len: queue, done: Math.floor(stageDone), total: stageTotal, rate_per_s: Math.round(rate * 10) / 10, eta_s: rate > 1 && stageDone < stageTotal ? (stageTotal - stageDone) / rate : null };
+  });
+  // Like the engine, the header names one stage and carries that stage's own count, rate and ETA.
+  const firstOpen = stages.findIndex((st) => st.done < st.total);
+  const activeIndex = firstOpen < 0 ? stages.length - 1 : firstOpen, head = stages[activeIndex];
+  const found = {
+    subjects: Math.floor(s.done[1] * 1.15), soft: Math.floor(s.done[2] * 0.21), closed_eyes: Math.floor(s.done[3] * 0.01),
+    numbers: Math.floor(s.done[4] * 0.8), plates: Math.floor(s.done[4] * 0.6), bursts: s.bursts, keepers: s.keepers,
+  };
+  const overallEta = finished ? null : (s.overallRate > 0 ? Math.max(0, s.total - s.overall) / s.overallRate : null);
+  lastProgress = {
+    job_id: s.jobId, state: finished ? 'done' : 'running', stage: head.id, stage_index: activeIndex, stage_count: stages.length,
+    done: head.done, total: head.total, rate_per_s: head.rate_per_s, eta_s: finished ? null : head.eta_s, recent: s.recent, found, pipeline: { stages, workers: lanes },
+    overall: { done: s.overall, total: s.total, fraction: finished ? 1 : frac, rate_per_s: s.overallRate, eta_s: overallEta, eta_confident: finished || s.done[1] >= 20 },
+  };
+  const job = db.jobs.find((j) => j.id === s.jobId);
+  if (job) { job.done = overall; if (finished) job.status = 'done'; }
+  if (finished) { s.finished = true; clearInterval(s.timer); }
+  for (const cb of listeners) cb(lastProgress);
+}
+
+/* ── identify simulator: the live AI trace, so the Identify screen can be walked without the engine ── */
+const identifyListeners = new Set<(p: IdentifyLive) => void>();
+let lastIdentify: IdentifyLive | null = null;
+export function subscribeIdentifyProgress(cb: (p: IdentifyLive) => void): () => void {
+  identifyListeners.add(cb);
+  if (lastIdentify) cb(lastIdentify);
+  return () => { identifyListeners.delete(cb); };
+}
+
+const IDENTIFY_STEPS: IdentifyStage[] = ['read', 'crop', 'vision', 'merge'];
+type IdentifySim = { jobId: number; tick: number; total: number; startedAt: number; timer: number; recent: IdentifyItem[]; finished: boolean };
+let identSim: IdentifySim | undefined;
+
+function identifyItem(k: number, stage: IdentifyStage, startedAt: number): IdentifyItem {
+  const [make, model, colour, team, no, plate] = CARS[k % CARS.length];
+  return {
+    detection_id: 9000 + k, image_id: 1000 + k, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + k}.CR3`,
+    thumb_path: mockThumb(k), preview_path: null, crop_path: mockThumb(k + 2), stage,
+    prompt: 'You are reading one competition car. Read the race number from the windscreen or side window first, then the door board. Take the make and model from badges or the body shape, and the team from the livery.',
+    reply: { number: no, make, model, colour, team, plate: null },
+    trace: [
+      `read IMG_${4200 + k}.CR3 · RAW preview 1920 px`,
+      `crop subject · car ${model}`,
+      `vlm 1 ask(s): ${stage === 'vision' ? 'reading the number and make' : 'queued'}`,
+      `entry list: 26 candidates · best match #${no}`,
+    ],
+    number: no, number_source: k % 5 === 0 ? 'ocr+entry' : 'vlm', number_conf: 0.62 + ((k * 7) % 36) / 100,
+    plate, make, model, team, colour,
+    action: k % 4 === 0 ? ['dust'] : k % 7 === 0 ? ['airborne', 'tyre_smoke'] : [],
+    failures: [], ms: 1200 + ((k * 37) % 900), at: startedAt + (k + 1) * 2,
+  };
+}
+
+function emitIdentify(snap: IdentifyLive): void {
+  lastIdentify = snap;
+  for (const cb of identifyListeners) cb(snap);
+}
+
+function startIdentifySim(jobId: number): void {
+  if (identSim && !identSim.finished) return;
+  const total = Math.max(8, Number(params().get('frames')) || 24);
+  identSim = { jobId, tick: 0, total, startedAt: Date.now(), timer: 0, recent: [], finished: false };
+  identSim.timer = window.setInterval(() => tickIdentify(), 900);
+  tickIdentify();
+}
+
+function tickIdentify(): void {
+  const s = identSim;
+  if (!s || s.finished) return;
+  const idx = Math.floor(s.tick / 4), step = s.tick % 4;
+  const stage = IDENTIFY_STEPS[step];
+  const finished = idx >= s.total;
+  if (step === 0 && idx > 0 && idx <= s.total) s.recent = [{ ...identifyItem(idx - 1, 'done', s.startedAt), worker: 0 }, ...s.recent].slice(0, 16);
+  const current = finished ? null : identifyItem(idx, stage, s.startedAt);
+  emitIdentify({
+    job_id: s.jobId, state: finished ? 'done' : 'running', done: finished ? s.total : idx, total: s.total,
+    started_at: s.startedAt / 1000, elapsed_ms: Date.now() - s.startedAt,
+    stage: finished ? 'done' : stage, workers: 3,
+    current: current ? { ...current, worker: 0 } : null,
+    // The real run has one car per worker; the mock shows the same three lanes.
+    active: current ? [
+      { ...current, worker: 0 },
+      { ...identifyItem(idx + 1, 'crop', s.startedAt), worker: 1 },
+      { ...identifyItem(idx + 2, 'read', s.startedAt), worker: 2 },
+    ] : [],
+    recent: s.recent, errors: [],
+  });
+  if (finished) { s.finished = true; clearInterval(s.timer); return; }
+  s.tick += 1;
+}
+
+function stopIdentifySim(): void {
+  const s = identSim;
+  if (!s || s.finished) return;
+  s.finished = true;
+  clearInterval(s.timer);
+  const idx = Math.min(Math.floor(s.tick / 4), s.total);
+  emitIdentify({
+    job_id: s.jobId, state: 'stopped', done: idx, total: s.total,
+    started_at: s.startedAt / 1000, elapsed_ms: Date.now() - s.startedAt, stage: 'done', workers: 3,
+    current: lastIdentify?.current ?? null, active: [], recent: s.recent, errors: [],
+  });
+}
+
 function status(db: Db): Status {
+  if (identSim && !identSim.finished) {
+    const job = db.jobs.find((j) => j.id === identSim?.jobId);
+    return {
+      tasks: [{ id: 11, label: `Identifying · album ${identSim.jobId}`, detail: lastIdentify?.current?.path ?? 'Preparing…', state: 'running', done: lastIdentify?.done ?? 0, total: identSim.total, eta: null, error: null }],
+      log: [`Reading ${job?.label ?? 'album'} vehicles`], activeJob: null, operations: [`Identifying:${identSim.jobId}`],
+    };
+  }
+  if (sim && !sim.finished) {
+    const job = db.jobs.find((j) => j.id === sim?.jobId);
+    return { tasks: [{ id: 9, label: `Scanning ${job?.label ?? 'album'}`, detail: `IMG_${4200 + sim.overall}.CR3`, state: 'running', done: sim.overall, total: sim.total, eta: lastProgress?.eta_s ?? null, error: null }], log: ['scan started'], activeJob: sim.jobId, operations: [] };
+  }
   if (params().has('identify') && !db.identifySkipped) {
     db.ticks += 1;
     const done = Math.min(1458, 118 + db.ticks * 7);
@@ -110,6 +349,16 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
         { name: 'minicpm-v:8b', size: 5473838466, vision: true, parameter_size: '7.6B' },
       ],
     });
+    case 'provider_models': {
+      const provider = String(a.provider ?? '');
+      if (provider !== 'openai' && provider !== 'opencode' && provider !== 'opencode-go') {
+        return out({ models: [], error: `'${provider}' does not list models; type the model name` });
+      }
+      const models = provider === 'openai'
+        ? [{ id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }, { id: 'o4-mini', name: 'o4-mini' }]
+        : [{ id: 'qwen3.8-max', name: 'qwen3.8-max' }, { id: 'deepseek-v4.1-flash', name: 'deepseek-v4.1-flash' }, { id: 'kimi-k2', name: 'kimi-k2' }];
+      return out({ models });
+    }
     case 'summary': return out({images: {scanned: db.frames.length, written: 0, errors: 0}, counts: {numbered: 48, plated: 48, to_review: 12}});
     case 'rename_job': { const job = db.jobs.find(j => j.id === a.jobId); if(job) job.label = String(a.label || 'Album'); return out(null); }
     case 'bulk_edit': { for(const d of db.dets.filter(d => (a.ids as number[]).includes(d.id))) { if('number' in a) d.number = String(a.number); if('reviewed' in a) d.reviewed = a.reviewed ? 1 : 0; } return out({updated: (a.ids as number[]).length}); }
@@ -117,12 +366,107 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'import_known': return out({written: 1});
     case 'export_known': return out('plate,make,model\nABC123,Ford,Falcon\n');
     case 'import_entries': return out({count: 12});
+    case 'worker_limits': {
+      const pool = (key: string, current: number, max: number, def: number) => ({ current: Math.min(max, Math.max(1, Math.round(Number(db.settings[key]) || current))), min: 1, max, default: def, live: false });
+      return out({
+        cores: 12, preview: pool('preview_workers', 4, 8, 4), cull: pool('workers', 6, 10, 6), detect: pool('detect_workers', 2, 4, 1), identify: pool('analysis_workers', 3, 4, 3),
+        note: 'Worker counts apply to the next scan; a running pool cannot be resized.',
+      } satisfies WorkerLimits);
+    }
     case 'bootstrap':
+      if (params().get('page') === 'scan') startSim(db, 3);
+      if (params().get('page') === 'identify') startIdentifySim(1);
       return out({ jobs: db.jobs, settings: db.settings, status: status(db), models: [{ name: 'Vehicle detector', file: 'yolo.onnx', ready: true }, { name: 'Plate reader', file: 'plates.onnx', ready: true }, { name: 'Vision model', file: 'qwen', ready: false }] } satisfies Bootstrap);
     case 'status': return out(status(db));
     case 'jobs': return out(db.jobs);
+    case 'global_stats': {
+      const albums = db.jobs.length;
+      const frames = db.jobs.reduce((n, job) => n + job.total, 0);
+      const complete = Math.max(0, albums - 1);
+      const shot = complete > 0 ? Math.round(frames * 0.98) : 0;
+      const subjects = Math.round(frames * 3.6);
+      const sharp = Math.round(subjects * 0.38);
+      const soft = Math.round(subjects * 0.58);
+      const shooting = frames * 30;
+      return out({
+        albums, complete_albums: complete, frames, complete_frames: shot,
+        copies_hidden: 2437, size_bytes: frames * 24300000,
+        cameras: [
+          { name: 'Canon EOS R7', count: Math.round(shot * 0.96) },
+          { name: 'Canon EOS R5', count: shot - Math.round(shot * 0.96) },
+        ],
+        lenses: [
+          { name: 'RF-S 18-150mm', count: Math.round(shot * 0.52) },
+          { name: 'EF100-400mm', count: Math.round(shot * 0.28) },
+          { name: 'RF24-70mm', count: Math.round(shot * 0.12) },
+          { name: '50mm', count: Math.round(shot * 0.05) },
+          { name: '85mm', count: Math.round(shot * 0.02) },
+          { name: '24mm', count: Math.round(shot * 0.01) },
+        ],
+        most_used: { camera: 'Canon EOS R7', lens: 'RF-S 18-150mm', f_number: 6.3, shutter: 0.008, iso: 800, focal_length: 150 },
+        f_numbers: [
+          { value: 6.3, count: Math.round(shot * 0.42) },
+          { value: 5.6, count: Math.round(shot * 0.31) },
+          { value: 4, count: Math.round(shot * 0.18) },
+        ],
+        shutters: [
+          { value: 0.001, count: Math.round(shot * 0.46) },
+          { value: 0.002, count: Math.round(shot * 0.33) },
+        ],
+        isos: [
+          { value: 100, count: Math.round(shot * 0.5) },
+          { value: 400, count: Math.round(shot * 0.3) },
+          { value: 1600, count: Math.round(shot * 0.2) },
+        ],
+        focal_lengths: [
+          { value: 18, count: Math.round(shot * 0.2) },
+          { value: 150, count: Math.round(shot * 0.55) },
+          { value: 400, count: Math.round(shot * 0.25) },
+        ],
+        pans: Math.round(frames * 0.28), bursts: Math.round(frames / 8),
+        blurred: Math.max(0, subjects - sharp - soft), soft, sharp,
+        af: { frames, missing: 0, off_subject: Math.round(frames * 0.04), no_subject: Math.round(frames * 0.01), soft: Math.round(frames * 0.02) },
+        keepers: Math.round(frames * 0.15), rejected: 3,
+        shooting_seconds: shooting,
+        average_shoot_seconds: albums > 0 ? Math.round(shooting / albums) : 0,
+        longest_shoot_seconds: Math.round(shooting / 5),
+        timed_albums: albums,
+      } satisfies GlobalStats);
+    }
+    case 'update_job_settings': {
+      const job = db.jobs.find((j) => j.id === a.jobId);
+      if (job) {
+        const patch = (a.patch ?? {}) as Record<string, unknown>;
+        job.settings_json = JSON.stringify({ ...JSON.parse(job.settings_json || '{}'), ...patch });
+        if (typeof patch.scan_profile === 'string') job.scan_profile = patch.scan_profile;
+      }
+      return out({ ok: true, jobId: a.jobId });
+    }
     case 'review': return out({ frames: db.frames, detections: db.dets });
+    case 'identified': {
+      const rows = db.dets
+        .filter((d) => d.number || d.plate || (d.attributes && d.attributes !== '{}'))
+        .map((d) => {
+          const f = db.frames.find((x) => x.id === d.image_id);
+          return {
+            id: d.id, image_id: d.image_id, cls: d.cls, region_type: d.region_type,
+            crop_path: d.crop_path, number: d.number, plate: d.plate,
+            number_conf: d.number ? 0.9 : null, plate_conf: d.plate ? 0.8 : null,
+            attributes: d.attributes, quality: d.quality ?? null,
+            reviewed: d.reviewed ?? 0, rejected: d.rejected ?? 0,
+            frame_path: f?.path ?? '', frame_thumb: f?.thumb_path ?? null,
+          };
+        });
+      return out({ rows: rows.slice(0, 400), total: rows.length, unreviewed: rows.filter((r) => r.reviewed !== 1).length, shown: Math.min(400, rows.length) });
+    }
     case 'scan': {
+      if (a.jobId == null && typeof a.root === 'string') {
+        const id = Math.max(0, ...db.jobs.map((j) => j.id)) + 1;
+        const label = String(a.label || '').trim() || a.root.split(/[\\/]/).filter(Boolean).pop() || 'Album';
+        db.jobs.unshift({ id, label, root: a.root, status: 'scanning', total: 0, done: 0, created_at: Math.floor(Date.now() / 1000), scan_profile: String(a.profile ?? 'motorsport') });
+        if (a.stage === 'all') startSim(db, id);
+        return out({ jobId: id });
+      }
       const jobId = (a.jobId as number | undefined) ?? 3;
       if (a.jobId != null) {
         for (const f of db.frames.filter((f) => !f.rejected)) f.status = 'done';
@@ -132,15 +476,21 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       return out({ jobId });
     }
     case 'identify': {
+      startIdentifySim(Number(a.jobId) || 1);
       for (const d of db.dets) {
         const f = db.frames.find((f) => f.id === d.image_id);
         if (f && !f.rejected && !d.rejected && !d.bystander && (!d.cull_reason || d.stars != null || f.manual_stars != null)) d.reviewed = 1;
       }
       return out(null);
     }
+    case 'composition': return out({ jobId: (a.jobId as number | undefined) ?? null });
     case 'mark': {
       const f = db.frames.find((x) => x.id === a.imageId);
-      if (f) { if ('stars' in a) f.manual_stars = (a.stars as number | null) ?? null; if ('rejected' in a) f.rejected = a.rejected ? 1 : 0; }
+      if (f) {
+        if ('stars' in a) f.manual_stars = (a.stars as number | null) ?? null;
+        if ('rejected' in a) { f.rejected = a.rejected ? 1 : 0; if (a.rejected) f.picked = 0; }
+        if ('picked' in a) { f.picked = a.picked ? 1 : 0; if (a.picked) f.rejected = 0; }
+      }
       for (const d of db.dets.filter((d) => d.image_id === a.imageId)) {
         if ('stars' in a) d.stars = (a.stars as number | null) ?? null;
         if ('rejected' in a) { d.rejected = a.rejected ? 1 : 0; if (!a.rejected) d.cull_reason = null; }
@@ -163,9 +513,10 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'train_model': return out({ labels: db.labels, active: true, validation: { exact: 0.62, within_one: 0.93, n: db.labels } });
     case 'forget_model': return out({ labels: db.labels, active: false, validation: null });
     case 'train_taste': return out({ n: 42 });
-    case 'save_settings': db.settings = args as Settings; return out(db.settings);
+    case 'save_settings': db.settings = { ...db.settings, ...(args as Settings) }; return out(db.settings);
+    case 'stop': if (sim && !sim.finished) { sim.finished = true; clearInterval(sim.timer); if (lastProgress) { lastProgress = { ...lastProgress, state: 'stopped', eta_s: null }; for (const cb of listeners) cb(lastProgress); } const job = db.jobs.find((j) => j.id === sim?.jobId); if (job) job.status = 'stopped'; } return out(status(db));
     case 'delete_job': db.jobs = db.jobs.filter((j) => j.id !== a.jobId); return out(null);
-    case 'cancel_operation': db.identifySkipped = true; return out(null);
+    case 'cancel_operation': db.identifySkipped = true; stopIdentifySim(); return out(null);
     default: return out(null);
   }
 }

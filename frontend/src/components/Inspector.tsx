@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { asset, call } from '../lib/api';
+import { compositionLabels } from '../lib/composition.mjs';
+import { afLabel } from '../lib/viewer.mjs';
 import { filename, frameStars, frameExcluded } from '../lib/review';
 import type { Detection, Frame, KnownVehicle, MarkValues } from '../lib/types';
 import { StarControl } from './Stars';
@@ -120,12 +122,14 @@ export function Inspector({
           onDoubleClick={handleResetWidth}
           title="Drag to resize inspector · Double-click to reset"
         />
-        <p className="muted">{scanning ? 'Results appear here while the scan runs.' : 'Select a photograph.'}</p>
+        <p className="muted">{scanning ? 'Results appear here while the scan runs' : 'Select a photograph'}</p>
       </aside>
     );
   }
 
   const stars = frameStars(frame);
+  const labels = compositionLabels(frame);
+  const af = afLabel(frame);
 
   return (
     <aside
@@ -180,8 +184,28 @@ export function Inspector({
         <dt>Focus</dt>
         <dd>{frame.rating != null ? frame.rating.toFixed(3) : '—'}</dd>
         <dt>Burst</dt>
-        <dd>{frame.burst_key ?? '—'}</dd>
+        <dd>{frame.burst_key == null || (allFrames.length > 0 && allFrames.filter((f) => f.burst_key === frame.burst_key).length < 2) ? '—' : frame.burst_key}</dd>
+        {af && (
+          <>
+            <dt title="Camera's autofocus area">AF box</dt>
+            <dd>{af}</dd>
+          </>
+        )}
       </dl>
+
+      {frame.taste != null && (
+        <p className="muted taste-score" title="Learned taste: ranks this frame against its burst. A sort signal, not a keeper.">
+          Taste {frame.taste.toFixed(2)}
+        </p>
+      )}
+
+      {labels.length > 0 && (
+        <div className="comp-labels">
+          {labels.map((label) => (
+            <span key={label.id} className={label.tone === 'ok' ? 'tag' : `tag ${label.tone}`} title="Composition: measured framing, balance, background and leading lines. Nothing is culled.">{label.text}</span>
+          ))}
+        </div>
+      )}
 
       {frame.error && <p className="error-text">{frame.error}</p>}
 

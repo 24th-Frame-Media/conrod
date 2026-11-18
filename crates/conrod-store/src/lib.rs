@@ -140,6 +140,9 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // Which body shot it and which burst it belongs to -- see conrod-core::bursts.
     ("images", "camera", "TEXT"),
     ("images", "burst_key", "INTEGER"),
+    // The time burst a frame belongs to: frames shot within the album's burst
+    // gap of each other, per camera. `burst_key` holds the moment inside it.
+    ("images", "time_burst", "INTEGER"),
     ("images", "taken_at", "REAL"),
     // Measured on the crop, not the frame, so a panning shot is not marked
     // down for the blur that makes it good.
@@ -175,20 +178,104 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("detections", "predicted_stars", "INTEGER"),
     // 1 on the one frame of a pass worth keeping. Stored for the same reason.
     ("detections", "burst_pick", "INTEGER"),
+    // The same flag at frame level, for a frame with no subject to mark.
+    ("images", "burst_pick", "INTEGER"),
+    // The learned taste score, 0..1: a sort signal inside a burst, never a
+    // keeper. Written by `taste_rank` from the cached preview.
+    ("images", "taste", "REAL"),
     // Other readings of the same car's plate. See known_vehicles.
     ("known_vehicles", "aliases", "TEXT"),
     ("known_vehicles", "driver", "TEXT"),
     ("known_vehicles", "country", "TEXT"),
     ("known_vehicles", "embedding", "TEXT"),
     ("images", "sharpness", "REAL"),
+    // The whole frame's score of a subject-less frame, before the in-focus
+    // area rescues it: what the frame reads as when the detector missed the
+    // subject. See `bare_frame`.
+    ("images", "sharpness_whole", "REAL"),
+    // The camera's autofocus area, as fractions of the upright frame (see
+    // conrod_io::af). A real subject box on a frame the detector missed.
+    ("images", "af_x1", "REAL"),
+    ("images", "af_y1", "REAL"),
+    ("images", "af_x2", "REAL"),
+    ("images", "af_y2", "REAL"),
+    ("images", "af_mode", "INTEGER"),
+    // The edge-blur rating measured inside that box: what a missed frame is
+    // rated on before either whole-frame rule can speak.
+    ("images", "af_sharpness", "REAL"),
+    // How much of a panning frame is sharp, 0..1: the frame rating's cap.
+    ("images", "pan_share", "REAL"),
     ("images", "rating", "REAL"),
     ("images", "rating_verdict", "TEXT"),
     ("images", "stars", "INTEGER"),
     ("images", "rejected", "INTEGER NOT NULL DEFAULT 0"),
+    // Manually flagged as a keeper, mutually exclusive with rejected.
+    ("images", "picked", "INTEGER NOT NULL DEFAULT 0"),
     ("images", "thumb_path", "TEXT"),
+    // Perceptual hash of the thumbnail, and the near-duplicate stack it landed in
+    // (the stack's smallest image id). See bursts::near_dupes.
+    ("images", "phash", "INTEGER"),
+    ("images", "dupe_key", "INTEGER"),
+    // Another frame this one is a byte-identical copy of; the copy is hidden
+    // from bursts, picks, counts and XMP writes (see `copies.rs`).
+    ("images", "copy_of", "INTEGER"),
+    // What the frame looks like, as hex (see `conrod_vision::look`): two colour
+    // histograms read from the thumbnail, which the moment splitter compares.
+    ("images", "look", "TEXT"),
     ("detections", "features", "TEXT"),
     ("detections", "heuristic", "REAL"),
     ("detections", "region_type", "TEXT DEFAULT 'vehicle'"),
+    // NIMA technical quality, 0..1. NULL when the model is off or absent.
+    ("detections", "quality", "REAL"),
+    // Keep-together sets found in the EXIF (brackets, focus stacks, intervals).
+    ("images", "set_id", "INTEGER"),
+    ("images", "set_kind", "TEXT"),
+    // The exposure settings themselves, so a regroup can find sets again
+    // without opening a file.
+    ("images", "exposure_time", "REAL"),
+    ("images", "exposure_bias", "REAL"),
+    ("images", "f_number", "REAL"),
+    ("images", "focal_length", "REAL"),
+    ("images", "focus_distance", "REAL"),
+    // What the photograph was taken with: the lens as the file names it, the
+    // ISO, and the file's size on disk. Filled at scan time, and backfilled by
+    // `shoot_stats` for an album scanned before these columns existed.
+    ("images", "lens", "TEXT"),
+    ("images", "iso", "INTEGER"),
+    ("images", "file_size", "INTEGER"),
+    // Measured exposure: a flag, and the only exposure cull (`dark_frame`).
+    ("images", "exposure_verdict", "TEXT"),
+    ("images", "highlight_clip", "REAL"),
+    ("images", "shadow_clip", "REAL"),
+    ("images", "dark_frame", "INTEGER"),
+    // Level: property, interiors, landscape. Flag only.
+    ("images", "tilt_deg", "REAL"),
+    ("images", "converge_deg", "REAL"),
+    ("images", "level_verdict", "TEXT"),
+    // Continuous expression for the people presets; NULL without the models.
+    ("images", "eye_open_min", "REAL"),
+    ("images", "smile_max", "REAL"),
+    // Framing, measured from the chosen subject box.
+    ("detections", "cut_sides", "INTEGER"),
+    ("detections", "subject_frac", "REAL"),
+    ("detections", "lead_room", "REAL"),
+    ("detections", "framing_score", "REAL"),
+    // Rodeo/equestrian only: how much the animal is rearing under its rider.
+    ("images", "buck_score", "REAL"),
+    // Composition, read off the thumbnail with the frame's main subject box
+    // (see conrod_vision::composition): where the subject sits, how the frame
+    // balances, how busy the background is, and whether a leading line runs
+    // into it. `comp_at` is when the measure was taken, Unix seconds, so the
+    // UI can say how fresh it is. A re-run rewrites all of them.
+    ("images", "comp_placement", "REAL"),
+    ("images", "comp_mode", "TEXT"),
+    ("images", "comp_balance_x", "REAL"),
+    ("images", "comp_balance_y", "REAL"),
+    ("images", "comp_symmetry", "REAL"),
+    ("images", "comp_clutter", "REAL"),
+    ("images", "comp_lines", "INTEGER"),
+    ("images", "comp_subject_share", "REAL"),
+    ("images", "comp_at", "REAL"),
 ];
 
 fn now_unix() -> f64 {
@@ -272,6 +359,12 @@ fn migrate(conn: &Connection) -> Result<()> {
             conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind}"))?;
         }
     }
+    // Existing albums need the hand-pick index too: the first identify-scope
+    // or library-stats query would otherwise scan the album once per frame.
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_images_hand_pick ON images(job_id, burst_key)
+             WHERE COALESCE(picked,0)=1;",
+    )?;
     Ok(())
 }
 

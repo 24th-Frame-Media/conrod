@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { Confirm, Empty, FilePick } from '../components/basics';
+import { Confirm, Empty, FilePick, Icon } from '../components/basics';
 import { call, engine } from '../lib/api';
 import { words } from '../lib/format';
 import type { KnownVehicle, Toaster } from '../lib/types';
@@ -90,7 +90,7 @@ function MergeDialog({
             Merging <b>{carA.plate}</b> and <b>{carB.plate}</b>. Pick which values to keep or edit them directly.
           </p>
         </div>
-        <button type="button" className="ghost small" onClick={onCancel}>✕</button>
+        <button type="button" className="ghost small" onClick={onCancel} aria-label="Close"><Icon name="x" size={14} /></button>
       </div>
 
       <form onSubmit={handleConfirm} className="merge-form">
@@ -462,8 +462,9 @@ export function Known({ run, toast }: { run: Runner; toast: Toaster }) {
                         type="button"
                         className="ghost small danger"
                         onClick={() => void remove(v.plate)}
+                        aria-label="Remove"
                       >
-                        ✕
+                        <Icon name="x" size={14} />
                       </button>
                     </div>
                   </div>

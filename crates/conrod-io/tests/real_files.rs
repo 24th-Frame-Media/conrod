@@ -18,6 +18,10 @@ fn camera_and_time_match_exiftool_when_available() {
     let (mut ok, mut read) = (0, 0);
     for case in cases {
         let file = Path::new(case["path"].as_str().unwrap());
+        // The list is local to one machine; files get moved or archived.
+        if !file.exists() {
+            continue;
+        }
         let Ok(frame) = raw::read(file) else {
             panic!("could not read {}", file.display());
         };

@@ -69,7 +69,7 @@ pub fn for_vehicle(
             add(&mut out, v);
         }
     }
-    match (given(&a.make), given(&a.model)) {
+    match (given(&a.make), a.confirmed_model()) {
         (Some(make), Some(model)) => {
             // Both the bare model and the qualified one, for either search.
             add(&mut out, model);
@@ -123,4 +123,30 @@ pub fn caption_for(analyses: &[VehicleAnalysis]) -> String {
         .filter(|t| !t.is_empty())
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+#[cfg(test)]
+mod suggested_model_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn suggested_model_is_left_out_of_keywords() {
+        let options = KeywordOptions::default();
+        let suggested = VehicleAnalysis::from_map(
+            json!({"make": "Ford", "model": "Focus", "model_suggested": true})
+                .as_object()
+                .unwrap(),
+        );
+        let keywords = for_vehicle(&suggested, &options, None);
+        assert_eq!(keywords, vec!["Ford".to_string()]);
+        let confirmed = VehicleAnalysis::from_map(
+            json!({"make": "Ford", "model": "Focus"})
+                .as_object()
+                .unwrap(),
+        );
+        let keywords = for_vehicle(&confirmed, &options, None);
+        assert!(keywords.contains(&"Focus".to_string()));
+        assert!(keywords.contains(&"Ford Focus".to_string()));
+    }
 }
