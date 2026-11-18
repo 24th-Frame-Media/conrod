@@ -216,10 +216,18 @@ pub fn analyze(
         .flatten();
     let ocr_listed = ocr_reading.number.as_deref().is_some_and(listed);
     let (number, source, confidence) = match vlm_number.as_deref() {
-        Some(v) if listed(v) && !ocr_listed => {
-            merge_number(&OcrReading::default(), Some(v), s.ocr_accept_confidence)
-        }
-        _ => merge_number(&ocr_reading, vlm_number.as_deref(), s.ocr_accept_confidence),
+        Some(v) if listed(v) && !ocr_listed => merge_number(
+            &OcrReading::default(),
+            Some(v),
+            described.number_confidence,
+            s.ocr_accept_confidence,
+        ),
+        _ => merge_number(
+            &ocr_reading,
+            vlm_number.as_deref(),
+            described.number_confidence,
+            s.ocr_accept_confidence,
+        ),
     };
     let mut trace = vec![
         format!(
@@ -242,8 +250,8 @@ pub fn analyze(
             described.plate, a.plate
         ),
     ];
-    // A number the model alone supplied keeps the model's own lowered confidence
-    // (windscreen and nose reads), rather than merge_number's flat 0.7.
+    // Agreement can score above the model's own confidence; keep that ceiling,
+    // so a nose-board read keeps its penalty even when OCR agrees.
     let from_vlm = vlm_number.is_some() && number == vlm_number;
     let confidence = if from_vlm {
         confidence.min(described.number_confidence)

@@ -211,16 +211,24 @@ impl Default for OcrReading {
 
 /// Decide the competition number from two disagreeing readers.
 ///
-/// `ocr_accept_confidence` is `Settings.ocr_accept_confidence` (default
-/// 0.80): the OCR reading's own floor for winning outright.
+/// `vlm_confidence` is the model's own confidence in the number (already
+/// lowered for nose-board reads by `map_vehicle`); `ocr_accept_confidence`
+/// is `Settings.ocr_accept_confidence` (default 0.80), the OCR reading's own
+/// floor for winning outright.
 pub fn merge_number(
     ocr_reading: &OcrReading,
     vlm_number: Option<&str>,
+    vlm_confidence: f64,
     ocr_accept_confidence: f64,
 ) -> (Option<String>, Option<String>, f64) {
     let ocr_number = given(&ocr_reading.number);
     // Treat an empty vlm_number the same as a missing ocr number.
     let vlm_number = vlm_number.filter(|s| !s.is_empty());
+    let vlm_confidence = if vlm_confidence.is_finite() {
+        vlm_confidence.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     let source = if ocr_reading.source.is_empty() {
         "ocr".to_string()
     } else {
@@ -230,7 +238,7 @@ pub fn merge_number(
     if let (Some(o), Some(v)) = (ocr_number, vlm_number) {
         if o == v {
             // Independent agreement is worth more than either one's confidence.
-            let confidence = (ocr_reading.confidence.max(0.7) + 0.2).min(1.0);
+            let confidence = (ocr_reading.confidence.max(vlm_confidence).max(0.7) + 0.2).min(1.0);
             return (
                 Some(o.to_string()),
                 Some(format!("{source}+vlm")),
@@ -244,9 +252,10 @@ pub fn merge_number(
         }
     }
     if let Some(v) = vlm_number {
-        // The model reads stylised and angled numbers far better than OCR,
-        // so it wins where OCR was not already confident.
-        return (Some(v.to_string()), Some("vlm".to_string()), 0.7);
+        // The model reads stylised and angled numbers far better than OCR, so
+        // it wins where OCR was not already confident. Keep its own confidence:
+        // a high read can clear review, a low one stays visibly uncertain.
+        return (Some(v.to_string()), Some("vlm".to_string()), vlm_confidence);
     }
     if let Some(o) = ocr_number {
         // Weak, but better than nothing -- the low score sends it to review.
@@ -295,6 +304,51 @@ pub fn corroborated(claim: Option<&str>, evidence: &[String]) -> bool {
         return false;
     }
     words.iter().any(|w| haystack.contains(w.as_str()))
+}
+
+#[cfg(test)]
+mod merge_number_tests {
+    use super::*;
+
+    fn ocr(number: Option<&str>, confidence: f64) -> OcrReading {
+        OcrReading {
+            number: number.map(str::to_string),
+            confidence,
+            source: "ocr".into(),
+        }
+    }
+
+    #[test]
+    fn a_confident_vlm_number_keeps_its_own_confidence() {
+        let (number, source, confidence) =
+            merge_number(&ocr(None, 0.0), Some("88"), 0.95, 0.8);
+        assert_eq!(number.as_deref(), Some("88"));
+        assert_eq!(source.as_deref(), Some("vlm"));
+        assert_eq!(confidence, 0.95, "a 0.95 read can clear review");
+    }
+
+    #[test]
+    fn a_weak_vlm_number_is_kept_but_stays_uncertain() {
+        let (number, source, confidence) =
+            merge_number(&ocr(None, 0.0), Some("88"), 0.2, 0.8);
+        assert_eq!(number.as_deref(), Some("88"));
+        assert_eq!(source.as_deref(), Some("vlm"));
+        assert_eq!(confidence, 0.2, "a weak read stays visibly uncertain");
+    }
+
+    #[test]
+    fn agreement_takes_the_better_of_the_two_readers() {
+        let (_, source, confidence) = merge_number(&ocr(Some("7"), 0.5), Some("7"), 0.9, 0.8);
+        assert_eq!(source.as_deref(), Some("ocr+vlm"));
+        assert_eq!(confidence, 1.0);
+    }
+
+    #[test]
+    fn an_out_of_range_vlm_confidence_is_clamped() {
+        let (_, _, high) = merge_number(&ocr(None, 0.0), Some("7"), 9.0, 0.8);
+        let (_, _, low) = merge_number(&ocr(None, 0.0), Some("7"), -1.0, 0.8);
+        assert_eq!((high, low), (1.0, 0.0));
+    }
 }
 
 #[cfg(test)]
