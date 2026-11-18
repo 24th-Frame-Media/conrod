@@ -117,6 +117,10 @@ pub struct ScanArgs {
     pub grouping_keep_pans: Option<bool>,
     #[serde(default)]
     pub grouping_focus_anchor: Option<bool>,
+    /// What a *new* album's scan should do: "both", "cull" or "identify".
+    /// Left out (as a resume does) keeps the saved default.
+    #[serde(default)]
+    pub workflow_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -545,6 +549,30 @@ mod tests {
             panic!()
         };
         assert_eq!(scan.grouping_pause, None);
+    }
+
+    #[test]
+    fn a_scan_carries_the_albums_workflow_mode_in_camel_case() {
+        for word in ["both", "cull", "identify"] {
+            let Ok(Command::Scan(scan)) =
+                Command::parse("scan", json!({"root": "C:\\\\Photos", "workflowMode": word}))
+            else {
+                panic!()
+            };
+            assert_eq!(scan.workflow_mode.as_deref(), Some(word));
+        }
+        // Missing keeps None: a new album then keeps the stored default.
+        let Ok(Command::Scan(scan)) = Command::parse("scan", json!({"root": "C:\\\\Photos"})) else {
+            panic!()
+        };
+        assert_eq!(scan.workflow_mode, None);
+        // The settings key spelling is not a scan arg.
+        let Ok(Command::Scan(scan)) =
+            Command::parse("scan", json!({"root": "C:\\\\Photos", "workflow_mode": "cull"}))
+        else {
+            panic!()
+        };
+        assert_eq!(scan.workflow_mode, None);
     }
 
     #[test]

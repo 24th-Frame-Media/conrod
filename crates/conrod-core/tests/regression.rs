@@ -1217,6 +1217,13 @@ fn settings_match_snapshot() {
         m.remove("use_quality_score"); // Rust-only
         m.remove("blur_strictness"); // Rust-only
         m.remove("entry_list"); // Rust-only
+        m.remove("workflow_mode"); // Rust-only: album-level scan/identify workflow
+        // Rust-only: per-album stacking choices; the Python app has no such fields.
+        m.remove("grouping_sensitivity");
+        m.remove("grouping_pause");
+        m.remove("grouping_keep_pans");
+        m.remove("grouping_focus_anchor");
+        m.remove("grouping_stacks");
         m.remove("vlm_services");
         m.remove("vlm_strategy");
         // Rust-only: per-album burst gaps changed the one default from the
