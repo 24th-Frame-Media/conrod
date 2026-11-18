@@ -54,11 +54,21 @@ pub struct EdgeBlur {
     pub dirs: [f64; 4],
     /// Edge pixels used.
     pub edges: usize,
+    /// 98th percentile gradient magnitude of the region (0..255 luma
+    /// units): how strong the edges are, not just how wide. NaN when the
+    /// region had no measurable gradients.
+    pub contrast: f64,
 }
 
 const PRE_SMOOTH: f32 = 0.6;
 const SIGMA0: f32 = 1.0;
 const MIN_SIGMA: f32 = 0.3;
+/// 98th percentile gradient magnitude below which a region has no edges worth
+/// judging. A completely blurred or featureless patch would otherwise read as
+/// perfectly sharp because the edge census floor is relative to the patch
+/// itself (B1000_4150: contrast 1.7, sigma pinned to the 0.30 floor, rated 5
+/// stars inside the AF box).
+pub const MIN_CONTRAST: f64 = 3.0;
 const R_MIN: f32 = 1.01;
 const R_MAX: f32 = 5.0;
 const MIN_EDGES: usize = 80;
@@ -95,12 +105,19 @@ impl EdgeBlur {
             worst_dir: 0,
             dirs: [f64::NAN; 4],
             edges,
+            contrast: f64::NAN,
         }
     }
 
     /// `sigma_worst` in native pixels, expressed at [`REFERENCE_EDGE`].
     pub fn sigma_worst_at_reference(&self, long_edge: usize) -> f64 {
         at_reference(self.sigma_worst, long_edge)
+    }
+
+    /// The region has no edges strong enough to judge: its census found only
+    /// the noise floor, so a small sigma here is the floor, not sharpness.
+    pub fn flat(&self) -> bool {
+        !self.contrast.is_nan() && self.contrast < MIN_CONTRAST
     }
 }
 
@@ -498,6 +515,7 @@ fn estimate(
         worst_dir: worst_dir as u8,
         dirs,
         edges: n,
+        contrast: f64::from(p98),
     }
 }
 
@@ -625,6 +643,19 @@ mod tests {
         assert_eq!(e.edges, 0);
         assert!(e.sigma.is_nan() && e.dirs.iter().all(|v| v.is_nan()));
         assert_eq!(e.worst_dir, 0);
+    }
+
+    #[test]
+    fn a_flat_low_contrast_patch_is_not_sharp() {
+        // A blurred two-level pattern: the census can still find edges, but
+        // their gradients are noise-sized. Its sigma must not be read as focus.
+        let m = measure(&blurred(&blocks(384, 384, 2.0, 0.5, 13), 2.0), None);
+        assert!(
+            m.sigma.is_nan() || m.flat(),
+            "contrast {:.2} sigma {:.3} should be flat or unmeasured",
+            m.contrast,
+            m.sigma
+        );
     }
 
     #[test]

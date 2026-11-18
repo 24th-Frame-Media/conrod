@@ -39,6 +39,7 @@ fn unmeasured() -> EdgeBlur {
         worst_dir: 0,
         dirs: [NAN; 4],
         edges: 0,
+        contrast: NAN,
     }
 }
 
@@ -52,6 +53,7 @@ fn referenced(e: EdgeBlur, long: usize) -> EdgeBlur {
         worst_dir: e.worst_dir,
         dirs: e.dirs.map(|v| edgeblur::at_reference(v, long)),
         edges: e.edges,
+        contrast: e.contrast,
     }
 }
 

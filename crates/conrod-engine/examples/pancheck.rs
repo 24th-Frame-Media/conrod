@@ -159,7 +159,30 @@ fn main() -> Result<(), String> {
                 n(af_rating)
             ))
         ),
-        None => format!(" · tile {:.3}", m.score),
+        None => {
+            // A bare frame: the AF box's own census, which is what the rescue
+            // rates. `af_blur` only carries the pooled sigmas.
+            let census = af.map(|b| {
+                let px = |v: f64, e: usize| (v.max(0.0) as usize).min(e);
+                let rect = [
+                    px(b[0], grey.width),
+                    px(b[1], grey.height),
+                    px(b[2], grey.width),
+                    px(b[3], grey.height),
+                ];
+                conrod_vision::edgeblur::measure(&grey, Some(rect))
+            });
+            format!(
+                " · tile {:.3} · af census {} · sigma af {:.3} ({:.3})",
+                m.score,
+                census.map_or("none".into(), |e| format!(
+                    "edges {} contrast {:.1} pooled {:.3} dirs [{:.2},{:.2},{:.2},{:.2}]",
+                    e.edges, e.contrast, e.sigma, e.dirs[0], e.dirs[1], e.dirs[2], e.dirs[3]
+                )),
+                n(af_blur.map(|a| a.whole)),
+                n(af_rating)
+            )
+        }
     };
     let bare_line = match &bare {
         Some(bare) => format!(

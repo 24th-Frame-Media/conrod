@@ -333,6 +333,12 @@ fn af_rating(
         return Ok(None);
     }
     let blur = conrod_vision::edgeblur::measure(&grey, Some(region));
+    if blur.flat() {
+        // A completely blurred or featureless box: its sigma is the floor, not
+        // evidence of focus. NULL makes the frame fall back to its whole-frame
+        // score instead of being praised for a patch with no edges.
+        return Ok(None);
+    }
     Ok(sharpness::rating_from_blur(
         blur.sigma_worst_at_reference(fw.max(fh)),
         sharpness::BlurStrictness::parse(strictness),
