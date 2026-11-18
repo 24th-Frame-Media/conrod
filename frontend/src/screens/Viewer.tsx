@@ -2,7 +2,9 @@ import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
 import { Modal } from '../components/basics';
 import { StarControl } from '../components/Stars';
 import { asset } from '../lib/api';
-import { filename, frameStars, frameExcluded } from '../lib/review';
+import { compositionLabels } from '../lib/composition.mjs';
+import { actionLabel } from '../lib/identifyFlow.mjs';
+import { filename, frameStars, frameExcluded, parseAttributes } from '../lib/review';
 import { shotRows } from '../lib/shot.mjs';
 import type { Stack } from '../lib/stacks.mjs';
 import type { Frame } from '../lib/types';
@@ -64,6 +66,13 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keep
   const dets = facts.get(frame.id)?.dets ?? [];
   const stars = frameStars(frame);
   const shot = shotRows(frame);
+  // The same signals the Review inspector shows, so opening a photo here is not a step down.
+  const labels = compositionLabels(frame);
+  const vehicleDet = dets.find((d) => d.id === selectedDetId && (d.region_type ?? 'vehicle') === 'vehicle')
+    ?? dets.find((d) => (d.region_type ?? 'vehicle') === 'vehicle')
+    ?? null;
+  const attrs = vehicleDet ? parseAttributes(vehicleDet) : null;
+  const vehicleName = attrs ? [attrs.make, attrs.model].filter(Boolean).join(' ') : '';
 
   return (
     <Modal label="Photo viewer" className="viewer" onClose={onClose}>
@@ -157,6 +166,44 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keep
               ))}
             </dl>
           )}
+
+          {attrs && (
+            <section className="viewer-vehicle" aria-label="Vehicle identification">
+              <span className="viewer-vehicle-number mono">{attrs.race_number ? `#${attrs.race_number}` : (attrs.plate ?? '—')}</span>
+              <div className="viewer-vehicle-facts">
+                <b>{vehicleName || (attrs.plate ? 'Plate read' : 'Unidentified vehicle')}</b>
+                <span className="muted">
+                  {[attrs.team, attrs.colour, vehicleName ? attrs.plate : null].filter(Boolean).join(' · ') || 'No team or colour read'}
+                </span>
+                {attrs.number_source === 'ocr' && (
+                  <span className="tag warn" title="Only OCR read this number; the vision model has not confirmed it.">OCR only</span>
+                )}
+              </div>
+            </section>
+          )}
+
+          {frame.taste != null && (
+            <p className="muted taste-score" title="Learned taste: ranks this frame against its burst. A sort signal, not a keeper.">
+              Taste {frame.taste.toFixed(2)}
+            </p>
+          )}
+
+            {labels.length > 0 && (
+            <div className="comp-labels">
+              {labels.map((label) => (
+                <span key={label.id} className={label.tone === 'ok' ? 'tag' : `tag ${label.tone}`}
+                  title="Composition: measured framing, balance, background and leading lines. Nothing is culled.">
+                  {label.text}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {attrs?.action?.length ? (
+            <div className="comp-labels viewer-action" aria-label="Action">
+              {attrs.action.map((tag) => <span className="tag" key={tag}>{actionLabel(tag)}</span>)}
+            </div>
+          ) : null}
 
           {stack && stack.frames.length > 1 && (
             <BurstFilmstrip

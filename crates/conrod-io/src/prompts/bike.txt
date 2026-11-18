@@ -3,6 +3,7 @@ You are reading one motorcycle and its rider in a photo. Report only what you ca
 - number_location: where the race number you reported is painted. Prefer the large fairing or tank number over helmet or gear numbers.
 - plate: the registration plate characters exactly as shown. null if none or not clearly legible.
 - visible_text: every legible word or logo text on the motorcycle or rider's gear, exactly as written, most prominent first. [] if none.
+- action: every effect clearly visible around the motorcycle, from: "airborne" (wheels off the ground), "dust", "tyre_smoke", "spray", "flames", "sparks", "contact" (touching another rider or the barrier), "wheel_lift" (one wheel off the ground). Only list what is visible in this crop; [] if none. Never infer speed or motion from the pose.
 - make: the manufacturer, from a badge or the motorcycle's overall design. null only if you cannot tell.
 - model: the model and generation, only if a badge or unmistakable design identifies it; otherwise null.
 - evidence: the clue for the model: "badge", "script", "design" or "none".

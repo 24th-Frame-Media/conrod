@@ -67,15 +67,36 @@ export function displayItem(live, selectedId) {
 }
 
 /**
- * The newest finished car while its result is still fresh: the screen holds it for a beat after
- * the next car takes over, so the number and fields can actually be read. `now` is milliseconds.
+ * One lane per identify worker: its car being read, else the last car it finished, else empty.
+ * `live.workers` is the run's worker count; older snapshots or tests fall back to the highest
+ * worker index seen. `live` says whether that lane is reading right now.
  */
-export function justFinished(live, now, withinMs = 1800) {
-  const item = live?.recent?.[0];
-  if (!item || item.at == null) return null;
-  const at = Number(item.at) * 1000;
-  if (!Number.isFinite(at)) return null;
-  return Math.abs(Number(now) - at) <= withinMs ? item : null;
+export function workerLanes(live) {
+  if (!live) return [];
+  const active = live.active ?? [];
+  const recent = live.recent ?? [];
+  const seen = [...active, ...recent].map((item) => Number(item.worker) || 0);
+  const count = Math.max(Number(live.workers) || 0, ...seen.map((worker) => worker + 1), 0);
+  const reading = new Map(active.map((item) => [Number(item.worker) || 0, item]));
+  const finished = new Map();
+  for (const item of recent) {
+    const worker = Number(item.worker) || 0;
+    if (!finished.has(worker)) finished.set(worker, item);
+  }
+  return Array.from({ length: count }, (_, worker) => ({
+    worker,
+    item: reading.get(worker) ?? finished.get(worker) ?? null,
+    live: reading.has(worker),
+  }));
+}
+
+/** Human labels for the vision model's action tags. */
+export const ACTION_LABELS = {
+  airborne: 'Airborne', dust: 'Dust', tyre_smoke: 'Tyre smoke', spray: 'Spray',
+  flames: 'Flames', sparks: 'Sparks', contact: 'Contact', wheel_lift: 'Wheel lift',
+};
+export function actionLabel(id) {
+  return ACTION_LABELS[id] ?? String(id ?? '');
 }
 
 /** 0..100, rounded, clamped; null when there is no confidence at all. */export function confidencePercent(conf) {

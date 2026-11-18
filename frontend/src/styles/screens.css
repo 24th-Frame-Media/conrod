@@ -729,6 +729,7 @@ dialog.viewer {
 .det-badge.badge-keeper { background: transparent; color: var(--text-dim); border: 0; padding-left: 0; padding-right: 0; display: inline-flex; align-items: center; gap: 4px; }
 .det-badge.badge-panned { background: var(--surface-3); color: var(--text-dim); border: 1px solid var(--line); }
 .det-badge.badge-culled { background: rgba(229, 87, 92, 0.14); color: var(--bad); border: 1px solid rgba(229, 87, 92, 0.3); }
+.det-badge.badge-ocr { background: rgba(207, 174, 90, 0.14); color: var(--warn2); border: 1px solid rgba(207, 174, 90, 0.3); }
 
 .det-drawer {
   padding: 8px 10px;
@@ -1015,8 +1016,16 @@ dialog.viewer {
 .burst-strip small { display: block; padding: 6px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .burst-strip .cull-tag { position: absolute; bottom: 8px; left: 8px; z-index: 2; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: var(--overlay-bad); font: 12px/16px var(--mono); }
 /* Composition chips: under a frame in the expanded stack strip, and the selected frame's full set in the inspector. */
-.comp-labels { display: flex; flex-wrap: wrap; gap: 4px; }
-.burst-strip .comp-labels { padding: 0 8px 7px; }
+/* The viewer's sidebar carries the same signals as Review's inspector, plus what the car was read as. */
+.viewer-vehicle { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); }
+.viewer-vehicle-number { font-size: 24px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+.viewer-vehicle-facts { display: grid; gap: 2px; min-width: 0; }
+.viewer-vehicle-facts b { font-size: 13px; font-weight: 500; }
+.viewer-vehicle-facts .muted { font-size: 11.5px; }
+.viewer-vehicle .tag { justify-self: start; font-size: 10px; padding: 1px 6px; }
+.id-action-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.id-action-tags .tag { font-size: 10px; padding: 1px 6px; }
+.comp-labels { display: flex; flex-wrap: wrap; gap: 4px; }.burst-strip .comp-labels { padding: 0 8px 7px; }
 .burst-strip .comp-labels .tag { font-size: 10px; line-height: 1.3; padding: 1px 6px; }
 /* The cleanest-background marker compares frames; it is not a measured label, so it reads as a note. */
 .burst-strip .comp-labels .tag.cleanest { border-style: dashed; }
@@ -2273,17 +2282,6 @@ dialog.viewer {
 .id-stats div { display: grid; gap: 1px; }
 .id-stats dt { font-size: 11px; letter-spacing: .04em; color: var(--text-mute); }
 .id-stats dd { margin: 0; font-size: 16px; font-weight: 500; }
-/* One thumbnail per identify worker: several cars are read at once, and this
-   is the only place the screen shows the other two. */
-.id-flight { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.id-flight-label { font-size: 9.5px; letter-spacing: .14em; color: var(--text-mute); white-space: nowrap; }
-.id-flight-list { display: flex; gap: 6px; }
-.id-flight-card { display: grid; gap: 3px; width: 66px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); transition: border-color .2s var(--ease); }
-.id-flight-card img, .id-flight-noimg { width: 100%; height: 34px; border-radius: 4px; object-fit: cover; display: block; background: var(--surface-3); }
-.id-flight-card span { font-size: 8.5px; letter-spacing: .1em; text-align: center; text-transform: uppercase; color: var(--text-mute); }
-.id-flight-card.sel { border-color: var(--accent); }
-.id-flight-card.sel span { color: var(--accent); }
-.id-flight-card:hover { border-color: var(--line-hover); }
 .id-actions { display: flex; gap: 8px; }
 .id-progress { display: flex; align-items: center; gap: 14px; }
 .id-progress .bar { flex: 1; height: 6px; background: var(--surface-3); margin: 0; }
@@ -2323,6 +2321,34 @@ dialog.viewer {
 .id-flow.still .id-node-dot { animation: none; }
 
 .id-main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; align-items: start; }
+/* One page per identify worker: several cars are read at once, so each gets its
+   own image, question, reply and result instead of a single narrated stage. */
+.id-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; align-items: start; }
+.id-lanes-empty { margin: 0; font-size: 12.5px; }
+.id-lane { display: grid; gap: 10px; padding: 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-lg); min-width: 0; }
+.id-lane.live { border-color: rgba(109, 201, 164, .35); }
+.id-lane-head { display: flex; align-items: center; gap: 8px; }
+.id-lane-name { font-size: 10px; letter-spacing: .14em; color: var(--text-mute); }
+.id-lane-stage { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--text-dim); }
+.id-lane-stage.done { color: var(--good); border-color: rgba(76, 195, 138, .35); }
+.id-lane-stage.vision, .id-lane-stage.merge { color: var(--accent); border-color: rgba(227, 168, 58, .35); }
+.id-lane-stage.idle { color: var(--text-mute); }
+.id-lane-dot { margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--scan); animation: pulse 1.4s ease-in-out infinite; }
+.id-view-lane { aspect-ratio: 16 / 9; max-height: 200px; }
+.id-lane-result { display: flex; align-items: center; gap: 10px; padding: 0 2px; animation: id-fade .3s var(--ease); }
+.id-lane-number { font-size: 26px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+.id-lane-facts { display: grid; gap: 1px; min-width: 0; flex: 1; }
+.id-lane-facts b { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.id-lane-facts span { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.id-lane-conf { font-size: 12px; }
+.id-lane-conf.good { color: var(--good); } .id-lane-conf.warn { color: var(--warn2); } .id-lane-conf.bad { color: var(--bad); }
+.id-lane .id-panel { padding: 9px 10px; background: var(--surface); }
+.id-lane .id-panel h4 { margin-bottom: 5px; font-size: 9.5px; }
+.id-lane .id-panel pre { max-height: 96px; font-size: 10.5px; line-height: 1.45; }
+.id-lane-panel .id-failures { display: block; margin-top: 5px; font-size: 10.5px; }
+.id-lane-trace summary { cursor: pointer; font-size: 10.5px; color: var(--text-mute); }
+.id-lane-trace .id-trace-lines { margin-top: 6px; max-height: 160px; }
+.id-lane-open { justify-self: start; }
 .id-left { display: grid; gap: 12px; min-width: 0; }
 .id-view {
   position: relative; aspect-ratio: 16 / 10; max-height: min(40vh, 420px); overflow: hidden; display: grid; place-items: center;
@@ -2430,8 +2456,8 @@ dialog.viewer {
 .pipeline-watch { margin-left: auto; }
 @media (max-width: 1000px) {
   .id-main { grid-template-columns: 1fr; }
+  .id-lanes { grid-template-columns: 1fr; }
   .id-head { align-items: flex-start; }
-  .id-flight { order: 3; flex-basis: 100%; }
   .id-stats { gap: 18px; }
   .id-result { grid-template-columns: auto minmax(0, 1fr); }
   .id-conf { grid-column: 1 / -1; grid-auto-flow: column; align-items: center; justify-content: start; }
@@ -2440,7 +2466,7 @@ dialog.viewer {
 @media (prefers-reduced-motion: reduce) {
   .id-scanline { display: none; }
   .id-link.flow { animation: none; }
-  .id-node.active, .id-node-dot, .id-badge.live::before, .id-live-return.on i { animation: none; }
+  .id-node.active, .id-node-dot, .id-badge.live::before, .id-live-return.on i, .id-lane-dot { animation: none; }
 }
 
 /* ── settings page shell: header, two columns, fixed save bar ── */

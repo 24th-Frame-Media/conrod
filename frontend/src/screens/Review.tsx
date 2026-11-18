@@ -404,6 +404,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     ...settings,
     read_numbers: albumSetting(currentJob, 'read_numbers', settings) as boolean | undefined ?? true,
     read_plates: albumSetting(currentJob, 'read_plates', settings) as boolean | undefined ?? true,
+    read_action: albumSetting(currentJob, 'read_action', settings) as boolean | undefined ?? true,
     group_vehicles: albumSetting(currentJob, 'group_vehicles', settings) as boolean | undefined ?? true,
     grouping_stacks: albumSetting(currentJob, 'grouping_stacks', settings) as boolean | undefined ?? true,
     grouping_sensitivity: String(albumSetting(currentJob, 'grouping_sensitivity', settings) ?? 'normal'),

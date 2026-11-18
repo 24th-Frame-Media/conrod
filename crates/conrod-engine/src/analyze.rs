@@ -86,6 +86,31 @@ pub fn analyze_with(
         vlm: describer,
     } = readers;
 
+    // The question for the vision model needs nothing OCR reads, so build it (and
+    // let a live feed show it) as soon as the car arrives. The model is still
+    // asked after the readers, but the panel fills when the car reaches VISION.
+    let (entries, entry_warning) = entry_list(&s.entry_list);
+    let policy = conrod_core::profile::ShootPreset::parse(&s.scan_profile).policy();
+    let racing =
+        policy.profile == conrod_core::profile::ScanProfile::Motorsport && policy.vlm.numbers;
+    let mut vlm_prompt = None;
+    if s.use_vlm {
+        if let Some((_, io)) = describer.as_ref() {
+            let hints = vlm::VlmHints {
+                racing,
+                candidates: entries
+                    .as_deref()
+                    .map(EntryList::candidates)
+                    .unwrap_or_default(),
+            };
+            let prompt = vlm::vehicle_prompt(io, is_bike, &hints);
+            if let Some(on_prompt) = on_prompt {
+                on_prompt(&prompt);
+            }
+            vlm_prompt = Some(prompt);
+        }
+    }
+
     // 1. Registration, and any number roundels the same detector picked up.
     let mut roundels: Vec<(String, f64)> = Vec::new();
     if let (true, Some((detector, reader))) = (s.read_plates, plate_models.as_mut()) {
@@ -132,17 +157,12 @@ pub fn analyze_with(
         OcrReading::default()
     };
 
-    let (entries, entry_warning) = entry_list(&s.entry_list);
     failures.extend(entry_warning);
 
     // 3. The semantic pass.
-    let policy = conrod_core::profile::ShootPreset::parse(&s.scan_profile).policy();
-    let racing = policy.profile == conrod_core::profile::ScanProfile::Motorsport
-        && policy.vlm.numbers;
     let mut described = VehicleDescription::default();
     let mut vlm_reply = serde_json::Value::Null;
     let mut vlm_attempts = 0;
-    let mut vlm_prompt = None;
     let mut vlm_ran = false;
     if let (true, Some((client, io))) = (s.use_vlm, describer.as_ref()) {
         let hints = vlm::VlmHints {
@@ -152,14 +172,6 @@ pub fn analyze_with(
                 .map(EntryList::candidates)
                 .unwrap_or_default(),
         };
-        // Build the question here as well as inside `describe_with_reply`, so a
-        // live feed can show it while the model is still thinking. It is a pure
-        // function of the settings and hints, so the two copies are identical.
-        let prompt = vlm::vehicle_prompt(io, is_bike, &hints);
-        if let Some(on_prompt) = on_prompt {
-            on_prompt(&prompt);
-        }
-        vlm_prompt = Some(prompt);
         match vlm::describe_with_reply(client, crop, io, is_bike, &hints) {
             Ok((d, reply, attempts)) => {
                 vlm_ran = true;
@@ -182,6 +194,7 @@ pub fn analyze_with(
                 }
                 a.driver = d.driver.clone();
                 a.country = d.country.clone();
+                a.action = d.action.clone();
                 a.is_competition = d.is_competition;
                 described = d;
             }

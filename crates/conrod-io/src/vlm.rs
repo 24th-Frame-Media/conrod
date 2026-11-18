@@ -1331,6 +1331,13 @@ pub fn schema(with_plate: bool) -> Value {
             "enum": ["door", "roof", "windscreen", "nose", "other", "none"],
         },
         "visible_text": {"type": "array", "items": {"type": "string"}},
+        "action": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": ["airborne", "dust", "tyre_smoke", "spray", "flames", "sparks", "contact", "wheel_lift"],
+            },
+        },
         "make": {"type": ["string", "null"]},
         "model": {"type": ["string", "null"]},
         "evidence": {"type": "string", "enum": ["badge", "script", "design", "none"]},
@@ -1342,6 +1349,7 @@ pub fn schema(with_plate: bool) -> Value {
         "number",
         "number_location",
         "visible_text",
+        "action",
         "make",
         "model",
         "evidence",
@@ -1373,6 +1381,9 @@ pub struct VehicleDescription {
     pub country: Option<String>,
     pub sponsors: Vec<String>,
     pub livery_text: Vec<String>,
+    /// Visible action effects around the car: `airborne`, `dust`, `tyre_smoke`,
+    /// `spray`, `flames`, `sparks`, `contact`, `wheel_lift`.
+    pub action: Vec<String>,
     /// What the model based the make/model on: "badge", "script" or "design".
     pub model_evidence: Option<String>,
     /// The model was identified from the car's design alone, a suggestion.
@@ -1544,6 +1555,11 @@ fn map_vehicle(
         _ => None,
     };
     let visible = text_list(parsed.get("visible_text"));
+    let action = if settings.read_action {
+        action_list(parsed.get("action"))
+    } else {
+        Vec::new()
+    };
     VehicleDescription {
         make,
         model,
@@ -1569,11 +1585,38 @@ fn map_vehicle(
         country: None,
         sponsors: visible.clone(),
         livery_text: visible,
+        action,
         model_suggested: model_evidence.as_deref() == Some("design"),
         model_evidence,
         is_competition: is_competition(parsed.get("is_competition")),
         confidence,
     }
+}
+
+/// The action effects the model reported, restricted to the schema's set so a
+/// free-form answer cannot put prose where the UI expects a tag.
+fn action_list(value: Option<&Value>) -> Vec<String> {
+    const KNOWN: [&str; 8] = [
+        "airborne",
+        "dust",
+        "tyre_smoke",
+        "spray",
+        "flames",
+        "sparks",
+        "contact",
+        "wheel_lift",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    for item in value.and_then(Value::as_array).into_iter().flatten() {
+        let Some(word) = item.as_str() else {
+            continue;
+        };
+        let key = word.trim().to_lowercase().replace([' ', '-'], "_");
+        if KNOWN.contains(&key.as_str()) && !out.contains(&key) {
+            out.push(key);
+        }
+    }
+    out
 }
 
 /// Downscale and JPEG-encode a crop for the model.
@@ -1880,6 +1923,27 @@ mod tests {
         assert_eq!(map_vehicle(&reply, &settings, true, false).plate, None);
         let d = map_vehicle(&reply, &settings, true, true);
         assert_eq!(d.plate.as_deref(), Some("ABC123"));
+    }
+
+    #[test]
+    fn action_effects_are_known_tags_only() {
+        let mut settings = Settings::default();
+        assert!(settings.read_action, "action is read by default");
+        let reply = json!({
+            "number": "7",
+            "visible_text": [],
+            "action": ["airborne", "tyre smoke", "FLAMES", "nonsense", "airborne"],
+        });
+        assert_eq!(
+            map_vehicle(&reply, &settings, true, false).action,
+            vec!["airborne".to_string(), "tyre_smoke".to_string(), "flames".to_string()]
+        );
+        settings.read_action = false;
+        assert!(map_vehicle(&reply, &settings, true, false).action.is_empty());
+        // A reply from before this field existed is not an error.
+        assert!(map_vehicle(&json!({"number": "7"}), &settings, true, false)
+            .action
+            .is_empty());
     }
 
     #[test]

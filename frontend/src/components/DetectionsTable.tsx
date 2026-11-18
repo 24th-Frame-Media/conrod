@@ -312,6 +312,7 @@ export function DetectionsTable({
                     <div className="det-title-row">
                       <span className={`det-pill pill-${cat}`}>{d.cls}</span>
                       {a.plate && <span className="det-chip-plate">{a.plate}</span>}
+                      {a.number_source === 'ocr' && <span className="det-badge badge-ocr" title="Only OCR read this number; the vision model has not confirmed it.">OCR</span>}
                       {d.burst_pick ? <span className="det-badge badge-keeper"><KeeperMark inline />Best</span> : null}
                       {d.panning ? <span className="det-badge badge-panned">panned</span> : null}
                       {d.cull_reason ? <span className="det-badge badge-culled">{d.cull_reason}</span> : null}

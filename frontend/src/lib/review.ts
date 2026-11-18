@@ -94,6 +94,9 @@ export function buildFacts(review: Review): Map<number, FrameFacts> {
 
 export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Record<Facet['kind'], FacetItem[]> {
   const bucket = { number: new Map<string, FacetItem>(), plate: new Map<string, FacetItem>(), person: new Map<string, FacetItem>(), make: new Map<string, FacetItem>(), team: new Map<string, FacetItem>(), subject: new Map<string, FacetItem>() };
+  // One number can belong to several cars (categories share numbers), so a
+  // number's row says how many distinct cars it covers rather than naming one.
+  const vehiclesByNumber = new Map<string, Set<string>>();
   const bump = (map: Map<string, FacetItem>, value: string, who: string | null) => {
     const item = map.get(value);
     if (item) { item.count += 1; if (!item.who && who) item.who = who; } else map.set(value, { value, count: 1, who: who ?? '' });
@@ -101,7 +104,14 @@ export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Re
   for (const f of frames) {
     const x = facts.get(f.id);
     if (!x) continue;
-    x.numbers.forEach((n) => bump(bucket.number, n, x.vehicle));
+    x.numbers.forEach((n) => {
+      bump(bucket.number, n, x.vehicle);
+      if (x.vehicle) {
+        const cars = vehiclesByNumber.get(n) ?? new Set<string>();
+        cars.add(x.vehicle);
+        vehiclesByNumber.set(n, cars);
+      }
+    });
     x.plates.forEach((p) => bump(bucket.plate, p, x.vehicle));
     x.makes.forEach((m) => bump(bucket.make, m, null));
     x.teams.forEach((t) => bump(bucket.team, t, null));
@@ -111,6 +121,13 @@ export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Re
       bump(bucket.person, key, face?.known_person_match?.name ?? null);
       const item = bucket.person.get(key);
       if (item && !item.thumb) item.thumb = face?.crop_path ?? null;
+    }
+  }
+  for (const [number, cars] of vehiclesByNumber) {
+    const item = bucket.number.get(number);
+    if (item && cars.size > 1) {
+      const names = [...cars].sort();
+      item.who = `${names[0]} +${names.length - 1}`;
     }
   }
   return {

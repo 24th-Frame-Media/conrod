@@ -70,6 +70,10 @@ export const FIELDS = {
     label: 'Read other text', kind: 'toggle',
     hint: 'Signage, sponsor boards and anything else in frame.',
   },
+  read_action: {
+    label: 'Read action', kind: 'toggle', album: true,
+    hint: 'Dust, tyre smoke, airborne, flames and contact, from the vision model.',
+  },
   use_known_vehicles: {
     label: 'Use known vehicles', kind: 'toggle',
     hint: 'Fill blanks from cars you have met before.',
@@ -138,7 +142,7 @@ for (const [key, field] of Object.entries(FIELDS)) field.key = key;
   {
     id: 'reading', tab: 'identification', title: 'What to read',
     hint: 'Identification runs after sharpness, so culling is never held up by OCR.',
-    keys: ['read_plates', 'read_numbers', 'read_text'],
+    keys: ['read_plates', 'read_numbers', 'read_text', 'read_action'],
   },
   {
     id: 'known-fill', tab: 'identification', title: 'Known vehicles and names',
@@ -182,6 +186,7 @@ export const OVERRIDABLE = [
   { key: 'burst_gap', label: 'Burst gap' },
   { key: 'read_plates', label: 'Licence plates' },
   { key: 'read_numbers', label: 'Race numbers' },
+  { key: 'read_action', label: 'Action effects' },
 ];
 
 /** Whole objects that behave like one field on the page, and the tab they dirty. */
