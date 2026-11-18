@@ -31,6 +31,25 @@ pub const WORKFLOW_CULL: &str = "cull";
 /// Scan and identify every subject, with no automatic culling.
 pub const WORKFLOW_IDENTIFY: &str = "identify";
 
+/// Identify only the effective keeper: the frame the photographer picked by
+/// hand when its burst has one, otherwise the pick `pick_keepers` marked on the
+/// detection or its frame. The default, and the cheap lane.
+pub const IDENTIFY_KEEPERS: &str = "keepers";
+/// Identify every unreviewed, non-bystander subject, culled or not.
+pub const IDENTIFY_EVERYTHING: &str = "everything";
+
+/// The one normaliser for `identify_scope`, shared by the settings loader, the
+/// scan sheet, the identify command and every reader of the album's choice:
+/// surrounding space and case are ignored, and a word this build does not know
+/// reads as [`IDENTIFY_KEEPERS`], so an old or nonsense value keeps the cheap
+/// lane.
+pub fn identify_scope_word(word: &str) -> &'static str {
+    match word.trim().to_ascii_lowercase().as_str() {
+        IDENTIFY_EVERYTHING => IDENTIFY_EVERYTHING,
+        _ => IDENTIFY_KEEPERS,
+    }
+}
+
 /// The one normaliser for `workflow_mode`, shared by the settings loader, the
 /// scan sheet and every reader of the album's choice: surrounding space and
 /// case are ignored, and a word this build does not know reads as
@@ -220,6 +239,12 @@ pub struct Settings {
     /// every subject identified). Normalised by [`workflow_mode_word`]; an
     /// album saved without it keeps today's "both".
     pub workflow_mode: String,
+    /// Which subjects this album's identify lane works on: "keepers" (the
+    /// effective keeper -- a hand pick, or the engine's suggestion when the
+    /// burst has no hand pick) or "everything" (every unreviewed, non-bystander
+    /// subject, culled or not). Normalised by [`identify_scope_word`]; an album
+    /// saved without it keeps "keepers".
+    pub identify_scope: String,
     pub sharp_at: f64,
     pub blurred_below: f64,
     pub focus_scale: i64,
@@ -334,6 +359,7 @@ impl Default for Settings {
             grouping_focus_anchor: true,
             grouping_stacks: true,
             workflow_mode: WORKFLOW_BOTH.into(),
+            identify_scope: IDENTIFY_KEEPERS.into(),
             sharp_at: SHARP_AT,
             blurred_below: BLURRED_BELOW,
             focus_scale: FOCUS_SCALE,
@@ -435,6 +461,9 @@ impl Settings {
         // One spelling of the workflow word, whatever the file holds: an album
         // saved before the field existed stays "both", a nonsense word too.
         settings.workflow_mode = settings.workflow().to_string();
+        // One spelling of the scope word too: a missing or nonsense value is
+        // the default, keepers.
+        settings.identify_scope = settings.identify_scope().to_string();
         // A threshold is a number about a scale; one set against an older
         // scale now means something nobody asked for, so it is retired.
         if stored.get("focus_scale").and_then(Value::as_i64) != Some(FOCUS_SCALE) {
@@ -482,6 +511,12 @@ impl Settings {
     /// says "cull" or "identify".
     pub fn workflow(&self) -> &'static str {
         workflow_mode_word(&self.workflow_mode)
+    }
+
+    /// This album's identify scope, normalised: [`IDENTIFY_KEEPERS`] unless it
+    /// says "everything".
+    pub fn identify_scope(&self) -> &'static str {
+        identify_scope_word(&self.identify_scope)
     }
 
     /// The blur strictness a scan applies: the album's own choice when one was
@@ -605,6 +640,41 @@ mod tests {
         assert_eq!(loaded.workflow_mode, "identify", "the loader normalises it once");
         std::fs::write(&path, r#"{"workflow_mode":"sometimes"}"#).unwrap();
         assert_eq!(Settings::load(&path).workflow(), "both");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_album_identifies_keepers_unless_it_chooses_everything() {
+        let settings = Settings::default();
+        assert_eq!(settings.identify_scope(), "keepers");
+        assert_eq!(
+            settings.identify_scope, "keepers",
+            "the stored default is the cheap lane"
+        );
+        assert_eq!(identify_scope_word(" EVERYTHING "), "everything");
+        assert_eq!(identify_scope_word("Everything"), "everything");
+        assert_eq!(identify_scope_word("keepers"), "keepers");
+        assert_eq!(
+            identify_scope_word("most"),
+            "keepers",
+            "an unknown word is keepers"
+        );
+        assert_eq!(identify_scope_word(""), "keepers");
+
+        // A patch stores the album's own choice, and the loader normalises it.
+        let patch: Map<String, Value> =
+            serde_json::from_str(r#"{"identify_scope":" EVERYTHING "}"#).unwrap();
+        let chosen = Settings::default().apply(&patch);
+        assert_eq!(chosen.identify_scope(), "everything");
+        let root = std::env::temp_dir().join(format!("conrod-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        std::fs::write(&path, r#"{"identify_scope":" Everything "}"#).unwrap();
+        let loaded = Settings::load(&path);
+        assert_eq!(loaded.identify_scope, "everything", "the loader normalises it once");
+        std::fs::write(&path, r#"{"identify_scope":"all of them"}"#).unwrap();
+        assert_eq!(Settings::load(&path).identify_scope(), "keepers");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

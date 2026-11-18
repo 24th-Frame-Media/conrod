@@ -10,19 +10,20 @@ import { edgeFrameId, stepInStack } from '../lib/navigation.mjs';
 import { reviewedStacks, stackDecision } from '../lib/decisions.mjs';
 import { tasteStacks } from '../lib/taste.mjs';
 import { albumSetting } from '../lib/album.mjs';
-import { WORKFLOW_OPTIONS, identifyActionLabel, pipelineSteps, workflowIncludesCull, workflowIncludesIdentify, workflowLabel, workflowModeOf, type PipelineStep } from '../lib/workflow.mjs';
+import { WORKFLOW_OPTIONS, pipelineSteps, workflowIncludesCull, workflowIncludesIdentify, workflowLabel, workflowModeOf, type PipelineStep } from '../lib/workflow.mjs';
+import { everythingCount, identifyActionLabel, identifyScopeOf, keeperCount } from '../lib/identify.mjs';
 import { call, engine } from '../lib/api';
 import { useLocalFlag, useRun } from '../state/hooks';
 import { useToast } from '../state/toast';
 import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
 import { ShootSettingsModal } from '../components/ShootSettingsModal';
+import { ShootStatsModal } from '../components/ShootStatsModal';
 import { ExportSheet } from '../components/ExportSheet';
 import { Identifications } from '../components/Identifications';
-import type { Frame, Job, KnownVehicle, MarkValues, Settings, Status, Task } from '../lib/types';
+import type { Frame, Job, KnownVehicle, MarkValues, Scope, Settings, Status, Task } from '../lib/types';
 import { profileLabel, profileParent } from '../lib/types';
 import { facetsFor } from '../lib/facets.mjs';
 import type { ReviewModel } from '../state/useReview';
-import { subjectExcluded } from '../review.mjs';
 import { Viewer } from './Viewer';
 import { Compare } from './Compare';
 
@@ -106,7 +107,7 @@ function PipelineStepper({ steps }: { steps: PipelineStep[] }) {
 type Props = {
   rv: ReviewModel; jobs: Job[]; jobId: number | null; scanning: boolean; status: Status; settings: Settings;
   showBoxes: boolean; onToggleBoxes: () => void; verbs: MutableRefObject<ReviewVerbs>;
-  onPickJob: (id: number) => void; onIdentify: () => void; onCull: () => void;
+  onPickJob: (id: number) => void; onIdentify: (scope?: Scope) => void; onCull: () => void;
   onHelp: () => void; onOpenViewer: () => void; onLibrary: () => void;
   onEdit: (detectionId: number, updates: Record<string, string | string[] | null>) => unknown;
   onAcceptAll: () => void; onSkipIdentify: () => void; onWrite: (dryRun: boolean) => void;
@@ -135,6 +136,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const [known, setKnown] = useState<KnownVehicle[]>([]);
   const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [autoAdvance, setAutoAdvance] = useLocalFlag('conrod.autoAdvance', true);
   const [crossStacks, setCrossStacks] = useLocalFlag('conrod.crossStacks', true);
@@ -384,7 +386,13 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   );
   const excluded = review.frames.filter((f) => facts.get(f.id)?.cull).length;
   const pending = review.frames.filter((f) => !facts.get(f.id)?.cull && f.status !== 'done').length;
-  const eligible = review.frames.filter((f) => (facts.get(f.id)?.dets ?? []).some((d) => !d.reviewed && !subjectExcluded(f, d))).length;
+  // What each identify scope could still read. The keeper count follows the album's effective keepers (`rv.keepers`:
+  // a manual pick when a burst has one, else the engine's suggestion), so it never re-derives the suggestion from
+  // `burst_pick`; everything counts every unreviewed subject, culled frames included.
+  const keeperEligible = keeperCount(review.frames, facts, keepers);
+  const everythingEligible = everythingCount(review.frames, facts);
+  const identifyScope = identifyScopeOf(albumSetting(currentJob, 'identify_scope', settings));
+  const scopeEligible = identifyScope === 'everything' ? everythingEligible : keeperEligible;
   const busy = scanning || status.operations.some((key) => key.endsWith(`:${jobId}`));
   const currentParent = profileParent(currentProfile);
   const kind = currentParent === 'portrait' ? 'portrait'
@@ -400,6 +408,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     grouping_pause: Number(albumSetting(currentJob, 'grouping_pause', settings) ?? 0.8),
     grouping_keep_pans: albumSetting(currentJob, 'grouping_keep_pans', settings) as boolean | undefined ?? true,
     grouping_focus_anchor: albumSetting(currentJob, 'grouping_focus_anchor', settings) as boolean | undefined ?? true,
+    identify_scope: identifyScopeOf(albumSetting(currentJob, 'identify_scope', settings)),
   };
   /** Album-scoped changes go to this album only; the global defaults are edited in Settings. */
   const saveAlbum = async (patch: Record<string, unknown>) => {
@@ -410,7 +419,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const workflow = workflowModeOf(albumSetting(currentJob, 'workflow_mode', settings));
   // The stepper reads the album's own data, not `job.status`: a long-finished album can still say "scanning".
   const scanned = Boolean(currentJob && currentJob.total > 0 && currentJob.done >= currentJob.total) && !scanning;
-  const identified = eligible === 0 && review.detections.length > 0;
+  const identified = scopeEligible === 0 && review.detections.length > 0;
   const steps = pipelineSteps(workflow, { scanned, identified, identifying, scanning });
   const pickWorkflow = (value: string) => {
     void run(async () => {
@@ -418,11 +427,15 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       toast(`Workflow: ${workflowLabel(value)}.`);
     });
   };
-  // One label for the split button and its menu, so the two cannot disagree.
-  const identifyLabel = identifyActionLabel(workflow, eligible);
-  const identifyTitle = workflow === 'identify'
-    ? 'Read plates, numbers, and vehicle data on every subject, kept or culled'
-    : 'Run plate, number, and vision model identification on kept photos';
+  // One label per scope for the split button and its menu, so the two cannot disagree. The workflow only decides
+  // whether identification exists at all; the album's scope decides what it reads.
+  const identifyLabels = {
+    keepers: identifyActionLabel('keepers', keeperEligible),
+    everything: identifyActionLabel('everything', everythingEligible),
+  };
+  const identifyTitle = identifyScope === 'everything'
+    ? 'Read plates, numbers, and vehicle data on every subject, culled frames included'
+    : 'Read plates, numbers, and vehicle data on the keeper you picked, or the suggested one';
 
   const primaryStep = !busy && pending > 0 && workflowIncludesCull(workflow)
     ? {
@@ -437,10 +450,10 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         onClick: () => {},
         title: 'Identification is currently running',
       }
-    : !busy && eligible > 0 && workflowIncludesIdentify(workflow)
+    : !busy && scopeEligible > 0 && workflowIncludesIdentify(workflow)
     ? {
-        label: identifyLabel ?? `Identify kept photos (${eligible.toLocaleString()})`,
-        onClick: onIdentify,
+        label: identifyActionLabel(identifyScope, scopeEligible),
+        onClick: () => onIdentify(identifyScope),
         title: identifyTitle,
       }
     : !identifying && workflowIncludesIdentify(workflow) && review.detections.some((d) => !d.reviewed)
@@ -466,12 +479,20 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     }] : []),
     ...(workflowIncludesIdentify(workflow) ? [
       {
-        id: 'identify',
-        label: identifyLabel ?? 'Identify',
-        hint: workflow === 'identify' ? 'Read plates, numbers, and VLM on every subject, kept or culled' : 'Run plates, numbers, and VLM on unreviewed kept photos',
-        badge: eligible > 0 ? eligible : undefined,
-        disabled: busy || identifying || eligible === 0,
-        onClick: onIdentify,
+        id: 'identify_keepers',
+        label: identifyLabels.keepers,
+        hint: 'Read plates, numbers, and VLM on your keeper, or the suggested one',
+        badge: keeperEligible > 0 ? keeperEligible.toLocaleString() : undefined,
+        disabled: busy || identifying || keeperEligible === 0,
+        onClick: () => onIdentify('keepers'),
+      },
+      {
+        id: 'identify_everything',
+        label: identifyLabels.everything,
+        hint: 'Read every subject, culled frames included; bystanders skipped',
+        badge: everythingEligible > 0 ? everythingEligible.toLocaleString() : undefined,
+        disabled: busy || identifying || everythingEligible === 0,
+        onClick: () => onIdentify('everything'),
       },
       {
         id: 'identified',
@@ -639,6 +660,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       },
     },
     {
+      id: 'stats',
+      label: 'Shoot statistics…',
+      hint: 'Frames, gear, exposure and quality',
+      onClick: () => setStatsOpen(true),
+    },
+    {
       id: 'summary',
       label: 'Shoot summary',
       onClick: () => {
@@ -708,13 +735,11 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         <PipelineStepper steps={steps} />
       </div>
       <ShootSettingsModal
-        jobId={jobId}
         jobLabel={currentJob?.label ?? ''}
         initialProfile={currentProfile}
         initialSettings={albumSettings}
         visible={shootSettingsOpen}
         onClose={() => setShootSettingsOpen(false)}
-        onStatsLoaded={() => void rv.refresh()}
         onSave={async (patch) => {
           await engine.updateJobSettings(jobId, patch);
           // A grouping choice only shows once the album is regrouped; a preset or detection change is safe to regroup too.
@@ -723,6 +748,13 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           await rv.refresh();
           toast('Shoot settings updated for this album and its stacks regrouped.');
         }}
+      />
+      <ShootStatsModal
+        visible={statsOpen}
+        jobId={jobId}
+        jobLabel={currentJob?.label ?? ''}
+        onClose={() => setStatsOpen(false)}
+        onStatsLoaded={() => void rv.refresh()}
       />
       <Identifications
         visible={idsOpen}

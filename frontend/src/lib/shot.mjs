@@ -72,8 +72,11 @@ export function formatTaken(epoch) {
   if (v == null || v <= 0) return null;
   const date = new Date(v * 1000);
   if (!Number.isFinite(date.getTime())) return null;
+  // EXIF has no time zone: `taken_at` is the camera's wall clock encoded as UTC. Reading it back
+  // in UTC shows the time the photographer saw; the viewer's own zone would shift it by hours.
   return date.toLocaleString(undefined, {
     day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    timeZone: 'UTC',
   });
 }
 
@@ -89,13 +92,6 @@ export function formatDuration(seconds) {
     return rest > 0 ? `${hours} h ${rest} min` : `${hours} h`;
   }
   return `${Math.floor(hours / 24)} d ${hours % 24} h`;
-}
-
-/** How long the shoot lasted, first frame to last; null unless both ends are real and ordered. */
-function durationBetween(from, to) {
-  const a = numOr(from);
-  const b = numOr(to);
-  return a == null || b == null || b <= a ? null : formatDuration(b - a);
 }
 
 /** The frame's shot details, present values only, in the viewer's order. */
@@ -116,105 +112,4 @@ export function shotRows(frame) {
   push('File size', formatBytes(frame.file_size));
   push('Taken', formatTaken(frame.taken_at));
   return rows;
-}
-
-/** "Canon EOS R7 × 6,912 · Canon EOS R5 × 200 · 2 more": the top names, then a count of the rest. */
-function nameList(items, top) {
-  const parts = [];
-  for (const item of items ?? []) {
-    const name = text(item?.name);
-    const n = numOr(item?.count);
-    if (name == null || n == null || n <= 0) continue;
-    parts.push(`${name} × ${count(n)}`);
-  }
-  if (parts.length === 0) return null;
-  const more = parts.length - top;
-  return parts.slice(0, top).join(' · ') + (more > 0 ? ` · ${more} more` : '');
-}
-
-/** "ƒ/5.6 × 3,120 · ƒ/4 × 2,010": a value/count list with the same top-N tail. */
-function bucketList(items, label, top) {
-  const parts = [];
-  for (const item of items ?? []) {
-    const name = label(numOr(item?.value));
-    const n = numOr(item?.count);
-    if (name == null || n == null || n <= 0) continue;
-    parts.push(`${name} × ${count(n)}`);
-  }
-  if (parts.length === 0) return null;
-  const more = parts.length - top;
-  return parts.slice(0, top).join(' · ') + (more > 0 ? ` · ${more} more` : '');
-}
-
-/** "100–6,400" across a bucket list's values; null when every frame used one value. */
-function rangeOf(items, format) {
-  const values = (items ?? []).map((item) => numOr(item?.value)).filter((v) => v != null && v > 0);
-  if (values.length < 2) return null;
-  const lo = Math.min(...values);
-  const hi = Math.max(...values);
-  return lo === hi ? null : `${format(lo)}–${format(hi)}`;
-}
-
-const TOP_NAMES = 2;
-const TOP_BUCKETS = 3;
-
-/** The card's three groups: Gear, Exposure (wide, with the distributions as lines) and Shoot. */
-export function statSections(stats) {
-  if (!stats) return [];
-  const used = stats.most_used ?? {};
-  const push = (list, label, value) => {
-    if (value != null && value !== '') list.push({ label, value });
-  };
-
-  const gear = [];
-  push(gear, 'Cameras', nameList(stats.cameras, TOP_NAMES));
-  push(gear, 'Lenses', nameList(stats.lenses, TOP_NAMES));
-  const mostUsed = [text(used.camera), text(used.lens)].filter(Boolean).join(' · ');
-  push(gear, 'Most used', mostUsed || null);
-
-  const exposure = [];
-  push(exposure, 'Aperture', formatAperture(used.f_number));
-  push(exposure, 'Shutter', formatShutter(used.shutter));
-  push(exposure, 'ISO', count(used.iso));
-  push(exposure, 'Focal length', formatFocal(used.focal_length));
-  push(exposure, 'ISO range', rangeOf(stats.isos, count));
-  const focalRange = rangeOf(stats.focal_lengths, trim1);
-  push(exposure, 'Focal range', focalRange == null ? null : `${focalRange} mm`);
-  const lines = [];
-  push(lines, 'f-stops', bucketList(stats.f_numbers, formatAperture, TOP_BUCKETS));
-  push(lines, 'shutters', bucketList(stats.shutters, shutterLabel, TOP_BUCKETS));
-
-  const shoot = [];
-  const frames = count(stats.frames);
-  const hidden = numOr(stats.copies_hidden);
-  push(shoot, 'Frames', frames == null ? null : `${frames}${hidden != null && hidden > 0 ? ` · ${count(hidden)} hidden` : ''}`);
-  push(shoot, 'Size', formatBytes(stats.size_bytes));
-  push(shoot, 'Duration', durationBetween(stats.taken_from, stats.taken_to));
-  push(shoot, 'Bursts', count(stats.bursts));
-  const pans = numOr(stats.pans);
-  push(shoot, 'Pans', pans != null && pans > 0 ? count(pans) : null);
-  const subjects = [];
-  if (numOr(stats.blurred) > 0) subjects.push(`${count(stats.blurred)} blurred`);
-  if (numOr(stats.soft) > 0) subjects.push(`${count(stats.soft)} soft`);
-  if (numOr(stats.sharp) > 0) subjects.push(`${count(stats.sharp)} sharp`);
-  push(shoot, 'Subjects', subjects.join(' · ') || null);
-  const af = stats.af;
-  if (af && numOr(af.frames) > 0) {
-    const misses = (numOr(af.missing) ?? 0) + (numOr(af.off_subject) ?? 0) + (numOr(af.no_subject) ?? 0);
-    push(shoot, 'AF misses', count(misses));
-  }
-  const keepers = numOr(stats.keepers) ?? 0;
-  const rejected = numOr(stats.rejected) ?? 0;
-  push(shoot, 'Keepers', keepers + rejected > 0 ? `${count(keepers)} kept · ${count(rejected)} rejected` : null);
-  const stars = (stats.stars ?? [])
-    .filter((s) => numOr(s?.value) >= 1 && numOr(s?.count) > 0)
-    .sort((a, b) => b.value - a.value)
-    .map((s) => `★${s.value} ${count(s.count)}`);
-  push(shoot, 'Stars', stars.join(' · ') || null);
-
-  return [
-    { key: 'gear', title: 'Gear', rows: gear },
-    { key: 'exposure', title: 'Exposure', rows: exposure, lines },
-    { key: 'shoot', title: 'Shoot', rows: shoot },
-  ].filter((section) => section.rows.length > 0 || (section.lines?.length ?? 0) > 0);
 }

@@ -81,7 +81,12 @@ export type Status = { revision?: number; tasks: Task[]; log: string[]; activeJo
 export type Review = { frames: Frame[]; detections: Detection[]; tasteHead?: boolean };
 
 export type SettingValue = string | number | boolean;
-export type Settings = Record<string, SettingValue>;
+/** Global defaults; an album's `settings_json` overrides the same keys. */
+export type Settings = Record<string, SettingValue> & {
+  /** What identification reads; the album's own value wins over this default. */
+  identify_scope?: Scope;
+  workflow_mode?: string;
+};
 export type ModelInfo = { id?: string; name: string; file: string; ready: boolean; detail?: string };
 export type Bootstrap = { jobs: Job[]; settings: Settings; models: ModelInfo[]; status: Status };
 
@@ -96,8 +101,10 @@ export type Region = (typeof REGIONS)[number];
 export type Page = 'Library' | 'Scan' | 'Review' | 'Train' | 'Known vehicles' | 'Settings';
 export type View = 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook';
 export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick' | 'taste';
+/** Which subjects identification reads: the suggested keeper of each burst, or every subject. */
+export type Scope = 'keepers' | 'everything';
 export type Facet = { kind: import('./facets.mjs').FacetKind; value: string };
-export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean; scanProfile?: string; blurStrictness?: string; burstGap?: number; groupingStacks?: boolean; groupingSensitivity?: string; groupingPause?: number; groupingKeepPans?: boolean; groupingFocusAnchor?: boolean; workflowMode?: string } | { jobId: number };
+export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean; scanProfile?: string; blurStrictness?: string; burstGap?: number; groupingStacks?: boolean; groupingSensitivity?: string; groupingPause?: number; groupingKeepPans?: boolean; groupingFocusAnchor?: boolean; workflowMode?: string; identifyScope?: Scope } | { jobId: number };
 export type MarkValues = { stars?: number | null; rejected?: boolean; picked?: boolean };
 export type Toaster = (message: string, options?: { tone?: 'error' | 'ok'; ms?: number }) => void;
 

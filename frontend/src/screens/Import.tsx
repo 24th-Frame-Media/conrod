@@ -7,7 +7,8 @@ import { GroupingFields, groupingOf, type GroupingValues } from '../components/G
 import { call, chooseFolder } from '../lib/api';
 import { filename } from '../lib/review';
 import { WORKFLOW_OPTIONS, workflowModeOf } from '../lib/workflow.mjs';
-import { profileParent, type ScanArgs, type Settings, type Status } from '../lib/types';
+import { IDENTIFY_SCOPE_OPTIONS, identifyScopeOf } from '../lib/identify.mjs';
+import { profileParent, type ScanArgs, type Scope, type Settings, type Status } from '../lib/types';
 
 export type ScanDraft = { root: string; label: string };
 /** What the sheet remembers for next time (and what the new album copies): shoot type, strictness, burst gap, stacking. */
@@ -17,6 +18,8 @@ export type ImportDefaults = {
   grouping_keep_pans: boolean; grouping_focus_anchor: boolean;
   /** `both` | `cull` | `identify`; travels with the scan and becomes the album's own setting. */
   workflow_mode: string;
+  /** `keepers` | `everything`; travels with the scan (as `identifyScope`) and becomes the album's setting. */
+  identify_scope: Scope;
 };
 type Props = {
   draft: ScanDraft; setDraft: (d: ScanDraft) => void; profile: string; setProfile: (p: string) => void;
@@ -37,6 +40,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const [burstGap, setBurstGap] = useState(String(DEFAULT_GAP));
   const [grouping, setGrouping] = useState<GroupingValues>(groupingOf(settings));
   const [workflow, setWorkflow] = useState(() => workflowModeOf(settings.workflow_mode));
+  const [identifyScope, setIdentifyScope] = useState<Scope>(() => identifyScopeOf(settings.identify_scope));
   const [readPlates, setReadPlates] = useState(true);
   const [readNumbers, setReadNumbers] = useState(true);
   const [includePeople, setIncludePeople] = useState(false);
@@ -48,6 +52,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
     setBurstGap(String(Number(settings.burst_gap) > 0 ? settings.burst_gap : DEFAULT_GAP));
     setGrouping(groupingOf(settings));
     setWorkflow(workflowModeOf(settings.workflow_mode));
+    setIdentifyScope(identifyScopeOf(settings.identify_scope));
     setReadPlates(settings.read_plates !== false);
     setReadNumbers(settings.read_numbers !== false);
     setEntries('');
@@ -68,7 +73,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const start = () => {
     onStart(
       { root: draft.root.trim(), label: draft.label.trim() || filename(draft.root), profile, recursive, stage: 'all', readPlates: vehicles && readPlates, readNumbers: vehicles && readNumbers, includePeople: parent === 'motorsport' && includePeople },
-      { scan_profile: profile, blur_strictness: strictnessTouched ? strictness : undefined, burst_gap: gapOk ? gap : DEFAULT_GAP, ...grouping, workflow_mode: workflow },
+      { scan_profile: profile, blur_strictness: strictnessTouched ? strictness : undefined, burst_gap: gapOk ? gap : DEFAULT_GAP, ...grouping, workflow_mode: workflow, identify_scope: identifyScope },
     );
     onClose();
   };
@@ -103,6 +108,13 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
             {WORKFLOW_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
           <small className="muted">{(WORKFLOW_OPTIONS.find((option) => option.id === workflow) ?? WORKFLOW_OPTIONS[0]).hint}</small>
+        </div>
+        <div className="import-field">
+          <label htmlFor="import-identify-scope">Identify</label>
+          <select id="import-identify-scope" value={identifyScope} onChange={(e) => setIdentifyScope(identifyScopeOf(e.target.value))}>
+            {IDENTIFY_SCOPE_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+          <small className="muted">{(IDENTIFY_SCOPE_OPTIONS.find((option) => option.id === identifyScope) ?? IDENTIFY_SCOPE_OPTIONS[0]).hint}</small>
         </div>
         <div className="import-field">
           <label>Strictness</label>

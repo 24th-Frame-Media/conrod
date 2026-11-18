@@ -34,7 +34,9 @@ pub type Tags = Map<String, Value>;
 pub struct Frame {
     pub path: String,
     pub camera: String,
-    /// Seconds since the epoch; `None` when the file carries no time.
+    /// The camera's wall clock as seconds since the Unix epoch, or `None` when the file carries no
+    /// time. EXIF carries no zone, so this is never shifted into the viewer's zone; it is
+    /// formatted back as UTC.
     pub taken: Option<f64>,
     pub burst: u32,
 }
@@ -80,7 +82,9 @@ pub fn camera_of(tags: &Tags, fallback: &str) -> String {
     fallback.to_string()
 }
 
-/// When the shutter fired, in seconds, with sub-seconds where recorded.
+/// When the shutter fired, as the camera's wall clock in seconds since the Unix epoch, with
+/// sub-seconds where recorded (an EXIF stamp has no zone; a zone suffix is discarded rather than
+/// converted).
 pub fn taken_at(tags: &Tags) -> Option<f64> {
     let stamp = first(
         tags,
@@ -405,7 +409,9 @@ pub fn look_distance(a: &[u8], b: &[u8]) -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MomentFrame {
     pub burst: i64,
-    /// Seconds since the epoch; `None` when the file carries no time.
+    /// The camera's wall clock as seconds since the Unix epoch, or `None` when the file carries no
+    /// time. EXIF carries no zone, so this is never shifted into the viewer's zone; it is
+    /// formatted back as UTC.
     pub taken: Option<f64>,
     /// What the frame looks like, when its thumbnail could be measured.
     pub look: Option<Look>,
@@ -593,7 +599,9 @@ pub struct DupeFrame {
     pub id: i64,
     pub phash: u64,
     pub burst: Option<i64>,
-    /// Seconds since the epoch; `None` when the file carries no time.
+    /// The camera's wall clock as seconds since the Unix epoch, or `None` when the file carries no
+    /// time. EXIF carries no zone, so this is never shifted into the viewer's zone; it is
+    /// formatted back as UTC.
     pub taken: Option<f64>,
     /// Unit-vector embeddings of the frame's subjects.
     pub looks: Vec<Vec<f32>>,

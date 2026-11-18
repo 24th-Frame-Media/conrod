@@ -33,7 +33,7 @@ export const engine = {
   mark: (imageId: number, values: MarkValues) => call('mark', { imageId, ...values }),
   editDetection: (detectionId: number, updates: Record<string, string | string[] | null>) => call('edit_detection', { detectionId, ...updates }),
   preview: (imageId: number) => call<string>('preview', { imageId }),
-  identify: (jobId: number) => call('identify', { jobId }),
+  identify: (jobId: number, scope?: import('./types').Scope) => call('identify', scope ? { jobId, scope } : { jobId }),
   identified: (jobId: number) => call<import('./types').Identified>('identified', { jobId }),
   acceptIdentifications: (ids: number[]) => call('bulk_edit', { ids, reviewed: true }),
   write: (jobId: number, dryRun = false) => call('write', { jobId, dryRun }),

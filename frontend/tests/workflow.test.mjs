@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_WORKFLOW, WORKFLOW_OPTIONS, identifyActionLabel, pipelineSteps,
+  DEFAULT_WORKFLOW, WORKFLOW_OPTIONS, pipelineSteps,
   workflowIncludesCull, workflowIncludesIdentify, workflowLabel, workflowModeOf,
 } from '../src/lib/workflow.mjs';
 
@@ -72,12 +72,10 @@ test('the step keys carry no number, so filtering never renames one', () => {
   }
 });
 
-test('the identify action is named for the mode, and absent in cull-only', () => {
-  assert.equal(identifyActionLabel('both', 12), 'Identify kept photos (12)');
-  assert.equal(identifyActionLabel('identify', 12), 'Identify all photos (12)');
-  assert.equal(identifyActionLabel('cull', 12), null);
-  assert.equal(identifyActionLabel('nonsense', 3), 'Identify kept photos (3)', 'unknown reads as both');
-  assert.equal(identifyActionLabel('identify', 1200), 'Identify all photos (1,200)');
+test('the identify action is named by the scope, not the mode: the workflow only hides it in cull-only', () => {
+  assert.equal(workflowIncludesIdentify('cull'), false, 'cull-only has no Identify step or actions');
+  assert.equal(workflowIncludesIdentify('both'), true);
+  assert.equal(workflowIncludesIdentify('identify'), true);
 });
 
 test('each mode says which halves of the pipeline it runs', () => {

@@ -19,4 +19,3 @@ export function workflowLabel(value: unknown): string;
 export function workflowIncludesCull(value: unknown): boolean;
 export function workflowIncludesIdentify(value: unknown): boolean;
 export function pipelineSteps(mode: unknown, state?: Partial<WorkflowState>): PipelineStep[];
-export function identifyActionLabel(value: unknown, n: number): string | null;
