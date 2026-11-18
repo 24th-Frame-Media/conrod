@@ -131,7 +131,7 @@ button.small { padding: 4px 12px; font-size: 12px; }
 .topbar-progress { position: absolute; left: 0; bottom: -1px; height: 2px; background: var(--accent); transition: width .4s var(--ease); }
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand > *, .stats > * { pointer-events: none; }
-.brand-mark { height: 26px; color: var(--scan); display: flex; }
+.brand-mark { height: 26px; color: var(--accent); display: flex; }
 .brand h1 { font-size: 16px; margin: 0; font-weight: 600; }
 .mark { height: 100%; width: auto; display: block; }
 .tabs { display: flex; gap: 4px; }
@@ -356,7 +356,7 @@ dialog[open] { animation: dialog-in .18s var(--ease); }
 .splash { position: fixed; inset: 0; z-index: 200; background: var(--bg); display: grid; place-items: center; transition: opacity .35s var(--ease); }
 .splash.gone { opacity: 0; pointer-events: none; }
 .splash-card { width: 320px; padding: 24px 28px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; display: grid; grid-template-columns: auto 1fr; gap: 0 20px; align-items: center; }
-.splash-mark { height: 56px; color: var(--scan); grid-row: span 2; }
+.splash-mark { height: 56px; color: var(--accent); grid-row: span 2; }
 .splash-name { font-size: 26px; font-weight: 400; margin: 0; }
 .splash-name b { font-weight: 600; }
 .splash-ver { color: var(--text-mute); font-size: 12px; font-weight: 400; margin: 0; }

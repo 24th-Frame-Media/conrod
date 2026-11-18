@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Conrod">
+  <mask id="conrod-bores">
+    <rect width="64" height="64" fill="#fff"/>
+    <circle cx="46.2" cy="43.1" r="3.4" fill="#000"/>
+    <circle cx="46.2" cy="20.9" r="2.1" fill="#000"/>
+  </mask>
+  <g mask="url(#conrod-bores)" fill="none">
+    <path d="M46.2 20.9 A18 18 0 1 0 46.2 43.1" stroke="#e3a83a" stroke-width="9" stroke-linecap="round"/>
+    <circle cx="46.2" cy="43.1" r="8.5" fill="#e3a83a"/>
+    <circle cx="46.2" cy="20.9" r="5.8" fill="#e3a83a"/>
+  </g>
+</svg>

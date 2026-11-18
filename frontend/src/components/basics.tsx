@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 /**
@@ -72,10 +72,25 @@ export function FilePick({ label, accept, onFile }: { label: string; accept: str
   );
 }
 
+/**
+ * The connecting rod curled into a C: a big end and a small end with their
+ * bores punched through, so the mark reads as both the name and the engine
+ * part at 16 px. The mask keeps the bores transparent on light and dark.
+ */
 export function Mark() {
+  const mask = useId().replace(/:/g, '');
   return (
-    <svg className="mark" viewBox="0 0 26 72" fill="none" aria-hidden="true">
-      <path d="M19 3 L12 45 L13.5 50 L7.5 54 L7.5 59 L4 69" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+    <svg className="mark" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+      <mask id={mask}>
+        <rect width="64" height="64" fill="#fff" />
+        <circle cx="46.2" cy="43.1" r="3.4" fill="#000" />
+        <circle cx="46.2" cy="20.9" r="2.1" fill="#000" />
+      </mask>
+      <g mask={`url(#${mask})`} fill="none">
+        <path d="M46.2 20.9 A18 18 0 1 0 46.2 43.1" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
+        <circle cx="46.2" cy="43.1" r="8.5" fill="currentColor" />
+        <circle cx="46.2" cy="20.9" r="5.8" fill="currentColor" />
+      </g>
     </svg>
   );
 }
