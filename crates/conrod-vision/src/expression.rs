@@ -90,14 +90,14 @@ const BLENDSHAPE_NAMES: [&str; 52] = [
 
 /// The 146 landmark indices the blendshape model reads, in MediaPipe's order.
 const BLENDSHAPE_SUBSET: [usize; 146] = [
-    0, 1, 4, 5, 6, 7, 8, 10, 13, 14, 17, 21, 33, 37, 39, 40, 46, 52, 53, 54, 55, 58, 61, 63, 65, 66,
-    67, 70, 78, 80, 81, 82, 84, 87, 88, 91, 93, 95, 103, 105, 107, 109, 127, 132, 133, 136, 144,
-    145, 146, 148, 149, 150, 152, 153, 154, 155, 157, 158, 159, 160, 161, 162, 163, 168, 172, 173,
-    176, 178, 181, 185, 191, 195, 197, 234, 246, 249, 251, 263, 267, 269, 270, 276, 282, 283, 284,
-    285, 288, 291, 293, 295, 296, 297, 300, 308, 310, 311, 312, 314, 317, 318, 321, 323, 324, 332,
-    334, 336, 338, 356, 361, 362, 365, 373, 374, 375, 377, 378, 379, 380, 381, 382, 384, 385, 386,
-    387, 388, 389, 390, 397, 398, 400, 402, 405, 409, 415, 454, 466, 468, 469, 470, 471, 472, 473,
-    474, 475, 476, 477,
+    0, 1, 4, 5, 6, 7, 8, 10, 13, 14, 17, 21, 33, 37, 39, 40, 46, 52, 53, 54, 55, 58, 61, 63, 65,
+    66, 67, 70, 78, 80, 81, 82, 84, 87, 88, 91, 93, 95, 103, 105, 107, 109, 127, 132, 133, 136,
+    144, 145, 146, 148, 149, 150, 152, 153, 154, 155, 157, 158, 159, 160, 161, 162, 163, 168, 172,
+    173, 176, 178, 181, 185, 191, 195, 197, 234, 246, 249, 251, 263, 267, 269, 270, 276, 282, 283,
+    284, 285, 288, 291, 293, 295, 296, 297, 300, 308, 310, 311, 312, 314, 317, 318, 321, 323, 324,
+    332, 334, 336, 338, 356, 361, 362, 365, 373, 374, 375, 377, 378, 379, 380, 381, 382, 384, 385,
+    386, 387, 388, 389, 390, 397, 398, 400, 402, 405, 409, 415, 454, 466, 468, 469, 470, 471, 472,
+    473, 474, 475, 476, 477,
 ];
 
 // Landmark indices, as MediaPipe numbers its 478 points. Subject's right eye
@@ -184,10 +184,7 @@ impl Crop {
             (v - CROP as f64 / 2.0) * self.scale,
         );
         let (s, c) = self.angle.sin_cos();
-        (
-            self.cx + dx * c - dy * s,
-            self.cy + dx * s + dy * c,
-        )
+        (self.cx + dx * c - dy * s, self.cy + dx * s + dy * c)
     }
 }
 
@@ -217,7 +214,10 @@ fn crop(image: &Rgb, face: &Face) -> (Rgb, Crop) {
                 continue;
             }
             let (xi, yi) = (x as usize, y as usize);
-            let (x1, y1) = ((xi + 1).min(image.width - 1), (yi + 1).min(image.height - 1));
+            let (x1, y1) = (
+                (xi + 1).min(image.width - 1),
+                (yi + 1).min(image.height - 1),
+            );
             let (fx, fy) = (x - xi as f64, y - yi as f64);
             let i = (v * CROP + u) * 3;
             for ch in 0..3 {
@@ -324,10 +324,9 @@ impl ExpressionModel {
                 expression.eye_open_r = 1.0 - coef("eyeBlinkRight");
                 expression.smile = (coef("mouthSmileLeft") + coef("mouthSmileRight")) / 2.0;
                 expression.jaw_open = coef("jawOpen");
-                expression.brow_up = (coef("browInnerUp")
-                    + coef("browOuterUpLeft")
-                    + coef("browOuterUpRight"))
-                    / 3.0;
+                expression.brow_up =
+                    (coef("browInnerUp") + coef("browOuterUpLeft") + coef("browOuterUpRight"))
+                        / 3.0;
             }
             None => {
                 let eyes = eye_aspect_ratios(&points);
@@ -349,8 +348,8 @@ impl ExpressionModel {
                 tensor[i * 3 + c] = f32::from(px[c]) / 255.0;
             }
         }
-        let input = Tensor::from_array(([1usize, CROP, CROP, 3], tensor))
-            .map_err(|e| e.to_string())?;
+        let input =
+            Tensor::from_array(([1usize, CROP, CROP, 3], tensor)).map_err(|e| e.to_string())?;
         let out = self
             .landmarks
             .run(ort::inputs![input])
@@ -565,7 +564,11 @@ mod tests {
         assert!((yaw - 22.5).abs() < 0.5, "{yaw}");
 
         let mut tilted = frontal();
-        let (angle, sin, cos) = (10f64.to_radians(), 10f64.to_radians().sin(), 10f64.to_radians().cos());
+        let (angle, sin, cos) = (
+            10f64.to_radians(),
+            10f64.to_radians().sin(),
+            10f64.to_radians().cos(),
+        );
         for i in [EYE_R_OUTER, EYE_L_OUTER] {
             let (dx, dy) = (tilted[i].0 - 128.0, tilted[i].1 - 110.0);
             tilted[i] = (128.0 + dx * cos - dy * sin, 110.0 + dx * sin + dy * cos);
@@ -628,7 +631,13 @@ mod tests {
             score: 0.9,
             bbox: [100.0, 60.0, 180.0, 140.0],
             eyes: [(130.0, 100.0), (150.0, 100.0)],
-            landmarks: [(130.0, 100.0), (150.0, 100.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)],
+            landmarks: [
+                (130.0, 100.0),
+                (150.0, 100.0),
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (0.0, 0.0),
+            ],
         };
         let (out, map) = crop(&image, &face);
         assert_eq!((out.width, out.height), (CROP, CROP));
@@ -737,8 +746,8 @@ mod tests {
 
     /// Models are optional locally; each test skips without them.
     fn installed(name: &str) -> Option<std::path::PathBuf> {
-        let dir = std::path::PathBuf::from(std::env::var("USERPROFILE").ok()?)
-            .join(".conrod/models");
+        let dir =
+            std::path::PathBuf::from(std::env::var("USERPROFILE").ok()?).join(".conrod/models");
         let path = dir.join(name);
         path.is_file().then_some(path)
     }
@@ -771,6 +780,12 @@ mod tests {
         let scores = blend(&mut session, &points).unwrap();
         assert_eq!(scores.len(), 52);
         assert!(scores.iter().all(|s| s.is_finite()));
-        eprintln!("blendshape range {:?}", (scores.iter().cloned().fold(f32::MIN, f32::max), scores.iter().cloned().fold(f32::MAX, f32::min)));
+        eprintln!(
+            "blendshape range {:?}",
+            (
+                scores.iter().cloned().fold(f32::MIN, f32::max),
+                scores.iter().cloned().fold(f32::MAX, f32::min)
+            )
+        );
     }
 }

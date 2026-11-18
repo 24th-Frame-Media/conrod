@@ -123,7 +123,10 @@ fn tilt_and_keystone_on_real_frames() {
                 level.verdict,
                 ms,
             ));
-            let _ = std::fs::write(frames_dir.join(format!("{index:03}.pgm")), pgm(&gray.thumbnail(768)));
+            let _ = std::fs::write(
+                frames_dir.join(format!("{index:03}.pgm")),
+                pgm(&gray.thumbnail(768)),
+            );
             rows.push((
                 index,
                 name,
@@ -143,11 +146,7 @@ fn tilt_and_keystone_on_real_frames() {
         .filter(|t| t.is_finite())
         .collect();
     tilts.sort_by(f64::total_cmp);
-    let mut converge: Vec<f64> = rows
-        .iter()
-        .map(|r| r.3)
-        .filter(|c| c.is_finite())
-        .collect();
+    let mut converge: Vec<f64> = rows.iter().map(|r| r.3).filter(|c| c.is_finite()).collect();
     converge.sort_by(f64::total_cmp);
     let pct = |v: &[f64], p: f64| -> f64 {
         if v.is_empty() {

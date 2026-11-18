@@ -225,7 +225,10 @@ mod tests {
             (rate - 1.0).abs() < 0.51,
             "recent seconds decide the rate, got {rate}"
         );
-        assert!(meter.eta(44, 144).unwrap() > 90.0, "the ETA follows it down");
+        assert!(
+            meter.eta(44, 144).unwrap() > 90.0,
+            "the ETA follows it down"
+        );
     }
 
     #[test]
@@ -338,7 +341,10 @@ mod tests {
             "eta_s",
             "eta_confident",
         ] {
-            assert!(overall.get(key).is_some(), "missing overall.{key}: {overall}");
+            assert!(
+                overall.get(key).is_some(),
+                "missing overall.{key}: {overall}"
+            );
         }
         assert_eq!(overall["eta_confident"], false);
         let stage = &value["pipeline"]["stages"][0];

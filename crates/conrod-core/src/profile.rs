@@ -556,9 +556,7 @@ impl ShootPreset {
                 .pan()
                 .blur("strict")
                 .vlm(VlmTargets::BIB),
-            ShootPreset::SportRodeo => PresetPolicy::new(Event)
-                .min_box(0.7)
-                .vlm(VlmTargets::NAMES),
+            ShootPreset::SportRodeo => PresetPolicy::new(Event).min_box(0.7).vlm(VlmTargets::NAMES),
             ShootPreset::SportEquestrian => PresetPolicy::new(Event)
                 .pan()
                 .min_box(0.7)
@@ -865,20 +863,150 @@ mod tests {
     #[test]
     fn the_original_presets_keep_their_old_values() {
         use ShootPreset::*;
-        type OldValues = (ShootPreset, ScanProfile, bool, bool, bool, bool, bool, f64, usize);
+        type OldValues = (
+            ShootPreset,
+            ScanProfile,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            f64,
+            usize,
+        );
         let old: [OldValues; 13] = [
-            (Portrait, ScanProfile::Portrait, false, true, false, true, false, 1.0, 8),
-            (PortraitGroup, ScanProfile::Portrait, false, true, false, true, false, 0.5, 24),
-            (PortraitCouple, ScanProfile::Portrait, false, true, false, true, false, 1.0, 8),
-            (PortraitPets, ScanProfile::Portrait, false, true, false, true, false, 1.0, 8),
-            (Motorsport, ScanProfile::Motorsport, true, true, true, true, true, 1.0, 8),
-            (MotorsportBurnouts, ScanProfile::Motorsport, true, true, true, true, true, 1.0, 8),
-            (MotorsportTrack, ScanProfile::Motorsport, true, true, true, true, true, 0.7, 8),
-            (MotorsportRally, ScanProfile::Motorsport, true, true, true, true, true, 0.7, 8),
-            (MotorsportMeet, ScanProfile::Motorsport, true, true, false, true, false, 1.0, 16),
-            (Event, ScanProfile::Event, true, true, false, true, true, 1.0, 8),
-            (EventShows, ScanProfile::Event, true, true, false, true, true, 0.5, 24),
-            (EventParties, ScanProfile::Event, false, true, false, true, false, 0.5, 24),
+            (
+                Portrait,
+                ScanProfile::Portrait,
+                false,
+                true,
+                false,
+                true,
+                false,
+                1.0,
+                8,
+            ),
+            (
+                PortraitGroup,
+                ScanProfile::Portrait,
+                false,
+                true,
+                false,
+                true,
+                false,
+                0.5,
+                24,
+            ),
+            (
+                PortraitCouple,
+                ScanProfile::Portrait,
+                false,
+                true,
+                false,
+                true,
+                false,
+                1.0,
+                8,
+            ),
+            (
+                PortraitPets,
+                ScanProfile::Portrait,
+                false,
+                true,
+                false,
+                true,
+                false,
+                1.0,
+                8,
+            ),
+            (
+                Motorsport,
+                ScanProfile::Motorsport,
+                true,
+                true,
+                true,
+                true,
+                true,
+                1.0,
+                8,
+            ),
+            (
+                MotorsportBurnouts,
+                ScanProfile::Motorsport,
+                true,
+                true,
+                true,
+                true,
+                true,
+                1.0,
+                8,
+            ),
+            (
+                MotorsportTrack,
+                ScanProfile::Motorsport,
+                true,
+                true,
+                true,
+                true,
+                true,
+                0.7,
+                8,
+            ),
+            (
+                MotorsportRally,
+                ScanProfile::Motorsport,
+                true,
+                true,
+                true,
+                true,
+                true,
+                0.7,
+                8,
+            ),
+            (
+                MotorsportMeet,
+                ScanProfile::Motorsport,
+                true,
+                true,
+                false,
+                true,
+                false,
+                1.0,
+                16,
+            ),
+            (
+                Event,
+                ScanProfile::Event,
+                true,
+                true,
+                false,
+                true,
+                true,
+                1.0,
+                8,
+            ),
+            (
+                EventShows,
+                ScanProfile::Event,
+                true,
+                true,
+                false,
+                true,
+                true,
+                0.5,
+                24,
+            ),
+            (
+                EventParties,
+                ScanProfile::Event,
+                false,
+                true,
+                false,
+                true,
+                false,
+                0.5,
+                24,
+            ),
             (Mix, ScanProfile::Mix, true, true, false, true, true, 1.0, 8),
         ];
         for (preset, profile, vehicles, people, faces_off, animals, pan, factor, max) in old {
@@ -889,7 +1017,10 @@ mod tests {
             assert!(preset.wants_faces(true), "{preset:?}");
             assert_eq!(preset.wants_animals(), animals, "{preset:?}");
             assert_eq!(preset.pan_compatible(), pan, "{preset:?}");
-            assert!((preset.min_box_fraction(1.0) - factor).abs() < 1e-9, "{preset:?}");
+            assert!(
+                (preset.min_box_fraction(1.0) - factor).abs() < 1e-9,
+                "{preset:?}"
+            );
             assert_eq!(preset.max_subjects(8), max, "{preset:?}");
         }
     }
@@ -946,7 +1077,10 @@ mod tests {
         // Property: no subjects, brackets kept, and the report delivers most.
         for preset in [ShootPreset::PropertyListing, ShootPreset::PropertyReport] {
             let p = preset.policy();
-            assert!(!p.people && !p.vehicles && !p.animals && !p.faces_default, "{preset:?}");
+            assert!(
+                !p.people && !p.vehicles && !p.animals && !p.faces_default,
+                "{preset:?}"
+            );
             assert_eq!(p.group, KeepSet, "{preset:?}");
             assert_eq!(p.default_blur, "strict", "{preset:?}");
             assert!(!p.pan_allowed, "{preset:?}");
@@ -964,7 +1098,11 @@ mod tests {
         assert!(ShootPreset::WildlifeBirds.wants_animals());
         assert_eq!(ShootPreset::Landscape.group_unit(), KeepSet);
         assert_eq!(ShootPreset::Astro.default_blur_strictness(), "lenient");
-        for dark in [ShootPreset::Astro, ShootPreset::Concert, ShootPreset::EventShows] {
+        for dark in [
+            ShootPreset::Astro,
+            ShootPreset::Concert,
+            ShootPreset::EventShows,
+        ] {
             assert!(dark.policy().dark_ok, "{dark:?}");
         }
         assert!(!ShootPreset::Landscape.policy().dark_ok);
@@ -985,16 +1123,28 @@ mod tests {
 
     #[test]
     fn track_presets_default_to_critical_blur() {
-        assert_eq!(ShootPreset::Motorsport.default_blur_strictness(), "critical");
+        assert_eq!(
+            ShootPreset::Motorsport.default_blur_strictness(),
+            "critical"
+        );
         assert_eq!(
             ShootPreset::MotorsportTrack.default_blur_strictness(),
             "critical"
         );
         // Unchanged: burnouts and rallies stay lenient.
-        assert_eq!(ShootPreset::MotorsportBurnouts.default_blur_strictness(), "lenient");
-        assert_eq!(ShootPreset::MotorsportRally.default_blur_strictness(), "lenient");
+        assert_eq!(
+            ShootPreset::MotorsportBurnouts.default_blur_strictness(),
+            "lenient"
+        );
+        assert_eq!(
+            ShootPreset::MotorsportRally.default_blur_strictness(),
+            "lenient"
+        );
         // Unchanged: MotorsportMeet sets no blur of its own, so it keeps moderate.
-        assert_eq!(ShootPreset::MotorsportMeet.default_blur_strictness(), "moderate");
+        assert_eq!(
+            ShootPreset::MotorsportMeet.default_blur_strictness(),
+            "moderate"
+        );
     }
 
     #[test]
@@ -1002,9 +1152,15 @@ mod tests {
         for preset in ShootPreset::ALL {
             let p = preset.policy();
             assert_eq!(p.profile, preset.profile(), "{preset:?}");
-            assert!(p.min_box_factor > 0.0 && p.min_box_factor <= 1.0, "{preset:?}");
             assert!(
-                matches!(p.default_blur, "critical" | "strict" | "moderate" | "lenient"),
+                p.min_box_factor > 0.0 && p.min_box_factor <= 1.0,
+                "{preset:?}"
+            );
+            assert!(
+                matches!(
+                    p.default_blur,
+                    "critical" | "strict" | "moderate" | "lenient"
+                ),
                 "{preset:?}"
             );
             assert!(!preset.label().is_empty(), "{preset:?}");

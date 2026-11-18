@@ -472,7 +472,14 @@ mod tests {
         assert!(empty["current"].is_null());
         assert!(empty["recent"].as_array().unwrap().is_empty());
 
-        live.start_item(0, 55, 42, "D:/shoot/A.CR3", Some("thumb.jpg"), Some("preview.jpg"));
+        live.start_item(
+            0,
+            55,
+            42,
+            "D:/shoot/A.CR3",
+            Some("thumb.jpg"),
+            Some("preview.jpg"),
+        );
         live.phase(55, VISION);
         live.set_prompt(55, "You are reading one competition car ...");
         let reading = live.snapshot();
@@ -500,7 +507,10 @@ mod tests {
         live.advance();
         let finished = live.snapshot();
         assert_eq!(finished["done"], 1);
-        assert!(finished["current"].is_null(), "the finished car is not current");
+        assert!(
+            finished["current"].is_null(),
+            "the finished car is not current"
+        );
         let recent = finished["recent"].as_array().unwrap();
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0]["detection_id"], 55);
@@ -535,7 +545,15 @@ mod tests {
             "the first-started car stays on screen while the others run"
         );
         // The first worker finishes while the second is still in the model.
-        live.finish_item(1, &analysis("1", "Ford"), Value::Null, Vec::new(), Vec::new(), 10.0, None);
+        live.finish_item(
+            1,
+            &analysis("1", "Ford"),
+            Value::Null,
+            Vec::new(),
+            Vec::new(),
+            10.0,
+            None,
+        );
         live.advance();
         let snapshot = live.snapshot();
         assert_eq!(
@@ -545,7 +563,15 @@ mod tests {
         assert_eq!(snapshot["recent"][0]["detection_id"], 1);
         assert_eq!(snapshot["recent"][0]["number"], "1");
         assert_eq!(snapshot["recent"][0]["make"], "Ford");
-        live.finish_item(2, &analysis("2", "Toyota"), Value::Null, Vec::new(), Vec::new(), 20.0, None);
+        live.finish_item(
+            2,
+            &analysis("2", "Toyota"),
+            Value::Null,
+            Vec::new(),
+            Vec::new(),
+            20.0,
+            None,
+        );
         live.advance();
         let snapshot = live.snapshot();
         assert!(snapshot["current"].is_null());
@@ -563,7 +589,15 @@ mod tests {
             live.snapshot()["current"]["number_conf"].is_null(),
             "an unread car must not look like a 0% reading"
         );
-        live.finish_item(5, &analysis("7", "Ford"), Value::Null, Vec::new(), Vec::new(), 10.0, None);
+        live.finish_item(
+            5,
+            &analysis("7", "Ford"),
+            Value::Null,
+            Vec::new(),
+            Vec::new(),
+            10.0,
+            None,
+        );
         live.advance();
         assert_eq!(live.snapshot()["recent"][0]["number_conf"], 0.95);
     }
@@ -582,10 +616,20 @@ mod tests {
         assert_eq!(active[0]["worker"], 1, "the second car belongs to lane 1");
         assert_eq!(active[1]["worker"], 0);
         assert!(
-            active.iter().any(|item| item["detection_id"] == snapshot["current"]["detection_id"]),
+            active
+                .iter()
+                .any(|item| item["detection_id"] == snapshot["current"]["detection_id"]),
             "the narrated car is one of the active ones"
         );
-        live.finish_item(1, &analysis("1", "Ford"), Value::Null, Vec::new(), Vec::new(), 5.0, None);
+        live.finish_item(
+            1,
+            &analysis("1", "Ford"),
+            Value::Null,
+            Vec::new(),
+            Vec::new(),
+            5.0,
+            None,
+        );
         live.advance();
         let active = live.snapshot()["active"].as_array().unwrap().clone();
         assert_eq!(active.len(), 1);
@@ -623,7 +667,11 @@ mod tests {
         live.advance();
         let snapshot = live.snapshot();
         assert_eq!(snapshot["done"], 2, "clamped to the total");
-        assert_eq!(snapshot["errors"].as_array().unwrap().len(), 2, "deduplicated");
+        assert_eq!(
+            snapshot["errors"].as_array().unwrap().len(),
+            2,
+            "deduplicated"
+        );
         assert_eq!(
             snapshot["recent"][0]["failures"][0],
             "detection 3 has an empty box and was skipped"
@@ -681,7 +729,14 @@ mod tests {
             "top-level payload"
         );
         // One car finished, one still being read.
-        live.start_item(0, 1, 10, "D:/a.CR3", Some("thumb-a.jpg"), Some("preview-a.jpg"));
+        live.start_item(
+            0,
+            1,
+            10,
+            "D:/a.CR3",
+            Some("thumb-a.jpg"),
+            Some("preview-a.jpg"),
+        );
         live.phase(1, MERGE);
         live.finish_item(
             1,
@@ -693,15 +748,21 @@ mod tests {
             Some(Path::new("cache/native/crop-1.jpg")),
         );
         live.advance();
-        live.start_item(1, 2, 11, "D:/b.CR3", Some("thumb-b.jpg"), Some("preview-b.jpg"));
+        live.start_item(
+            1,
+            2,
+            11,
+            "D:/b.CR3",
+            Some("thumb-b.jpg"),
+            Some("preview-b.jpg"),
+        );
         live.phase(2, READ);
         live.set_prompt(2, "You are reading one competition car ...");
         live.set_workers(3);
         let snapshot = live.snapshot();
         assert_eq!(snapshot["workers"], 3);
         assert_eq!(
-            snapshot["active"][0]["prompt"],
-            "You are reading one competition car ...",
+            snapshot["active"][0]["prompt"], "You are reading one competition car ...",
             "each worker's panel gets its own prompt"
         );
         let current = snapshot["current"].as_object().unwrap();
@@ -711,9 +772,29 @@ mod tests {
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>(),
             [
-                "at", "action", "colour", "crop_path", "detection_id", "failures", "image_id", "make", "model",
-                "ms", "number", "number_conf", "number_source", "path", "plate", "preview_path",
-                "prompt", "reply", "stage", "team", "thumb_path", "trace", "worker",
+                "at",
+                "action",
+                "colour",
+                "crop_path",
+                "detection_id",
+                "failures",
+                "image_id",
+                "make",
+                "model",
+                "ms",
+                "number",
+                "number_conf",
+                "number_source",
+                "path",
+                "plate",
+                "preview_path",
+                "prompt",
+                "reply",
+                "stage",
+                "team",
+                "thumb_path",
+                "trace",
+                "worker",
             ]
             .map(String::from)
             .into_iter()
@@ -727,9 +808,28 @@ mod tests {
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>(),
             [
-                "at", "action", "colour", "crop_path", "detection_id", "failures", "image_id", "make", "model",
-                "ms", "number", "number_conf", "number_source", "path", "plate", "preview_path",
-                "reply", "stage", "team", "thumb_path", "trace", "worker",
+                "at",
+                "action",
+                "colour",
+                "crop_path",
+                "detection_id",
+                "failures",
+                "image_id",
+                "make",
+                "model",
+                "ms",
+                "number",
+                "number_conf",
+                "number_source",
+                "path",
+                "plate",
+                "preview_path",
+                "reply",
+                "stage",
+                "team",
+                "thumb_path",
+                "trace",
+                "worker",
             ]
             .map(String::from)
             .into_iter()

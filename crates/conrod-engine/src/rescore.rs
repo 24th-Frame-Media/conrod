@@ -275,7 +275,9 @@ pub(crate) fn measure_af_frames(
     )?;
     let total = found.len() as u64;
     task.progress(0, total);
-    task.detail(format!("Measuring {total} missed frames inside the focus area"));
+    task.detail(format!(
+        "Measuring {total} missed frames inside the focus area"
+    ));
     let strictness = cfg.effective_blur();
     let done = AtomicUsize::new(0);
     let results: Vec<(i64, Result<Option<f64>>)> = found
@@ -317,14 +319,10 @@ pub(crate) fn measure_af_frames(
 
 /// One AF box's edge-blur rating, on the upright preview's native luma. The box
 /// is fractions of the upright frame, the space `af::read` returns.
-fn af_rating(
-    path: &std::path::Path,
-    area: [f64; 4],
-    strictness: &str,
-) -> Result<Option<f64>> {
+fn af_rating(path: &std::path::Path, area: [f64; 4], strictness: &str) -> Result<Option<f64>> {
     let frame = conrod_io::raw::read(path)?;
-    let image = conrod_vision::imageops::Rgb::decode_jpeg(&frame.preview, 1)?
-        .orient(frame.orientation);
+    let image =
+        conrod_vision::imageops::Rgb::decode_jpeg(&frame.preview, 1)?.orient(frame.orientation);
     let grey = image.to_gray();
     let (fw, fh) = (grey.width, grey.height);
     let px = |at: usize, edge: usize| (area[at].clamp(0.0, 1.0) * edge as f64) as usize;
@@ -473,12 +471,10 @@ fn measure_frame(
             // car it reads worse and lowers the score, but it can also read
             // sharper than the detection box, and must not vouch for a frame the
             // detection box found soft (B1000_4218 read 0.984 that way).
-            let af = af_px
-                .filter(|af| holds_middle(bbox, *af))
-                .and_then(|af| {
-                    let blur = crate::subject_blur(&grey, af, fw.max(fh));
-                    sharpness::rating_from_blur(blur.whole, strictness)
-                });
+            let af = af_px.filter(|af| holds_middle(bbox, *af)).and_then(|af| {
+                let blur = crate::subject_blur(&grey, af, fw.max(fh));
+                sharpness::rating_from_blur(blur.whole, strictness)
+            });
             if let Some(score) = second_opinion(detection, af) {
                 focus.score = score;
             }
@@ -496,7 +492,10 @@ fn measure_frame(
             let mut focus = focus;
             focus.heuristic = focus.score;
             if focus.panning
-                && matches!(s["region"].as_str().unwrap_or("vehicle"), "vehicle" | "person")
+                && matches!(
+                    s["region"].as_str().unwrap_or("vehicle"),
+                    "vehicle" | "person"
+                )
             {
                 panning = true;
             }
@@ -726,7 +725,10 @@ mod tests {
         // The scan stored 1.0 for a pan the detector missed; the measure has since
         // changed. No file on disk, so the pixel pass leaves the stored sharpness
         // alone and the rating must still follow it.
-        lib.sql("UPDATE images SET sharpness=0.66, rating=1.0 WHERE id=?", [bare]);
+        lib.sql(
+            "UPDATE images SET sharpness=0.66, rating=1.0 WHERE id=?",
+            [bare],
+        );
         lib.run("rescore", json!({"jobId": lib.job})).unwrap();
         lib.wait_idle();
         let rating: f64 = lib.one("SELECT rating FROM images WHERE id=?", [bare]);
@@ -742,7 +744,10 @@ mod tests {
         // A stored heuristic so the subject is re-rated, a pan flag so the frame
         // is capped, and a share the scan would have stored for a small car.
         with_features(&lib, car, 0.95, 0.1);
-        lib.sql("UPDATE detections SET panning=1,rating=0.95 WHERE id=?", [car]);
+        lib.sql(
+            "UPDATE detections SET panning=1,rating=0.95 WHERE id=?",
+            [car],
+        );
         lib.sql(
             "UPDATE images SET sharpness=0.95,rating=0.95,pan_share=0.1 WHERE id=?",
             [frame],
@@ -964,7 +969,10 @@ mod tests {
         let task = lib.task("Re-scoring");
         assert_eq!(task["state"], "done", "{task}");
         assert!(
-            task["detail"].as_str().unwrap().contains("1 kept as stored"),
+            task["detail"]
+                .as_str()
+                .unwrap()
+                .contains("1 kept as stored"),
             "{task}"
         );
 
@@ -1044,10 +1052,7 @@ mod tests {
         let task = lib.task("Rescanning");
         assert_eq!(task["state"], "done", "{task}");
         assert!(
-            task["detail"]
-                .as_str()
-                .unwrap()
-                .contains("1 photos unread"),
+            task["detail"].as_str().unwrap().contains("1 photos unread"),
             "{task}"
         );
 
@@ -1138,7 +1143,8 @@ mod tests {
         );
         let cull: String = lib.one("SELECT cull_reason FROM detections WHERE id=?", [face]);
         assert_eq!(
-            cull, crate::EYES_CLOSED,
+            cull,
+            crate::EYES_CLOSED,
             "a re-measure must not open shut eyes"
         );
         let cull: String = lib.one("SELECT cull_reason FROM detections WHERE id=?", [left]);

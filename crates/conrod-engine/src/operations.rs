@@ -894,7 +894,10 @@ mod tests {
             [picked],
         );
         lib.sql("UPDATE detections SET stars=5 WHERE id=?", [starred]);
-        lib.sql("UPDATE detections SET cull_reason='too blurred' WHERE id=?", [culled]);
+        lib.sql(
+            "UPDATE detections SET cull_reason='too blurred' WHERE id=?",
+            [culled],
+        );
         lib.sql("UPDATE detections SET reviewed=1 WHERE id=?", [reviewed]);
         lib.sql("UPDATE detections SET bystander=1 WHERE id=?", [bystander]);
 
@@ -924,7 +927,10 @@ mod tests {
         let culled = lib.detection(lib.frame("b.jpg", None), "vehicle", 0.2);
         let suggested = lib.detection(lib.frame("c.jpg", None), "vehicle", 0.9);
         lib.sql("UPDATE detections SET burst_pick=1 WHERE id=?", [suggested]);
-        lib.sql("UPDATE detections SET cull_reason='too blurred' WHERE id=?", [culled]);
+        lib.sql(
+            "UPDATE detections SET cull_reason='too blurred' WHERE id=?",
+            [culled],
+        );
 
         // A new album carries the default: keepers.
         let album = crate::operations::settings(lib.d(), lib.job).unwrap();

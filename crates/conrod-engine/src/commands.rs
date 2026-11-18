@@ -564,9 +564,10 @@ mod tests {
         assert_eq!(scan.grouping_focus_anchor, Some(false));
 
         // The sheet may send none of them: absent is None, not a default.
-        let Ok(Command::Scan(scan)) =
-            Command::parse("scan", json!({"root": "C:\\\\Photos", "groupingSensitivity": "off"}))
-        else {
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({"root": "C:\\\\Photos", "groupingSensitivity": "off"}),
+        ) else {
             panic!()
         };
         assert_eq!(scan.grouping_sensitivity.as_deref(), Some("off"));
@@ -576,9 +577,10 @@ mod tests {
         assert_eq!(scan.grouping_focus_anchor, None);
         // Settings keys are snake_case on the wire only as JSON patch keys; a
         // scan takes the camelCase arg names.
-        let Ok(Command::Scan(scan)) =
-            Command::parse("scan", json!({"root": "C:\\\\Photos", "grouping_pause": 1.0}))
-        else {
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({"root": "C:\\\\Photos", "grouping_pause": 1.0}),
+        ) else {
             panic!()
         };
         assert_eq!(scan.grouping_pause, None);
@@ -587,22 +589,25 @@ mod tests {
     #[test]
     fn a_scan_carries_the_albums_workflow_mode_in_camel_case() {
         for word in ["both", "cull", "identify"] {
-            let Ok(Command::Scan(scan)) =
-                Command::parse("scan", json!({"root": "C:\\\\Photos", "workflowMode": word}))
-            else {
+            let Ok(Command::Scan(scan)) = Command::parse(
+                "scan",
+                json!({"root": "C:\\\\Photos", "workflowMode": word}),
+            ) else {
                 panic!()
             };
             assert_eq!(scan.workflow_mode.as_deref(), Some(word));
         }
         // Missing keeps None: a new album then keeps the stored default.
-        let Ok(Command::Scan(scan)) = Command::parse("scan", json!({"root": "C:\\\\Photos"})) else {
+        let Ok(Command::Scan(scan)) = Command::parse("scan", json!({"root": "C:\\\\Photos"}))
+        else {
             panic!()
         };
         assert_eq!(scan.workflow_mode, None);
         // The settings key spelling is not a scan arg.
-        let Ok(Command::Scan(scan)) =
-            Command::parse("scan", json!({"root": "C:\\\\Photos", "workflow_mode": "cull"}))
-        else {
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({"root": "C:\\\\Photos", "workflow_mode": "cull"}),
+        ) else {
             panic!()
         };
         assert_eq!(scan.workflow_mode, None);
@@ -611,22 +616,25 @@ mod tests {
     #[test]
     fn a_scan_carries_the_albums_identify_scope_in_camel_case() {
         for word in ["keepers", "everything"] {
-            let Ok(Command::Scan(scan)) =
-                Command::parse("scan", json!({"root": "C:\\\\Photos", "identifyScope": word}))
-            else {
+            let Ok(Command::Scan(scan)) = Command::parse(
+                "scan",
+                json!({"root": "C:\\\\Photos", "identifyScope": word}),
+            ) else {
                 panic!()
             };
             assert_eq!(scan.identify_scope.as_deref(), Some(word));
         }
         // Missing keeps None: a new album then keeps the stored default.
-        let Ok(Command::Scan(scan)) = Command::parse("scan", json!({"root": "C:\\\\Photos"})) else {
+        let Ok(Command::Scan(scan)) = Command::parse("scan", json!({"root": "C:\\\\Photos"}))
+        else {
             panic!()
         };
         assert_eq!(scan.identify_scope, None);
         // The settings key spelling is not a scan arg.
-        let Ok(Command::Scan(scan)) =
-            Command::parse("scan", json!({"root": "C:\\\\Photos", "identify_scope": "everything"}))
-        else {
+        let Ok(Command::Scan(scan)) = Command::parse(
+            "scan",
+            json!({"root": "C:\\\\Photos", "identify_scope": "everything"}),
+        ) else {
             panic!()
         };
         assert_eq!(scan.identify_scope, None);
@@ -728,7 +736,8 @@ mod tests {
             panic!()
         };
         assert_eq!((taste.job_id, taste.force), (2, true));
-        let Ok(Command::TasteRank(taste)) = Command::parse("taste_rank", json!({"jobId": 2})) else {
+        let Ok(Command::TasteRank(taste)) = Command::parse("taste_rank", json!({"jobId": 2}))
+        else {
             panic!()
         };
         assert!(!taste.force, "a plain run only fills in what is missing");

@@ -112,7 +112,10 @@ mod tests {
         let lib = Lib::new("looks-backfill");
         let a = lib.frame("1.jpg", None);
         let thumb = thumbnail(&lib, "thumb-1.jpg", [200, 30, 30]);
-        lib.sql("UPDATE images SET thumb_path=? WHERE id=?", params![thumb, a]);
+        lib.sql(
+            "UPDATE images SET thumb_path=? WHERE id=?",
+            params![thumb, a],
+        );
         let boxes = HashMap::from([(a, [0.357, 0.393, 0.643, 0.607])]);
 
         let db = lib.db();

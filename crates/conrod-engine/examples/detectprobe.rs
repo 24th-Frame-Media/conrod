@@ -29,7 +29,11 @@ use std::time::Instant;
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let db_path = args.first().ok_or("db path")?;
-    let job: i64 = args.get(1).ok_or("job")?.parse().map_err(|e| format!("{e}"))?;
+    let job: i64 = args
+        .get(1)
+        .ok_or("job")?
+        .parse()
+        .map_err(|e| format!("{e}"))?;
     let conf: f64 = args
         .get(2)
         .ok_or("detect_conf")?
@@ -246,7 +250,10 @@ fn main() -> Result<(), String> {
     });
 
     println!("\n---- JSON ----");
-    println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 
@@ -346,9 +353,7 @@ fn pick(db: &Connection, job: i64, wanted: usize, missed: bool) -> Result<Vec<Fr
     );
     let mut stmt = db.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([job], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-        })
+        .query_map([job], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
         .map_err(|e| e.to_string())?;
     let mut all: Vec<(i64, String)> = Vec::new();
     for r in rows {
@@ -430,9 +435,7 @@ impl Runner<'_> {
             }
         };
         let orientation = frame_io.orientation;
-        let rgb = match Rgb::decode_jpeg(&frame_io.preview, 1)
-            .map(|i| i.orient(orientation))
-        {
+        let rgb = match Rgb::decode_jpeg(&frame_io.preview, 1).map(|i| i.orient(orientation)) {
             Ok(i) => i,
             Err(e) => {
                 self.failures.push(json!({
@@ -593,13 +596,11 @@ fn read_af(paths: &[String]) -> (HashMap<String, Af>, HashMap<String, String>) {
                     _ => None,
                 }
             };
-            let mode = entry
-                .get("Canon:AFAreaMode")
-                .and_then(|v| match v {
-                    Value::Number(n) => n.as_i64(),
-                    Value::String(s) => s.parse().ok(),
-                    _ => None,
-                });
+            let mode = entry.get("Canon:AFAreaMode").and_then(|v| match v {
+                Value::Number(n) => n.as_i64(),
+                Value::String(s) => s.parse().ok(),
+                _ => None,
+            });
             let (Some(dx), Some(dy), Some(w), Some(h)) = (
                 number("Canon:AFAreaXPositions"),
                 number("Canon:AFAreaYPositions"),
@@ -613,10 +614,9 @@ fn read_af(paths: &[String]) -> (HashMap<String, Af>, HashMap<String, String>) {
                 errors.insert(key, format!("AF area has no size ({w}x{h})"));
                 continue;
             }
-            let (Some(canvas_w), Some(canvas_h)) = (
-                number("Canon:AFImageWidth"),
-                number("Canon:AFImageHeight"),
-            ) else {
+            let (Some(canvas_w), Some(canvas_h)) =
+                (number("Canon:AFImageWidth"), number("Canon:AFImageHeight"))
+            else {
                 errors.insert(key, "no AFImageWidth/Height".into());
                 continue;
             };

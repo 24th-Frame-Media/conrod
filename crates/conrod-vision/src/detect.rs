@@ -404,6 +404,10 @@ mod tests {
         assert_eq!(class_name(0), "person");
         assert_eq!(class_name(2), "car");
         assert_eq!(class_name(32), "sports ball");
-        assert_eq!(class_name(70), "vehicle", "an unnamed class still reads as a vehicle");
+        assert_eq!(
+            class_name(70),
+            "vehicle",
+            "an unnamed class still reads as a vehicle"
+        );
     }
 }

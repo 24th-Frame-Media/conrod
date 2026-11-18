@@ -290,7 +290,17 @@ fn remeasure(
 ) -> Vec<Option<(sharpness::Sharpness, f64)>> {
     subjects
         .iter()
-        .map(|s| measure_box(image, grey, s.bbox, s.region_type, settings, profile, models))
+        .map(|s| {
+            measure_box(
+                image,
+                grey,
+                s.bbox,
+                s.region_type,
+                settings,
+                profile,
+                models,
+            )
+        })
         .collect()
 }
 
@@ -304,8 +314,7 @@ fn frame_setter(profile: ScanProfile, include_people: bool, subjects: &[Subject]
         _ => None,
     };
     let main = main_subject(subjects.iter().filter_map(|s| {
-        kind_of(s.region_type)
-            .map(|k| (k, (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1])))
+        kind_of(s.region_type).map(|k| (k, (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1])))
     }));
     let region = profile
         .frame_priority(include_people, main)
@@ -315,7 +324,10 @@ fn frame_setter(profile: ScanProfile, include_people: bool, subjects: &[Subject]
                 return None;
             }
             let name = crate::passes::region_name(*kind);
-            subjects.iter().any(|s| s.region_type == name).then_some(name)
+            subjects
+                .iter()
+                .any(|s| s.region_type == name)
+                .then_some(name)
         })?;
     subjects
         .iter()
@@ -332,9 +344,8 @@ fn band(bands: &[f64], i: usize) -> String {
 #[test]
 #[ignore]
 fn export_recall() {
-    let labels_path = std::env::var("CONROD_EVAL_LABELS").unwrap_or_else(|_| {
-        String::from(r"E:\code\photo\conrod\target\groundtruth\labels.json")
-    });
+    let labels_path = std::env::var("CONROD_EVAL_LABELS")
+        .unwrap_or_else(|_| String::from(r"E:\code\photo\conrod\target\groundtruth\labels.json"));
     let filter = std::env::var("CONROD_EVAL_SHOOT").expect("CONROD_EVAL_SHOOT");
     let neighbours = env_usize("CONROD_EVAL_NEIGHBOURS", 12);
     let max = env_usize("CONROD_EVAL_MAX", 40);
@@ -357,7 +368,12 @@ fn export_recall() {
     let exported: Vec<(String, PathBuf)> = frames
         .iter()
         .filter(|f| f["exported"].as_bool() == Some(true))
-        .filter_map(|f| Some((f["shoot"].as_str()?.to_string(), PathBuf::from(f["path"].as_str()?))))
+        .filter_map(|f| {
+            Some((
+                f["shoot"].as_str()?.to_string(),
+                PathBuf::from(f["path"].as_str()?),
+            ))
+        })
         .filter(|(shoot, _)| shoot.contains(&filter))
         .filter(|(_, path)| {
             only.is_empty()
@@ -472,9 +488,8 @@ fn export_recall() {
         needs.extend(crate::setup::FACES);
     }
     crate::setup::ensure(&hub, &stop, &needs).expect("install the models the app installs");
-    let detector = Mutex::new(
-        Detector::load(&detector_model(), Device::Auto).expect("load the detector"),
-    );
+    let detector =
+        Mutex::new(Detector::load(&detector_model(), Device::Auto).expect("load the detector"));
     let device = lock(&detector).device;
     let faces = preset
         .wants_faces(settings.include_people)
@@ -538,7 +553,10 @@ fn export_recall() {
                 // best subject would be culled (that subject decides the frame).
                 let verdict =
                     sharpness::verdict_for(f.rating, settings.sharp_at, settings.blurred_below);
-                let best = f.subjects.iter().max_by(|a, b| a.rating.total_cmp(&b.rating));
+                let best = f
+                    .subjects
+                    .iter()
+                    .max_by(|a, b| a.rating.total_cmp(&b.rating));
                 let exported = exported_names.contains(&path.to_string_lossy().to_lowercase());
                 // The network's own answer, and the rest of each subject's
                 // measurement, from one extra decode of the same preview.
@@ -555,9 +573,14 @@ fn export_recall() {
                 };
                 let grey = image.as_ref().map(|i| i.to_gray());
                 let focus = match (image.as_ref(), grey.as_ref()) {
-                    (Some(image), Some(grey)) => {
-                        Some(remeasure(image, grey, &f.subjects, &settings, profile, &models))
-                    }
+                    (Some(image), Some(grey)) => Some(remeasure(
+                        image,
+                        grey,
+                        &f.subjects,
+                        &settings,
+                        profile,
+                        &models,
+                    )),
                     _ => None,
                 };
                 // No subject to judge: what the fallback would have said had the
@@ -567,15 +590,20 @@ fn export_recall() {
                         .iter()
                         .max_by(|a, b| a.1.total_cmp(&b.1))
                         .and_then(|(class, conf, bbox)| {
-                            let region = if *class == detect::PERSON
-                                || detect::PETS.contains(class)
+                            let region = if *class == detect::PERSON || detect::PETS.contains(class)
                             {
                                 "person"
                             } else {
                                 "vehicle"
                             };
                             measure_box(image, grey, *bbox, region, &settings, profile, &models)
-                                .map(|(m, _)| format!("{}#{class}:{conf:.3}={:.4}", detect::class_name(*class), m.score))
+                                .map(|(m, _)| {
+                                    format!(
+                                        "{}#{class}:{conf:.3}={:.4}",
+                                        detect::class_name(*class),
+                                        m.score
+                                    )
+                                })
                         }),
                     _ => None,
                 };
@@ -600,11 +628,7 @@ fn export_recall() {
                     }
                 }
                 for (i, s) in f.subjects.iter().enumerate() {
-                    let edges = framing::assess(
-                        Some(s.bbox),
-                        f.size.0 as i64,
-                        f.size.1 as i64,
-                    );
+                    let edges = framing::assess(Some(s.bbox), f.size.0 as i64, f.size.1 as i64);
                     // The new subject measure, timed on the same native pixels
                     // the scan now uses (one grey per frame, not one per subject).
                     let (blur_worst, blur_pooled, blur_score, blur_ms) =
@@ -626,7 +650,9 @@ fn export_recall() {
                                     conrod_vision::edgeblur::at_reference(e.sigma, long),
                                     sharpness::rating_from_blur(
                                         worst,
-                                        sharpness::BlurStrictness::parse(&settings.effective_blur()),
+                                        sharpness::BlurStrictness::parse(
+                                            &settings.effective_blur(),
+                                        ),
                                     )
                                     .unwrap_or(f64::NAN),
                                     ms,
@@ -722,10 +748,8 @@ fn export_recall() {
         .filter(|r| r["pick"].as_i64() == Some(1))
         .filter_map(|r| r["burst_key"].as_i64())
         .collect();
-    let by_path: std::collections::HashMap<String, &Rec> = records
-        .iter()
-        .map(|r| (r.path.to_lowercase(), r))
-        .collect();
+    let by_path: std::collections::HashMap<String, &Rec> =
+        records.iter().map(|r| (r.path.to_lowercase(), r)).collect();
 
     let mut csv = String::from(
         "file,exported,rating,score,stars,verdict,panning,cull_reason,subjects,burst_key,burst_size,burst_pick,seconds,raw_detections,top_raw_subject_score\n",
@@ -871,7 +895,11 @@ fn export_recall() {
             times[times.len() - 1]
         );
     }
-    let mut blur_ms: Vec<f64> = subs.iter().map(|s| s.blur_ms).filter(|v| v.is_finite()).collect();
+    let mut blur_ms: Vec<f64> = subs
+        .iter()
+        .map(|s| s.blur_ms)
+        .filter(|v| v.is_finite())
+        .collect();
     blur_ms.sort_by(f64::total_cmp);
     if !blur_ms.is_empty() {
         println!(
@@ -884,7 +912,10 @@ fn export_recall() {
     }
 
     let keepers: Vec<&Row> = listed.iter().filter(|r| r.exported).collect();
-    println!("\nexported (human-confirmed keepers) in the run: {}", keepers.len());
+    println!(
+        "\nexported (human-confirmed keepers) in the run: {}",
+        keepers.len()
+    );
     if keepers.is_empty() {
         return;
     }
@@ -901,7 +932,11 @@ fn export_recall() {
         "rated exactly 1.0: {saturated} ({:.0}%)",
         100.0 * saturated as f64 / keepers.len() as f64
     );
-    let rejected: Vec<&Row> = keepers.iter().copied().filter(|r| !r.cull.is_empty()).collect();
+    let rejected: Vec<&Row> = keepers
+        .iter()
+        .copied()
+        .filter(|r| !r.cull.is_empty())
+        .collect();
     println!(
         "with a cull reason (false rejects): {} ({:.0}%)",
         rejected.len(),
@@ -941,12 +976,7 @@ fn export_recall() {
             match pick_of.get(&r.burst) {
                 Some(p) => println!(
                     "    {} {:.3} (burst {} of {}) -> {} {:.3}",
-                    r.file,
-                    r.rating,
-                    r.burst,
-                    r.size,
-                    p.file,
-                    p.rating
+                    r.file, r.rating, r.burst, r.size, p.file, p.rating
                 ),
                 None => println!(
                     "    {} {:.3} (burst {} of {}) -> no pick",
@@ -963,7 +993,8 @@ fn export_recall() {
     for (dir, was) in &before {
         let now = snapshot(dir);
         assert_eq!(
-            *was, now,
+            *was,
+            now,
             "the shoot folder {} changed during the run",
             dir.display()
         );

@@ -37,7 +37,11 @@ const MIN_VALUE: f64 = 0.2;
 pub const VERSION: u8 = 1;
 
 fn hsv(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
-    let (r, g, b) = (f64::from(r) / 255.0, f64::from(g) / 255.0, f64::from(b) / 255.0);
+    let (r, g, b) = (
+        f64::from(r) / 255.0,
+        f64::from(g) / 255.0,
+        f64::from(b) / 255.0,
+    );
     let max = r.max(g).max(b);
     let delta = max - r.min(g).min(b);
     let sector = if delta <= 0.0 {
@@ -101,8 +105,12 @@ pub fn subject(image: &Rgb, bbox: [f64; 4]) -> Option<[u8; LOOK_SUBJECT_BINS]> {
     let (cx, cy) = ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0);
     let (bw, bh) = ((bbox[2] - bbox[0]).abs(), (bbox[3] - bbox[1]).abs());
     let edge = |centre: f64, size: f64, extent: f64| {
-        let lo = (((centre - size * SUBJECT_INNER / 2.0) * extent).floor().max(0.0)) as usize;
-        let hi = ((centre + size * SUBJECT_INNER / 2.0) * extent).ceil().min(extent) as usize;
+        let lo = (((centre - size * SUBJECT_INNER / 2.0) * extent)
+            .floor()
+            .max(0.0)) as usize;
+        let hi = ((centre + size * SUBJECT_INNER / 2.0) * extent)
+            .ceil()
+            .min(extent) as usize;
         (lo, hi.max(lo + 2).min(extent as usize))
     };
     let (x0, x1) = edge(cx, bw, w);
@@ -230,7 +238,10 @@ mod tests {
     fn a_red_car_and_a_blue_car_are_far_apart() {
         let (red, bbox) = frame_with_car([200, 30, 30]);
         let (blue, _) = frame_with_car([30, 60, 200]);
-        let d = look_distance(&subject(&red, bbox).unwrap(), &subject(&blue, bbox).unwrap());
+        let d = look_distance(
+            &subject(&red, bbox).unwrap(),
+            &subject(&blue, bbox).unwrap(),
+        );
         assert!(d > 0.9, "red vs blue crops: {d}");
     }
 
@@ -246,7 +257,10 @@ mod tests {
     fn a_colourless_car_reads_as_brightness_not_hue() {
         let (white, bbox) = frame_with_car([235, 235, 235]);
         let (black, _) = frame_with_car([20, 20, 22]);
-        let (w, b) = (subject(&white, bbox).unwrap(), subject(&black, bbox).unwrap());
+        let (w, b) = (
+            subject(&white, bbox).unwrap(),
+            subject(&black, bbox).unwrap(),
+        );
         assert!(w[..SUBJECT_HUES].iter().all(|&v| v == 0), "{w:?}");
         assert!(look_distance(&w, &b) > 0.9);
     }
@@ -312,6 +326,9 @@ mod tests {
             }
         }
         let ms = started.elapsed().as_secs_f64() * 1000.0 / paths.len().max(1) as f64;
-        eprintln!("{} thumbnails: {ms:.2} ms each, decode + both histograms, one thread", paths.len());
+        eprintln!(
+            "{} thumbnails: {ms:.2} ms each, decode + both histograms, one thread",
+            paths.len()
+        );
     }
 }

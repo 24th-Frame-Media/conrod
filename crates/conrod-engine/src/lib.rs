@@ -14,7 +14,7 @@ use conrod_io::raw;
 use conrod_vision::detect::{self, DetectOptions, Detector, Device};
 use conrod_vision::faces::FaceDetector;
 use conrod_vision::imageops::{Filter, Gray, Rgb};
-use conrod_vision::{expression, exposure, framing as vis_framing, level, sharpness};
+use conrod_vision::{exposure, expression, framing as vis_framing, level, sharpness};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Condvar;
@@ -29,39 +29,39 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 pub mod analyze;
 pub mod bench;
+#[cfg(test)]
+mod blurtest;
 pub mod catalog;
 pub mod commands;
 pub mod composition;
 pub mod copies;
 pub mod desktop;
+#[cfg(test)]
+mod edgetest;
 pub mod edits;
+#[cfg(test)]
+mod evaltest;
 pub mod housekeeping;
 pub mod identify_live;
 pub mod library;
 mod looks;
 pub mod operations;
+#[cfg(test)]
+mod pantest;
 pub mod passes;
 pub mod progress;
 pub mod region_training;
 pub mod rescore;
 pub mod selftest;
 pub mod setup;
+#[cfg(test)]
+mod sporttest;
 pub mod taste;
 #[cfg(test)]
 mod testkit;
-#[cfg(test)]
-mod blurtest;
-#[cfg(test)]
-mod edgetest;
-#[cfg(test)]
-mod evaltest;
+pub mod training;
 #[cfg(test)]
 mod vlmeval;
-#[cfg(test)]
-mod pantest;
-#[cfg(test)]
-mod sporttest;
-pub mod training;
 pub mod watching;
 
 pub const EXTENSIONS: [&str; 4] = ["cr3", "cr2", "jpg", "jpeg"];
@@ -389,7 +389,8 @@ pub(crate) fn face_subjects(
                         out.eye_open_min
                             .map_or(read.eye_open_min(), |m: f32| m.min(read.eye_open_min())),
                     );
-                    out.smile_max = Some(out.smile_max.map_or(read.smile, |m: f32| m.max(read.smile)));
+                    out.smile_max =
+                        Some(out.smile_max.map_or(read.smile, |m: f32| m.max(read.smile)));
                     // The mesh confirms or rescues the OCEC verdict, never
                     // invents a cull: on a turned head it reads a shut eye in
                     // a frame the photographer delivered, while OCEC said
@@ -666,7 +667,11 @@ pub(crate) fn pan_capped(rating: f64, panning: bool, share: Option<f64>) -> f64 
 /// A condition report keeps nearly everything: only a subject that is clearly
 /// out of focus goes, and never one that is merely soft or a held pan.
 /// `rating_word` is `rating_for`'s ("poor" is blurred), as `cullable` reads it.
-fn deliver_most_reason(cull_blurred: bool, focus: &sharpness::Sharpness, rating_word: &str) -> String {
+fn deliver_most_reason(
+    cull_blurred: bool,
+    focus: &sharpness::Sharpness,
+    rating_word: &str,
+) -> String {
     if cull_blurred && sharpness::cullable(focus, rating_word) {
         "too blurred".into()
     } else {
@@ -728,9 +733,7 @@ pub fn cull_frame(
     // Level only where a crooked frame is worth flagging, and framing only
     // where the preset says composition decides between frames.
     let level = policy.level.then(|| level::measure(&grey));
-    let tilt = level
-        .as_ref()
-        .and_then(|l| l.tilt_deg.map(|t| t as f32));
+    let tilt = level.as_ref().and_then(|l| l.tilt_deg.map(|t| t as f32));
     let framing_policy = framing_policy(preset);
     let boxes: Vec<[f64; 4]> = found.iter().map(|det| det.bbox).collect();
 
@@ -741,11 +744,7 @@ pub fn cull_frame(
         } else {
             "vehicle"
         };
-        let others: Vec<[f64; 4]> = boxes
-            .iter()
-            .copied()
-            .filter(|b| *b != det.bbox)
-            .collect();
+        let others: Vec<[f64; 4]> = boxes.iter().copied().filter(|b| *b != det.bbox).collect();
         let crop_grey = cut_gray(&grey, det.crop_box, settings, models.contains_key(kind));
         let scale = crop_grey.width as f64 / (det.crop_box[2] - det.crop_box[0]);
         let [cx, cy] = [det.crop_box[0], det.crop_box[1]];
@@ -810,13 +809,8 @@ pub fn cull_frame(
             && subject_not_blurred
             && pan.is_some_and(|p| p.coherence >= conrod_vision::streaks::PAN_COHERENCE);
         let motion = pan_motion(focus.panning, pan);
-        let measured = vis_framing::framing(
-            [fw as f64, fh as f64],
-            det.bbox,
-            &others,
-            motion,
-            tilt,
-        );
+        let measured =
+            vis_framing::framing([fw as f64, fh as f64], det.bbox, &others, motion, tilt);
         let framing_score =
             framing_policy.map(|policy| vis_framing::framing_score(&measured, &policy));
         let verdict = sharpness::rating_for(rating, settings.sharp_at, settings.blurred_below);
@@ -1235,8 +1229,15 @@ pub(crate) fn scan_files_filtered(
             for lane in 0..workers {
                 // Borrows, not moves: every worker shares the same pools. `lane`
                 // is copied so its borrow does not outlive the loop iteration.
-                let (paths, settings, detectors, models, faces, expression, quality) =
-                    (&paths, &settings, &detectors, &models, &faces, &expression, &quality);
+                let (paths, settings, detectors, models, faces, expression, quality) = (
+                    &paths,
+                    &settings,
+                    &detectors,
+                    &models,
+                    &faces,
+                    &expression,
+                    &quality,
+                );
                 let (progress, on_frame, should_scan, task) =
                     (&progress, &on_frame, &should_scan, &task);
                 let (pausing, flag, next, done, hub) = (&pausing, &flag, &next, &done, &hub);
@@ -1346,11 +1347,26 @@ mod tests {
     fn a_condition_report_culls_only_clearly_blurred_subjects() {
         let focus = sharpness::Sharpness::default();
         assert_eq!(deliver_most_reason(true, &focus, "poor"), "too blurred");
-        assert_eq!(deliver_most_reason(true, &focus, "fair"), "", "soft is kept");
+        assert_eq!(
+            deliver_most_reason(true, &focus, "fair"),
+            "",
+            "soft is kept"
+        );
         assert_eq!(deliver_most_reason(true, &focus, "good"), "");
-        assert_eq!(deliver_most_reason(false, &focus, "poor"), "", "culling off");
-        let held = sharpness::Sharpness { panning: true, ..focus };
-        assert_eq!(deliver_most_reason(true, &held, "poor"), "", "a held pan stays");
+        assert_eq!(
+            deliver_most_reason(false, &focus, "poor"),
+            "",
+            "culling off"
+        );
+        let held = sharpness::Sharpness {
+            panning: true,
+            ..focus
+        };
+        assert_eq!(
+            deliver_most_reason(true, &held, "poor"),
+            "",
+            "a held pan stays"
+        );
     }
 
     #[test]
@@ -1511,9 +1527,15 @@ mod tests {
         let mirror = [3000.0, 1000.0, 5000.0, 3000.0];
         let left = vis_framing::framing(FRAME, car, &[], motion, None);
         let right = vis_framing::framing(FRAME, mirror, &[], motion, None);
-        let (l, r) = (left.lead_room.expect("panned"), right.lead_room.expect("panned"));
+        let (l, r) = (
+            left.lead_room.expect("panned"),
+            right.lead_room.expect("panned"),
+        );
         assert!(l > 0.20 && r > 0.20, "left {l:.3}, right {r:.3}");
-        assert!((l - r).abs() < 1e-6, "mirrored pans read the same: {l} vs {r}");
+        assert!(
+            (l - r).abs() < 1e-6,
+            "mirrored pans read the same: {l} vs {r}"
+        );
         let policy = vis_framing::FramingPolicy::sport();
         assert!(
             (vis_framing::framing_score(&left, &policy)
@@ -1602,9 +1624,7 @@ mod tests {
         }
         let mut out = vec![0f32; w * h];
         for x in 0..w {
-            let mut acc: f32 = (0..=r)
-                .map(|i| tmp[i.min(h - 1) * w + x])
-                .sum::<f32>()
+            let mut acc: f32 = (0..=r).map(|i| tmp[i.min(h - 1) * w + x]).sum::<f32>()
                 + (1..=r).map(|_| tmp[x]).sum::<f32>();
             for y in 0..h {
                 out[y * w + x] = acc / win;

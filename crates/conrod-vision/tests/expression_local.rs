@@ -47,8 +47,12 @@ fn env(name: &str) -> Option<usize> {
 }
 
 fn models_dir() -> PathBuf {
-    PathBuf::from(std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap())
-        .join(".conrod/models")
+    PathBuf::from(
+        std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap(),
+    )
+    .join(".conrod/models")
 }
 
 /// The largest complete JPEG in a file: walk each SOI's segments (so an EXIF
@@ -143,11 +147,8 @@ fn preview(frame: &Path, cache: &Path) -> Option<Rgb> {
         image
     };
     let _ = std::fs::create_dir_all(cache);
-    let buffer = image::RgbImage::from_raw(
-        small.width as u32,
-        small.height as u32,
-        small.data.clone(),
-    );
+    let buffer =
+        image::RgbImage::from_raw(small.width as u32, small.height as u32, small.data.clone());
     if let Some(buffer) = buffer {
         let _ = buffer.save(&cached);
     }
@@ -172,7 +173,11 @@ fn expressions_on_real_portraits() {
     }
     let dir = models_dir();
     for name in [models::FACES, models::EYES] {
-        assert!(dir.join(name).is_file(), "missing {}", dir.join(name).display());
+        assert!(
+            dir.join(name).is_file(),
+            "missing {}",
+            dir.join(name).display()
+        );
     }
     std::fs::create_dir_all(OUT).unwrap();
     let cache = Path::new(OUT).join("cache");
@@ -215,7 +220,9 @@ fn expressions_on_real_portraits() {
             continue;
         }
         attempts += 1;
-        let Some(preview) = preview(&path, &cache) else { continue };
+        let Some(preview) = preview(&path, &cache) else {
+            continue;
+        };
         let mut found = None;
         for orientation in [1u16, 6, 8, 3] {
             let image = if orientation == 1 {
@@ -223,30 +230,42 @@ fn expressions_on_real_portraits() {
             } else {
                 preview.clone().orient(orientation)
             };
-            let Ok(faces) = detector.detect(&image) else { continue };
+            let Ok(faces) = detector.detect(&image) else {
+                continue;
+            };
             if !faces.is_empty() {
                 found = Some((image, faces));
                 break;
             }
         }
-        let Some((image, mut faces)) = found else { continue };
+        let Some((image, mut faces)) = found else {
+            continue;
+        };
         faces.sort_by(|a, b| area(b).total_cmp(&area(a)));
         let face = &faces[0];
         let eyes = detector.eyes_open(&image, face);
 
         let t = Instant::now();
-        let Ok(expression) = ep.read(&image, face) else { continue };
+        let Ok(expression) = ep.read(&image, face) else {
+            continue;
+        };
         let ep_ms = t.elapsed().as_secs_f64() * 1e3;
         let t = Instant::now();
-        let Ok(cpu_expression) = cpu.read(&image, face) else { continue };
+        let Ok(cpu_expression) = cpu.read(&image, face) else {
+            continue;
+        };
         let cpu_ms = t.elapsed().as_secs_f64() * 1e3;
         // The same face without the blend model: the geometry fallback, and
         // the landmarks-only timing.
         let t = Instant::now();
-        let Ok(geo) = geo_ep.read(&image, face) else { continue };
+        let Ok(geo) = geo_ep.read(&image, face) else {
+            continue;
+        };
         let geo_ep_ms = t.elapsed().as_secs_f64() * 1e3;
         let t = Instant::now();
-        let Ok(geo_cpu) = geo_cpu.read(&image, face) else { continue };
+        let Ok(geo_cpu) = geo_cpu.read(&image, face) else {
+            continue;
+        };
         let geo_cpu_ms = t.elapsed().as_secs_f64() * 1e3;
 
         timing.ep.push((ep_ms, geo_ep_ms));
@@ -309,10 +328,19 @@ fn expressions_on_real_portraits() {
             },
         }));
         *shot += 1;
-        tiles.push((image, face.bbox, expression.eye_open_min(), expression.smile));
+        tiles.push((
+            image,
+            face.bbox,
+            expression.eye_open_min(),
+            expression.smile,
+        ));
     }
 
-    assert!(rows.len() >= 20, "only {} faces from {attempts} frames", rows.len());
+    assert!(
+        rows.len() >= 20,
+        "only {} faces from {attempts} frames",
+        rows.len()
+    );
 
     // The blendshape model's own face-presence score gates the comparison: a
     // wheel or a dog is a YuNet false positive with no landmarks.
@@ -464,16 +492,41 @@ fn write_sheet(tiles: &[(Rgb, [f64; 4], f32, f32)], path: PathBuf) -> Result<(),
             }
         }
         let bar_y = oy + TILE;
-        bar(&mut sheet, w, (ox + 4, bar_y + 4), TILE - 12, *eyes, [0, 200, 255]);
-        bar(&mut sheet, w, (ox + 4, bar_y + 14), TILE - 12, *smile, [255, 90, 200]);
-        let edge = if *eyes < 0.5 { [220, 40, 40] } else { [40, 190, 80] };
+        bar(
+            &mut sheet,
+            w,
+            (ox + 4, bar_y + 4),
+            TILE - 12,
+            *eyes,
+            [0, 200, 255],
+        );
+        bar(
+            &mut sheet,
+            w,
+            (ox + 4, bar_y + 14),
+            TILE - 12,
+            *smile,
+            [255, 90, 200],
+        );
+        let edge = if *eyes < 0.5 {
+            [220, 40, 40]
+        } else {
+            [40, 190, 80]
+        };
         rect(&mut sheet, w, (ox, oy), (TILE - 1, TILE - 1), edge, 3);
     }
     let out = image::RgbImage::from_raw(w as u32, h as u32, sheet).ok_or("sheet buffer")?;
     out.save(&path).map_err(|e| e.to_string())
 }
 
-fn bar(sheet: &mut [u8], w: usize, (x, y): (usize, usize), len: usize, value: f32, colour: [u8; 3]) {
+fn bar(
+    sheet: &mut [u8],
+    w: usize,
+    (x, y): (usize, usize),
+    len: usize,
+    value: f32,
+    colour: [u8; 3],
+) {
     let filled = (len as f32 * value.clamp(0.0, 1.0)) as usize;
     for i in 0..filled {
         let p = (y * w + x + i) * 3;

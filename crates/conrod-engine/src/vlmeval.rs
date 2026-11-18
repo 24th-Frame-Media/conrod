@@ -4,7 +4,7 @@
 //!
 //! `cargo test -p conrod-engine --release vlm_production_eval -- --ignored --nocapture`
 
-use crate::analyze::{analyze, Context, Readers, Analysed};
+use crate::analyze::{analyze, Analysed, Context, Readers};
 use conrod_core::entrylist;
 use conrod_core::models;
 use conrod_core::registry::KnownVehicle;
@@ -226,7 +226,10 @@ fn vlm_production_eval() {
                 "latency": latency, "attempts": 0, "note": "", "error": e,
             }),
         };
-        println!("app {id} {group} {latency:.1}ms json={} {}", rec["json_ok"], rec["error"]);
+        println!(
+            "app {id} {group} {latency:.1}ms json={} {}",
+            rec["json_ok"], rec["error"]
+        );
         writeln!(out, "{}", rec).expect("write record");
         out.flush().expect("flush");
     }

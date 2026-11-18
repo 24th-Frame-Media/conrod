@@ -100,7 +100,10 @@ fn ring_measure(g: &Gray, b: [usize; 4], long: usize) -> (EdgeBlur, bool) {
     let win = gray_crop(g, r);
     let [x0, y0, x1, y1] = b;
     let local = [x0 - rx0, y0 - ry0, x1 - rx0, y1 - ry0];
-    (referenced(edgeblur::measure_outside(&win, local), long), clamped)
+    (
+        referenced(edgeblur::measure_outside(&win, local), long),
+        clamped,
+    )
 }
 
 /// Production box in pixels, exactly as `cull_frame` clamps it.
@@ -189,7 +192,8 @@ fn production(
     // The new one, exactly as `cull_frame` takes it.
     let streak = conrod_vision::streaks::background_streaks(grey, bbox).unwrap_or(NAN);
     let new = preset.pan_compatible()
-        && sharpness::verdict_for(focus.score, settings.sharp_at, settings.blurred_below) != "blurred"
+        && sharpness::verdict_for(focus.score, settings.sharp_at, settings.blurred_below)
+            != "blurred"
         && streak >= conrod_vision::streaks::PAN_COHERENCE;
     (old, new, focus.score, streak, focus.learned)
 }
@@ -577,18 +581,28 @@ struct Item {
 
 fn label_json(dir: &Path, name: &str) -> serde_json::Value {
     let path = dir.join(name);
-    serde_json::from_slice(&std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    serde_json::from_slice(
+        &std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())),
+    )
+    .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 fn items(dir: &Path) -> Vec<Item> {
     let mut out = Vec::new();
     // Main set: a list of frames, labels keyed by id.
     let labels = label_json(dir, "labels.json");
-    for f in label_json(dir, "frames.json").as_array().expect("frames.json").iter() {
+    for f in label_json(dir, "frames.json")
+        .as_array()
+        .expect("frames.json")
+        .iter()
+    {
         let Some(id) = f["id"].as_str() else { continue };
-        let Some(label) = labels[id]["label"].as_str() else { continue };
-        let Some(path) = f["path"].as_str() else { continue };
+        let Some(label) = labels[id]["label"].as_str() else {
+            continue;
+        };
+        let Some(path) = f["path"].as_str() else {
+            continue;
+        };
         out.push(Item {
             id: id.to_string(),
             set: "main",
@@ -610,10 +624,16 @@ fn items(dir: &Path) -> Vec<Item> {
         .iter()
         .filter_map(|v| Some((v["id"].as_str()?, v["label"].as_str()?)))
         .collect();
-    for f in label_json(dir, "frames_slow.json").as_array().expect("frames_slow.json").iter() {
+    for f in label_json(dir, "frames_slow.json")
+        .as_array()
+        .expect("frames_slow.json")
+        .iter()
+    {
         let Some(id) = f["id"].as_str() else { continue };
         let Some(label) = by_id.get(id) else { continue };
-        let Some(path) = f["path"].as_str() else { continue };
+        let Some(path) = f["path"].as_str() else {
+            continue;
+        };
         out.push(Item {
             id: id.to_string(),
             set: "slow",
@@ -635,23 +655,29 @@ fn pan_measure() {
     );
     let csv_path = dir.join("measure.csv");
     assert!(
-        csv_path.to_string_lossy().replace('\\', "/").to_lowercase().contains("/target/pan/"),
+        csv_path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_lowercase()
+            .contains("/target/pan/"),
         "refusing to write to {}",
         csv_path.display()
     );
     let all = items(&dir);
-    assert!(!all.is_empty(), "no labelled frames under {}", dir.display());
+    assert!(
+        !all.is_empty(),
+        "no labelled frames under {}",
+        dir.display()
+    );
 
     let settings = Settings::default();
     let preset = ShootPreset::parse(&settings.scan_profile);
-    let models: std::collections::HashMap<String, conrod_core::ridge::SharpModel> =
-        ["vehicle"]
-            .into_iter()
-            .filter_map(|region| load_region_model(region).map(|m| (region.to_string(), m)))
-            .collect();
-    let detector = Mutex::new(
-        Detector::load(&detector_model(), Device::Auto).expect("load the detector"),
-    );
+    let models: std::collections::HashMap<String, conrod_core::ridge::SharpModel> = ["vehicle"]
+        .into_iter()
+        .filter_map(|region| load_region_model(region).map(|m| (region.to_string(), m)))
+        .collect();
+    let detector =
+        Mutex::new(Detector::load(&detector_model(), Device::Auto).expect("load the detector"));
     println!(
         "device {}; detector {}; learned vehicle model {}",
         lock(&detector).device,
@@ -777,7 +803,11 @@ fn pan_measure() {
             });
         }
         if rows.len().is_multiple_of(20) {
-            println!("… {} rows, {:.0} s", rows.len(), started.elapsed().as_secs_f64());
+            println!(
+                "… {} rows, {:.0} s",
+                rows.len(),
+                started.elapsed().as_secs_f64()
+            );
         }
     }
 
@@ -796,7 +826,11 @@ fn pan_measure() {
     }
     std::fs::write(&csv_path, &csv).unwrap_or_else(|e| panic!("{}: {e}", csv_path.display()));
 
-    let mut ms: Vec<f64> = rows.iter().map(|r| r.ms).filter(|v| v.is_finite()).collect();
+    let mut ms: Vec<f64> = rows
+        .iter()
+        .map(|r| r.ms)
+        .filter(|v| v.is_finite())
+        .collect();
     ms.sort_by(f64::total_cmp);
     println!(
         "\nlabelled frames: {}, measured {}, skipped by label {}, no box {}, unreadable {}; {:.1} s",

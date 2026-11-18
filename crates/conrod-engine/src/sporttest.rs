@@ -148,7 +148,10 @@ fn rodeo_probe() {
     );
     // The guard: everything this test writes goes to a folder called rodeo.
     assert!(
-        out_dir.to_string_lossy().replace('\\', "/").contains("/rodeo"),
+        out_dir
+            .to_string_lossy()
+            .replace('\\', "/")
+            .contains("/rodeo"),
         "refusing to write to {}",
         out_dir.display()
     );
@@ -225,17 +228,16 @@ fn rodeo_probe() {
             .copied()
             .collect();
         let frame_area = (image.width.max(1) * image.height.max(1)) as f64;
-        let best_animal = animals
-            .iter()
-            .max_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(class, conf, b)| {
-                let (w, h) = (b[2] - b[0], b[3] - b[1]);
-                (*class, *conf, if w > 0.0 { h / w } else { f64::NAN })
-            });
+        let best_animal =
+            animals
+                .iter()
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(class, conf, b)| {
+                    let (w, h) = (b[2] - b[0], b[3] - b[1]);
+                    (*class, *conf, if w > 0.0 { h / w } else { f64::NAN })
+                });
         let rider = sport::rider_on_animal(&persons, &animals);
-        let buck = rider.map(|r| {
-            sport::buck_score(&r, animals[r.animal].2, persons[r.person].2)
-        });
+        let buck = rider.map(|r| sport::buck_score(&r, animals[r.animal].2, persons[r.person].2));
         recs.push(Rec {
             file: path.to_string_lossy().into_owned(),
             number: n,
@@ -396,14 +398,16 @@ fn rodeo_probe() {
             scores[0]
         );
         let weak = scores.iter().filter(|s| **s < 0.5).count();
-        println!("below 0.5: {weak} ({:.0}%)", 100.0 * weak as f64 / scores.len() as f64);
+        println!(
+            "below 0.5: {weak} ({:.0}%)",
+            100.0 * weak as f64 / scores.len() as f64
+        );
     }
-    let kinds: BTreeMap<&str, usize> = recs
-        .iter()
-        .fold(BTreeMap::new(), |mut acc, r| {
-            *acc.entry(r.subject.map_or("none", |s| s.kind())).or_default() += 1;
-            acc
-        });
+    let kinds: BTreeMap<&str, usize> = recs.iter().fold(BTreeMap::new(), |mut acc, r| {
+        *acc.entry(r.subject.map_or("none", |s| s.kind()))
+            .or_default() += 1;
+        acc
+    });
     println!("decisive subject: {kinds:?}");
     if !recs.is_empty() {
         println!(
@@ -416,7 +420,11 @@ fn rodeo_probe() {
     }
 
     // Nothing beside the photographer's originals changed.
-    assert_eq!(before, snapshot(Path::new(SHOOT)), "the shoot folder changed");
+    assert_eq!(
+        before,
+        snapshot(Path::new(SHOOT)),
+        "the shoot folder changed"
+    );
     println!(
         "\nsource untouched: {} files, same names and sizes as before",
         before.len()

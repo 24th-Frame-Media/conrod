@@ -178,7 +178,12 @@ impl Progress {
     }
 
     /// Fill in what a stage runs on, once its session is loaded.
-    pub fn describe(&self, stage: &'static str, model: impl Into<String>, device: impl Into<String>) {
+    pub fn describe(
+        &self,
+        stage: &'static str,
+        model: impl Into<String>,
+        device: impl Into<String>,
+    ) {
         let (model, device) = (model.into(), device.into());
         self.with_node(stage, |node| {
             node.model = model;
@@ -216,7 +221,15 @@ impl Progress {
         step: &'static str,
         file: &str,
     ) {
-        self.lane(pool, index, stage, WAITING, Some(reason), Some(step), Some(file));
+        self.lane(
+            pool,
+            index,
+            stage,
+            WAITING,
+            Some(reason),
+            Some(step),
+            Some(file),
+        );
     }
 
     /// `pool`'s worker `index` has nothing in hand.
@@ -342,10 +355,9 @@ impl Progress {
             });
         }
         let overall = self.overall(&nodes);
-        let (stage, done, total, rate, eta) = stages
-            .get(phase)
-            .or_else(|| stages.first())
-            .map_or(("read".to_string(), 0, 0, 0.0, None), |node| {
+        let (stage, done, total, rate, eta) = stages.get(phase).or_else(|| stages.first()).map_or(
+            ("read".to_string(), 0, 0, 0.0, None),
+            |node| {
                 (
                     node.id.to_string(),
                     node.done,
@@ -353,7 +365,8 @@ impl Progress {
                     round2(node.meter.rate().unwrap_or(0.0)),
                     node.meter.eta(node.done, node.total).map(round1),
                 )
-            });
+            },
+        );
         let lane_out: Vec<WorkerLane> = lanes
             .iter()
             .map(|lane| WorkerLane {
@@ -404,10 +417,8 @@ impl Progress {
         let frame_cost = nodes
             .iter()
             .find(|node| {
-                matches!(
-                    node.id.as_str(),
-                    "read" | "detect" | "sharpness" | "faces"
-                ) && node.rate_per_s > 0.0
+                matches!(node.id.as_str(), "read" | "detect" | "sharpness" | "faces")
+                    && node.rate_per_s > 0.0
             })
             .map_or(FALLBACK_FRAME_SECONDS, |node| 1.0 / node.rate_per_s);
         let cost = |id: &str| match id {
@@ -474,13 +485,16 @@ pub fn for_scan(
         StageSpec::new("group", 1),
         StageSpec::new("pick", 1),
     ];
-    let lanes: Vec<(&'static str, usize)> = vec![
-        ("read", cull as usize),
-        ("identify", identify as usize),
-    ];
+    let lanes: Vec<(&'static str, usize)> =
+        vec![("read", cull as usize), ("identify", identify as usize)];
     // One crop's VLM time spread over the identify workers: a crop waits
     // VLM_SECONDS_PER_CROP / workers before it comes back.
-    Progress::with_identify_cost(job, stages, &lanes, VLM_SECONDS_PER_CROP / identify.max(1) as f64)
+    Progress::with_identify_cost(
+        job,
+        stages,
+        &lanes,
+        VLM_SECONDS_PER_CROP / identify.max(1) as f64,
+    )
 }
 
 fn round1(value: f64) -> f64 {
@@ -531,7 +545,10 @@ mod tests {
         assert_eq!(detect.workers_busy, 0, "waiting is not inside the stage");
         assert_eq!(waiting_snap.pipeline.workers[0].state, "waiting");
         assert_eq!(waiting_snap.pipeline.workers[0].stage, "detect");
-        assert_eq!(waiting_snap.pipeline.workers[0].waiting_for.as_deref(), Some("lock"));
+        assert_eq!(
+            waiting_snap.pipeline.workers[0].waiting_for.as_deref(),
+            Some("lock")
+        );
         assert_eq!(waiting_snap.pipeline.workers[1].state, "idle");
         assert_eq!(
             waiting_snap.pipeline.workers[1].stage, "read",
@@ -544,7 +561,10 @@ mod tests {
         // Now inside the detector.
         progress.busy("read", 0, "detect", "detect", "1.CR3");
         let busy = progress.snapshot();
-        assert_eq!(busy.pipeline.stages[1].workers_busy, 1, "one worker is inside detect");
+        assert_eq!(
+            busy.pipeline.stages[1].workers_busy, 1,
+            "one worker is inside detect"
+        );
         assert_eq!(busy.pipeline.workers[0].state, "busy");
         assert_eq!(
             busy.pipeline.stages[1].queue_len, 0,
@@ -555,7 +575,8 @@ mod tests {
         progress.advance("read", 10);
         progress.advance("detect", 4);
         assert_eq!(
-            progress.snapshot().pipeline.stages[1].queue_len, 6,
+            progress.snapshot().pipeline.stages[1].queue_len,
+            6,
             "frames finished upstream that detect has not taken"
         );
         progress.advance("detect", 6);
@@ -576,7 +597,10 @@ mod tests {
         assert_eq!(snap.found.subjects, 12);
         assert_eq!(snap.recent[0].image_id, 4);
         assert_eq!(snap.recent[0].verdict, "sharp");
-        assert!(snap.recent[0].panning, "a pan is a flag beside the sharpness verdict");
+        assert!(
+            snap.recent[0].panning,
+            "a pan is a flag beside the sharpness verdict"
+        );
         assert_eq!(snap.pipeline.stages[1].model, "yolo11s-960.onnx");
         progress.idle("read", 0);
         assert_eq!(progress.snapshot().pipeline.stages[1].workers_busy, 0);
@@ -609,7 +633,10 @@ mod tests {
             first.overall.eta_s.is_some(),
             "an unstarted identify still contributes its configured estimate"
         );
-        assert!(!first.overall.eta_confident, "10 of 100 frames is not enough");
+        assert!(
+            !first.overall.eta_confident,
+            "10 of 100 frames is not enough"
+        );
         assert!(first.overall.fraction > 0.0 && first.overall.fraction < 1.0);
         // Identify weighs 4 s a crop against a cull frame's ~0.025 s, so 40
         // crops dominate the bar even though there are only 40 of them.
@@ -626,7 +653,10 @@ mod tests {
             "every stage is 20+ items in: {warm:?}"
         );
         assert!(warm.overall.eta_s.is_some());
-        assert_eq!(warm.pipeline.stages[4].queue_len, 10, "faces done 30, identify took 20");
+        assert_eq!(
+            warm.pipeline.stages[4].queue_len, 10,
+            "faces done 30, identify took 20"
+        );
         assert!(
             warm.overall.fraction > first.overall.fraction,
             "the bar follows the work"

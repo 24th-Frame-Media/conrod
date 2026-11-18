@@ -470,14 +470,16 @@ pub fn measure(image: &Gray, bbox: Option<[f64; 4]>, model: Option<&SharpModel>)
         let centre = [w * 0.25, h * 0.25, w * 0.75, h * 0.75];
         let pan = crate::streaks::background_streaks(&grey, centre)
             .is_some_and(|coherence| coherence >= PAN_COHERENCE);
-        let cap = pan.then(|| {
-            pan_consistency(&data.crop(
-                (centre[0] as usize).min(data.w - 1),
-                (centre[1] as usize).min(data.h - 1),
-                (centre[2] as usize).min(data.w),
-                (centre[3] as usize).min(data.h),
-            ))
-        }).flatten();
+        let cap = pan
+            .then(|| {
+                pan_consistency(&data.crop(
+                    (centre[0] as usize).min(data.w - 1),
+                    (centre[1] as usize).min(data.h - 1),
+                    (centre[2] as usize).min(data.w),
+                    (centre[3] as usize).min(data.h),
+                ))
+            })
+            .flatten();
         let panning = pan && cap.is_some();
         let share = pan.then(|| sharp_share(&data)).flatten();
         let share_cap = share.map(pan_share_cap);
@@ -974,8 +976,8 @@ mod tests {
             for y in 0..h {
                 for x in 0..w {
                     let (lo, hi) = (x.saturating_sub(radius), (x + radius).min(w - 1));
-                    rows[y * w + x] = cur[y * w + lo..=y * w + hi].iter().sum::<f64>()
-                        / (hi - lo + 1) as f64;
+                    rows[y * w + x] =
+                        cur[y * w + lo..=y * w + hi].iter().sum::<f64>() / (hi - lo + 1) as f64;
                 }
             }
             let mut out = vec![0.0; cur.len()];
@@ -1058,14 +1060,15 @@ mod tests {
         let half_line = (y1 + y2) / 2;
         for y in y1..y2 {
             for x in x1..x2 {
-                let source = if half && y >= half_line { &soft } else { &sharp };
+                let source = if half && y >= half_line {
+                    &soft
+                } else {
+                    &sharp
+                };
                 out.data[y * edge + x] = source.data[y * edge + x];
             }
         }
-        (
-            out,
-            [x1 as f64, y1 as f64, x2 as f64, y2 as f64],
-        )
+        (out, [x1 as f64, y1 as f64, x2 as f64, y2 as f64])
     }
 
     #[test]
@@ -1180,7 +1183,10 @@ mod tests {
             while x < last + 2.0 {
                 x += 0.01;
                 let v = score(x);
-                assert!(v <= prev + 1e-12, "score rose at {x:.2}: {prev:.3} -> {v:.3}");
+                assert!(
+                    v <= prev + 1e-12,
+                    "score rose at {x:.2}: {prev:.3} -> {v:.3}"
+                );
                 assert!((0.0..=1.0).contains(&v), "score {v} out of range at {x:.2}");
                 prev = v;
             }
@@ -1189,9 +1195,8 @@ mod tests {
 
     #[test]
     fn critical_gives_each_star_its_own_blur() {
-        let score = |sigma: f64| {
-            rating_from_blur(sigma, BlurStrictness::Critical).expect("finite sigma")
-        };
+        let score =
+            |sigma: f64| rating_from_blur(sigma, BlurStrictness::Critical).expect("finite sigma");
         let stars = |sigma: f64| stars_for(score(sigma));
         assert_eq!(stars(0.5), 5);
         assert_eq!(stars(0.69), 5);

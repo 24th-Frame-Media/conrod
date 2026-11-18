@@ -497,8 +497,7 @@ fn belongs(
     };
     // The box jumped between neighbours, or the car is clearly not the same one.
     continues(previous, next, leeway, rules)
-        && livery_distance(open.last_look, frame.look)
-            .is_none_or(|d| d <= rules.subject_distance)
+        && livery_distance(open.last_look, frame.look).is_none_or(|d| d <= rules.subject_distance)
 }
 
 /// A new group key per frame, splitting each time burst into moments only where
@@ -1138,7 +1137,11 @@ mod moment_tests {
     #[test]
     fn the_sensitivity_ladder_moves_every_threshold_the_right_way() {
         let normal = MomentRules::from_sensitivity("normal", MOMENT_PAUSE, true);
-        assert_eq!(normal, MomentRules::default(), "normal is today's behaviour");
+        assert_eq!(
+            normal,
+            MomentRules::default(),
+            "normal is today's behaviour"
+        );
         assert!(
             !MomentRules::from_sensitivity("off", MOMENT_PAUSE, true).split,
             "off never cuts a burst"
@@ -1146,7 +1149,11 @@ mod moment_tests {
         let gentle = MomentRules::from_sensitivity("gentle", MOMENT_PAUSE, true);
         let eager = MomentRules::from_sensitivity("eager", MOMENT_PAUSE, true);
         for (word, rules, factor) in [("gentle", gentle, 1.5), ("eager", eager, 0.7)] {
-            assert_eq!(rules.scale_ratio, normal.scale_ratio * factor, "{word} scale");
+            assert_eq!(
+                rules.scale_ratio,
+                normal.scale_ratio * factor,
+                "{word} scale"
+            );
             assert_eq!(rules.shift, normal.shift * factor, "{word} shift");
             assert_eq!(
                 rules.scene_distance,
@@ -1180,7 +1187,11 @@ mod moment_tests {
             normal,
             "an unknown word is normal"
         );
-        assert_eq!(sensitivity_word("  EAGER "), "eager", "trimmed and lower-cased");
+        assert_eq!(
+            sensitivity_word("  EAGER "),
+            "eager",
+            "trimmed and lower-cased"
+        );
         assert_eq!(sensitivity_word("gentle"), "gentle");
         assert_eq!(clamped_pause(-2.0), 0.0);
         assert_eq!(clamped_pause(0.0), 0.0, "zero disables, not the default");
@@ -1225,7 +1236,11 @@ mod moment_tests {
         let frames = [mf(1, boxed(0.25, 0.5, 0.1)), mf(1, boxed(0.8, 0.5, 0.1))];
         assert_eq!(split_moments(&frames), vec![1, 2], "normal cuts");
         let gentle = MomentRules::from_sensitivity("gentle", MOMENT_PAUSE, true);
-        assert_eq!(split_moments_with(&frames, &gentle), vec![1, 1], "gentle keeps it");
+        assert_eq!(
+            split_moments_with(&frames, &gentle),
+            vec![1, 1],
+            "gentle keeps it"
+        );
     }
 
     #[test]
@@ -1234,7 +1249,11 @@ mod moment_tests {
         let frames = [mf(1, boxed(0.3, 0.5, 0.1)), mf(1, boxed(0.65, 0.5, 0.1))];
         assert_eq!(split_moments(&frames), vec![1, 1], "normal keeps it");
         let eager = MomentRules::from_sensitivity("eager", MOMENT_PAUSE, true);
-        assert_eq!(split_moments_with(&frames, &eager), vec![1, 2], "eager cuts");
+        assert_eq!(
+            split_moments_with(&frames, &eager),
+            vec![1, 2],
+            "eager cuts"
+        );
     }
 
     #[test]
@@ -1244,7 +1263,11 @@ mod moment_tests {
             shot(0.0, boxed(0.5, 0.5, 0.1), 3, colour(0)),
             shot(5.0, boxed(0.5, 0.5, 0.1), 20, colour(0)),
         ];
-        assert_eq!(split_moments(&frames), vec![1, 2], "a pause with a new scene cuts");
+        assert_eq!(
+            split_moments(&frames),
+            vec![1, 2],
+            "a pause with a new scene cuts"
+        );
         let no_pause = MomentRules::from_sensitivity("normal", 0.0, true);
         assert_eq!(no_pause.pause, 0.0);
         assert_eq!(
