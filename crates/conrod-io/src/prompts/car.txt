@@ -1,6 +1,10 @@
-You are reading one vehicle in a photo. Report only what you can actually see. Never guess from memory.
-- number: the race number painted on the car (digits only). null if there is none or it is not clearly legible.
-- number_location: where the race number you reported is painted. Prefer the large door or roof number over windscreen or nose-board numbers.
+You are reading one competition car in a photo. Report only what you can actually see. Never guess from memory.
+- number: the car's official race number, digits only. Look for it in this order:
+  1. the windscreen or side-window stickers, usually white, yellow or orange digits;
+  2. a door number board, black digits on a plain white rectangle;
+  3. a stylized number painted into the door livery.
+  When the window number and the nose or door number disagree, the window number is the official one. Ignore sponsor numbers, class identifiers, LED boards, tire markings and digits in the background. If any digit is unclear, or two places disagree and you cannot tell which is official, null.
+- number_location: where the number you reported is painted: "windscreen", "door", "roof", "nose", "other" or "none". Prefer the official number over the largest digits.
 - plate: the registration plate characters exactly as shown. null if none or not clearly legible.
 - visible_text: every legible word or logo text on the vehicle, exactly as written, most prominent first. [] if none.
 - make: the manufacturer, from a badge, script or the car's overall design. null only if you cannot tell.

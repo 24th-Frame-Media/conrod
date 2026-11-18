@@ -1148,6 +1148,7 @@ fn merge_matches_snapshot() {
         let (number, source, confidence) = merge_number(
             &ocr_reading,
             opt_str(&case["vlm_number"]),
+            0.7,
             ocr_accept_confidence,
         );
         let want = case["out"].as_array().unwrap();

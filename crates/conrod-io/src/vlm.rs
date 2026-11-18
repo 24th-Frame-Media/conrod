@@ -1281,7 +1281,8 @@ pub struct VehicleDescription {
     pub body_type: Option<String>,
     pub race_number: Option<String>,
     /// How sure the model is of the race number, lowered when it was read
-    /// off the windscreen or nose, where numbers are often incidental.
+    /// off the nose board, where numbers are often incidental and can
+    /// conflict with the official window number.
     pub number_confidence: f64,
     pub plate: Option<String>,
     pub team: Option<String>,
@@ -1452,10 +1453,9 @@ fn map_vehicle(
     let make = text(parsed.get("make"));
     let make = conrod_core::marques::correct_make(make.as_deref(), model.as_deref());
     let confidence = number(parsed.get("confidence"));
-    let weak_spot = matches!(
-        text(parsed.get("number_location")).as_deref(),
-        Some("windscreen" | "nose")
-    );
+    // A nose board can carry a different number from the official window one
+    // (the benchmark's car 2: window 2, nose 1), so it is the weak spot.
+    let weak_spot = matches!(text(parsed.get("number_location")).as_deref(), Some("nose"));
     let model_evidence = match evidence.as_str() {
         "badge" | "script" | "design" => Some(evidence.clone()),
         _ => None,
@@ -1800,13 +1800,19 @@ mod tests {
     }
 
     #[test]
-    fn weak_number_locations_lower_the_number_confidence() {
+    fn only_the_nose_number_lowers_the_number_confidence() {
         let settings = Settings::default();
         let door = json!({"number": "42", "number_location": "door", "confidence": 0.9});
+        let window = json!({"number": "42", "number_location": "windscreen", "confidence": 0.9});
         let nose = json!({"number": "42", "number_location": "nose", "confidence": 0.9});
         assert_eq!(
             map_vehicle(&door, &settings, true, false).number_confidence,
             0.9
+        );
+        assert_eq!(
+            map_vehicle(&window, &settings, true, false).number_confidence,
+            0.9,
+            "the window number is the official one, not a weak spot"
         );
         let d = map_vehicle(&nose, &settings, true, false);
         assert!((d.number_confidence - 0.63).abs() < 1e-9);
