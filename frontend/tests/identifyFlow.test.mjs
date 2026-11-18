@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FLOW_NODES, IDENTIFY_STAGES, activeStage, confidencePercent, confidenceTone, displayItem,
-  displayPath, elapsed, flowNodes, justFinished, prettyReply, progressPercent, rateLabel, sourceLabel,
+  FLOW_NODES, IDENTIFY_STAGES, actionLabel, activeStage, confidencePercent, confidenceTone, displayItem,
+  displayPath, elapsed, flowNodes, prettyReply, progressPercent, rateLabel, sourceLabel, workerLanes,
 } from '../src/lib/identifyFlow.mjs';
 
 test('the stages are the engine contract, in flow order', () => {
@@ -47,15 +47,27 @@ test('the flow follows the car on screen, and a held result completes it', () =>
   assert.ok(flowNodes({ ...live, current: { detection_id: 2, stage: 'vision' } }, null, 'done').every((node) => node.state === 'done'));
 });
 
-test('a fresh result is held for a moment, an old one is not', () => {
-  const now = 1_800_000_000_000;
-  const live = { recent: [{ detection_id: 9, at: now / 1000 - 0.4 }], current: { detection_id: 10 } };
-  assert.equal(justFinished(live, now)?.detection_id, 9, 'a result that just landed stays on screen');
-  assert.equal(justFinished({ recent: [{ detection_id: 9, at: now / 1000 - 30 }] }, now), null, 'an old result yields to the live car');
-  assert.equal(justFinished({ recent: [] }, now), null);
-  assert.equal(justFinished({ recent: [{ detection_id: 9, at: null }] }, now), null);
-  assert.equal(justFinished(null, now), null);
-  assert.equal(justFinished(live, now - 60_000), null, 'the same snapshot ages out on the next render');
+test('one lane per worker: the live car, else its last finished car', () => {
+  const live = {
+    workers: 3,
+    active: [
+      { detection_id: 10, worker: 0, stage: 'vision' },
+      { detection_id: 11, worker: 2, stage: 'crop' },
+    ],
+    recent: [
+      { detection_id: 9, worker: 0, stage: 'done' },
+      { detection_id: 8, worker: 1, stage: 'done' },
+      { detection_id: 7, worker: 1, stage: 'done' },
+    ],
+  };
+  const lanes = workerLanes(live);
+  assert.deepEqual(lanes.map((lane) => lane.worker), [0, 1, 2]);
+  assert.deepEqual(lanes.map((lane) => lane.item?.detection_id), [10, 8, 11], 'a live car beats the last finished one, and the newest finished car represents its worker');
+  assert.deepEqual(lanes.map((lane) => lane.live), [true, false, true]);
+  assert.equal(workerLanes(null).length, 0);
+  assert.equal(workerLanes({ active: [], recent: [] }).length, 0);
+  // Snapshots without a worker count still lay out one lane per worker seen.
+  assert.equal(workerLanes({ active: [{ detection_id: 5, worker: 1 }], recent: [] }).length, 2);
 });
 
 test('an in-flight car can be pinned before it finishes', () => {
@@ -131,6 +143,14 @@ test('the source chip says where the number came from', () => {
   assert.equal(sourceLabel(''), '');
   assert.equal(sourceLabel(null), '');
   assert.equal(sourceLabel(undefined), '');
+});
+
+test('action tags read as words, and an unknown tag passes through', () => {
+  assert.equal(actionLabel('airborne'), 'Airborne');
+  assert.equal(actionLabel('tyre_smoke'), 'Tyre smoke');
+  assert.equal(actionLabel('wheel_lift'), 'Wheel lift');
+  assert.equal(actionLabel('mystery'), 'mystery');
+  assert.equal(actionLabel(null), '');
 });
 
 const live = {

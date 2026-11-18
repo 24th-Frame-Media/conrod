@@ -35,6 +35,9 @@ pub struct VehicleAnalysis {
     pub team_corroborated: bool,
     pub sponsors: Vec<String>,
     pub text: Vec<String>,
+    /// Visible action effects: `airborne`, `dust`, `tyre_smoke`, `spray`,
+    /// `flames`, `sparks`, `contact`, `wheel_lift`.
+    pub action: Vec<String>,
     pub is_competition: bool,
     pub vlm_conf: f64,
     /// What the model based make/model on: "badge", "script" or "design".
@@ -65,6 +68,7 @@ impl Default for VehicleAnalysis {
             team_corroborated: false,
             sponsors: Vec::new(),
             text: Vec::new(),
+            action: Vec::new(),
             is_competition: false,
             vlm_conf: 0.0,
             model_evidence: None,

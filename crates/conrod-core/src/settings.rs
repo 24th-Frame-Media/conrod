@@ -190,6 +190,9 @@ pub struct Settings {
     pub number_min_len: i64,
     pub number_max_len: i64,
     pub read_text: bool,
+    /// Ask the vision model for visible action effects (dust, smoke, airborne,
+    /// flames) as well as identity. Identity-only shoots can turn it off.
+    pub read_action: bool,
     pub text_min_confidence: f64,
     pub text_min_length: i64,
     pub max_text_items: i64,
@@ -333,6 +336,7 @@ impl Default for Settings {
             number_min_len: 1,
             number_max_len: 3,
             read_text: true,
+            read_action: true,
             text_min_confidence: 0.55,
             text_min_length: 2,
             max_text_items: 12,

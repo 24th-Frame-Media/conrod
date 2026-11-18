@@ -133,7 +133,7 @@ export type Bootstrap = { jobs: Job[]; settings: Settings; models: ModelInfo[]; 
 
 export const ATTRIBUTE_KEYS = ['plate', 'race_number', 'make', 'model', 'colour', 'team', 'driver', 'country', 'plate_state', 'body_type'] as const;
 export type AttributeKey = (typeof ATTRIBUTE_KEYS)[number];
-export type Attributes = Partial<Record<AttributeKey, string>> & { colour_hex?: string; sponsors?: string[]; person_name?: string; plate_bbox?: [number, number, number, number]; model_suggested?: boolean; model_evidence?: string };
+export type Attributes = Partial<Record<AttributeKey, string>> & { colour_hex?: string; sponsors?: string[]; person_name?: string; plate_bbox?: [number, number, number, number]; model_suggested?: boolean; model_evidence?: string; number_source?: string; number_conf?: number; vlm_conf?: number; action?: string[] };
 export type KnownVehicle = { plate: string; old_plate?: string; make?: string; model?: string; colour?: string; team?: string; race_number?: string; driver?: string; country?: string };
 export type Training = { labels: number; active?: boolean; validation?: unknown };
 
@@ -329,6 +329,10 @@ export type IdentifyItem = {
   model?: string | null;
   team?: string | null;
   colour?: string | null;
+  /** The identify worker reading this car, 0-based. */
+  worker?: number;
+  /** Visible action effects: airborne, dust, tyre_smoke, spray, flames, sparks, contact, wheel_lift. */
+  action?: string[];
   failures?: string[];
   /** How long this car took, in milliseconds. */
   ms?: number | null;
@@ -348,6 +352,8 @@ export type IdentifyLive = {
   stage: IdentifyStage;
   /** The vision model this run calls, for the VISION node; empty when off. */
   model?: string;
+  /** How many identify workers run at once: one panel per worker. */
+  workers?: number;
   /** Null before the first car is read. */
   current: IdentifyItem | null;
   /** Every car a worker is inside right now, one per identify worker, newest first. */

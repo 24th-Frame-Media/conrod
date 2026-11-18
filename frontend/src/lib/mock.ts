@@ -243,7 +243,9 @@ function identifyItem(k: number, stage: IdentifyStage, startedAt: number): Ident
       `entry list: 26 candidates · best match #${no}`,
     ],
     number: no, number_source: k % 5 === 0 ? 'ocr+entry' : 'vlm', number_conf: 0.62 + ((k * 7) % 36) / 100,
-    plate, make, model, team, colour, failures: [], ms: 1200 + ((k * 37) % 900), at: startedAt + (k + 1) * 2,
+    plate, make, model, team, colour,
+    action: k % 4 === 0 ? ['dust'] : k % 7 === 0 ? ['airborne', 'tyre_smoke'] : [],
+    failures: [], ms: 1200 + ((k * 37) % 900), at: startedAt + (k + 1) * 2,
   };
 }
 
@@ -266,15 +268,19 @@ function tickIdentify(): void {
   const idx = Math.floor(s.tick / 4), step = s.tick % 4;
   const stage = IDENTIFY_STEPS[step];
   const finished = idx >= s.total;
-  if (step === 0 && idx > 0 && idx <= s.total) s.recent = [identifyItem(idx - 1, 'done', s.startedAt), ...s.recent].slice(0, 16);
+  if (step === 0 && idx > 0 && idx <= s.total) s.recent = [{ ...identifyItem(idx - 1, 'done', s.startedAt), worker: 0 }, ...s.recent].slice(0, 16);
   const current = finished ? null : identifyItem(idx, stage, s.startedAt);
   emitIdentify({
     job_id: s.jobId, state: finished ? 'done' : 'running', done: finished ? s.total : idx, total: s.total,
     started_at: s.startedAt / 1000, elapsed_ms: Date.now() - s.startedAt,
-    stage: finished ? 'done' : stage,
-    current,
+    stage: finished ? 'done' : stage, workers: 3,
+    current: current ? { ...current, worker: 0 } : null,
     // The real run has one car per worker; the mock shows the same three lanes.
-    active: current ? [current, identifyItem(idx + 1, 'crop', s.startedAt), identifyItem(idx + 2, 'read', s.startedAt)] : [],
+    active: current ? [
+      { ...current, worker: 0 },
+      { ...identifyItem(idx + 1, 'crop', s.startedAt), worker: 1 },
+      { ...identifyItem(idx + 2, 'read', s.startedAt), worker: 2 },
+    ] : [],
     recent: s.recent, errors: [],
   });
   if (finished) { s.finished = true; clearInterval(s.timer); return; }
@@ -289,7 +295,7 @@ function stopIdentifySim(): void {
   const idx = Math.min(Math.floor(s.tick / 4), s.total);
   emitIdentify({
     job_id: s.jobId, state: 'stopped', done: idx, total: s.total,
-    started_at: s.startedAt / 1000, elapsed_ms: Date.now() - s.startedAt, stage: 'done',
+    started_at: s.startedAt / 1000, elapsed_ms: Date.now() - s.startedAt, stage: 'done', workers: 3,
     current: lastIdentify?.current ?? null, active: [], recent: s.recent, errors: [],
   });
 }

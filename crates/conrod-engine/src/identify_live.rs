@@ -64,9 +64,14 @@ struct Item {
     model: Option<String>,
     team: Option<String>,
     colour: Option<String>,
+    /// Visible action effects, as the model reported them.
+    action: Vec<String>,
     failures: Vec<String>,
     ms: f64,
     at: f64,
+    /// The identify worker reading this car, 0-based: the screen draws one
+    /// panel per worker and needs to know which lane a car belongs to.
+    worker: usize,
     /// When the worker started this car, for the failure path's `ms`.
     since: Instant,
 }
@@ -98,9 +103,11 @@ impl Item {
             model: None,
             team: None,
             colour: None,
+            action: Vec::new(),
             failures: Vec::new(),
             ms: 0.0,
             at: epoch(),
+            worker: 0,
             since: Instant::now(),
         }
     }
@@ -139,9 +146,11 @@ impl Item {
         map.insert("model".into(), json!(self.model));
         map.insert("team".into(), json!(self.team));
         map.insert("colour".into(), json!(self.colour));
+        map.insert("action".into(), json!(self.action));
         map.insert("failures".into(), json!(self.failures));
         map.insert("ms".into(), json!(self.ms));
         map.insert("at".into(), json!(self.at));
+        map.insert("worker".into(), json!(self.worker));
         Value::Object(map)
     }
 }
@@ -165,6 +174,8 @@ struct State {
     /// The vision model this run will actually call, for the flow's VISION
     /// node. Empty when the shoot has no vision model.
     model: String,
+    /// How many identify workers this run uses: the screen draws one panel each.
+    workers: usize,
 }
 
 /// One identify run's live feed. `Desktop` keeps it in an `Arc` so the status
@@ -195,6 +206,7 @@ impl IdentifyLive {
                 errors: Vec::new(),
                 state: "running",
                 model: String::new(),
+                workers: 0,
             }),
             finished: AtomicBool::new(false),
             final_sent: AtomicBool::new(false),
@@ -203,15 +215,19 @@ impl IdentifyLive {
 
     /// A worker has picked up one car. The screen shows it before the RAW is
     /// even open, so its image and path come from the pending query's join.
+    /// `worker` is the 0-based lane: one panel per worker on the screen.
+    #[allow(clippy::too_many_arguments)]
     pub fn start_item(
         &self,
+        worker: usize,
         detection_id: i64,
         image_id: i64,
         path: &str,
         thumb_path: Option<&str>,
         preview_path: Option<&str>,
     ) {
-        let item = Item::new(detection_id, image_id, path, thumb_path, preview_path);
+        let mut item = Item::new(detection_id, image_id, path, thumb_path, preview_path);
+        item.worker = worker;
         let mut state = lock(&self.inner);
         state.live.retain(|live| live.detection_id != detection_id);
         state.live.push(item);
@@ -276,6 +292,7 @@ impl IdentifyLive {
         item.model = analysis.model.clone();
         item.team = analysis.team.clone();
         item.colour = analysis.colour.clone();
+        item.action = analysis.action.clone();
         item.reply = reply;
         item.trace = trace;
         item.failures = failures;
@@ -327,6 +344,11 @@ impl IdentifyLive {
         lock(&self.inner).model = model.to_string();
     }
 
+    /// How many workers run at once, for the one-panel-per-worker view.
+    pub fn set_workers(&self, workers: usize) {
+        lock(&self.inner).workers = workers;
+    }
+
     /// The run ended: `done`, `stopped` or `error`. The car in flight (if any)
     /// is dropped; the run has no more snapshots to follow.
     pub fn finish(&self, state: &'static str) {
@@ -367,15 +389,17 @@ impl IdentifyLive {
             "elapsed_ms": round1(self.started.elapsed().as_secs_f64() * 1000.0),
             "stage": state.stage,
             "model": state.model,
+            "workers": state.workers,
             "current": current,
             // Every car a worker is inside right now, including `current`:
             // identify runs several workers, and the screen shows them all.
+            // The prompt rides along so each worker's panel can show its own.
             "active": state
                 .live
                 .iter()
                 .rev()
                 .take(ACTIVE_LIMIT)
-                .map(|item| item.value(false))
+                .map(|item| item.value(true))
                 .collect::<Vec<_>>(),
             "recent": state.recent.iter().map(|item| item.value(false)).collect::<Vec<_>>(),
             "errors": state.errors,
@@ -448,7 +472,7 @@ mod tests {
         assert!(empty["current"].is_null());
         assert!(empty["recent"].as_array().unwrap().is_empty());
 
-        live.start_item(55, 42, "D:/shoot/A.CR3", Some("thumb.jpg"), Some("preview.jpg"));
+        live.start_item(0, 55, 42, "D:/shoot/A.CR3", Some("thumb.jpg"), Some("preview.jpg"));
         live.phase(55, VISION);
         live.set_prompt(55, "You are reading one competition car ...");
         let reading = live.snapshot();
@@ -501,9 +525,9 @@ mod tests {
     #[test]
     fn with_parallel_workers_each_finish_lands_on_its_own_car() {
         let live = IdentifyLive::new(108, 2);
-        live.start_item(1, 10, "a.CR3", None, None);
+        live.start_item(0, 1, 10, "a.CR3", None, None);
         live.phase(1, CROP);
-        live.start_item(2, 11, "b.CR3", None, None);
+        live.start_item(1, 2, 11, "b.CR3", None, None);
         live.phase(2, VISION);
         assert_eq!(
             live.snapshot()["current"]["detection_id"],
@@ -533,7 +557,7 @@ mod tests {
     #[test]
     fn a_car_still_being_read_reports_no_confidence() {
         let live = IdentifyLive::new(1, 1);
-        live.start_item(5, 9, "a.CR3", None, None);
+        live.start_item(0, 5, 9, "a.CR3", None, None);
         live.phase(5, VISION);
         assert!(
             live.snapshot()["current"]["number_conf"].is_null(),
@@ -547,14 +571,16 @@ mod tests {
     #[test]
     fn every_worker_car_is_in_the_active_list() {
         let live = IdentifyLive::new(1, 3);
-        live.start_item(1, 10, "a.CR3", None, None);
-        live.start_item(2, 11, "b.CR3", None, None);
+        live.start_item(0, 1, 10, "a.CR3", None, None);
+        live.start_item(1, 2, 11, "b.CR3", None, None);
         live.phase(2, VISION);
         let snapshot = live.snapshot();
         let active = snapshot["active"].as_array().unwrap();
         assert_eq!(active.len(), 2, "one entry per car a worker is inside");
         assert_eq!(active[0]["detection_id"], 2, "newest first");
         assert_eq!(active[0]["stage"], VISION);
+        assert_eq!(active[0]["worker"], 1, "the second car belongs to lane 1");
+        assert_eq!(active[1]["worker"], 0);
         assert!(
             active.iter().any(|item| item["detection_id"] == snapshot["current"]["detection_id"]),
             "the narrated car is one of the active ones"
@@ -570,7 +596,7 @@ mod tests {
     fn recent_is_newest_first_and_capped_at_sixteen() {
         let live = IdentifyLive::new(7, 40);
         for id in 0..20 {
-            live.start_item(id, id + 100, "frame.CR3", None, None);
+            live.start_item(0, id, id + 100, "frame.CR3", None, None);
             finish(&live, id, &id.to_string());
         }
         let snapshot = live.snapshot();
@@ -591,7 +617,7 @@ mod tests {
         live.error("vehicle description: model is down");
         live.error("vehicle description: model is down");
         live.error("text read: timed out");
-        live.start_item(3, 4, "x.CR3", None, None);
+        live.start_item(0, 3, 4, "x.CR3", None, None);
         live.finish_error(3, "detection 3 has an empty box and was skipped");
         live.advance_by(2);
         live.advance();
@@ -647,6 +673,7 @@ mod tests {
                 "stage",
                 "state",
                 "total",
+                "workers",
             ]
             .map(String::from)
             .into_iter()
@@ -654,7 +681,7 @@ mod tests {
             "top-level payload"
         );
         // One car finished, one still being read.
-        live.start_item(1, 10, "D:/a.CR3", Some("thumb-a.jpg"), Some("preview-a.jpg"));
+        live.start_item(0, 1, 10, "D:/a.CR3", Some("thumb-a.jpg"), Some("preview-a.jpg"));
         live.phase(1, MERGE);
         live.finish_item(
             1,
@@ -666,10 +693,17 @@ mod tests {
             Some(Path::new("cache/native/crop-1.jpg")),
         );
         live.advance();
-        live.start_item(2, 11, "D:/b.CR3", Some("thumb-b.jpg"), Some("preview-b.jpg"));
+        live.start_item(1, 2, 11, "D:/b.CR3", Some("thumb-b.jpg"), Some("preview-b.jpg"));
         live.phase(2, READ);
         live.set_prompt(2, "You are reading one competition car ...");
+        live.set_workers(3);
         let snapshot = live.snapshot();
+        assert_eq!(snapshot["workers"], 3);
+        assert_eq!(
+            snapshot["active"][0]["prompt"],
+            "You are reading one competition car ...",
+            "each worker's panel gets its own prompt"
+        );
         let current = snapshot["current"].as_object().unwrap();
         assert_eq!(
             current
@@ -677,9 +711,9 @@ mod tests {
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>(),
             [
-                "at", "colour", "crop_path", "detection_id", "failures", "image_id", "make", "model",
+                "at", "action", "colour", "crop_path", "detection_id", "failures", "image_id", "make", "model",
                 "ms", "number", "number_conf", "number_source", "path", "plate", "preview_path",
-                "prompt", "reply", "stage", "team", "thumb_path", "trace",
+                "prompt", "reply", "stage", "team", "thumb_path", "trace", "worker",
             ]
             .map(String::from)
             .into_iter()
@@ -693,9 +727,9 @@ mod tests {
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>(),
             [
-                "at", "colour", "crop_path", "detection_id", "failures", "image_id", "make", "model",
+                "at", "action", "colour", "crop_path", "detection_id", "failures", "image_id", "make", "model",
                 "ms", "number", "number_conf", "number_source", "path", "plate", "preview_path",
-                "reply", "stage", "team", "thumb_path", "trace",
+                "reply", "stage", "team", "thumb_path", "trace", "worker",
             ]
             .map(String::from)
             .into_iter()

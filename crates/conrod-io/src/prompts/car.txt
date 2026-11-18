@@ -7,6 +7,7 @@ You are reading one competition car in a photo. Report only what you can actuall
 - number_location: where the number you reported is painted: "windscreen", "door", "roof", "nose", "other" or "none". Prefer the official number over the largest digits.
 - plate: the registration plate characters exactly as shown. null if none or not clearly legible.
 - visible_text: every legible word or logo text on the vehicle, exactly as written, most prominent first. [] if none.
+- action: every effect clearly visible around the vehicle, from: "airborne" (wheels off the ground), "dust", "tyre_smoke", "spray", "flames", "sparks", "contact" (touching another car or the barrier), "wheel_lift" (one wheel off the ground). Only list what is visible in this crop; [] if none. Never infer speed or motion from the pose.
 - make: the manufacturer, from a badge, script or the car's overall design. null only if you cannot tell.
 - model: the model and generation (e.g. 'Skyline GT-R R34', 'Falcon XR6 BA', 'Commodore VL'), only if a badge, model script or unmistakable design identifies it; otherwise null.
 - evidence: the clue for the model: "badge", "script", "design" or "none".

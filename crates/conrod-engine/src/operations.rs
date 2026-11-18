@@ -280,6 +280,7 @@ impl Run<'_> {
             if let Some(row) = wanted.first() {
                 let id = row["id"].as_i64().ok_or("Invalid detection")?;
                 live.start_item(
+                    lane,
                     id,
                     row["image_id"].as_i64().unwrap_or_default(),
                     path,
@@ -311,6 +312,7 @@ impl Run<'_> {
             if let Some(live) = self.live {
                 if started != Some(id) {
                     live.start_item(
+                        lane,
                         id,
                         image_id,
                         path,
@@ -570,6 +572,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             p.phase("identify");
         }
         let workers = identify_workers(&settings).min(frames.len().max(1));
+        live.set_workers(workers);
         let run = Run {
             d,
             settings: &settings,

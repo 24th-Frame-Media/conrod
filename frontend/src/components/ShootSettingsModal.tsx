@@ -15,6 +15,7 @@ type Props = {
     scan_profile: string;
     read_numbers: boolean;
     read_plates: boolean;
+    read_action: boolean;
     group_vehicles: boolean;
     /** Which subjects identification reads; does not need a regroup. */
     identify_scope: Scope;
@@ -32,6 +33,7 @@ export function ShootSettingsModal({
   const [profile, setProfile] = useState(initialProfile || 'motorsport');
   const [readNumbers, setReadNumbers] = useState(initialSettings.read_numbers !== false);
   const [readPlates, setReadPlates] = useState(initialSettings.read_plates !== false);
+  const [readAction, setReadAction] = useState(initialSettings.read_action !== false);
   const [groupVehicles, setGroupVehicles] = useState(initialSettings.group_vehicles !== false);
   const [identifyScope, setIdentifyScope] = useState<Scope>(() => identifyScopeOf(initialSettings.identify_scope));
   const [grouping, setGrouping] = useState<GroupingValues>(() => groupingOf(initialSettings));
@@ -43,6 +45,7 @@ export function ShootSettingsModal({
       setProfile(initialProfile || 'motorsport');
       setReadNumbers(initialSettings.read_numbers !== false);
       setReadPlates(initialSettings.read_plates !== false);
+      setReadAction(initialSettings.read_action !== false);
       setGroupVehicles(initialSettings.group_vehicles !== false);
       setIdentifyScope(identifyScopeOf(initialSettings.identify_scope));
       setGrouping(groupingOf(initialSettings));
@@ -59,6 +62,7 @@ export function ShootSettingsModal({
         scan_profile: profile,
         read_numbers: readNumbers,
         read_plates: readPlates,
+        read_action: readAction,
         group_vehicles: groupVehicles,
         identify_scope: identifyScope,
         ...grouping,
@@ -125,6 +129,18 @@ export function ShootSettingsModal({
               <div className="toggle-text">
                 <b>Read licence plates</b>
                 <span>OCR vehicle registration and licence plates.</span>
+              </div>
+            </label>
+
+            <label className="shoot-toggle-row">
+              <input
+                type="checkbox"
+                checked={readAction}
+                onChange={(e) => setReadAction(e.target.checked)}
+              />
+              <div className="toggle-text">
+                <b>Read action and atmosphere</b>
+                <span>Dust, tyre smoke, spray, airborne, flames, sparks, contact and wheel lift, only when clearly visible.</span>
               </div>
             </label>
 
