@@ -714,6 +714,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         initialSettings={albumSettings}
         visible={shootSettingsOpen}
         onClose={() => setShootSettingsOpen(false)}
+        onStatsLoaded={() => void rv.refresh()}
         onSave={async (patch) => {
           await engine.updateJobSettings(jobId, patch);
           // A grouping choice only shows once the album is regrouped; a preset or detection change is safe to regroup too.

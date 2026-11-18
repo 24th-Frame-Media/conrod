@@ -40,6 +40,23 @@ export type Frame = {
   /** How many leading lines the frame reads as, 0..7. */
   comp_lines?: number | null;
   comp_subject_share?: number | null;
+  /** EXIF shot data, read with the file (or backfilled on the first `shoot_stats`); null when absent. */
+  camera?: string | null;
+  lens?: string | null;
+  iso?: number | null;
+  /** Bytes on disk. */
+  file_size?: number | null;
+  /** Seconds: 0.001 is 1/1000. */
+  exposure_time?: number | null;
+  /** EV, signed. */
+  exposure_bias?: number | null;
+  f_number?: number | null;
+  /** Millimetres. */
+  focal_length?: number | null;
+  /** Metres. */
+  focus_distance?: number | null;
+  /** Epoch seconds, in local time when displayed. */
+  taken_at?: number | null;
 };
 export type Detection = {
   rejected?: number; bystander?: number; stars?: number | null;

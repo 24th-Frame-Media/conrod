@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
 import { Modal } from '../components/basics';
 import { StarControl } from '../components/Stars';
 import { asset } from '../lib/api';
 import { filename, frameStars, frameExcluded } from '../lib/review';
+import { shotRows } from '../lib/shot.mjs';
 import type { Stack } from '../lib/stacks.mjs';
 import type { Frame } from '../lib/types';
 import type { ReviewModel } from '../state/useReview';
@@ -62,6 +63,7 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keep
   if (!frame) return null;
   const dets = facts.get(frame.id)?.dets ?? [];
   const stars = frameStars(frame);
+  const shot = shotRows(frame);
 
   return (
     <Modal label="Photo viewer" className="viewer" onClose={onClose}>
@@ -144,6 +146,17 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keep
               Close
             </button>
           </div>
+
+          {shot.length > 0 && (
+            <dl className="meta side-shot" aria-label="Shot details">
+              {shot.map((row) => (
+                <Fragment key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd title={row.value}>{row.value}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          )}
 
           {stack && stack.frames.length > 1 && (
             <BurstFilmstrip

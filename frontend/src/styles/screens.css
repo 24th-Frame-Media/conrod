@@ -168,6 +168,23 @@
 .shoot-toggle-row .toggle-text b { font-size: 13.5px; color: var(--text); }
 .shoot-toggle-row .toggle-text span { font-size: 12px; color: var(--text-dim); line-height: 1.35; }
 
+/* shoot statistics card: Gear, Exposure (pairs plus distribution lines) and Shoot, stacked */
+.shot-stats { padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--surface-2); gap: 8px; }
+.shot-stats-grid { display: grid; gap: 10px; }
+.shot-stats-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.shot-stats-group + .shot-stats-group { padding-top: 9px; border-top: 1px solid var(--line-soft); }
+.shot-stats-group h4 { margin: 0; font-size: 11px; font-weight: 500; letter-spacing: .01em; color: var(--text-mute); }
+.shot-stats .meta { font-size: 11.5px; gap: 2px 12px; }
+.shot-stats .meta dt { color: var(--text-mute); white-space: nowrap; }
+.shot-stats .meta dd { min-width: 0; font-size: 11.5px; overflow-wrap: anywhere; }
+/* one field per row: the 540 px dialog cannot fit two label/value pairs, and
+   the second value used to clip at the card's right edge */
+.shot-stats-group.exposure .meta { grid-template-columns: auto minmax(0, 1fr); }
+.shot-stats-line { margin: 0; font-size: 11px; line-height: 1.4; color: var(--text-mute); font-family: var(--mono); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shot-stats-line span { color: var(--text-dim); }
+.shot-stats-note { margin: 0; font-size: 11.5px; }
+.shot-stats-error { margin: 0; }
+
 .review-note { flex: none; margin: 12px 18px 0; padding: 10px 14px; border: 1px solid var(--line); border-left: 3px solid var(--text-mute); border-radius: 8px; background: var(--surface-2); color: var(--text-dim); font-size: 13px; }
 .review-main { flex: 1; min-height: 0; display: flex; }
 .facets { width: 230px; flex: none; padding: 16px 14px; border-right: 1px solid var(--line-soft); overflow-y: auto; background: var(--surface); }
@@ -360,6 +377,10 @@ dialog.viewer {
 #frame-caption { font-size: 11px; line-height: 1.45; word-break: break-all; margin: 0; }
 .frame-pos { margin: 0; font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; }
 .viewer-meta-sub { font-size: 11px; color: var(--text-mute); margin-top: 2px; }
+/* the frame's shot data: one compact line per field, ellipsised rather than allowed to widen the panel */
+.side-shot { flex-shrink: 0; margin: 0; padding: 6px 0 2px; border-top: 1px solid var(--line-soft); font-size: 11.5px; gap: 1px 10px; }
+.side-shot dt { white-space: nowrap; }
+.side-shot dd { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── viewer stage controls ── */
 .viewer-stage-controls {
