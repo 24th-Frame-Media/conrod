@@ -57,6 +57,18 @@ jobs:
           npm ci
           npm run build
 
+      # Cargo 1.90+ nests a build script's OUT_DIR one level deeper
+      # (build/<crate>/<hash>/out). ort-sys still walks up three ancestors when
+      # it copies DirectML.dll, so it writes to target/release/build and then
+      # expects build/examples and build/deps beside it. A cold cargo build
+      # never creates those, and the copy panics with "The system cannot find
+      # the path specified". Create them so the ONNX Runtime copy succeeds.
+      - name: Prepare the build directories for ort-sys
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force target/release/build/examples | Out-Null
+          New-Item -ItemType Directory -Force target/release/build/deps | Out-Null
+
       # The signing key is what makes an update installable: Tauri checks the
       # installer's minisign signature against the public key compiled into the app.
       - name: Build the app and the installer
