@@ -49,6 +49,8 @@ export type ShootStats = {
   af: { frames: number; missing: number; off_subject: number; no_subject: number; soft: number };
   keepers: number;
   rejected: number;
+  /** How many keepers carry Lightroom's pick, when the bridge has imported a catalog; absent today. */
+  catalog_match?: import('./types').CatalogMatch;
   stars: StatValue[];
   taken_from: number | null;
   taken_to: number | null;

@@ -463,3 +463,45 @@ export type VlmService = {
 };
 export type VlmStrategy = 'least_busy' | 'round_robin' | 'random';
 
+/* ── Lightroom bridge (docs/plans/lightroom-bridge.md) ── */
+
+/** `lightroom_export`: the package the Conrod Bridge plugin will pick up from `bridge\out`. */
+export type LightroomExport = {
+  /** The package's file name without `.json`, shown in the export sheet's result line. */
+  package: string;
+  /** Frames carried by the package. */
+  photos: number;
+  /** Absolute path of the written package. */
+  path: string;
+};
+
+/** `lightroom_import`: what the package(s) or catalog changed, in the plan's three counts. */
+export type LightroomImport = {
+  matched: number;
+  unmatched: number;
+  /** Album frames that have no entry in the catalog (or in the package). */
+  missing: number;
+  /** Share of keepers that carry `pick = 1`, 0..100; null when nothing could be compared. */
+  percent: number | null;
+};
+
+/** One package waiting in the bridge; `lightroom_pending` may report it with older field names. */
+export type LightroomPackage = {
+  name: string;
+  album?: string | null;
+  photos?: number | null;
+  /** Seconds since the package was written. */
+  age_s?: number | null;
+};
+
+/** `lightroom_pending` returns the rows directly or wrapped; the UI accepts both. */
+export type LightroomPending = LightroomPackage[] | { packages: LightroomPackage[] };
+
+/** `shoot_stats`' optional catalog column: how many keepers agree with Lightroom's picks. */
+export type CatalogMatch = {
+  matched: number;
+  compared: number;
+  /** 0..100; null when nothing could be compared. */
+  percent: number | null;
+};
+

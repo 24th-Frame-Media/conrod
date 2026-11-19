@@ -211,6 +211,7 @@ export function App() {
                 toast('Identification skipped. Write XMP when you\'re ready.', { tone: 'ok' });
               })}
               onWrite={(dryRun) => jobId != null && write(jobId, dryRun)}
+              lightroomDev={dev?.lightroom}
               onEdit={(id, updates) => run(async () => { await engine.editDetection(id, updates); await rv.refresh(); })} />
         )}
         {view === 'Train' && (
