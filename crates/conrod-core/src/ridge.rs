@@ -1,8 +1,7 @@
-//! Ridge regression, in the two flavours the app uses: standardised
-//! hand-built features onto a one-to-five sharpness rating, and unit
-//! embeddings onto the stars a photographer gives. Both are a linear model
-//! stored as a list of numbers, so a model file trained once is read here
-//! unchanged regardless of which trainer produced it.
+//! Ridge regression: standardised hand-built sharpness features onto a
+//! one-to-five rating. The model is stored as a list of numbers, so a model
+//! file trained once is read here unchanged regardless of which trainer
+//! produced it.
 
 use serde::{Deserialize, Serialize};
 
@@ -13,10 +12,6 @@ pub const FEATURE_VERSION: u32 = 1;
 pub const SHARP_MIN_LABELS: usize = 60;
 /// Ridge penalty on standardised sharpness features.
 pub const SHARP_PENALTY: f64 = 2.0;
-/// Below this the taste fit is noise (it has 384 inputs).
-pub const TASTE_ENOUGH_RATINGS: usize = 200;
-/// Ridge penalty for the taste model.
-pub const TASTE_PENALTY: f64 = 0.3;
 
 /// Solve `a x = b` by Gaussian elimination with partial pivoting, the same
 /// method LAPACK's `gesv` uses under `numpy.linalg.solve`. `None` if singular.
@@ -151,52 +146,4 @@ pub fn predict_sharp(model: &SharpModel, vector: &[f64]) -> Option<f64> {
         .map(|(((v, m), s), w)| (v - m) / s * w)
         .sum();
     Some(dot + model.intercept)
-}
-
-// --- taste ------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TasteModel {
-    /// One weight per embedding dimension, then the intercept.
-    pub weights: Vec<f64>,
-    pub trained_on: usize,
-}
-
-/// Fit the stars a photographer gives to unit embeddings. `None` below
-/// [`TASTE_ENOUGH_RATINGS`] or when every rating is the same.
-pub fn fit_taste(vectors: &[Vec<f64>], stars: &[f64]) -> Option<TasteModel> {
-    let dims = vectors.first()?.len();
-    if vectors.len() < TASTE_ENOUGH_RATINGS
-        || vectors.len() != stars.len()
-        || dims == 0
-        || vectors.iter().any(|v| v.len() != dims)
-        || !distinct(stars)
-    {
-        return None;
-    }
-    let design: Vec<Vec<f64>> = vectors
-        .iter()
-        .map(|v| {
-            let mut row = v.clone();
-            row.push(1.0);
-            row
-        })
-        .collect();
-    let weights = ridge(&design, stars, TASTE_PENALTY)?;
-    Some(TasteModel {
-        weights,
-        trained_on: stars.len(),
-    })
-}
-
-/// The star this photographer would probably give this crop, one to five.
-pub fn predict_taste(model: &TasteModel, vector: &[f64]) -> Option<i32> {
-    if model.weights.len() != vector.len() + 1 {
-        return None;
-    }
-    let (intercept, weights) = model.weights.split_last()?;
-    let value: f64 = vector.iter().zip(weights).map(|(v, w)| v * w).sum::<f64>() + intercept;
-    // Round-half-to-even, matching the convention the model was trained
-    // against.
-    Some(value.round_ties_even().clamp(1.0, 5.0) as i32)
 }
