@@ -1,18 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="t" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#f6c86b"/><stop offset="1" stop-color="#c98516"/>
+    <linearGradient id="s" x1="8" y1="2" x2="56" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2b3138"/><stop offset="1" stop-color="#121518"/>
     </linearGradient>
     <mask id="b">
-      <rect width="64" height="64" fill="#fff"/>
-      <circle cx="46.2" cy="43.1" r="3.4" fill="#000"/>
-      <circle cx="46.2" cy="20.9" r="2.1" fill="#000"/>
+      <rect width="256" height="256" fill="#fff"/>
+      <circle cx="128" cy="202" r="17" fill="#000"/>
+      <circle cx="128" cy="56" r="10" fill="#000"/>
+      <path d="M126 90 L126 148 L134 156 L134 170" stroke="#000" stroke-width="14"
+            stroke-linecap="round" stroke-linejoin="round" fill="none"/>
     </mask>
   </defs>
-  <rect width="64" height="64" rx="14" fill="url(#t)"/>
-  <g transform="translate(7 7) scale(.78)" mask="url(#b)" fill="none">
-    <path d="M46.2 20.9 A18 18 0 1 0 46.2 43.1" stroke="#17171a" stroke-width="9" stroke-linecap="round"/>
-    <circle cx="46.2" cy="43.1" r="8.5" fill="#17171a"/>
-    <circle cx="46.2" cy="20.9" r="5.8" fill="#17171a"/>
+  <rect width="64" height="64" rx="14" fill="url(#s)"/>
+  <g transform="translate(32 32) rotate(35) scale(0.172) translate(-128 -128)">
+    <g mask="url(#b)" fill="#e3a83a">
+      <path d="M104 56 C 114 92 108 170 90 202 L 166 202 C 148 170 142 92 152 56 Z"/>
+      <circle cx="128" cy="202" r="38"/>
+      <circle cx="128" cy="56" r="24"/>
+    </g>
   </g>
 </svg>
