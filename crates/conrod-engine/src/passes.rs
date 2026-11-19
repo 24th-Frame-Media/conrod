@@ -1006,9 +1006,12 @@ pub fn redetect(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         // person box to put them in, so a failure here never fails the pass.
         let faces = ShootPreset::parse(&low.scan_profile)
             .wants_faces(low.include_people)
-            .then(|| crate::load_faces().ok().map(std::sync::Mutex::new))
+            .then(|| crate::load_faces_pool(lanes).ok())
             .flatten();
-        let expression = faces.is_some().then(crate::load_expression).flatten();
+        let expression = faces
+            .is_some()
+            .then(|| crate::load_expression_pool(lanes))
+            .flatten();
         let models: HashMap<_, _> = ["vehicle", "person", "face", "eye"]
             .into_iter()
             .filter_map(|region| crate::load_region_model(region).map(|m| (region.to_string(), m)))
@@ -1233,8 +1236,8 @@ fn find_people(
     }
     if !frames.is_empty() {
         crate::setup::ensure(&d.hub, stop, crate::setup::FACES)?;
-        let detector = std::sync::Mutex::new(crate::load_faces()?);
-        let expression = crate::load_expression();
+        let detector = crate::load_faces_pool(1)?;
+        let expression = crate::load_expression_pool(1);
         let region_models: HashMap<String, _> = ["face", "eye"]
             .into_iter()
             .filter_map(|r| crate::load_region_model(r).map(|m| (r.to_string(), m)))
