@@ -160,6 +160,10 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("detections", "stars", "INTEGER"),
     // A vehicle in the photograph that is not what the photograph is of.
     ("detections", "bystander", "INTEGER"),
+    // Who set `bystander`: 1 the camera's focus area (the subject is elsewhere,
+    // so a re-measure may take the mark back), 0 a person (never overridden),
+    // NULL untouched.
+    ("detections", "af_bystander", "INTEGER"),
     // Where the sharpness is, not how much: a held pan has a sharp subject
     // against a smeared background.
     ("detections", "panning", "INTEGER"),

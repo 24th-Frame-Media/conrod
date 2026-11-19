@@ -1783,7 +1783,7 @@ impl Desktop {
             insert_subject(&tx, image, s)?;
         }
         let rating = f.rating;
-        tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=?,lens=?,iso=?,file_size=? WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,f.lens,f.exif.iso,f.file_size,image]).map_err(err)?;
+        tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=?,lens=?,iso=?,file_size=?,af_x1=COALESCE(?,af_x1),af_y1=COALESCE(?,af_y1),af_x2=COALESCE(?,af_x2),af_y2=COALESCE(?,af_y2),af_mode=CASE WHEN ? THEN ? ELSE af_mode END,af_sharpness=CASE WHEN ? THEN ? ELSE af_sharpness END WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,f.lens,f.exif.iso,f.file_size,f.af.map(|a| a.x1),f.af.map(|a| a.y1),f.af.map(|a| a.x2),f.af.map(|a| a.y2),f.af.is_some(),f.af.and_then(|a| a.mode).map(i64::from),f.af.is_some(),f.af_sharpness,image]).map_err(err)?;
         tx.commit().map_err(err)?;
         if report {
             self.report_frame(image, &thumb, f, settings);
@@ -1823,7 +1823,7 @@ impl Desktop {
             .filter(|s| s.cull_reason == crate::EYES_CLOSED)
             .count();
         progress.add_found(|found| {
-            found.subjects += f.subjects.len() as u64;
+            found.subjects += f.subjects.iter().filter(|s| !s.bystander).count() as u64;
             found.soft += u64::from(soft);
             found.closed_eyes += closed as u64;
         });
@@ -1914,14 +1914,25 @@ impl Desktop {
         // Images whose largest subject is a vehicle: only liveries of vehicles
         // tell one car from another.
         let mut vehicles: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        // Frames whose detections the camera's focus area made bystanders: the
+        // AF box is their subject, whatever the album's anchor setting says.
+        let mut af_subject: std::collections::HashSet<i64> = std::collections::HashSet::new();
         for d in rows(
             &db,
-            "SELECT d.image_id AS image,d.x1,d.y1,d.x2,d.y2,d.panning AS pan,COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
+            "SELECT d.image_id AS image,d.x1,d.y1,d.x2,d.y2,d.panning AS pan,COALESCE(d.region_type,'vehicle') AS region,COALESCE(d.bystander,0) AS bystander,COALESCE(d.af_bystander,0) AS af_bystander FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
             [job],
         )? {
+            let image = d["image"].as_i64().unwrap_or_default();
+            // A bystander is not what the frame is of: it neither anchors the
+            // moment nor marks the frame as a pan.
+            if d["bystander"].as_i64() == Some(1) {
+                if d["af_bystander"].as_i64() == Some(1) {
+                    af_subject.insert(image);
+                }
+                continue;
+            }
             let bbox = ["x1", "y1", "x2", "y2"].map(|k| d[k].as_f64().unwrap_or_default());
             let area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]);
-            let image = d["image"].as_i64().unwrap_or_default();
             if d["pan"].as_i64() == Some(1) {
                 pans.insert(image);
             }
@@ -1935,7 +1946,7 @@ impl Desktop {
             }
         }
         // Each image's main subject as fractions of the frame.
-        let fractions: std::collections::HashMap<i64, [f64; 4]> = images
+        let mut fractions: std::collections::HashMap<i64, [f64; 4]> = images
             .iter()
             .filter_map(|v| {
                 let id = v["id"].as_i64()?;
@@ -1970,6 +1981,13 @@ impl Desktop {
             };
             af_boxes.insert(id, [x1, y1, x2, y2]);
         }
+        // A frame the focus area rates has no detection box to measure a look
+        // from: it is measured on the AF box instead.
+        for id in &af_subject {
+            if let (false, Some(af)) = (fractions.contains_key(id), af_boxes.get(id)) {
+                fractions.insert(*id, *af);
+            }
+        }
         // What each frame looks like, measured from its thumbnail once and kept.
         let looks = crate::looks::load(&db, job, &fractions)?;
         let mut order: Vec<usize> = (0..frames.len()).collect();
@@ -1991,7 +2009,9 @@ impl Desktop {
                     }
                     // The album can turn the focus-area anchor off, leaving a
                     // frame the detector missed with no subject at all.
-                    _ if cfg.grouping_focus_anchor => af_boxes.get(&id).copied(),
+                    _ if cfg.grouping_focus_anchor || af_subject.contains(&id) => {
+                        af_boxes.get(&id).copied()
+                    }
                     _ => None,
                 };
                 conrod_core::bursts::MomentFrame {
@@ -2132,7 +2152,7 @@ pub(crate) fn insert_subject(
     image: i64,
     s: &crate::Subject,
 ) -> Result<()> {
-    db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,rating_verdict,panning,sharp_end,cull_reason,features,heuristic,region_type,quality,attributes,cut_sides,subject_frac,lead_room,framing_score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![image,s.bbox[0],s.bbox[1],s.bbox[2],s.bbox[3],s.class,s.conf,s.sharpness,s.rating,conrod_vision::sharpness::rating_for(s.rating,0.825,0.606),s.panning,s.sharp_end,s.cull_reason,serde_json::to_string(&s.features).map_err(err)?,s.heuristic,s.region_type,s.quality,eyes_json(s.eyes_open),s.cut_sides,s.subject_frac,s.lead_room,s.framing_score]).map_err(err)?;
+    db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,rating_verdict,panning,sharp_end,cull_reason,features,heuristic,region_type,quality,attributes,cut_sides,subject_frac,lead_room,framing_score,bystander,af_bystander) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![image,s.bbox[0],s.bbox[1],s.bbox[2],s.bbox[3],s.class,s.conf,s.sharpness,s.rating,conrod_vision::sharpness::rating_for(s.rating,0.825,0.606),s.panning,s.sharp_end,s.cull_reason,serde_json::to_string(&s.features).map_err(err)?,s.heuristic,s.region_type,s.quality,eyes_json(s.eyes_open),s.cut_sides,s.subject_frac,s.lead_room,s.framing_score,s.bystander.then_some(1),s.bystander.then_some(1)]).map_err(err)?;
     Ok(())
 }
 
@@ -2991,6 +3011,49 @@ mod tests {
             key(b),
             "and is not anchored to the car the camera focused on"
         );
+    }
+
+    #[test]
+    fn a_frame_the_focus_area_rates_is_anchored_by_it_not_by_its_bystander() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("regroup-af-bystander");
+        let a = lib.frame("a.jpg", None);
+        let x = lib.frame("x.jpg", None);
+        let b = lib.frame("b.jpg", None);
+        for (taken, image) in [(0.0, a), (0.2, x), (0.4, b)] {
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                params![taken, image],
+            );
+        }
+        lib.detection(a, "vehicle", 0.8);
+        lib.detection(b, "vehicle", 0.8);
+        lib.sql(
+            "UPDATE detections SET x1=3600,y1=2400,x2=4800,y2=3200 WHERE image_id=?",
+            [b],
+        );
+        // A detection that looks like car A's, but the camera focused on B's.
+        let truck = lib.detection(x, "vehicle", 0.8);
+        lib.sql(
+            "UPDATE detections SET bystander=1,af_bystander=1 WHERE id=?",
+            [truck],
+        );
+        lib.sql(
+            "UPDATE images SET af_x1=0.6,af_y1=0.6,af_x2=0.8,af_y2=0.8 WHERE id=?",
+            [x],
+        );
+        // The album's anchor choice is about frames the detector missed; a
+        // frame whose subject the camera named is anchored by it regardless.
+        lib.run(
+            "update_job_settings",
+            json!({"jobId": lib.job, "patch": {"grouping_focus_anchor": false}}),
+        )
+        .unwrap();
+        lib.d().regroup(lib.job).unwrap();
+        let key =
+            |image: i64| -> i64 { lib.one("SELECT burst_key FROM images WHERE id=?", [image]) };
+        assert_eq!(key(x), key(b), "the AF box is the subject");
+        assert_ne!(key(x), key(a), "not the bystander that looks like car A");
     }
 
     #[test]

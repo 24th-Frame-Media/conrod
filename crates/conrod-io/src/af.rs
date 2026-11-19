@@ -118,6 +118,15 @@ pub fn parse(record: &Value, frame: (u32, u32), orientation: u16) -> Option<AfAr
         (fw, fh)
     };
     let tags = Tags::new(record);
+    // A record naming more than one valid point is a zone or the body's whole
+    // grid (`ValidAFPoints` 9 on a 1500D, 651 on an R7): its arrays list every
+    // point in the zone, and the first is just the grid's first cell, not where
+    // the camera focused. Every maker shares the arrays, so this is checked
+    // before any reader: such a record names no area, the same answer as a zone
+    // too large to be a point.
+    if tags.first("ValidAFPoints").is_some_and(|n| n > 1.0) {
+        return None;
+    }
     // A named maker is tried first; the others follow so a wrong or missing
     // `Make` still lets the tags speak for themselves.
     let mut order = [0usize, 1, 2, 3, 4];
@@ -163,7 +172,13 @@ fn finish(
 /// [`parse`]'s Canon reader, so the two agree: the first AF point, centred at
 /// the AF image's centre plus the offset with y flipped, as wide and high as
 /// the point says.
+///
+/// A record with more than one valid point is a zone or the whole grid (see
+/// [`canon`]), not the point the camera used, so it names no area.
 pub fn from_canon(af: &CanonAf, frame: (u32, u32), orientation: u16) -> Option<AfArea> {
+    if af.valid > 1 {
+        return None;
+    }
     let (fw, fh) = (f64::from(frame.0), f64::from(frame.1));
     if fw <= 0.0 || fh <= 0.0 || !matches!(orientation, 0 | 1 | 3 | 6 | 8) {
         return None;
@@ -382,6 +397,7 @@ pub fn read(
         "-AFAreaXPositions",
         "-AFAreaYPositions",
         "-AFAreaMode",
+        "-ValidAFPoints",
         "-FocusLocation",
         "-FocusPixel",
         "-AFPointPosition",
@@ -611,6 +627,54 @@ mod tests {
                 "orientation {orientation}"
             );
         }
+    }
+
+    #[test]
+    fn a_multi_point_record_is_a_zone_not_a_point() {
+        // The 1500D's 9-point zone and the R7's 651-point grid: the arrays
+        // list every point, so their first entry is the grid's first cell.
+        for valid in [9, 45, 651] {
+            let record = json!({
+                "Canon:AFImageWidth": 6960,
+                "Canon:AFImageHeight": 4640,
+                "Canon:AFAreaWidths": "187 187",
+                "Canon:AFAreaHeights": "191 191",
+                "Canon:AFAreaXPositions": "-3018 -2810",
+                "Canon:AFAreaYPositions": "2120 2120",
+                "Canon:ValidAFPoints": valid,
+                "IFD0:Make": "Canon",
+                "IFD0:ImageWidth": 6960,
+                "IFD0:ImageHeight": 4640,
+            });
+            assert!(parse(&record, R7_FRAME, 1).is_none(), "valid {valid}");
+        }
+        // One valid point is the point the camera used.
+        let single = r7(
+            json!("445 0 0"),
+            json!("631 0 0"),
+            json!("-186 0 0"),
+            json!("405 0 0"),
+        );
+        let mut with_valid = single.clone();
+        with_valid["Canon:ValidAFPoints"] = json!(1);
+        assert!(parse(&with_valid, R7_FRAME, 1).is_some());
+    }
+
+    #[test]
+    fn the_native_reader_also_refuses_a_multi_point_record() {
+        let mut af = CanonAf {
+            mode: 9,
+            points: 651,
+            valid: 1,
+            canvas: (6960, 4640),
+            width: 445,
+            height: 631,
+            x: -186,
+            y: 405,
+        };
+        assert!(from_canon(&af, R7_FRAME, 1).is_some());
+        af.valid = 651;
+        assert_eq!(from_canon(&af, R7_FRAME, 1), None);
     }
 
     #[test]

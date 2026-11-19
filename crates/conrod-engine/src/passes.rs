@@ -681,12 +681,15 @@ pub(crate) fn rate_missed_frames(conn: &Connection, job: i64) -> Result<usize> {
                                 THEN o.time_burst=images.time_burst \
                                 ELSE o.burst_key=images.burst_key END \
                        AND o.id<>images.id AND COALESCE(o.copy_of,0)=0 \
-                       AND COALESCE(d.region_type,'vehicle') IN ('vehicle','person'))";
-    // A measured frame the detector found nothing in.
+                       AND COALESCE(d.bystander,0)=0 \
+                        AND COALESCE(d.region_type,'vehicle') IN ('vehicle','person'))";
+    // A measured frame the detector found nothing in, or whose detections are
+    // all bystanders (the camera focused outside them).
     const BARE: &str = "WHERE images.job_id=?1 AND images.status='done' \
          AND (images.sharpness IS NOT NULL OR images.af_sharpness IS NOT NULL) \
          AND COALESCE(images.copy_of,0)=0 \
-         AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_id=images.id)";
+         AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_id=images.id \
+                         AND COALESCE(d.bystander,0)=0)";
     let missed: i64 = conn
         .query_row(
             &format!(
@@ -739,22 +742,26 @@ pub fn pick_keepers(d: &Desktop, job: i64) -> Result<Value> {
 }
 
 /// The action: read the camera's autofocus area for every visible RAW of the
-/// album, store it per frame, then put the frames the detector missed back on
-/// their car: measure the focus inside the AF box, re-rate them and regroup so a
-/// missed frame sits in its car's moment. One press fixes an existing album.
+/// album, store it per frame, then settle what it means for each frame: put the
+/// frames the detector missed back on their car, and where the camera focused
+/// outside every detection make the AF area the subject (see `afsubject`).
+/// One press fixes an existing album.
 ///
-/// Every visible frame without an AF box is read, detected or not: the box is
-/// the most reliable subject box a frame has, so a re-score measures a detected
-/// subject inside it when it sits on the subject (see `rescore`'s
-/// `measure_frame`). The pass is resumable: the query takes
-/// only frames whose `af_x1` is still NULL, so an interrupted run picks up where
-/// it stopped and a second run only fills the gaps. That matters because a full
-/// album is a long read: 6,912 frames take about 13 minutes.
+/// Every visible frame without an AF box is read, detected or not: the box
+/// is the most reliable subject box a frame has, so a re-score measures a
+/// detected subject inside it when it sits on the subject (see `rescore`'s
+/// `measure_frame`). The pass is resumable: the query takes only frames whose
+/// `af_x1` is still NULL, so an interrupted run picks up where it stopped and a
+/// second run only fills the gaps.
+///
+/// The box is read natively from the RAW's Canon makernote
+/// (`conrod_io::raw::af_header`): a header-only read, about 10 ms a frame where
+/// exiftool took about 110. ExifTool is only the fallback, for the frames the
+/// native reader finds no AF record in.
 pub fn focus_points(d: &Arc<Desktop>, job: i64) -> Result<Value> {
     require_job(d, job)?;
     let cfg = settings(d, job)?;
     launch(d, job, "Reading focus points", move |d, stop, task| {
-        let exiftool = exiftool_path()?;
         // The visible frames of the album that have no AF box yet; only RAW
         // carries maker AF tags.
         let images = rows(
@@ -782,39 +789,60 @@ pub fn focus_points(d: &Arc<Desktop>, job: i64) -> Result<Value> {
                 })
             })
             .collect();
-        // `af::read` needs each frame's upright size and EXIF orientation: the
-        // AF tags are in sensor order and the box cannot be turned upright
-        // without it. The database has the size but no orientation, and
-        // `raw::read` is the only public source for it. Read once per chunk, in
-        // parallel, and only for the frames that chunk reads, so the work stays
-        // bounded by what has been stored and a stopped run leaves nothing read
-        // twice.
         task.detail(format!(
-            "Reading {} RAW files for the camera's focus area · a full read of 6,912 frames \
-             takes about 13 minutes, and an interrupted run resumes at the frames still \
-             without one",
+            "Reading the focus area of {} RAW files from their makernotes",
             raws.len()
         ));
         task.progress(0, raws.len() as u64);
-        let (mut with_point, mut without) = (0usize, 0usize);
+        let (mut with_point, mut without, mut native) = (0usize, 0usize, 0usize);
         let mut read = 0usize;
+        let mut exiftool: Option<Option<std::path::PathBuf>> = None;
         for chunk in raws.chunks(100) {
             if stop.load(Ordering::Relaxed) {
                 return Ok(());
             }
-            let frames: HashMap<_, _> = chunk
+            // The header read gives the orientation along with the AF record,
+            // so the upright box needs no second look at the file.
+            let headers: Vec<_> = chunk
                 .par_iter()
                 .map(|(_, path, w, h)| {
-                    let orientation = conrod_io::raw::read(path).map_or(1, |f| f.orientation);
-                    (path.clone(), (*w, *h, orientation))
+                    let header = conrod_io::raw::af_header(path).ok();
+                    let orientation = header.map_or(1, |h| h.orientation);
+                    let area = header
+                        .and_then(|h| h.af)
+                        .and_then(|af| conrod_io::af::from_canon(&af, (*w, *h), orientation));
+                    (orientation, area)
                 })
                 .collect();
-            let paths: Vec<_> = chunk.iter().map(|(_, path, _, _)| path.clone()).collect();
-            let areas = conrod_io::af::read(&paths, &exiftool, &frames);
+            let mut areas: Vec<Option<conrod_io::af::AfArea>> =
+                headers.iter().map(|(_, area)| *area).collect();
+            native += areas.iter().flatten().count();
+            // The frames the native reader found nothing in go to exiftool, if
+            // it is installed; a body it does not know is not a failed pass.
+            let misses: Vec<usize> = (0..chunk.len()).filter(|&i| areas[i].is_none()).collect();
+            if !misses.is_empty() {
+                let tool = exiftool.get_or_insert_with(|| exiftool_path().ok());
+                if let Some(tool) = tool {
+                    let frames: HashMap<_, _> = misses
+                        .iter()
+                        .map(|&i| {
+                            let (_, path, w, h) = &chunk[i];
+                            (path.clone(), (*w, *h, headers[i].0))
+                        })
+                        .collect();
+                    let paths: Vec<_> = misses.iter().map(|&i| chunk[i].1.clone()).collect();
+                    for (&i, (_, area)) in misses
+                        .iter()
+                        .zip(conrod_io::af::read(&paths, tool, &frames))
+                    {
+                        areas[i] = area;
+                    }
+                }
+            }
             let stored: Vec<(i64, Option<conrod_io::af::AfArea>)> = chunk
                 .iter()
                 .zip(areas)
-                .map(|((id, _, _, _), (_, area))| {
+                .map(|((id, _, _, _), area)| {
                     if area.is_some() {
                         with_point += 1;
                     } else {
@@ -834,11 +862,11 @@ pub fn focus_points(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         if stop.load(Ordering::Relaxed) {
             return Ok(());
         }
-        // The frames the detector missed but the camera focused: measure the
-        // focus inside the AF box, rate them by it, then group them beside the
-        // frame of their car. In this order, because each step reads the one
-        // before: a rating needs a measurement, and the regroup needs the rating
-        // for its keeper.
+        // What the box means for each frame: where it sits off every detected
+        // subject (or the frame has none) it is measured, rates the frame and
+        // makes the detections bystanders. In this order, because each step
+        // reads the one before: a rating needs a measurement, and the regroup
+        // needs the rating for its keeper.
         let (measured, unmeasured) = crate::rescore::measure_af_frames(d, job, &cfg, task)?;
         if stop.load(Ordering::Relaxed) {
             return Ok(());
@@ -846,9 +874,9 @@ pub fn focus_points(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         let rated = crate::passes::rate_missed_frames(&lock(&d.db), job)?;
         let counts = d.regroup(job)?;
         task.detail(format!(
-            "{with_point} frames with a focus point, {read} read, {without} without · \
-             {measured} missed frames measured inside the focus area ({unmeasured} unread) · \
-             {rated} missed frames rated on it · {} bursts · {} moments · {} keepers",
+            "{with_point} frames with a focus point ({native} from the makernote), {read} read, {without} without · \
+             {measured} frames measured inside the focus area ({unmeasured} unread) · \
+             {rated} frames rated on it · {} bursts · {} moments · {} keepers",
             counts["bursts"], counts["moments"], counts["keepers"]
         ));
         Ok(())
@@ -1239,7 +1267,7 @@ fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
     let profile = ScanProfile::parse(&cfg.scan_profile);
     let found = rows(
         &lock(&d.reader),
-        "SELECT d.image_id, COALESCE(d.region_type,'vehicle') AS region, d.x1, d.y1, d.x2, d.y2, d.rating, i.sharpness AS whole FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.image_id",
+        "SELECT d.image_id, COALESCE(d.region_type,'vehicle') AS region, d.x1, d.y1, d.x2, d.y2, d.rating, i.sharpness AS whole FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.bystander,0)=0 ORDER BY d.image_id",
         [job],
     )?;
     type Rated<'a> = Vec<(&'a str, [f64; 4], f64)>;
@@ -2935,15 +2963,16 @@ mod tests {
 
     /// A real R7 frame from the Bathurst 1000 shoot: the whole `focus_points`
     /// action against a temp album, reading the D: original (never writing it).
-    /// Ignored because it needs this machine's ExifTool and read-only originals.
+    /// Ignored because it needs the read-only originals. The box comes from the
+    /// makernote, so no ExifTool is needed.
     #[test]
-    #[ignore = "reads a real CR3 from the D: originals with this machine's exiftool"]
+    #[ignore = "reads a real CR3 from the D: originals"]
     fn real_focus_points_stores_the_cameras_box() {
         let file = std::path::PathBuf::from(
             r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-08_Thursday\20261008_B1000_4692.CR3",
         );
-        if !file.is_file() || exiftool_path().is_err() {
-            eprintln!("skipping: {} or ExifTool is missing", file.display());
+        if !file.is_file() {
+            eprintln!("skipping: {} is missing", file.display());
             return;
         }
         let lib = Lib::new("af-real");
@@ -2972,7 +3001,7 @@ mod tests {
             task["detail"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("1 frames with a focus point, 1 read, 0 without"),
+                .contains("1 frames with a focus point (1 from the makernote), 1 read, 0 without"),
             "{task}"
         );
         let stored: (f64, f64, f64, f64) = lib

@@ -192,6 +192,14 @@ pub fn edit_detection(d: &Desktop, a: &EditArgs) -> Result<Value> {
         params![number, source, conf, plate, plate_state, Value::Object(attrs.clone()).to_string(), rejected, a.reviewed, stars, bystander, a.detection_id],
     )
     .map_err(err)?;
+    if a.bystander.is_some() {
+        // A person decided: the focus area may no longer change the mark.
+        db.execute(
+            "UPDATE detections SET af_bystander=0 WHERE id=?",
+            [a.detection_id],
+        )
+        .map_err(err)?;
+    }
     if row.region.as_deref() == Some("face") {
         if let (Some(name), Some(embedding)) = (
             attrs
@@ -268,7 +276,7 @@ pub fn bulk_edit(d: &Desktop, a: &BulkArgs) -> Result<Value> {
         }
         if let Some(bystander) = a.bystander {
             tx.execute(
-                "UPDATE detections SET bystander=?,reviewed=1 WHERE id=?",
+                "UPDATE detections SET bystander=?,af_bystander=0,reviewed=1 WHERE id=?",
                 params![bystander, id],
             )
             .map_err(err)?;
