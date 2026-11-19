@@ -1,9 +1,14 @@
 /* Dev-only engine stand-in: `vite dev` + `?mock=1`. Imported dynamically behind import.meta.env.DEV, so it is not in `dist`.
    Extra params: page=library|scan|ingest|identify|review|train|known|settings, viewer, popover, scan (a scan is running), profile=<shoot preset id>. */
 import { startIngestSim, type IngestSim } from './mockIngest';
+import type { ShootStats } from './shot.mjs';
 import type { Bootstrap, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, Settings, Status, WorkerLimits } from './types';
 
-export type DevStart = { page?: Page; jobId?: number; viewer?: boolean; popover?: boolean };
+export type DevStart = {
+  page?: Page; jobId?: number; viewer?: boolean; popover?: boolean;
+  /** `?lightroom=sent|export|import|imported|stats` opens the sheet or dialog a screenshot needs. */
+  lightroom?: 'export' | 'sent' | 'import' | 'imported' | 'stats';
+};
 const params = () => new URLSearchParams(location.search);
 
 /** `?mock=1&page=ingest` (or `page=scan`) plays a ~80 s ingest of album 3: scan lanes, group, pick, vision, done. `page=identify` plays only the vision phase.
@@ -11,7 +16,11 @@ const params = () => new URLSearchParams(location.search);
 export function devStart(): DevStart {
   const pages: Record<string, Page> = { library: 'Library', scan: 'Scan', ingest: 'Scan', identify: 'Identify', review: 'Review', train: 'Train', known: 'Known vehicles', settings: 'Settings' };
   const page = pages[params().get('page') ?? ''];
-  return { page, jobId: page === 'Review' || page === 'Train' || page === 'Identify' ? 1 : page === 'Scan' ? 3 : undefined, viewer: params().has('viewer'), popover: params().has('popover') };
+  const lightroom = params().get('lightroom');
+  return {
+    page, jobId: page === 'Review' || page === 'Train' || page === 'Identify' ? 1 : page === 'Scan' ? 3 : undefined, viewer: params().has('viewer'), popover: params().has('popover'),
+    lightroom: lightroom === 'export' || lightroom === 'sent' || lightroom === 'import' || lightroom === 'imported' || lightroom === 'stats' ? lightroom : undefined,
+  };
 }
 
 const CARS: [string, string, string, string, string, string, number][] = [
@@ -209,6 +218,55 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       return out({ models });
     }
     case 'summary': return out({images: {scanned: db.frames.length, written: 0, errors: 0}, counts: {numbered: 48, plated: 48, to_review: 12}});
+    case 'shoot_stats': {
+      const frames = db.frames.length;
+      const subjects = frames * 4;
+      const sharp = Math.round(subjects * 0.42);
+      const soft = Math.round(subjects * 0.48);
+      const from = Date.UTC(2026, 8, 8, 9, 12) / 1000;
+      return out({
+        frames, copies_hidden: 0, size_bytes: frames * 24_300_000, backfilled: 0,
+        cameras: [{ name: 'Canon EOS R7', count: frames }],
+        lenses: [
+          { name: 'EF100-400mm', count: Math.round(frames * 0.7) },
+          { name: 'RF24-70mm', count: Math.round(frames * 0.3) },
+        ],
+        most_used: { camera: 'Canon EOS R7', lens: 'EF100-400mm', f_number: 5.6, shutter: 0.001, iso: 400, focal_length: 400 },
+        f_numbers: [{ value: 5.6, count: Math.round(frames * 0.6) }, { value: 4, count: Math.round(frames * 0.4) }],
+        shutters: [{ value: 0.001, count: Math.round(frames * 0.7) }, { value: 0.002, count: Math.round(frames * 0.3) }],
+        isos: [{ value: 100, count: Math.round(frames * 0.55) }, { value: 1600, count: Math.round(frames * 0.45) }],
+        focal_lengths: [{ value: 400, count: frames }],
+        pans: Math.round(frames * 0.3), bursts: Math.round(frames / 5),
+        blurred: Math.max(0, subjects - sharp - soft), soft, sharp,
+        af: { frames, missing: 0, off_subject: Math.round(frames * 0.05), no_subject: 1, soft: 3 },
+        keepers: Math.round(frames * 0.25), rejected: 4,
+        stars: [{ value: 3, count: Math.round(frames * 0.4) }, { value: 5, count: Math.round(frames * 0.25) }],
+        taken_from: from, taken_to: from + 6 * 3600,
+        catalog_match: { matched: Math.round(frames * 0.66), compared: frames, percent: 66 },
+      } satisfies ShootStats);
+    }
+    case 'lightroom_export': {
+      const name = `bathurst-1000-${Math.floor(Date.now() / 1000)}`;
+      return out({
+        package: name,
+        photos: db.frames.length,
+        path: `C:\\Users\\kapsikkum\\.conrod\\bridge\\out\\${name}.json`,
+      });
+    }
+    case 'lightroom_pending': {
+      if (String(a.dir ?? 'in') !== 'in') return out({ packages: [] });
+      return out({
+        packages: [
+          { name: 'bathurst-1000-1763600000', album: 'Bathurst 1000', photos: db.frames.length, age_s: 420 },
+          { name: 'phillip-island-gp-1763550000', album: 'Phillip Island GP', photos: 37, age_s: 7200 },
+        ],
+      });
+    }
+    case 'lightroom_import': {
+      const compared = db.frames.length;
+      const matched = Math.round(compared * 0.66);
+      return out({ matched, unmatched: compared - matched, missing: 9, percent: Math.round((matched / compared) * 100) });
+    }
     case 'rename_job': { const job = db.jobs.find(j => j.id === a.jobId); if(job) job.label = String(a.label || 'Album'); return out(null); }
     case 'bulk_edit': { for(const d of db.dets.filter(d => (a.ids as number[]).includes(d.id))) { if('number' in a) d.number = String(a.number); if('reviewed' in a) d.reviewed = a.reviewed ? 1 : 0; } return out({updated: (a.ids as number[]).length}); }
     case 'seed_known': return out({written: db.known.length});

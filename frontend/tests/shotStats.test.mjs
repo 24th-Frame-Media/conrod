@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   sharePercent, averageBytes, topN, stackedSegments, shootTiles, cameraRows, lensRows,
   exposureTiles, bucketRows, rangeChip, exposureChips, qualityParts, afParts, shootMiniStats,
-  takenRange,
+  takenRange, catalogTile,
 } from '../src/lib/shotStats.mjs';
 import { formatAperture, formatShutter, formatBytes } from '../src/lib/shot.mjs';
 
@@ -88,6 +88,22 @@ test('the hero tiles carry the numbers and their one-line subs', () => {
   // Nothing in, nothing out; a hidden-copy count of zero is not a sub-line.
   assert.deepEqual(shootTiles(null), []);
   assert.equal(shootTiles({ frames: 4, copies_hidden: 0 })[0].sub, null);
+});
+
+test('the catalog tile appears only when a catalog import filled catalog_match', () => {
+  // The engine of today sends no catalog_match: the tile is not there at all.
+  assert.equal(catalogTile(stats), null);
+  assert.deepEqual(shootTiles(stats).map((tile) => tile.key), ['frames', 'size', 'duration', 'keepers']);
+
+  const withCatalog = { ...stats, catalog_match: { matched: 52, compared: 72, percent: 72 } };
+  const tile = catalogTile(withCatalog);
+  assert.deepEqual(tile, { key: 'catalog', label: 'Matched LR picks', value: '72%', sub: '52 / 72' });
+  // It sits beside the keepers tile, last, and the percentage is the matched share of compared.
+  assert.equal(shootTiles(withCatalog).at(-1).key, 'catalog');
+
+  assert.equal(catalogTile({ catalog_match: { matched: 0, compared: 0, percent: null } }), null);
+  assert.equal(catalogTile({ catalog_match: { matched: 3, compared: 4, percent: null } }).value, '75%');
+  assert.equal(catalogTile({ catalog_match: { matched: 3, compared: 4, percent: 60 } }).value, '75%');
 });
 
 test('a one-day shoot reads as a compact date and clock range', () => {

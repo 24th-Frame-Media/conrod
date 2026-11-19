@@ -96,7 +96,22 @@ export function takenRange(from, to) {
   return `${date} · ${clock(start)}–${clock(end)}`;
 }
 
-/** The four hero tiles: frames, size, duration and keepers, each with its one-line sub. */
+// The "Matched LR picks" tile: the share of compared keepers that Lightroom also picked, with
+// `matched / compared` underneath. Absent entirely until an import has filled `catalog_match`.
+export function catalogTile(stats) {
+  const match = stats?.catalog_match;
+  const compared = numOr(match?.compared);
+  if (!match || compared == null || compared <= 0) return null;
+  const percent = sharePercent(match.matched, compared);
+  return {
+    key: 'catalog',
+    label: 'Matched LR picks',
+    value: percent == null ? '—' : `${percent}%`,
+    sub: `${count(match.matched)} / ${count(compared)}`,
+  };
+}
+
+/** The hero tiles: frames, size, duration and keepers, plus the catalog tile when an import filled it. */
 export function shootTiles(stats) {
   if (!stats) return [];
   const tiles = [];
@@ -144,6 +159,9 @@ export function shootTiles(stats) {
     if (bursts != null && bursts > 0) sub.push(`${count(bursts)} bursts`);
     tiles.push({ key: 'keepers', label: 'Keepers', value: count(keepers), sub: sub.join(' · ') || null });
   }
+
+  const catalog = catalogTile(stats);
+  if (catalog != null) tiles.push(catalog);
 
   return tiles;
 }

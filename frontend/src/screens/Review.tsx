@@ -19,6 +19,7 @@ import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
 import { ShootSettingsModal } from '../components/ShootSettingsModal';
 import { ShootStatsModal } from '../components/ShootStatsModal';
 import { ExportSheet } from '../components/ExportSheet';
+import { LightroomImport } from '../components/LightroomImport';
 import { Identifications } from '../components/Identifications';
 import type { Frame, Job, KnownVehicle, MarkValues, Scope, Settings, Status, Task } from '../lib/types';
 import { profileLabel, profileParent } from '../lib/types';
@@ -115,6 +116,8 @@ type Props = {
   onWatchIdentify: () => void;
   /** Album settings changed (preset, toggles): reload the job list so the new values show. */
   onJobsChanged: () => Promise<unknown> | void;
+  /** Dev start only (`?mock=1&lightroom=…`): open the sheet or dialog a screenshot needs. */
+  lightroomDev?: 'export' | 'sent' | 'import' | 'imported' | 'stats';
 };
 
 /** A burst/duplicate/vehicle group with the words the card shows. */
@@ -134,18 +137,27 @@ const byFrame = (stacks: StackView[]) => {
 };
 
 /** Toolbar (album, view, search, stars, sort, actions), facets, the card grid and the inspector. */
-export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite, onJobsChanged, onWatchIdentify }: Props) {
+export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite, onJobsChanged, onWatchIdentify, lightroomDev }: Props) {
   const [known, setKnown] = useState<KnownVehicle[]>([]);
   const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [lightroomOpen, setLightroomOpen] = useState(false);
   const [autoAdvance, setAutoAdvance] = useLocalFlag('conrod.autoAdvance', true);
   const [crossStacks, setCrossStacks] = useLocalFlag('conrod.crossStacks', true);
   const [cols, setCols] = useState(4);
   const run = useRun();
   const toast = useToast();
   useEffect(() => { void engine.known().then(setKnown); }, [jobId]);
+  // Dev start only: the export sheet, the import dialog and the stats modal each need to be open in
+  // a headless screenshot, and there is no URL the browser can click its way to on its own.
+  useEffect(() => {
+    if (!lightroomDev) return;
+    if (lightroomDev === 'stats') { setStatsOpen(true); return; }
+    if (lightroomDev === 'import' || lightroomDev === 'imported') { setLightroomOpen(true); return; }
+    setExportOpen(true);
+  }, [lightroomDev]);
   const { filters, patchFilters, frames, review, facts, keepers, selected, frame, grouping, expanded } = rv;
   const currentJob = jobs.find((j) => j.id === jobId);
   const currentProfile = String(currentJob?.scan_profile || settings.scan_profile || 'motorsport');
@@ -678,6 +690,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       onClick: () => setStatsOpen(true),
     },
     {
+      id: 'lightroom_import',
+      label: 'Import from Lightroom…',
+      hint: 'Read the flags, stars and colour labels you gave this shoot in Lightroom Classic',
+      onClick: () => setLightroomOpen(true),
+    },
+    {
       id: 'summary',
       label: 'Shoot summary',
       onClick: () => {
@@ -786,12 +804,22 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       />
       <ExportSheet
         visible={exportOpen}
+        jobId={jobId}
         albumLabel={currentJob?.label ?? ''}
         frames={review.frames}
         keepers={rv.keepers}
         dryRunFirst={false}
+        sendOnOpen={lightroomDev === 'sent'}
         onClose={() => setExportOpen(false)}
         onWrite={onWrite}
+      />
+      <LightroomImport
+        visible={lightroomOpen}
+        jobId={jobId}
+        albumLabel={currentJob?.label ?? ''}
+        autoRun={lightroomDev === 'imported'}
+        onClose={() => setLightroomOpen(false)}
+        onImported={() => void rv.refresh()}
       />
       {confirmReset === 'reset_ratings' && (
         <Confirm
