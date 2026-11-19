@@ -660,11 +660,14 @@ pub fn pick_of_pass(
 /// the detector did see. Those take the whole frame's score; every other
 /// subject-less frame keeps its in-focus-area score.
 ///
-/// The camera's own autofocus area outranks both rules: it says where the
-/// subject is, so a frame the detector missed but the camera focused is rated
-/// on the edge blur inside that box (`af_sharpness`) rather than on the whole
-/// frame. Precedence, in order: `af_sharpness`, the time-burst rule
-/// (`sharpness_whole`), the frame's own `sharpness`.
+/// The camera's own autofocus area outranks both rules, but only upwards: it
+/// says where the subject is, so a frame the detector missed but the camera
+/// focused is lifted to the edge blur inside that box (`af_sharpness`) rather
+/// than left on the whole frame, and a frame whose detections the camera parked
+/// keeps whichever is higher, the AF score or the rating those detections had
+/// (`afsubject::rescue`: the camera's word is evidence, never a veto).
+/// Precedence, in order for a bare frame: `max(af_sharpness, ...)`, the
+/// time-burst rule (`sharpness_whole`), the frame's own `sharpness`.
 ///
 /// Returns how many frames took either subject-aware score.
 pub(crate) fn rate_missed_frames(conn: &Connection, job: i64) -> Result<usize> {
@@ -690,6 +693,11 @@ pub(crate) fn rate_missed_frames(conn: &Connection, job: i64) -> Result<usize> {
          AND COALESCE(images.copy_of,0)=0 \
          AND NOT EXISTS (SELECT 1 FROM detections d WHERE d.image_id=images.id \
                          AND COALESCE(d.bystander,0)=0)";
+    // The rating the detector path gave a frame whose detections the camera's
+    // focus area parked: the best of the ratings this rule marked a bystander
+    // (`af_bystander` 1). A person's own marks are not in it.
+    const PARKED: &str = "SELECT max(d.rating) FROM detections d \
+         WHERE d.image_id=images.id AND COALESCE(d.af_bystander,0)=1";
     let missed: i64 = conn
         .query_row(
             &format!(
@@ -702,8 +710,15 @@ pub(crate) fn rate_missed_frames(conn: &Connection, job: i64) -> Result<usize> {
         .map_err(err)?;
     conn.execute(
         &format!(
+            // The camera's word is a rescue, never a veto (`afsubject::rescue`):
+            // a frame it rates lower than the detector did keeps the detector's
+            // rating, and one the detector only found background in is lifted
+            // onto the subject the camera focused on.
             "UPDATE images SET rating=CASE \
-                 WHEN images.af_sharpness IS NOT NULL THEN images.af_sharpness \
+                 WHEN images.af_sharpness IS NOT NULL THEN max(images.af_sharpness, COALESCE( \
+                     ({PARKED}), \
+                     CASE WHEN {MISSED} THEN images.sharpness_whole ELSE images.sharpness END, \
+                     0.0)) \
                  WHEN {MISSED} THEN images.sharpness_whole \
                  ELSE images.sharpness END {BARE}"
         ),
@@ -2848,7 +2863,7 @@ mod tests {
     }
 
     #[test]
-    fn the_focus_area_rates_a_missed_frame_before_the_time_burst() {
+    fn the_focus_area_lifts_a_missed_frame_and_never_lowers_one() {
         let lib = Lib::new("missed-af");
         let bare = lib.frame("bare.jpg", Some(1));
         let car = lib.frame("car.jpg", Some(1));
@@ -2865,7 +2880,8 @@ mod tests {
             0.66
         );
 
-        // The camera's box outranks the whole frame, even in a burst with a car.
+        // A lower AF score no longer outranks the whole frame: the camera may
+        // rescue a frame, never demote one.
         lib.sql(
             "UPDATE images SET af_x1=0.4,af_y1=0.4,af_x2=0.6,af_y2=0.6,af_sharpness=0.42 WHERE id=?",
             [bare],
@@ -2873,18 +2889,28 @@ mod tests {
         assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
         assert_eq!(
             lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
-            0.42
+            0.66
         );
 
-        // The AF score alone is enough: no burst mate, no whole-frame score.
+        // A higher one lifts it onto the subject the camera focused on.
+        lib.sql("UPDATE images SET af_sharpness=0.90 WHERE id=?", [bare]);
+        assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
+            0.90
+        );
+
+        // A frame alone in its own moment: the time-burst rule is gone, and the
+        // frame's own sharpness is the floor the AF area may lift it above.
         lib.sql(
-            "UPDATE images SET burst_key=2,rating=1.0,sharpness_whole=NULL WHERE id=?",
+            "UPDATE images SET burst_key=2,sharpness_whole=NULL,af_sharpness=0.42,rating=0.30 WHERE id=?",
             [bare],
         );
         assert_eq!(rate_missed_frames(&lib.db(), lib.job).unwrap(), 1);
         assert_eq!(
             lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
-            0.42
+            1.0,
+            "the AF area cannot demote the frame's own sharpness"
         );
 
         // Without the AF score it is a detail shot again: sharpness stands.
@@ -2896,6 +2922,38 @@ mod tests {
         assert_eq!(
             lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
             1.0
+        );
+    }
+
+    #[test]
+    fn a_parked_detections_rating_is_the_floor_when_the_focus_area_reads_lower() {
+        let lib = Lib::new("parked-floor");
+        let frame = lib.frame("parked.jpg", Some(1));
+        let det = lib.detection(frame, "vehicle", 0.9);
+        // The camera focused off the car, so the scan parked it: the frame was
+        // rated on the car at 0.88, the AF area reads 0.50.
+        lib.sql(
+            "UPDATE images SET af_x1=0.1,af_y1=0.1,af_x2=0.3,af_y2=0.3,af_sharpness=0.50,sharpness=0.70 WHERE id=?",
+            [frame],
+        );
+        lib.sql(
+            "UPDATE detections SET bystander=1,af_bystander=1,rating=0.88,cull_reason=NULL WHERE id=?",
+            [det],
+        );
+
+        rate_missed_frames(&lib.db(), lib.job).unwrap();
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [frame]),
+            0.88,
+            "the parked detection's own rating is the floor"
+        );
+
+        // A sharper AF area still lifts the frame.
+        lib.sql("UPDATE images SET af_sharpness=0.95 WHERE id=?", [frame]);
+        rate_missed_frames(&lib.db(), lib.job).unwrap();
+        assert_eq!(
+            lib.one::<f64>("SELECT rating FROM images WHERE id=?", [frame]),
+            0.95
         );
     }
 

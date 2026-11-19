@@ -775,7 +775,10 @@ pub fn cull_frame(
             kind: a.kind,
         })
         .filter(|af| afsubject::usable(*af, (fw, fh), &boxes));
-    let af_px = af.map(|af| af.area);
+    // The area a detected subject's score may be checked against: usable, and
+    // big enough that a body's single small cell is not a second opinion. The
+    // same area still rescues the frame below.
+    let af_opinion_area = af.and_then(|af| afsubject::opinion(af, (fw, fh), &boxes));
 
     let mut subjects = Vec::new();
     for det in &found {
@@ -811,9 +814,10 @@ pub fn cull_frame(
             let worst = if tile < 0.80 { blur.worst } else { blur.whole };
             let detection =
                 sharpness::rating_from_blur(worst, sharpness::BlurStrictness::parse(&strictness));
-            // The camera's focus area, when it sits on this subject, is a
-            // second opinion that can only lower the score (see `afsubject`).
-            let af_opinion = af_px
+            // The camera's focus area, when it sits on this subject and is big
+            // enough to measure one with, is a second opinion that can only
+            // lower the score (see `afsubject`).
+            let af_opinion = af_opinion_area
                 .filter(|af| afsubject::holds_middle(det.bbox, *af))
                 .and_then(|af| afsubject::rate_box(&grey, af, &strictness));
             if let Some(score) = rescore::second_opinion(detection, af_opinion) {
@@ -1012,30 +1016,37 @@ pub fn cull_frame(
             focus.measured.then_some(focus.score)
         }
     };
-    // Where the camera focused outside every detection, the focus area is the
-    // subject: the frame is rated on it and the detections are bystanders.
-    let af_sharpness = afsubject::apply(&mut subjects, &grey, af, &strictness).subject();
-    // A pan's frame rating reads the picture, not the car; the subjects keep
-    // their own ratings, which is what picks the keeper of a burst.
-    let panning = subjects
+    // The frame as the detector and the whole-frame path read it, measured
+    // before the camera's word can park any detection, so a rescue below has a
+    // real floor to stand on.
+    let detected_panning = subjects
         .iter()
-        .any(|s| !s.bystander && matches!(s.region_type, "vehicle" | "person") && s.panning);
-    let pan_share = panning
+        .any(|s| matches!(s.region_type, "vehicle" | "person") && s.panning);
+    let share_measured = detected_panning
         .then(|| sharpness::frame_sharp_share(&grey))
         .flatten();
     let rated: Vec<_> = subjects
         .iter()
-        .filter(|s| !s.bystander)
         .map(|s| (s.region_type, s.bbox, s.rating))
         .collect();
-    let rating = match af_sharpness {
-        Some(score) => score,
-        None => pan_capped(
-            frame_rating(preset.profile(), settings.include_people, &rated, whole),
-            panning,
-            pan_share,
-        ),
-    };
+    let detected = pan_capped(
+        frame_rating(preset.profile(), settings.include_people, &rated, whole),
+        detected_panning,
+        share_measured,
+    );
+    // Where the camera focused outside every detection, the focus area is the
+    // subject: the detections are bystanders and the frame is rescued to its
+    // score, never dragged down by it (see `afsubject::rescue`).
+    let af_sharpness = afsubject::apply(&mut subjects, &grey, af, &strictness).subject();
+    let rating = afsubject::rescue(detected, af_sharpness);
+    // A pan's frame rating reads the picture, not the car; the subjects keep
+    // their own ratings, which is what picks the keeper of a burst. A frame the
+    // camera focused elsewhere is not a pan, and the share is the same
+    // measurement the detected rating used.
+    let panning = subjects
+        .iter()
+        .any(|s| !s.bystander && matches!(s.region_type, "vehicle" | "person") && s.panning);
+    let pan_share = panning.then_some(share_measured).flatten();
     let stars = sharpness::stars_for(rating);
     // Exposure on the main subject, so a backlit rider's clipped whites are
     // told from a blown sky. A frame the focus area rates is of that area.

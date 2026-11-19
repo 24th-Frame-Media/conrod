@@ -541,7 +541,9 @@ fn measure_frame(
             kind,
         })
         .filter(|af| afsubject::usable(*af, (fw, fh), &boxes));
-    let af_px = af.map(|af| af.area);
+    // The same area may rescue the frame, but only a big enough one may be a
+    // detected subject's second opinion.
+    let af_opinion = af.and_then(|af| afsubject::opinion(af, (fw, fh), &boxes));
     let mut out = Vec::new();
     let mut panning = false;
     for s in subjects {
@@ -591,11 +593,12 @@ fn measure_frame(
             // this subject: its whole-box edge blur needs no centre-60% gate
             // (the AF box is already the subject, and the detection box's
             // margins are exactly what let a sharp background vouch for a
-            // smeared car). It is a second opinion only: on a heavily blurred
-            // car it reads worse and lowers the score, but it can also read
-            // sharper than the detection box, and must not vouch for a frame the
+            // smeared car). It is a second opinion only, and only when it is
+            // big enough to measure a subject with: on a heavily blurred car it
+            // reads worse and lowers the score, but it can also read sharper
+            // than the detection box, and must not vouch for a frame the
             // detection box found soft (B1000_4218 read 0.984 that way).
-            let af = af_px
+            let af = af_opinion
                 .filter(|af| afsubject::holds_middle(bbox, *af))
                 .and_then(|af| afsubject::rate_box(&grey, af, &cfg.effective_blur()));
             if let Some(score) = second_opinion(detection, af) {
@@ -664,6 +667,8 @@ struct Frame {
     pan_share: Option<f64>,
     /// Whether any vehicle or person of the frame is a held pan.
     panning: bool,
+    /// The stored AF rating, when the camera's focus area was the subject.
+    af_sharpness: Option<f64>,
 }
 
 fn write(d: &Desktop, batch: &[(i64, Outcome)]) -> Result<()> {
@@ -705,7 +710,7 @@ pub(crate) fn run(
     let profile = ScanProfile::parse(&cfg.scan_profile);
     let found = rows(
         &lock(&d.reader),
-        "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.features, d.heuristic, d.panning, d.rating, COALESCE(d.bystander,0) AS bystander, i.width, i.height, i.sharpness AS whole, i.pan_share FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.id",
+        "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.features, d.heuristic, d.panning, d.rating, COALESCE(d.bystander,0) AS bystander, i.width, i.height, i.sharpness AS whole, i.pan_share, i.af_sharpness FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.id",
         [job],
     )?;
     let total = found.len() as u64;
@@ -733,6 +738,7 @@ pub(crate) fn run(
         };
         frame.whole = row["whole"].as_f64();
         frame.pan_share = row["pan_share"].as_f64();
+        frame.af_sharpness = row["af_sharpness"].as_f64();
         if matches!(region, "vehicle" | "person") && row["panning"].as_i64() == Some(1) {
             frame.panning = true;
         }
@@ -812,8 +818,13 @@ pub(crate) fn run(
                 .unwrap_or(0.0);
             // The frame's rating says how the picture reads; a pan's is capped
             // by how much of the frame is sharp. The subjects keep their own
-            // ratings, which is what picks the keeper.
-            let rating = crate::pan_capped(rating, frame.panning, frame.pan_share);
+            // ratings, which is what picks the keeper. The camera's focus area
+            // rescues the frame (`afsubject::rescue`): it can lift a frame the
+            // detector only found background in, never lower this number.
+            let rating = crate::afsubject::rescue(
+                crate::pan_capped(rating, frame.panning, frame.pan_share),
+                frame.af_sharpness,
+            );
             tx.execute(
                 "UPDATE images SET rating=? WHERE id=?",
                 params![rating, image],
