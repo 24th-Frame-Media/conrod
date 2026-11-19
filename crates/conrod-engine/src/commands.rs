@@ -352,6 +352,24 @@ pub struct BenchRunArgs {
     pub models: Vec<BenchModel>,
 }
 
+/// `lightroom_pending`: which bridge folder to list. `in` is the default.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LightroomPendingArgs {
+    pub dir: Option<String>,
+}
+
+/// `lightroom_import`: the plugin's packages, or an `.lrcat` path instead.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LightroomImportArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    /// An absolute path to a Lightroom Classic catalog, read read-only.
+    #[serde(default)]
+    pub catalog: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", content = "args", rename_all = "snake_case")]
 pub enum Command {
@@ -443,6 +461,12 @@ pub enum Command {
     DescribeImage {
         path: String,
     },
+    /// Write the album's verdicts to `bridge\out` for the Conrod Bridge plugin.
+    LightroomExport(JobArgs),
+    /// Packages waiting in the bridge (`dir`: "in" by default, or "out").
+    LightroomPending(LightroomPendingArgs),
+    /// Apply Lightroom's flags from `bridge\in`, or from a `.lrcat` when given.
+    LightroomImport(LightroomImportArgs),
 }
 
 impl Command {
@@ -462,6 +486,45 @@ impl Command {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_lightroom_bridge_commands_parse_their_arguments() {
+        let Ok(Command::LightroomExport(a)) =
+            Command::parse("lightroom_export", json!({"jobId": 7}))
+        else {
+            panic!()
+        };
+        assert_eq!(a.job_id, 7);
+        assert!(Command::parse("lightroom_export", json!({})).is_err());
+        assert!(Command::parse("lightroom_export", json!({"jobId": 0})).is_err());
+
+        let Ok(Command::LightroomPending(a)) = Command::parse("lightroom_pending", json!({}))
+        else {
+            panic!()
+        };
+        assert_eq!(a.dir, None, "the reader defaults to in");
+        let Ok(Command::LightroomPending(a)) =
+            Command::parse("lightroom_pending", json!({"dir": "out"}))
+        else {
+            panic!()
+        };
+        assert_eq!(a.dir.as_deref(), Some("out"));
+
+        let Ok(Command::LightroomImport(a)) =
+            Command::parse("lightroom_import", json!({"jobId": 7}))
+        else {
+            panic!()
+        };
+        assert_eq!((a.job_id, a.catalog), (7, None));
+        let Ok(Command::LightroomImport(a)) = Command::parse(
+            "lightroom_import",
+            json!({"jobId": 7, "catalog": "C:\\Photos\\Lightroom.lrcat"}),
+        ) else {
+            panic!()
+        };
+        assert_eq!(a.catalog.as_deref(), Some("C:\\Photos\\Lightroom.lrcat"));
+        assert!(Command::parse("lightroom_import", json!({"jobId": 0})).is_err());
+    }
 
     #[test]
     fn the_wire_format_parses_and_bad_arguments_say_which() {
