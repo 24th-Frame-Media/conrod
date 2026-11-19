@@ -110,8 +110,8 @@ fn main() -> Result<(), String> {
                 (a.y2 * 1e3).round() / 1e3
             ]),
             result.af.and_then(|a| a.mode),
-            record.map_or(0, |r| r.valid),
-            record.map_or(0, |r| r.points),
+            record.as_ref().map_or(0, |r| r.valid),
+            record.as_ref().map_or(0, |r| r.points),
             result.af_sharpness.map(|s| (s * 1e3).round() / 1e3),
         );
         for s in &result.subjects {
