@@ -379,6 +379,7 @@ impl Desktop {
                 "update_job_settings",
                 "regroup",
                 "reset_all",
+                "reset_album",
                 "reset_detections",
                 "reset_identifications",
                 "reset_ratings",
@@ -516,6 +517,10 @@ impl Desktop {
             }
             Command::ResetRatings(a) => crate::housekeeping::reset_ratings(self, a.job_id),
             Command::ResetDetections(a) => crate::housekeeping::reset_detections(self, a.job_id),
+            Command::ResetAlbum(a) => match a.job_id {
+                Some(job) => crate::housekeeping::reset_album(self, job),
+                None => Err("reset_album needs a jobId: it resets one album".into()),
+            },
             Command::ResetAll {} => crate::housekeeping::reset_all(self),
             Command::OllamaModels(a) => {
                 let host = a

@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useState, type MutableRefObject } from 'react';
-import { Confirm, Empty, Icon } from '../components/basics';
+import { Confirm, Empty, Icon, Modal } from '../components/basics';
 import { Facets } from '../components/Facets';
 import { Inspector } from '../components/Inspector';
 import { PhotoGrid } from '../components/PhotoGrid';
@@ -136,10 +136,48 @@ const byFrame = (stacks: StackView[]) => {
   return map;
 };
 
+/**
+ * The one reset that cannot be undone: a typed RESET guards the red button, and
+ * the dialog says exactly what goes and what stays. Kept apart from `Confirm`
+ * because it has a field, a busy state and a "Cancel first" focus.
+ */
+function ResetAlbumDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => Promise<void> }) {
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ready = typed.trim().toLowerCase() === 'reset' && !busy;
+  return (
+    <Modal label="Reset this album?" className="small-dialog" onClose={() => { if (!busy) onCancel(); }}>
+      <div className="dialog-head"><h3>Reset this album?</h3></div>
+      <div className="dialog-body">
+        <p>This puts <strong>this album</strong> back to the moment it was created. It deletes, here only:</p>
+        <ul className="reset-ledger">
+          <li>every measurement and cull verdict</li>
+          <li>every star, pick and reject</li>
+          <li>every identification (numbers, plates, names)</li>
+          <li>the autofocus reads and the grouping</li>
+        </ul>
+        <p>It keeps the album and its settings, ready to scan again. <strong>Your photos and XMP sidecars are never touched.</strong></p>
+        <label className="reset-confirm">
+          <span>Type <strong>RESET</strong> to confirm</span>
+          <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="RESET"
+            spellCheck={false} autoComplete="off" disabled={busy} aria-label="Type RESET to confirm" />
+        </label>
+      </div>
+      <div className="actions-row end">
+        <button className="ghost" onClick={onCancel} disabled={busy} autoFocus>Cancel</button>
+        <button className="danger solid" disabled={!ready}
+          onClick={() => { setBusy(true); void onConfirm().finally(() => setBusy(false)); }}>
+          {busy ? 'Resetting…' : 'Reset album'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /** Toolbar (album, view, search, stars, sort, actions), facets, the card grid and the inspector. */
 export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite, onJobsChanged, onWatchIdentify, lightroomDev }: Props) {
   const [known, setKnown] = useState<KnownVehicle[]>([]);
-  const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'rescan' | null>(null);
+  const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'reset_album' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -589,6 +627,13 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         });
       },
     },
+    {
+      id: 'reset_all',
+      label: 'Reset all…',
+      danger: true,
+      hint: 'Back to the moment this album was created. Deletes every measurement, star, pick and identification here.',
+      onClick: () => setConfirmReset('reset_album'),
+    },
   ];
 
   const manageItems: MenuItem[] = [
@@ -888,6 +933,20 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         >
           <p>This re-reads every photograph in this album and re-measures its sharpness, so it can take a while. Boxes, stars, rejections, reviews, numbers and names are kept.</p>
         </Confirm>
+      )}
+      {confirmReset === 'reset_album' && (
+        <ResetAlbumDialog
+          onCancel={() => setConfirmReset(null)}
+          onConfirm={async () => {
+            const done = await run(async () => {
+              await call('reset_album', { jobId });
+              await rv.refresh();
+              toast('Album reset to its imported state.');
+              return true;
+            });
+            if (done) setConfirmReset(null);
+          }}
+        />
       )}
       {identifyTask && <IdentificationBanner task={identifyTask} settings={settings} onSkip={onSkipIdentify} />}
       <div className="review-main">

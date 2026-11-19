@@ -471,6 +471,10 @@ pub enum Command {
     ResetIdentifications(AlbumScope),
     ResetDetections(AlbumScope),
     ResetRatings(AlbumScope),
+    /// Return one album to the state just after import: every detection and
+    /// measurement goes, the frames stay and go back to pending. The job id is
+    /// required (one album only), unlike the other resets.
+    ResetAlbum(AlbumScope),
     ResetAll {},
     OllamaModels(OllamaModelsArgs),
     WatchStatus {},
@@ -770,6 +774,15 @@ mod tests {
         };
         assert_eq!(a.job_id, Some(5));
         assert!(Command::parse("reset_detections", json!({"jobId": 0})).is_err());
+        let Ok(Command::ResetAlbum(a)) = Command::parse("reset_album", json!({"jobId": 7})) else {
+            panic!()
+        };
+        assert_eq!(a.job_id, Some(7), "the album is the whole point");
+        assert!(Command::parse("reset_album", json!({"jobId": 0})).is_err());
+        let Ok(Command::ResetAlbum(a)) = Command::parse("reset_album", json!({})) else {
+            panic!()
+        };
+        assert_eq!(a.job_id, None, "the handler refuses a missing album");
         let Ok(Command::CacheClear(a)) = Command::parse("cache_clear", json!({})) else {
             panic!()
         };
