@@ -17,6 +17,20 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// What kind of AF record an area came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AreaKind {
+    /// One point, or a small zone the body reports as one point: the box is
+    /// the point the camera focused on, so it names the subject.
+    #[default]
+    Point,
+    /// A focus grid, such as the R7's 651 cells. The box is the union of the
+    /// cells the camera reported in focus: a depth-of-field map over the
+    /// subject rather than a point on it. `afsubject` only trusts it when the
+    /// detector found nothing but background of its own.
+    Grid,
+}
+
 /// The camera's autofocus area, as fractions of the upright frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AfArea {
@@ -26,6 +40,8 @@ pub struct AfArea {
     pub y2: f64,
     /// The camera's own AF mode number, when it reports one.
     pub mode: Option<u8>,
+    /// Whether this box is one point or the union of a focus grid's cells.
+    pub kind: AreaKind,
 }
 
 /// One exiftool `-n -json -G1` record's tags by bare name: `"Canon:AFAreaWidths"`
@@ -120,8 +136,9 @@ pub fn parse(record: &Value, frame: (u32, u32), orientation: u16) -> Option<AfAr
     let tags = Tags::new(record);
     // Canon's bitmap can name the point the camera used even when the record
     // lists a whole grid (`ValidAFPoints` 651 on an R7) or a nine-point zone:
-    // one bit is one point, and the arrays give its cell.
-    if let Some(area) = canon_bit(&tags, sensor, orientation) {
+    // one bit is one point, and the arrays give its cell. Several bits are the
+    // grid's in-focus cells, boxed together.
+    if let Some(area) = canon_bits(&tags, sensor, orientation) {
         return Some(area);
     }
     // A record naming more than one valid point is a zone or the body's whole
@@ -143,17 +160,17 @@ pub fn parse(record: &Value, frame: (u32, u32), orientation: u16) -> Option<AfAr
         let Some(pixels) = MAKERS[i](&tags, sensor) else {
             continue;
         };
-        if let Some(area) = finish(pixels, sensor, tags.mode(), orientation) {
+        if let Some(area) = finish(pixels, sensor, tags.mode(), orientation, AreaKind::Point) {
             return Some(area);
         }
     }
     None
 }
 
-/// Canon's `AFPointsInFocus` bitmap, when the record names exactly one point:
-/// that point is the one the camera used, and the arrays give its cell. `None`
-/// for no bit or several (a grid names no single point).
-fn canon_bit(tags: &Tags, sensor: (f64, f64), orientation: u16) -> Option<AfArea> {
+/// Canon's `AFPointsInFocus` bitmap, when the record carries one: exactly one
+/// bit is the point the camera used, and several are a focus grid whose
+/// in-focus cells, taken together, are the area. `None` for no bit.
+fn canon_bits(tags: &Tags, sensor: (f64, f64), orientation: u16) -> Option<AfArea> {
     let count = tags
         .first("NumAFPoints")
         .map(|n| n.clamp(0.0, f64::from(u16::MAX)) as u16)
@@ -163,17 +180,30 @@ fn canon_bit(tags: &Tags, sensor: (f64, f64), orientation: u16) -> Option<AfArea
         .into_iter()
         .map(|w| w as i64 as u16)
         .collect();
-    let mut named = crate::canon_af::points(words.into_iter(), count);
-    let one = named.next()?;
-    if named.next().is_some() {
-        return None;
+    let named: Vec<usize> = crate::canon_af::points(words.into_iter(), count).collect();
+    match named.as_slice() {
+        [] => None,
+        [one] => finish(
+            canon_point(tags, sensor, *one)?,
+            sensor,
+            tags.mode(),
+            orientation,
+            AreaKind::Point,
+        ),
+        several => {
+            let cells = several
+                .iter()
+                .map(|&i| canon_point(tags, sensor, i))
+                .collect::<Option<Vec<PixelBox>>>()?;
+            finish(
+                union_of(&cells)?,
+                sensor,
+                tags.mode(),
+                orientation,
+                AreaKind::Grid,
+            )
+        }
     }
-    finish(
-        canon_point(tags, sensor, one)?,
-        sensor,
-        tags.mode(),
-        orientation,
-    )
 }
 
 /// A maker's pixel box, checked and turned into the upright frame's fractions.
@@ -183,6 +213,7 @@ fn finish(
     sensor: (f64, f64),
     mode: Option<u8>,
     orientation: u16,
+    kind: AreaKind,
 ) -> Option<AfArea> {
     if cw <= 0.0 || ch <= 0.0 || x2 <= x1 || y2 <= y1 || !aspect_matches(cw, ch, sensor) {
         return None;
@@ -194,9 +225,23 @@ fn finish(
             x2: x2 / cw,
             y2: y2 / ch,
             mode,
+            kind,
         },
         orientation,
     )
+}
+
+/// The union of several cells of one canvas, in that canvas's pixels.
+fn union_of(cells: &[PixelBox]) -> Option<PixelBox> {
+    let first = cells.first()?;
+    let (mut x1, mut y1, mut x2, mut y2) = (first.2, first.3, first.4, first.5);
+    for cell in &cells[1..] {
+        x1 = x1.min(cell.2);
+        y1 = y1.min(cell.3);
+        x2 = x2.max(cell.4);
+        y2 = y2.max(cell.5);
+    }
+    Some((first.0, first.1, x1, y1, x2, y2))
 }
 
 /// The AF area of a Canon frame, from the record read out of its makernote
@@ -205,11 +250,12 @@ fn finish(
 /// AF image's centre plus the offset with y flipped, as wide and high as the
 /// point says.
 ///
-/// The record's `AFPointsInFocus` bitmap names the point: exactly one bit is
-/// the point the camera used, and it wins over `ValidAFPoints` (a 1500D writes
-/// nine valid points and one focus bit). With no bit set, a record naming more
-/// than one valid point is a zone or a whole grid whose arrays list every point
-/// in it, so it names no area.
+/// The record's `AFPointsInFocus` bitmap decides which of those cells is the
+/// area: exactly one bit is the point the camera used, and it wins over
+/// `ValidAFPoints` (a 1500D writes nine valid points and one focus bit);
+/// several bits are a focus grid, whose in-focus cells are taken together and
+/// boxed. With no bit set, a record naming more than one valid point is a zone
+/// whose arrays list every point in it, so it names no area.
 pub fn from_canon(af: &CanonAf, frame: (u32, u32), orientation: u16) -> Option<AfArea> {
     let (fw, fh) = (f64::from(frame.0), f64::from(frame.1));
     if fw <= 0.0 || fh <= 0.0 || !matches!(orientation, 0 | 1 | 3 | 6 | 8) {
@@ -225,19 +271,23 @@ pub fn from_canon(af: &CanonAf, frame: (u32, u32), orientation: u16) -> Option<A
         (cw, ch) if cw > 0 && ch > 0 => (f64::from(cw), f64::from(ch)),
         _ => sensor,
     };
-    // One bit names the point; none falls back to the first valid point, and a
-    // zone of several valid points names none.
-    let index = match af.sole_focus() {
-        Some(one) => one,
-        None if af.valid > 1 => return None,
-        None => 0,
-    };
-    finish(
-        point_box(canvas, af.point(index)?),
-        sensor,
-        mode,
-        orientation,
-    )
+    let cell = |index: usize| af.point(index).map(|p| point_box(canvas, p));
+    match af.in_focus().collect::<Vec<_>>().as_slice() {
+        // The point the camera used, whatever `ValidAFPoints` claims.
+        [one] => finish(cell(*one)?, sensor, mode, orientation, AreaKind::Point),
+        // A focus grid: the union of the cells it names.
+        several if several.len() > 1 => {
+            let cells = several
+                .iter()
+                .map(|&i| cell(i))
+                .collect::<Option<Vec<PixelBox>>>()?;
+            finish(union_of(&cells)?, sensor, mode, orientation, AreaKind::Grid)
+        }
+        // No bit: one valid point is the point the camera used; a zone of
+        // several valid points names none.
+        _ if af.valid > 1 => None,
+        _ => finish(cell(0)?, sensor, mode, orientation, AreaKind::Point),
+    }
 }
 
 /// One AF point's cell, in the AF canvas's pixels.
@@ -430,6 +480,7 @@ fn to_upright(area: AfArea, orientation: u16) -> Option<AfArea> {
         x2,
         y2,
         mode: area.mode,
+        kind: area.kind,
     })
 }
 
@@ -767,6 +818,7 @@ mod tests {
         focus[8] = 1 << 2; // point 130
         let record = canon_record(651, &cells, &focus);
         let area = parse(&record, R7_FRAME, 1).expect("the point the camera used");
+        assert_eq!(area.kind, AreaKind::Point);
         // The same box the native reader builds from slot 130.
         let native = from_canon(
             &CanonAf {
@@ -796,15 +848,20 @@ mod tests {
     }
 
     #[test]
-    fn several_in_focus_bits_still_name_no_point() {
-        // A grid's cells, taken together, name no single point: unchanged.
+    fn several_in_focus_bits_are_a_grid_union() {
+        // Two cells in a row: the area is the box around both.
         let cells = [(100, 100, -1000, 500), (100, 100, -800, 500)];
         let record = canon_record(9, &cells, &[0b11]);
-        assert_eq!(parse(&record, R7_FRAME, 1), None);
+        let area = parse(&record, R7_FRAME, 1).expect("a grid area");
+        assert_eq!(area.kind, AreaKind::Grid);
+        assert!(near(area.x1 * 6960.0, 3480.0 - 1050.0), "{area:?}");
+        assert!(near(area.x2 * 6960.0, 3480.0 - 750.0), "{area:?}");
+        assert!(near(area.y1 * 4640.0, 2320.0 - 550.0), "{area:?}");
+        assert!(near(area.y2 * 4640.0, 2320.0 - 450.0), "{area:?}");
     }
 
     #[test]
-    fn the_native_reader_takes_the_named_point() {
+    fn the_native_reader_takes_the_named_point_and_boxes_the_grid() {
         let cell = |x| crate::canon_af::AfPoint {
             width: 445,
             height: 631,
@@ -822,6 +879,7 @@ mod tests {
         };
         // The one bit wins over the first slot.
         let area = from_canon(&af, R7_FRAME, 1).expect("the named point");
+        assert_eq!(area.kind, AreaKind::Point);
         assert!(near((area.x1 + area.x2) / 2.0, (3480.0 + 500.0) / 6960.0));
         // No bit: a record with one valid point is that point.
         af.in_focus = vec![0];
@@ -830,9 +888,12 @@ mod tests {
         // No bit and several valid points: a zone, so no area.
         af.valid = 651;
         assert_eq!(from_canon(&af, R7_FRAME, 1), None);
-        // Several bits: still a grid, so still no point.
+        // Several bits: the union, whatever `ValidAFPoints` says.
         af.in_focus = vec![0b110];
-        assert_eq!(from_canon(&af, R7_FRAME, 1), None);
+        let grid = from_canon(&af, R7_FRAME, 1).expect("a grid");
+        assert_eq!(grid.kind, AreaKind::Grid);
+        assert!(near(grid.x1 * 6960.0, 3480.0 + 500.0 - 222.5));
+        assert!(near(grid.x2 * 6960.0, 3480.0 + 900.0 + 222.5));
     }
 
     #[test]

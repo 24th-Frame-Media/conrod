@@ -2803,6 +2803,7 @@ mod tests {
             x2: x + 0.1,
             y2: x + 0.1,
             mode: Some(9),
+            kind: conrod_io::af::AreaKind::Point,
         }
     }
 

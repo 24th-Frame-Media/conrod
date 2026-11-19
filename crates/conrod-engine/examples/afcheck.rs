@@ -97,7 +97,7 @@ fn main() -> Result<(), String> {
         )
         .map_err(|e| format!("{name}: {e}"))?;
         println!(
-            "\n{name} · taken {:.1} · stored rating {:.3} · NEW rating {:.3} · {:.3} whole · {} stars · af {:?} (mode {:?}, {}/{} points) · af_sharpness {:?}",
+            "\n{name} · taken {:.1} · stored rating {:.3} · NEW rating {:.3} · {:.3} whole · {} stars · af {:?} (mode {:?}, {:?}, {}/{} points) · af_sharpness {:?} · biggest detection {:.3}",
             taken.unwrap_or(f64::NAN),
             stored.unwrap_or(f64::NAN),
             result.rating,
@@ -110,9 +110,19 @@ fn main() -> Result<(), String> {
                 (a.y2 * 1e3).round() / 1e3
             ]),
             result.af.and_then(|a| a.mode),
+            result.af.map(|a| a.kind),
             record.as_ref().map_or(0, |r| r.valid),
             record.as_ref().map_or(0, |r| r.points),
             result.af_sharpness.map(|s| (s * 1e3).round() / 1e3),
+            result
+                .subjects
+                .iter()
+                .filter(|s| matches!(s.region_type, "vehicle" | "person"))
+                .map(|s| {
+                    let (w, h) = (result.size.0 as f64, result.size.1 as f64);
+                    (s.bbox[2] - s.bbox[0]).max(0.0) * (s.bbox[3] - s.bbox[1]).max(0.0) / (w * h)
+                })
+                .fold(0.0f64, f64::max),
         );
         for s in &result.subjects {
             println!(
