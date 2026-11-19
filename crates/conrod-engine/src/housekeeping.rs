@@ -14,16 +14,13 @@
 //! embedding's source, so it goes only with its detection).
 use crate::commands::CacheClearArgs;
 use crate::desktop::{rows, Desktop, Result};
+use crate::err;
 use crate::library::require_job;
 use crate::lock;
 use rusqlite::{params_from_iter, ToSql};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
-
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {

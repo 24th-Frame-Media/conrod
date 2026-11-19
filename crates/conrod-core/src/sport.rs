@@ -10,7 +10,7 @@
 //! `conrod-engine`'s `sporttest` measures these rules against a real rodeo
 //! shoot; every constant below is stated there in rates before it is trusted.
 
-/// COCO ids this module reads. `conrod-vision::detect` has the same ones.
+/// COCO ids this module reads. `conrod-vision::detect` knows the same classes.
 pub const PERSON: usize = 0;
 pub const HORSE: usize = 17;
 pub const COW: usize = 19;

@@ -1,5 +1,6 @@
 //! Entry lists and the cross-album vehicle registry.
 use crate::desktop::{rows, Desktop, Result};
+use crate::err;
 use crate::lock;
 use conrod_core::{
     mapping::NumberMap,
@@ -8,9 +9,6 @@ use conrod_core::{
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 fn row(v: &Value) -> Row {
     let text = |k: &str| v[k].as_str().map(str::to_owned);
     Row {

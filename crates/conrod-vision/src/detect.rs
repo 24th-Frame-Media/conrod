@@ -19,8 +19,9 @@ const PAD: f32 = 114.0 / 255.0;
 /// Offsets each class apart so NMS never compares boxes of different classes.
 const CLASS_OFFSET: f64 = 7680.0;
 
-/// COCO ids.
-pub const PERSON: usize = 0;
+/// COCO ids. The person id is `conrod-core`'s too, so the sport rules and the
+/// detector cannot disagree about which class is a person.
+pub use conrod_core::sport::PERSON;
 pub const VEHICLES: [usize; 4] = [2, 3, 5, 7];
 pub const PETS: [usize; 2] = [15, 16];
 /// Every COCO animal: bird, cat, dog, horse, sheep, cow, elephant, bear,

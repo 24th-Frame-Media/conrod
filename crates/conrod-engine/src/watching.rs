@@ -8,6 +8,7 @@
 use crate::commands::WatchArgs;
 use crate::desktop::Desktop;
 use crate::lock;
+use crate::now;
 use conrod_io::watch::{self, Watcher};
 use rusqlite::OptionalExtension;
 use serde::Serialize;
@@ -214,13 +215,6 @@ fn update(d: &Desktop, stop: &Arc<AtomicBool>, change: impl FnOnce(&mut WatchSta
     {
         change(&mut w.status);
     }
-}
-
-fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64()
 }
 
 fn run(d: Arc<Desktop>, mut watcher: Watcher, job: i64, interval: f64, stop: Arc<AtomicBool>) {

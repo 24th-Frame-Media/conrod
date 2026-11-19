@@ -1,6 +1,7 @@
 //! The slower identification and metadata lanes. Work is visible and cancellable.
 use crate::analyze::{self, Context, Readers};
 use crate::desktop::{rows, Desktop, Result};
+use crate::err;
 use crate::identify_live::{self, IdentifyLive};
 use crate::lock;
 use crate::setup;
@@ -28,10 +29,6 @@ use std::{
     },
     time::Instant,
 };
-
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 
 // All identification and embedding entry points share this rule. A manual
 // rating can rescue an automatic cull, but never a deliberate reject.

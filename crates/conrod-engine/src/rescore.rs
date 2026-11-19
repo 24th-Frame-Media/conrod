@@ -11,6 +11,7 @@
 //! pan / background / sharp-end facts, which come from the hand-built measure.
 //! Hand stars, rejects and reviews are in other columns and are never written.
 use crate::desktop::{rows, Desktop, Result};
+use crate::err;
 use crate::library::require_job;
 use crate::lock;
 use crate::operations::{launch, settings};
@@ -29,10 +30,6 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 
 /// What the scan stored about one subject.
 pub struct Stored<'a> {
@@ -196,9 +193,8 @@ fn remeasure_pixels(
         AtomicUsize::new(0),
         AtomicUsize::new(0),
     );
-    let workers = std::thread::available_parallelism()
-        .map_or(4, |n| n.get() * 4 / 5)
-        .clamp(2, 16);
+    // The album's own worker setting decides, not a private copy of the default.
+    let workers = cfg.cull_workers() as usize;
     let pan_ok = ShootPreset::parse(&cfg.scan_profile).pan_compatible();
     let failed = AtomicBool::new(false);
     let first_error: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);

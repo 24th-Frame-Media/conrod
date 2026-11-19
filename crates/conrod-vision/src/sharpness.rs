@@ -19,7 +19,7 @@ pub const WORKING_EDGE: usize = 1024;
 pub const PAN_MARGIN: f64 = 0.15;
 /// Background streak coherence that marks a frame as a pan when there is no
 /// subject box to compare against (same bar the engine's pan flag uses).
-pub const PAN_COHERENCE: f64 = 0.80;
+pub use crate::streaks::PAN_COHERENCE;
 /// A tile at or above this normalised score counts as sharp when measuring how
 /// much of a panning frame is sharp.
 pub const PAN_SHARE_SHARP: f64 = 0.75;
@@ -53,8 +53,7 @@ pub const STAR_BANDS: [(f64, u8); 5] = [(0.958, 5), (0.825, 4), (0.728, 3), (0.6
 /// "fair" -- is the bar. A frame the photographer starred by hand always counts,
 /// whatever it measures.
 pub const KEEPER_MIN_RATING: f64 = STAR_BANDS[2].0;
-pub const SHARP_AT: f64 = 0.825;
-pub const BLURRED_BELOW: f64 = 0.606;
+pub use conrod_core::settings::{BLURRED_BELOW, SHARP_AT};
 /// Edge-blur (`sigma_worst`, normalised to
 /// [`conrod_vision::edgeblur::REFERENCE_EDGE`]) at or below which a subject is
 /// plainly sharp. Deliberately low: the ramp from here to [`BLUR_AT_SHARP`]

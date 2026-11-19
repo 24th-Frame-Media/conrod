@@ -74,10 +74,9 @@ pub const TILT_LIMIT_DEG: f64 = 1.0;
 /// source: two degrees is a wall that visibly leans in a wide frame.
 pub const KEYSTONE_LIMIT_DEG: f64 = 2.0;
 
-/// Long edge (px) the angles are measured at. The same working plane as the
-/// streak measure: the arrangement of edges is what matters, not their native
-/// width.
-const FEATURE_EDGE: usize = 768;
+// The arrangement of edges is what matters, not their native width, so both
+// this measure and the streak measure work on the same 768 px plane.
+use crate::streaks::FEATURE_EDGE;
 /// Histogram bin width, degrees.
 const BIN_DEG: f64 = 0.5;
 /// How far from vertical (or horizontal) an edge may be and still count.

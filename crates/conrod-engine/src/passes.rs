@@ -4,6 +4,7 @@
 //! `pipeline.pick_of_pass`, `pipeline.embed_missing` and `grouping.consolidate`.
 use crate::desktop::{rows, Desktop, Result};
 use crate::edits::attributes_of;
+use crate::err;
 use crate::library::require_job;
 use crate::lock;
 use crate::operations::{launch, ml_eligible, settings, ML_ELIGIBLE};
@@ -21,10 +22,6 @@ use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 
 /// The `region_type` a profile's subject kind is stored under.
 pub(crate) fn region_name(kind: Subject) -> &'static str {

@@ -487,16 +487,21 @@ fn entry_list(path: &str) -> (Option<Arc<EntryList>>, Option<String>) {
         return (None, None);
     }
     let stamp = std::fs::metadata(path).and_then(|m| m.modified()).ok();
-    let mut cache = ENTRY_LIST.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((p, t, list)) = cache.as_ref() {
-        if p == path && *t == stamp {
-            return (list.clone(), None);
+    {
+        let cache = ENTRY_LIST.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((p, t, list)) = cache.as_ref() {
+            if p == path && *t == stamp {
+                return (list.clone(), None);
+            }
         }
     }
+    // Read and parse outside the lock: a second crop racing here may load the
+    // same file too, and the last one stored wins.
     let (list, warning) = match entrylist::load(Path::new(path)) {
         Ok(list) => (Some(Arc::new(list)), None),
         Err(e) => (None, Some(format!("entry list ignored: {e}"))),
     };
+    let mut cache = ENTRY_LIST.lock().unwrap_or_else(|e| e.into_inner());
     *cache = Some((path.to_string(), stamp, list.clone()));
     (list, warning)
 }

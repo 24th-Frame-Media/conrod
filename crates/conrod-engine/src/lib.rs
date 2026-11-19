@@ -27,6 +27,19 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Any error as the string the IPC layer sends.
+pub(crate) fn err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+/// Seconds since the Unix epoch, 0 if the clock reads before it.
+pub(crate) fn now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+}
+
 pub mod analyze;
 pub mod bench;
 #[cfg(test)]
