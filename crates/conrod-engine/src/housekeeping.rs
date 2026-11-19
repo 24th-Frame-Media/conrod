@@ -411,8 +411,10 @@ pub fn reset_album(d: &Desktop, job: i64) -> Result<Value> {
                 [job],
             )
             .map_err(err)?;
-        // `create_job` leaves a new album 'scanning', ready for its first scan.
-        tx.execute("UPDATE jobs SET status='scanning' WHERE id=?", [job])
+        // The import-only path leaves a fresh album 'indexed' (the CREATE TABLE
+        // default of 'scanning' is not what the person ever sees); anything else
+        // would read as a scan in flight with no Resume.
+        tx.execute("UPDATE jobs SET status='indexed' WHERE id=?", [job])
             .map_err(err)?;
         tx.commit().map_err(err)?;
         (gone, frames)
@@ -857,8 +859,12 @@ mod tests {
             .unwrap();
         assert_eq!(
             (job_status.as_str(), job_settings.as_str()),
-            ("scanning", settings.as_str()),
-            "ready for a first scan again, with the same settings"
+            ("indexed", settings.as_str()),
+            "the import-only state, with the same settings"
+        );
+        assert_ne!(
+            job_status, "scanning",
+            "a reset album is not a scan in flight"
         );
         let left: i64 = lib.one(
             "SELECT (SELECT COUNT(*) FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?)
