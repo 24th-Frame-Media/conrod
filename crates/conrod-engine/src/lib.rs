@@ -73,7 +73,6 @@ mod sporttest;
 pub mod taste;
 #[cfg(test)]
 mod testkit;
-pub mod training;
 #[cfg(test)]
 mod vlmeval;
 pub mod watching;
