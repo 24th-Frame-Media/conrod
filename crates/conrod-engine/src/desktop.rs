@@ -1889,7 +1889,9 @@ impl Desktop {
             cfg.grouping_pause,
             cfg.grouping_keep_pans,
         );
-        let db = lock(&self.db);
+        // The grouping is worked out on the reader connection, so the writer
+        // is only held to store the result.
+        let db = lock(&self.reader);
         let images = rows(
             &db,
             "SELECT id,path,camera,taken_at,rating,width,height,exposure_time,exposure_bias,f_number,focal_length,focus_distance FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 ORDER BY path",
@@ -1992,7 +1994,8 @@ impl Desktop {
             }
         }
         // What each frame looks like, measured from its thumbnail once and kept.
-        let looks = crate::looks::load(&db, job, &fractions)?;
+        drop(db);
+        let looks = crate::looks::load(&self.reader, &self.db, job, &fractions)?;
         let mut order: Vec<usize> = (0..frames.len()).collect();
         order.sort_by(|&a, &b| {
             frames[a]
@@ -2083,6 +2086,7 @@ impl Desktop {
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         let moments = key.iter().collect::<std::collections::BTreeSet<_>>().len();
+        let db = lock(&self.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         for (i, frame) in frames.iter().enumerate() {
             let set = sets[i];

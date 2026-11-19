@@ -27,6 +27,62 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Interchangeable model sessions that worker lanes borrow one at a time, so
+/// lanes do not queue behind a single session. Every item is loaded from the
+/// same files and keeps no state between calls.
+pub struct Pool<T> {
+    items: Vec<Mutex<T>>,
+    turn: AtomicUsize,
+}
+
+impl<T> Pool<T> {
+    pub(crate) fn new(items: Vec<T>) -> Self {
+        assert!(!items.is_empty(), "a pool needs at least one item");
+        Pool {
+            items: items.into_iter().map(Mutex::new).collect(),
+            turn: AtomicUsize::new(0),
+        }
+    }
+
+    /// A free item if there is one, else wait on the next in turn.
+    pub fn lock(&self) -> MutexGuard<'_, T> {
+        let start = self.turn.fetch_add(1, Ordering::Relaxed);
+        for k in 0..self.items.len() {
+            match self.items[(start + k) % self.items.len()].try_lock() {
+                Ok(guard) => return guard,
+                Err(std::sync::TryLockError::Poisoned(e)) => return e.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {}
+            }
+        }
+        lock(&self.items[start % self.items.len()])
+    }
+}
+
+/// `n` face detectors (at least one); a failure past the first just makes
+/// the pool smaller.
+pub(crate) fn load_faces_pool(n: usize) -> Result<Pool<FaceDetector>, String> {
+    let mut items = vec![load_faces()?];
+    while items.len() < n {
+        match load_faces() {
+            Ok(d) => items.push(d),
+            Err(_) => break,
+        }
+    }
+    Ok(Pool::new(items))
+}
+
+/// `n` expression models, or `None` when they are not installed.
+pub(crate) fn load_expression_pool(n: usize) -> Option<Pool<expression::ExpressionModel>> {
+    let mut items = vec![load_expression()?];
+    while items.len() < n {
+        match load_expression() {
+            Some(m) => items.push(m),
+            None => break,
+        }
+    }
+    Some(Pool::new(items))
+}
+
 /// Any error as the string the IPC layer sends.
 pub(crate) fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -345,14 +401,14 @@ pub(crate) fn load_faces() -> Result<FaceDetector, String> {
 /// The blendshape expression model, when its two ONNX files are installed.
 /// Optional by design: a shoot with no expression models is scanned exactly as
 /// before, on the binary OCEC eye verdict.
-pub(crate) fn load_expression() -> Option<Mutex<expression::ExpressionModel>> {
+pub(crate) fn load_expression() -> Option<expression::ExpressionModel> {
     use conrod_core::models;
     let landmarks = models::find(expression::LANDMARKS)?;
     let mut model = expression::ExpressionModel::load(&landmarks).ok()?;
     if let Some(blendshapes) = models::find(expression::BLENDSHAPES) {
         let _ = model.load_blendshapes(&blendshapes);
     }
-    Some(Mutex::new(model))
+    Some(model)
 }
 
 /// The cull reason of a face whose eyes are shut.
@@ -382,8 +438,8 @@ pub(crate) fn face_subjects(
     image: &Rgb,
     grey: &Gray,
     people: impl IntoIterator<Item = [f64; 4]>,
-    detector: &Mutex<FaceDetector>,
-    expression: Option<&Mutex<expression::ExpressionModel>>,
+    detector: &Pool<FaceDetector>,
+    expression: Option<&Pool<expression::ExpressionModel>>,
     settings: &Settings,
     strictness: &str,
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
@@ -396,13 +452,13 @@ pub(crate) fn face_subjects(
             continue;
         }
         let crop = image.crop(x0, y0, x1.min(fw), y1.min(fh));
-        let found = lock(detector).detect(&crop)?;
+        let found = detector.lock().detect(&crop)?;
         for face in found {
-            let open = lock(detector).eyes_open(&crop, &face);
+            let open = detector.lock().eyes_open(&crop, &face);
             // When the blendshape mesh agrees with the detector, its continuous
             // eye-open replaces the binary OCEC verdict.
             let judged = expression.and_then(|model| {
-                let mut model = lock(model);
+                let mut model = model.lock();
                 model.read(&crop, &face).ok()
             });
             let closed = match judged {
@@ -725,16 +781,18 @@ pub fn cull_frame(
     settings: &Settings,
     profile: ScanProfile,
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
-    faces: Option<&Mutex<FaceDetector>>,
+    faces: Option<&Pool<FaceDetector>>,
     // The blendshape expression model; `None` when its files are absent.
-    expression: Option<&Mutex<expression::ExpressionModel>>,
+    expression: Option<&Pool<expression::ExpressionModel>>,
     quality: Option<&Mutex<conrod_vision::quality::QualityModel>>,
     step: impl Fn(&'static str),
 ) -> Result<FrameResult, String> {
     let preset = ShootPreset::parse(&settings.scan_profile);
     step("read");
-    let frame = raw::read(path)?;
+    let mut frame = raw::read(path)?;
     let image = Rgb::decode_jpeg(&frame.preview, 1)?.orient(frame.orientation);
+    // The encoded preview has no other reader: free it before the long tail.
+    drop(std::mem::take(&mut frame.preview));
     // Resize outside the lock: only the network itself is serial.
     let input = detect::letterbox(&image);
     step("detect:wait");
@@ -1225,10 +1283,10 @@ pub(crate) fn scan_files_filtered(
         let faces =
             if ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people) {
                 let task = hub.start("Loading face detector", 0);
-                match load_faces() {
-                    Ok(detector) => {
+                match load_faces_pool(detectors.len()) {
+                    Ok(pool) => {
                         task.finish();
-                        Some(Mutex::new(detector))
+                        Some(pool)
                     }
                     Err(e) => {
                         *lock(&failure) = Some(e.clone());
@@ -1242,7 +1300,7 @@ pub(crate) fn scan_files_filtered(
         // Expression is optional: without the landmarker and blendshape files
         // the scan silently keeps the binary OCEC eye verdict.
         let expression = if faces.is_some() {
-            load_expression()
+            load_expression_pool(detectors.len())
         } else {
             None
         };

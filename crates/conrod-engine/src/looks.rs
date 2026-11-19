@@ -7,25 +7,30 @@
 //! written back, so an album scanned before this existed works without a
 //! re-scan, and every later regroup only reads text.
 use crate::desktop::{rows, Result};
-use crate::err;
+use crate::{err, lock};
 use conrod_core::bursts::Look;
 use conrod_vision::{imageops::Rgb, look};
 use rayon::prelude::*;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
 
 /// The look of every visible frame of the album that has a readable
 /// thumbnail. `boxes` holds each frame's main subject box as fractions of the
 /// frame; a frame not in it has no subject. The returned looks carry
 /// `vehicle: false`: whether the subject is a vehicle is the caller's to say.
+///
+/// Each lock is held only for its own statements: `reader` for the query,
+/// `writer` for storing the looks it had to measure, never across the decoding.
 pub(crate) fn load(
-    conn: &Connection,
+    reader: &Mutex<Connection>,
+    writer: &Mutex<Connection>,
     job: i64,
     boxes: &HashMap<i64, [f64; 4]>,
 ) -> Result<HashMap<i64, Look>> {
     let stored = rows(
-        conn,
+        &lock(reader),
         "SELECT id,thumb_path,look FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 AND thumb_path IS NOT NULL",
         [job],
     )?;
@@ -55,6 +60,7 @@ pub(crate) fn load(
         })
         .collect();
     if !measured.is_empty() {
+        let conn = lock(writer);
         let tx = conn.unchecked_transaction().map_err(err)?;
         for (id, stored) in &measured {
             tx.execute(
@@ -115,21 +121,24 @@ mod tests {
         );
         let boxes = HashMap::from([(a, [0.357, 0.393, 0.643, 0.607])]);
 
-        let db = lib.db();
-        let first = load(&db, lib.job, &boxes).unwrap();
-        let stored: String = db
-            .query_row("SELECT look FROM images WHERE id=?", [a], |r| r.get(0))
-            .unwrap();
+        let (reader, writer) = (&lib.d().reader, &lib.d().db);
+        let first = load(reader, writer, lib.job, &boxes).unwrap();
+        let stored: String = lib.one("SELECT look FROM images WHERE id=?", [a]);
         assert!(look::unpack(&stored).is_some(), "written back: {stored}");
         assert!(first[&a].subject.is_some());
 
         // Nothing to measure now: even a deleted thumbnail does not matter.
         std::fs::remove_file(&thumb).unwrap();
-        assert_eq!(load(&db, lib.job, &boxes).unwrap()[&a], first[&a]);
+        assert_eq!(
+            load(reader, writer, lib.job, &boxes).unwrap()[&a],
+            first[&a]
+        );
 
         // A subject that moved is another look: with no thumbnail to read, the
         // frame simply has none, rather than keeping a stale one.
         let moved = HashMap::from([(a, [0.1, 0.1, 0.3, 0.3])]);
-        assert!(!load(&db, lib.job, &moved).unwrap().contains_key(&a));
+        assert!(!load(reader, writer, lib.job, &moved)
+            .unwrap()
+            .contains_key(&a));
     }
 }

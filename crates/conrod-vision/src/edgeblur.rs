@@ -231,16 +231,14 @@ pub fn dir_bin(rx: f32, ry: f32) -> u8 {
     }
 }
 
-fn pick(sorted: &[f32], p: f32) -> f32 {
-    if sorted.is_empty() {
+/// The `p` quantile of `v` (reorders `v`). Same element a full `total_cmp`
+/// sort would put at that rank, found by selection in O(n).
+fn pick(v: &mut [f32], p: f32) -> f32 {
+    if v.is_empty() {
         return f32::NAN;
     }
-    let i = ((sorted.len() - 1) as f32 * p).round() as usize;
-    sorted[i.min(sorted.len() - 1)]
-}
-
-fn sorted(v: &mut [f32]) {
-    v.sort_by(f32::total_cmp);
+    let i = (((v.len() - 1) as f32 * p).round() as usize).min(v.len() - 1);
+    *v.select_nth_unstable_by(i, f32::total_cmp).1
 }
 
 /// Integer factor that brings `w * h` under `max_pixels`: 1 when it already
@@ -438,10 +436,8 @@ fn estimate(
             }
         }
     }
-    sorted(&mut mags);
-    sorted(&mut laps);
-    let p98 = pick(&mags, 0.98);
-    let noise = NOISE_MULT * GRAD_OVER_LAP * pick(&laps, 0.20) / LAP_P20_OVER_SIGMA;
+    let p98 = pick(&mut mags, 0.98);
+    let noise = NOISE_MULT * GRAD_OVER_LAP * pick(&mut laps, 0.20) / LAP_P20_OVER_SIGMA;
     let floor = if p98.is_nan() {
         return EdgeBlur::unmeasured(0);
     } else {
@@ -488,8 +484,7 @@ fn estimate(
     }
 
     let mut all: Vec<f32> = edges.iter().map(|&(s, _)| s).collect();
-    sorted(&mut all);
-    let sigma = f64::from(pick(&all, 0.2)) * kf;
+    let sigma = f64::from(pick(&mut all, 0.2)) * kf;
 
     // Per direction bin: the same 20th percentile, for bins with enough edges.
     let need = 40.max((n as f32 * 0.04).round() as usize);
@@ -501,8 +496,7 @@ fn estimate(
             .map(|&(s, _)| s)
             .collect();
         if v.len() >= need {
-            sorted(&mut v);
-            *slot = f64::from(pick(&v, 0.2)) * kf;
+            *slot = f64::from(pick(&mut v, 0.2)) * kf;
         }
     }
     let valid: Vec<(usize, f64)> = dirs
@@ -612,6 +606,63 @@ mod tests {
             }
         }
         Gray::new(w, h, out)
+    }
+
+    #[test]
+    fn selection_pick_equals_full_sort_pick() {
+        fn sort_pick(v: &[f32], p: f32) -> f32 {
+            let mut s = v.to_vec();
+            s.sort_by(f32::total_cmp);
+            let i = ((s.len() - 1) as f32 * p).round() as usize;
+            s[i.min(s.len() - 1)]
+        }
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        for n in [1usize, 2, 3, 7, 40, 257, 10_000] {
+            for trial in 0..8 {
+                let v: Vec<f32> = (0..n)
+                    .map(|_| match trial % 4 {
+                        0 => rng.unit() * 255.0,
+                        1 => (rng.unit() * 6.0).floor(),
+                        2 => rng.unit() - 0.5,
+                        _ => {
+                            let u = rng.unit();
+                            if u < 0.05 {
+                                f32::NAN
+                            } else if u < 0.1 {
+                                -0.0
+                            } else {
+                                u
+                            }
+                        }
+                    })
+                    .collect();
+                for p in [0.0f32, 0.2, 0.5, 0.98, 1.0] {
+                    let want = sort_pick(&v, p);
+                    let got = pick(&mut v.clone(), p);
+                    assert_eq!(got.to_bits(), want.to_bits(), "n={n} p={p} trial={trial}");
+                }
+            }
+        }
+        assert!(pick(&mut [], 0.5).is_nan());
+    }
+
+    /// `cargo test -p conrod-vision --release -- --ignored --nocapture pick_timing`
+    #[test]
+    #[ignore = "timing only"]
+    fn pick_timing_select_vs_sort() {
+        let mut rng = Rng(12345);
+        let v: Vec<f32> = (0..1_000_000).map(|_| rng.unit() * 255.0).collect();
+        let t = std::time::Instant::now();
+        let mut s = v.clone();
+        s.sort_by(f32::total_cmp);
+        let sorted_at = s[((s.len() - 1) as f32 * 0.2).round() as usize];
+        let sort_time = t.elapsed();
+        let t = std::time::Instant::now();
+        let mut s = v.clone();
+        let picked = pick(&mut s, 0.2);
+        let select_time = t.elapsed();
+        assert_eq!(picked.to_bits(), sorted_at.to_bits());
+        println!("1M floats: sort {sort_time:?}, select {select_time:?}");
     }
 
     #[test]

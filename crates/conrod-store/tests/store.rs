@@ -33,6 +33,25 @@ fn fresh_conn(label: &str) -> Connection {
 // --- round trips ---------------------------------------------------------------
 
 #[test]
+fn every_connection_gets_the_performance_pragmas_and_keeps_wal() {
+    let path = temp_db_path("pragmas");
+    for _ in 0..2 {
+        let conn = conrod_store::connect(Some(&path)).unwrap();
+        let get = |pragma: &str| -> i64 {
+            conn.query_row(&format!("PRAGMA {pragma}"), [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(get("cache_size"), -65536);
+        assert_eq!(get("temp_store"), 2, "MEMORY");
+        assert_eq!(get("mmap_size"), 268_435_456);
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+    }
+}
+
+#[test]
 fn an_existing_library_gets_the_hand_pick_index() {
     // Build a normal library, then remove the index to mimic one created before
     // the identify scopes existed. The next connect on a fresh path must add it.
