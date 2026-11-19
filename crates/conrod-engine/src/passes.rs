@@ -807,7 +807,7 @@ pub fn focus_points(d: &Arc<Desktop>, job: i64) -> Result<Value> {
                 .par_iter()
                 .map(|(_, path, w, h)| {
                     let header = conrod_io::raw::af_header(path).ok();
-                    let orientation = header.map_or(1, |h| h.orientation);
+                    let orientation = header.as_ref().map_or(1, |h| h.orientation);
                     let area = header
                         .and_then(|h| h.af)
                         .and_then(|af| conrod_io::af::from_canon(&af, (*w, *h), orientation));

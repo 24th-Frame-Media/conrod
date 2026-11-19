@@ -26,7 +26,8 @@ pub struct Frame {
     pub tags: Tags,
     /// Shutter, aperture, ISO and friends: what tells a bracket from a burst.
     pub exposure: Exposure,
-    /// The first AF point from a Canon body's makernote, in the AF image's own
+    /// The Canon makernote's AF record: every point's area and the bitmaps
+    /// saying which points the camera focused on, in the AF image's own
     /// pixels. Turn it into a box with [`Frame::af_area`].
     pub af: Option<CanonAf>,
 }
@@ -113,7 +114,7 @@ impl Frame {
 
 /// Only what the AF area needs, read from the file header: no preview, no
 /// decode. A scan that already holds a [`Frame`] reads [`Frame::af`] instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AfHeader {
     /// EXIF orientation, as in [`Frame::orientation`].
     pub orientation: u16,
@@ -772,9 +773,15 @@ mod canon_af_tests {
         // `boxes` reads a uuid's body after its 16-byte user type, so the
         // moov here is the uuid box alone.
         let af = cr3_af(&moov_with(&cmt3())).expect("an AF record");
-        assert_eq!((af.width, af.height, af.x, af.y), (100, 50, -20, 30));
+        let first = af.point(0).expect("a first point");
+        assert_eq!(
+            (first.width, first.height, first.x, first.y),
+            (100, 50, -20, 30)
+        );
         assert_eq!(af.mode, 13);
         assert_eq!(af.canvas, (6000, 4000));
+        // This record stops before the bitmap, so the valid point is the point.
+        assert_eq!(af.sole_focus(), None);
         // Centre (3000 - 20, 2000 - 30), 100 x 50, as fractions of 6000 x 4000.
         let area = af::from_canon(&af, (6000, 4000), 1).expect("a box");
         assert!((area.x1 - (2980.0 - 50.0) / 6000.0).abs() < 1e-9);
