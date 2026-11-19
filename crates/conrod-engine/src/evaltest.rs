@@ -99,7 +99,7 @@ fn persist(db: &rusqlite::Connection, job: i64, f: &FrameResult) -> Result<(), S
         crate::desktop::insert_subject(&tx, image, s)?;
     }
     tx.execute(
-        "UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=?,lens=?,iso=?,file_size=? WHERE id=?",
+        "UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=?,lens=?,iso=?,file_size=?,af_x1=?,af_y1=?,af_x2=?,af_y2=?,af_mode=?,af_sharpness=? WHERE id=?",
         rusqlite::params![
             f.size.0 as i64,
             f.size.1 as i64,
@@ -125,6 +125,12 @@ fn persist(db: &rusqlite::Connection, job: i64, f: &FrameResult) -> Result<(), S
             f.lens,
             f.exif.iso,
             f.file_size,
+            f.af.map(|a| a.x1),
+            f.af.map(|a| a.y1),
+            f.af.map(|a| a.x2),
+            f.af.map(|a| a.y2),
+            f.af.and_then(|a| a.mode).map(i64::from),
+            f.af_sharpness,
             image
         ],
     )

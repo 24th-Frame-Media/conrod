@@ -40,6 +40,7 @@ pub(crate) fn now() -> f64 {
         .as_secs_f64()
 }
 
+pub mod afsubject;
 pub mod analyze;
 pub mod bench;
 #[cfg(test)]
@@ -164,6 +165,9 @@ pub struct Subject {
     /// The preset's framing score for this subject, 0..1. `None` when the
     /// preset has no framing policy.
     pub framing_score: Option<f32>,
+    /// The camera's focus area is elsewhere, so this is not what the frame is
+    /// of (see `afsubject`): it is stored as a bystander and drives nothing.
+    pub bystander: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +204,12 @@ pub struct FrameResult {
     pub whole_raw: Option<f64>,
     /// How much of a panning frame is sharp, 0..1; `None` when it is not a pan.
     pub pan_share: Option<f64>,
+    /// The camera's focus area as fractions of the upright frame, read from the
+    /// RAW's makernote; `None` for a body or file that records none.
+    pub af: Option<conrod_io::af::AfArea>,
+    /// The edge-blur rating inside that area when it is the frame's subject
+    /// (see `afsubject`); `None` when a detection holds it or it is unusable.
+    pub af_sharpness: Option<f64>,
 }
 
 fn crop_gray(frame: &Gray, crop_box: [f64; 4]) -> Gray {
@@ -498,6 +508,7 @@ pub(crate) fn face_subjects(
                     subject_frac: 0.0,
                     lead_room: None,
                     framing_score: None,
+                    bystander: false,
                 });
             }
         }
@@ -749,6 +760,16 @@ pub fn cull_frame(
     let tilt = level.as_ref().and_then(|l| l.tilt_deg.map(|t| t as f32));
     let framing_policy = framing_policy(preset);
     let boxes: Vec<[f64; 4]> = found.iter().map(|det| det.bbox).collect();
+    // The camera's focus area, read from the makernote already in memory.
+    let af = frame.af_area((fw as u32, fh as u32));
+    let af_px = af.map(|a| {
+        [
+            a.x1 * fw as f64,
+            a.y1 * fh as f64,
+            a.x2 * fw as f64,
+            a.y2 * fh as f64,
+        ]
+    });
 
     let mut subjects = Vec::new();
     for det in &found {
@@ -782,9 +803,14 @@ pub fn cull_frame(
             // (its edge floor is region-relative), and asking it unasked demoted
             // a crisp frame from 1.000 to 0.797.
             let worst = if tile < 0.80 { blur.worst } else { blur.whole };
-            if let Some(score) =
-                sharpness::rating_from_blur(worst, sharpness::BlurStrictness::parse(&strictness))
-            {
+            let detection =
+                sharpness::rating_from_blur(worst, sharpness::BlurStrictness::parse(&strictness));
+            // The camera's focus area, when it sits on this subject, is a
+            // second opinion that can only lower the score (see `afsubject`).
+            let af_opinion = af_px
+                .filter(|af| afsubject::holds_middle(det.bbox, *af))
+                .and_then(|af| afsubject::rate_box(&grey, af, &strictness));
+            if let Some(score) = rescore::second_opinion(detection, af_opinion) {
                 // The tile score is not used to overrule this one: it is measured
                 // on the downscaled crop, so it is not comparable with the native
                 // edge census. It only decides whether the centre was consulted.
@@ -869,6 +895,7 @@ pub fn cull_frame(
             subject_frac: measured.subject_frac,
             lead_room: measured.lead_room,
             framing_score,
+            bystander: false,
         });
     }
     let mut eye_open_min = None;
@@ -962,6 +989,7 @@ pub fn cull_frame(
                     subject_frac: 0.0,
                     lead_room: None,
                     framing_score: None,
+                    bystander: false,
                 });
             }
         }
@@ -978,38 +1006,51 @@ pub fn cull_frame(
             focus.measured.then_some(focus.score)
         }
     };
+    // Where the camera focused outside every detection, the focus area is the
+    // subject: the frame is rated on it and the detections are bystanders.
+    let af_sharpness = afsubject::apply(&mut subjects, &grey, af_px, &strictness).subject();
     // A pan's frame rating reads the picture, not the car; the subjects keep
     // their own ratings, which is what picks the keeper of a burst.
     let panning = subjects
         .iter()
-        .any(|s| matches!(s.region_type, "vehicle" | "person") && s.panning);
+        .any(|s| !s.bystander && matches!(s.region_type, "vehicle" | "person") && s.panning);
     let pan_share = panning
         .then(|| sharpness::frame_sharp_share(&grey))
         .flatten();
     let rated: Vec<_> = subjects
         .iter()
+        .filter(|s| !s.bystander)
         .map(|s| (s.region_type, s.bbox, s.rating))
         .collect();
-    let rating = frame_rating(preset.profile(), settings.include_people, &rated, whole);
-    let rating = pan_capped(rating, panning, pan_share);
+    let rating = match af_sharpness {
+        Some(score) => score,
+        None => pan_capped(
+            frame_rating(preset.profile(), settings.include_people, &rated, whole),
+            panning,
+            pan_share,
+        ),
+    };
     let stars = sharpness::stars_for(rating);
     // Exposure on the main subject, so a backlit rider's clipped whites are
-    // told from a blown sky.
-    let subject_box = subjects
-        .iter()
-        .filter(|s| s.region_type != "face" && s.region_type != "eye")
-        .max_by(|a, b| {
-            let area = |s: &Subject| (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1]);
-            area(a).total_cmp(&area(b))
-        })
-        .map(|s| {
-            [
-                s.bbox[0].max(0.0) / fw as f64,
-                s.bbox[1].max(0.0) / fh as f64,
-                (s.bbox[2].min(fw as f64)) / fw as f64,
-                (s.bbox[3].min(fh as f64)) / fh as f64,
-            ]
-        });
+    // told from a blown sky. A frame the focus area rates is of that area.
+    let subject_box = match (af_sharpness, af) {
+        (Some(_), Some(af)) => Some([af.x1, af.y1, af.x2, af.y2]),
+        _ => subjects
+            .iter()
+            .filter(|s| s.region_type != "face" && s.region_type != "eye")
+            .max_by(|a, b| {
+                let area = |s: &Subject| (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1]);
+                area(a).total_cmp(&area(b))
+            })
+            .map(|s| {
+                [
+                    s.bbox[0].max(0.0) / fw as f64,
+                    s.bbox[1].max(0.0) / fh as f64,
+                    (s.bbox[2].min(fw as f64)) / fw as f64,
+                    (s.bbox[3].min(fh as f64)) / fh as f64,
+                ]
+            }),
+    };
     let exposure = Some(exposure::measure(&image, subject_box));
     let (lens, file_size) = source_details(path, &frame);
     Ok(FrameResult {
@@ -1032,6 +1073,8 @@ pub fn cull_frame(
         buck,
         whole_raw: bare.as_ref().and_then(|bare| bare.whole),
         pan_share,
+        af,
+        af_sharpness,
     })
 }
 
