@@ -340,7 +340,16 @@ pub(crate) fn measure_af_frames(
     // (id, frame, whether the geometry makes the AF area a candidate subject).
     let mut to_read = Vec::new();
     let mut not_subject = Vec::new();
-    for row in &images {
+    // One header read per RAW, all lanes at once, instead of one at a time.
+    let kinds: Vec<_> = images
+        .par_iter()
+        .map(|row| {
+            frame_kind(std::path::Path::new(
+                row["path"].as_str().unwrap_or_default(),
+            ))
+        })
+        .collect();
+    for (row, kind) in images.iter().zip(kinds) {
         let id = row["id"].as_i64().unwrap_or_default();
         let (w, h) = (
             row["width"].as_f64().unwrap_or_default(),
@@ -352,8 +361,6 @@ pub(crate) fn measure_af_frames(
         let held = boxes.get(&id).map_or(&[][..], Vec::as_slice);
         // A grid's union is stored like a point's box; the makernote says which
         // it is, so the gate can be applied here as at scan time.
-        let path = std::path::Path::new(row["path"].as_str().unwrap_or_default());
-        let kind = frame_kind(path);
         let candidate = w > 0.0
             && h > 0.0
             && afsubject::geometry(
