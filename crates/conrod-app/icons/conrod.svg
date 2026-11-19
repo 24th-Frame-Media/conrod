@@ -1,27 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Conrod app icon">
   <defs>
-    <linearGradient id="tile" x1="120" y1="80" x2="900" y2="960" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#f6c86b"/>
-      <stop offset="0.48" stop-color="#e3a83a"/>
-      <stop offset="1" stop-color="#c98516"/>
+    <linearGradient id="slate" x1="120" y1="40" x2="900" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2b3138"/>
+      <stop offset="0.55" stop-color="#1b1f24"/>
+      <stop offset="1" stop-color="#101316"/>
     </linearGradient>
-    <linearGradient id="rod" x1="330" y1="250" x2="700" y2="790" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#232327"/>
-      <stop offset="1" stop-color="#111113"/>
-    </linearGradient>
-    <mask id="conrod-bores">
-      <rect width="64" height="64" fill="#fff"/>
-      <circle cx="46.2" cy="43.1" r="3.4" fill="#000"/>
-      <circle cx="46.2" cy="20.9" r="2.1" fill="#000"/>
+    <radialGradient id="sheen" cx="300" cy="180" r="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <mask id="bores">
+      <rect width="256" height="256" fill="#fff"/>
+      <circle cx="128" cy="202" r="17" fill="#000"/>
+      <circle cx="128" cy="56" r="10" fill="#000"/>
+      <path d="M126 90 L126 148 L134 156 L134 170" stroke="#000" stroke-width="14"
+            stroke-linecap="round" stroke-linejoin="round" fill="none"/>
     </mask>
   </defs>
-  <rect width="1024" height="1024" rx="226" fill="url(#tile)"/>
-  <rect x="3" y="3" width="1018" height="1018" rx="223" fill="none" stroke="#fff" stroke-opacity="0.22" stroke-width="6"/>
-  <svg x="188" y="188" width="648" height="648" viewBox="0 0 64 64">
-    <g mask="url(#conrod-bores)" fill="none">
-      <path d="M46.2 20.9 A18 18 0 1 0 46.2 43.1" stroke="url(#rod)" stroke-width="9" stroke-linecap="round"/>
-      <circle cx="46.2" cy="43.1" r="8.5" fill="url(#rod)"/>
-      <circle cx="46.2" cy="20.9" r="5.8" fill="url(#rod)"/>
+  <rect width="1024" height="1024" rx="226" fill="url(#slate)"/>
+  <rect width="1024" height="1024" rx="226" fill="url(#sheen)"/>
+  <rect x="3" y="3" width="1018" height="1018" rx="223" fill="none" stroke="#fff" stroke-opacity="0.10" stroke-width="6"/>
+  <g transform="translate(512 512) rotate(35) scale(2.75) translate(-128 -128)">
+    <g mask="url(#bores)" fill="#e3a83a">
+      <path d="M104 56 C 114 92 108 170 90 202 L 166 202 C 148 170 142 92 152 56 Z"/>
+      <circle cx="128" cy="202" r="38"/>
+      <circle cx="128" cy="56" r="24"/>
     </g>
-  </svg>
+  </g>
 </svg>

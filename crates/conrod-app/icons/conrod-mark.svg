@@ -1,12 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Conrod">
-  <mask id="conrod-bores">
-    <rect width="64" height="64" fill="#fff"/>
-    <circle cx="46.2" cy="43.1" r="3.4" fill="#000"/>
-    <circle cx="46.2" cy="20.9" r="2.1" fill="#000"/>
-  </mask>
-  <g mask="url(#conrod-bores)" fill="none">
-    <path d="M46.2 20.9 A18 18 0 1 0 46.2 43.1" stroke="#e3a83a" stroke-width="9" stroke-linecap="round"/>
-    <circle cx="46.2" cy="43.1" r="8.5" fill="#e3a83a"/>
-    <circle cx="46.2" cy="20.9" r="5.8" fill="#e3a83a"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Conrod">
+  <defs>
+    <mask id="conrod-cut">
+      <rect width="256" height="256" fill="#fff"/>
+      <circle cx="128" cy="202" r="17" fill="#000"/>
+      <circle cx="128" cy="56" r="10" fill="#000"/>
+      <path d="M126 90 L126 148 L134 156 L134 170" stroke="#000" stroke-width="14"
+            stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </mask>
+  </defs>
+  <g transform="translate(128 128) rotate(35) scale(0.96) translate(-128 -128)">
+    <g mask="url(#conrod-cut)" fill="#e3a83a">
+      <path d="M104 56 C 114 92 108 170 90 202 L 166 202 C 148 170 142 92 152 56 Z"/>
+      <circle cx="128" cy="202" r="38"/>
+      <circle cx="128" cy="56" r="24"/>
+    </g>
   </g>
 </svg>
