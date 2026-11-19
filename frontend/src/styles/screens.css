@@ -986,6 +986,11 @@ dialog.viewer {
 .burst-stack:hover .burst-layers, .burst-stack.open .burst-layers { border-color: var(--line-hover); }
 .burst-stack.selected .burst-layers { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), 3px 3px 0 var(--surface-2), 6px 6px 0 var(--surface-3), 9px 9px 0 var(--surface); }
 .burst-stack.selected .burst-caption b { color: var(--accent); }
+/* A stack of one is the frame itself: no stacked-paper shadow and no stack-wide edges, just the frame's chrome. */
+.burst-stack.singleton .burst-layers { margin-right: 0; box-shadow: none; }
+.burst-stack.singleton .focus.stars { right: 60px; }
+.burst-stack.singleton .burst-caption .chips { display: flex; align-items: center; gap: 4px; min-height: 15px; overflow: hidden; }
+.burst-stack.singleton.selected .burst-layers { box-shadow: 0 0 0 2px var(--accent); }
 /* A burst whose lead is the engine's unaccepted suggestion. */
 .burst-stack.suggested .burst-layers { border-color: rgba(76, 195, 138, .55); }
 .burst-stack.suggested .burst-caption b { color: var(--text); }

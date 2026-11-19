@@ -1,10 +1,13 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { asset } from '../lib/api';
-import { scrollTopFor, stackLayout, visibleRows, type Stack } from '../lib/stacks.mjs';
-import { frameStars } from '../lib/review';
+import { isSingleton, scrollTopFor, stackLayout, visibleRows, type Stack } from '../lib/stacks.mjs';
+import { filename, frameStars, type FrameFacts } from '../lib/review';
 import { lowStarBadge } from '../lib/decisions.mjs';
 import type { Frame, MarkValues } from '../lib/types';
 import { BurstFilmstrip } from './BurstFilmstrip';
+import { DecisionPill } from './DecisionPill';
+import { FrameChips } from './FrameChips';
+import { Icon } from './basics';
 import { LoadableImage } from './Media';
 import { KeeperMark, StarPill } from './Stars';
 
@@ -20,55 +23,90 @@ type CardProps = {
   suggestion?: number;
   /** The burst's size and best stars when no frame in it is worth keeping. */
   soft?: { size: number; best: number };
+  /** What the card knows about its lead frame (chips, panning, the cull reason). */
+  fact?: FrameFacts;
   left: number; top: number; width: number; height: number;
   onToggle: (stack: StackView) => void;
   onPick?: (id: number) => void;
+  onReject?: (id: number, rejected: boolean) => void;
+  /** Keep or cull one frame from its pill. */
+  onDecide?: (id: number, values: MarkValues) => void;
   /** The engine's cull (or this frame's reject), for the stack's overall tone. */
   culled: (frame: Frame) => boolean;
 };
 
-const StackCard = memo(function StackCard({ stack, selected, open, suggestion, soft, left, top, width, height, onToggle, onPick, culled }: CardProps) {
+/**
+ * One card of the stack grid. A real stack shows its cover, its count and the keeper it proposes; a stack holding
+ * a single frame is that frame: thumbnail, stars, keep/cull pill and chips, with no stack chrome at all.
+ */
+const StackCard = memo(function StackCard({ stack, selected, open, suggestion, soft, fact, left, top, width, height, onToggle, onPick, onReject, onDecide, culled }: CardProps) {
   const { lead } = stack;
   const count = stack.frames.length;
-  const suggested = suggestion != null && !lead.picked;
+  const single = isSingleton(stack);
+  const suggested = !single && suggestion != null && !lead.picked;
   // The card's edge says where the whole stack stands: a keeper and no undecided frame, all culled, or still mixed.
   const live = stack.frames.filter((f) => !culled(f));
   const pool = live.length ? live : stack.frames;
   const best = pool.reduce((top, f) => Math.max(top, frameStars(f)), 0);
-  const lowStar = lowStarBadge(best);
+  const lowStar = single ? null : lowStarBadge(best);
   const allCulled = stack.frames.every((f) => f.rejected || culled(f));
   const decided = stack.frames.every((f) => f.picked || f.rejected || culled(f));
-  const tone = allCulled ? 'culled' : decided && stack.keepers.length ? 'kept' : 'mixed';
+  const tone = single ? null : allCulled ? 'culled' : decided && stack.keepers.length ? 'kept' : 'mixed';
   const toneTitle = tone === 'kept'
     ? 'Every frame in this stack is kept or culled, and it has a keeper'
     : tone === 'culled' ? 'Every frame in this stack is culled'
     : 'Some frames in this stack are still undecided';
+  const cls = `burst-stack${single ? ' singleton' : ''}${open ? ' open' : ''}${selected ? ' selected' : ''}${suggested ? ' suggested' : ''}${tone ? ` tone-${tone}` : ''}`;
   return (
-    <article className={`burst-stack${open ? ' open' : ''}${selected ? ' selected' : ''}${suggested ? ' suggested' : ''} tone-${tone}`} role="listitem" aria-current={selected || undefined} title={toneTitle}
+    <article className={cls} role="listitem" aria-current={selected || undefined} title={single ? lead.path : toneTitle}
       style={{ left, top, width, height }} onClick={() => onToggle(stack)}>
-      <div className="burst-layers" style={{ '--layers': Math.min(count, 4) } as CSSProperties}>
-        <LoadableImage src={asset(lead.thumb_path)} alt={stack.title} />
-        <StarPill frame={lead} />
-        {lowStar && <span className="low-stars" title={`No highly rated frame in this burst (best is ${best}★)`}>{lowStar}</span>}
-        {count > 1 || stack.total > count ? <span className="stack-count" title={stack.total > count ? `${count} of ${stack.total} frames match the filter` : `${count} frames`}>{stack.total > count ? `${count}/${stack.total}` : count}</span> : null}
-        {suggested ? (
-          <button type="button" className="suggest"
-            aria-label={`Keep ${stack.title}, the suggested keeper of its burst`}
-            title={`Suggested keeper: the engine ranks this frame best of ${suggestion ?? count} frames in its burst. Click to keep it.`}
-            onClick={(e) => { e.stopPropagation(); onPick?.(lead.id); }}>
-            <KeeperMark inline /><span>Suggested</span>
-          </button>
-        ) : soft ? (
-          <span className="no-keeper" title={`All ${soft.size} frames in this burst are soft (best ${soft.best} of 5). Nothing here is worth keeping, so no keeper is proposed.`}>
-            No keeper
-          </span>
-        ) : stack.keepers.length > 0 ? (
-          <KeeperMark label={lead.picked ? 'Keeper, picked by you' : 'Keeper, the engine\u2019s best of the burst'} />
-        ) : null}
+      <div className="burst-layers" style={single ? undefined : { '--layers': Math.min(count, 4) } as CSSProperties}>
+        <LoadableImage src={asset(lead.thumb_path)} alt={single ? filename(lead.path) : stack.title} />
+        {single ? (
+          <>
+            <DecisionPill frame={lead} onDecide={(values) => onDecide?.(lead.id, values)} />
+            <StarPill frame={lead} />
+            {fact?.panned && <span className="focus panning" title="Subject sharp against a blurred background. Kept, never auto-culled">panned</span>}
+            {Boolean(lead.picked) && <span className="focus picked" title="Picked (P)">picked</span>}
+            <button className="icon-btn" aria-label={fact?.cull ? 'Restore for ML' : 'Reject'} title={fact?.cull ? 'Restore for ML (U)' : 'Reject (X)'}
+              onClick={(e) => { e.stopPropagation(); onReject?.(lead.id, !fact?.cull); }}><Icon name={fact?.cull ? 'undo' : 'x'} size={14} /></button>
+            {fact?.cull && <div className="culled-note" title={fact.cullDetail ?? fact.cull}>{fact.cull}</div>}
+            {lead.status !== 'done' && <span className="stack-count">{lead.status}</span>}
+          </>
+        ) : (
+          <>
+            <StarPill frame={lead} />
+            {lowStar && <span className="low-stars" title={`No highly rated frame in this burst (best is ${best}★)`}>{lowStar}</span>}
+            {count > 1 || stack.total > count ? <span className="stack-count" title={stack.total > count ? `${count} of ${stack.total} frames match the filter` : `${count} frames`}>{stack.total > count ? `${count}/${stack.total}` : count}</span> : null}
+            {suggested ? (
+              <button type="button" className="suggest"
+                aria-label={`Keep ${stack.title}, the suggested keeper of its burst`}
+                title={`Suggested keeper: the engine ranks this frame best of ${suggestion ?? count} frames in its burst. Click to keep it.`}
+                onClick={(e) => { e.stopPropagation(); onPick?.(lead.id); }}>
+                <KeeperMark inline /><span>Suggested</span>
+              </button>
+            ) : soft ? (
+              <span className="no-keeper" title={`All ${soft.size} frames in this burst are soft (best ${soft.best} of 5). Nothing here is worth keeping, so no keeper is proposed.`}>
+                No keeper
+              </span>
+            ) : stack.keepers.length > 0 ? (
+              <KeeperMark label={lead.picked ? 'Keeper, picked by you' : 'Keeper, the engine\u2019s best of the burst'} />
+            ) : null}
+          </>
+        )}
       </div>
       <div className="burst-caption">
-        <b>{stack.title}</b>
-        <span>{stack.subtitle}</span>
+        {single ? (
+          <>
+            <b title={lead.path}>{filename(lead.path)}</b>
+            <FrameChips facts={fact} />
+          </>
+        ) : (
+          <>
+            <b>{stack.title}</b>
+            <span>{stack.subtitle}</span>
+          </>
+        )}
       </div>
     </article>
   );
@@ -78,13 +116,17 @@ const StackCard = memo(function StackCard({ stack, selected, open, suggestion, s
  * Shared renderer for grouped-photo grids (burst, duplicate or vehicle stacks). Windowed: only the rows near the
  * viewport are mounted, so a 3 000-frame shoot costs what a 50-frame one does. The open stack's strip sits under its row.
  */
-export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeperIds, suggestions, softBursts, culled, onToggle, onSelect, onOpen, onPick, onDecide, onStackAction, ariaLabel, empty }: {
+export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeperIds, facts, suggestions, softBursts, culled, onToggle, onSelect, onOpen, onPick, onDecide, onReject, onStackAction, ariaLabel, empty }: {
   stacks: StackView[]; selectedKey: string | null; selectedId: number | null; expandedKey: string | null; keeperIds: ReadonlySet<number>;
+  /** What each card knows about its frames: chips, panning, the cull reason. */
+  facts?: Map<number, FrameFacts>;
   suggestions?: Map<number, number>;
   softBursts?: Map<number, { size: number; best: number }>;
   culled: (frame: Frame) => boolean; onToggle: (stack: StackView) => void; onSelect: (id: number) => void; onOpen: () => void; onPick?: (id: number) => void;
   /** Keep or cull one frame from the strip's pill. */
   onDecide?: (id: number, values: MarkValues) => void;
+  /** Reject or restore a lone frame from its card. */
+  onReject?: (id: number, rejected: boolean) => void;
   /** The strip's two bulk buttons: keep the focused frame and cull the rest, or cull the whole stack. */
   onStackAction?: (stack: StackView, mode: 'keep' | 'cull') => void;
   ariaLabel: string; empty: ReactNode;
@@ -118,7 +160,11 @@ export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeper
   const cols = Math.max(1, Math.floor((size.w + GAP) / (MIN_W + GAP)));
   const width = (size.w - GAP * (cols - 1)) / cols;
   const cardH = Math.round(((width - LAYER_INSET) * 2) / 3) + 9 + CAPTION_H;
-  const expandedIndex = useMemo(() => (expandedKey == null ? -1 : stacks.findIndex((s) => s.key === expandedKey)), [stacks, expandedKey]);
+  const expandedIndex = useMemo(() => {
+    if (expandedKey == null) return -1;
+    const i = stacks.findIndex((s) => s.key === expandedKey);
+    return i >= 0 && !isSingleton(stacks[i]) ? i : -1;
+  }, [stacks, expandedKey]);
   const layout = useMemo(() => stackLayout({ count: stacks.length, cols, rowH: cardH, gap: GAP, pad: PAD, expandedIndex, expandedH: EXPANDED_H }), [stacks.length, cols, cardH, expandedIndex]);
   const [first, last] = visibleRows(layout, top, size.h);
 
@@ -151,7 +197,8 @@ export function StackGrid({ stacks, selectedKey, selectedId, expandedKey, keeper
           const i = first * layout.cols + n;
           const soft = !stack.keepers.length && stack.key.startsWith('b') && stack.lead.burst_key != null ? softBursts?.get(stack.lead.burst_key) : undefined;
           return <StackCard key={stack.key} stack={stack} selected={stack.key === selectedKey} open={stack.key === expandedKey} suggestion={suggestions?.get(stack.lead.id)} soft={soft}
-            left={(i % layout.cols) * (width + GAP)} top={layout.rowTop(Math.floor(i / layout.cols))} width={width} height={cardH} onToggle={onToggle} onPick={onPick} culled={culled} />;
+            fact={facts?.get(stack.lead.id)}
+            left={(i % layout.cols) * (width + GAP)} top={layout.rowTop(Math.floor(i / layout.cols))} width={width} height={cardH} onToggle={onToggle} onPick={onPick} onDecide={onDecide} onReject={onReject} culled={culled} />;
         })}
         {showStrip && openStack && (
           <div className="burst-expanded" style={{ top: layout.expandedTop, height: EXPANDED_H }}>

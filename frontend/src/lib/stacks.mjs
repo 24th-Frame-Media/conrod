@@ -23,6 +23,7 @@ export function keepersOf(group, facts) {
 /**
  * The size of the burst each suggested keeper heads: the engine's unaccepted pick, and how many frames it beat.
  * A burst already picked by hand has no suggestion left to make, so it is absent. Whole-album, like `keeperIds`.
+ * A group of one is absent too: there is nothing to choose between, and the grid draws it as a plain frame.
  *
  * Deliberately no confidence number: the engine's pick is a total order over many signals, not a rating, so a
  * rating margin would be a made-up probability. "Best of 18" is the honest claim.
@@ -30,9 +31,26 @@ export function keepersOf(group, facts) {
 export function suggestionSizes(frames, facts) {
   const out = new Map();
   for (const group of groupBy(frames, (f) => groupKeyOf(f)).values()) {
+    if (group.length < 2) continue;
     for (const pick of keepersOf(group, facts).filter((f) => !f.picked)) out.set(pick.id, group.length);
   }
   return out;
+}
+
+/**
+ * A stack holding one frame over the whole album (a burst of one, or a frame with no burst at all).
+ * The grid draws it as the frame itself: no count, no suggestion or keeper pill, no strip to expand.
+ * `total` is the album-wide size, so a filter that leaves one frame of a real burst visible keeps the stack.
+ */
+export function isSingleton(stack) {
+  return (stack?.total ?? stack?.frames?.length ?? 0) <= 1;
+}
+
+/** Ids of the frames that sit alone in their burst, so the flat grid can leave their stack chrome off. */
+export function singletonIds(frames) {
+  const ids = new Set();
+  for (const group of groupBy(frames, (f) => groupKeyOf(f)).values()) if (group.length <= 1) ids.add(group[0].id);
+  return ids;
 }
 
 /**
