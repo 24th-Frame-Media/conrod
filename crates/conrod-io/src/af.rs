@@ -11,6 +11,7 @@
 //! body this module does not know, or a file cropped after capture simply has
 //! no AF area, and [`read`] answers `None` for it rather than failing.
 
+use crate::canon_af::CanonAf;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -124,25 +125,71 @@ pub fn parse(record: &Value, frame: (u32, u32), orientation: u16) -> Option<AfAr
         order.rotate_left(i);
     }
     for i in order {
-        let Some((cw, ch, x1, y1, x2, y2)) = MAKERS[i](&tags, sensor) else {
+        let Some(pixels) = MAKERS[i](&tags, sensor) else {
             continue;
         };
-        if cw <= 0.0 || ch <= 0.0 || x2 <= x1 || y2 <= y1 {
-            continue;
+        if let Some(area) = finish(pixels, sensor, tags.mode(), orientation) {
+            return Some(area);
         }
-        if !aspect_matches(cw, ch, sensor) {
-            continue;
-        }
-        let area = AfArea {
+    }
+    None
+}
+
+/// A maker's pixel box, checked and turned into the upright frame's fractions.
+/// `None` for a degenerate box or a canvas that is not the sensor's shape.
+fn finish(
+    (cw, ch, x1, y1, x2, y2): PixelBox,
+    sensor: (f64, f64),
+    mode: Option<u8>,
+    orientation: u16,
+) -> Option<AfArea> {
+    if cw <= 0.0 || ch <= 0.0 || x2 <= x1 || y2 <= y1 || !aspect_matches(cw, ch, sensor) {
+        return None;
+    }
+    to_upright(
+        AfArea {
             x1: x1 / cw,
             y1: y1 / ch,
             x2: x2 / cw,
             y2: y2 / ch,
-            mode: tags.mode(),
-        };
-        return to_upright(area, orientation);
+            mode,
+        },
+        orientation,
+    )
+}
+
+/// The AF area of a Canon frame, from the record read out of its makernote
+/// ([`crate::canon_af`]) instead of from exiftool. The same arithmetic as
+/// [`parse`]'s Canon reader, so the two agree: the first AF point, centred at
+/// the AF image's centre plus the offset with y flipped, as wide and high as
+/// the point says.
+pub fn from_canon(af: &CanonAf, frame: (u32, u32), orientation: u16) -> Option<AfArea> {
+    let (fw, fh) = (f64::from(frame.0), f64::from(frame.1));
+    if fw <= 0.0 || fh <= 0.0 || !matches!(orientation, 0 | 1 | 3 | 6 | 8) {
+        return None;
     }
-    None
+    let sensor = if matches!(orientation, 6 | 8) {
+        (fh, fw)
+    } else {
+        (fw, fh)
+    };
+    let (w, h) = (f64::from(af.width), f64::from(af.height));
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    let canvas = match (af.canvas.0, af.canvas.1) {
+        (cw, ch) if cw > 0 && ch > 0 => (f64::from(cw), f64::from(ch)),
+        _ => sensor,
+    };
+    let pixels = centred(
+        canvas,
+        canvas.0 / 2.0 + f64::from(af.x),
+        canvas.1 / 2.0 - f64::from(af.y),
+        w,
+        h,
+    );
+    let mode = u8::try_from(af.mode).ok();
+    finish(pixels, sensor, mode, orientation)
 }
 
 fn maker_index(make: &str) -> Option<usize> {
