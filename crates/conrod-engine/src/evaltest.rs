@@ -505,8 +505,11 @@ fn export_recall() {
     let device = lock(&detector).device;
     let faces = preset
         .wants_faces(settings.include_people)
-        .then(|| Mutex::new(load_faces().expect("load the face detector")));
-    let expression = faces.is_some().then(crate::load_expression).flatten();
+        .then(|| crate::load_faces_pool(1).expect("load the face detector"));
+    let expression = faces
+        .is_some()
+        .then(|| crate::load_expression_pool(1))
+        .flatten();
     let models: std::collections::HashMap<String, conrod_core::ridge::SharpModel> =
         ["vehicle", "person", "face", "eye"]
             .into_iter()

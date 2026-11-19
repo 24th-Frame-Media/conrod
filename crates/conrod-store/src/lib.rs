@@ -335,6 +335,12 @@ pub fn connect(path: Option<&Path>) -> Result<Connection> {
     // multi-second analysis batch. Every statement below is its own
     // transaction, which is what WAL is for.
     conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=30000;")?;
+    // Per connection, none of it touches the file: a 64 MiB page cache (default
+    // 2 MiB; allocated as it fills), sort and index scratch in memory, and
+    // reads served from a 256 MiB memory map (address space, not RAM).
+    conn.execute_batch(
+        "PRAGMA cache_size=-65536; PRAGMA temp_store=MEMORY; PRAGMA mmap_size=268435456;",
+    )?;
     register_needs_review(&conn)?;
 
     let key = target.to_string_lossy().into_owned();
