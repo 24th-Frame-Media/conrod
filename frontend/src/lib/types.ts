@@ -229,17 +229,44 @@ export type PipelineStage = {
   eta_s: number | null;
 };
 
+/** A step a scan lane moves a frame through, in order. See docs/plans/ingest-live-contract.md. */
+export type LaneStep = 'read' | 'decode' | 'detect' | 'sharpness' | 'faces' | 'persist';
+
+/** One detection on a lane's frame: class, confidence and a box as fractions (0..1) of the upright frame, [x1, y1, x2, y2]. */
+export type LaneBox = { cls: string; conf: number; box: [number, number, number, number] };
+
+/** The frame a scan lane holds right now. Every field but the identity is optional and fills in as the steps finish. */
+export type LaneFrame = {
+  image_id: number;
+  file: string;
+  /** Same kind of path as `ScanRecentFrame.thumb_url`; run it through `asset()`. */
+  thumb_url?: string;
+  step: LaneStep;
+  boxes?: LaneBox[];
+  /** The autofocus area, [x1, y1, x2, y2] as fractions of the upright frame. */
+  af?: [number, number, number, number];
+  /** 0..5 */
+  stars?: number;
+  verdict?: 'sharp' | 'soft' | 'blurred';
+  panning?: boolean;
+};
+
 /** One worker lane: what that worker is doing this instant. */
 export type PipelineWorker = {
   stage: string;
   worker_index: number;
-  state: 'idle' | 'busy' | 'waiting';
-  /** Why it is waiting: `gpu`, `lock`, `ollama` or `paused`; null unless waiting. */
-  waiting_for: 'gpu' | 'lock' | 'ollama' | 'paused' | null;
+  /** `paused` is a lane that holds a frame but is frozen by Pause; older engines report it as `busy`. */
+  state: 'idle' | 'busy' | 'waiting' | 'paused';
+  /** Why it is waiting: `gpu`/`detector`, `faces`, `lock`, `writer`, `disk`, `ollama` or `paused`; null unless waiting. */
+  waiting_for: 'gpu' | 'detector' | 'faces' | 'lock' | 'writer' | 'disk' | 'ollama' | 'paused' | null;
   /** The file name, to show beside a thumbnail. */
   file: string | null;
   step: string | null;
   ms_in_step: number;
+  /** A stable lane id (0-based) that survives the lane changing `stage`; without it the card is keyed by stage + worker_index. */
+  lane?: number;
+  /** The frame this lane holds, with what has been found on it so far. */
+  current?: LaneFrame | null;
 };
 
 /** A frame that just finished, newest first in `ScanProgress.recent`. */
@@ -248,13 +275,19 @@ export type ScanRecentFrame = {
   /** The same path `Frame.thumb_path` holds; run it through `asset()` as usual. */
   thumb_url: string;
   subject: string;
-  verdict: 'sharp' | 'soft';
+  verdict: 'sharp' | 'soft' | 'blurred';
   /** A pan is a flag, not a verdict: a panned car can still be soft. */
   panning?: boolean;
   /** Older payloads folded the pan into the verdict. */
   legacy?: never;
   /** What the frame reads as once identified: a race number or plate. */
   label?: string | null;
+  /** The file name; lets a lane find its last finished thumbnail. */
+  file?: string;
+  /** 0..5 */
+  stars?: number;
+  boxes?: LaneBox[];
+  af?: [number, number, number, number];
 };
 
 export type ScanFound = {
