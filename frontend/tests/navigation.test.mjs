@@ -42,6 +42,16 @@ test('with crossStacks off, both edges are the end of the move', () => {
   assert.equal(stepInStack(stacks, 0, 3, 'forward'), null, 'off is the default');
 });
 
+test('a one-frame stack is a single frame: → lands on it, the next → crosses to the next stack', () => {
+  const list = [stack('b1', [1, 2]), stack('b9', [9]), stack('b11', [11, 12])];
+  const into = stepInStack(list, 0, 2, 'forward', cross);
+  assert.deepEqual(into, { stackIndex: 1 }, '→ from the previous stack\u2019s last frame steps to the lone frame');
+  assert.equal(edgeFrameId(list[into.stackIndex], 'forward'), 9);
+  assert.deepEqual(stepInStack(list, 1, 9, 'forward', cross), { stackIndex: 2 }, '→ again moves to the next stack');
+  assert.deepEqual(stepInStack(list, 1, 9, 'back', cross), { stackIndex: 0 }, '← from the lone frame moves to the previous stack');
+  assert.equal(stepInStack(list, 1, 9, 'forward', { crossStacks: false }), null, 'with cross-stack arrows off, the lone frame is the edge');
+});
+
 test('a frame outside the stack and an empty stack move nowhere', () => {
   assert.equal(stepInStack(stacks, 1, 7, 'forward', cross), null);
   assert.equal(stepInStack(stacks, 0, 99, 'forward', cross), null);

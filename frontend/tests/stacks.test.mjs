@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildStacks, decisionOf, keeperIds, keepersOf, nearestVisible, nextUndecided, reviewOrder,
-  scrollTopFor, softBursts, stackLayout, stepFlat, stepInStack, stepRow, stepStack, suggestionSizes, visibleRows,
+  buildStacks, decisionOf, isSingleton, keeperIds, keepersOf, nearestVisible, nextUndecided, reviewOrder,
+  scrollTopFor, singletonIds, softBursts, stackLayout, stepFlat, stepInStack, stepRow, stepStack, suggestionSizes, visibleRows,
 } from '../src/lib/stacks.mjs';
 
 const f = (id, burst, extra = {}) => ({ id, path: `D:\\IMG_${String(id).padStart(4, '0')}.CR3`, burst_key: burst, rejected: 0, picked: 0, manual_stars: null, rating: 0.5, ...extra });
@@ -62,6 +62,25 @@ test('a suggestion carries the size of the burst it heads, and stops being a sug
   assert.equal(twoBursts.get(2), 4);
   assert.equal(twoBursts.get(5), 2);
   assert.equal(twoBursts.get(7), undefined, 'a lone frame is not a burst to choose within');
+});
+
+test('a stack of one is the frame itself: no suggestion to make, and the flat grid knows which frames those are', () => {
+  const lone = [f(9, null), f(10, 4)];
+  const pickFacts = factsOf({ 10: { pick: true } });
+  const stacks = buildStacks(lone, { facts: pickFacts, keepers: keeperIds(lone, pickFacts) });
+  assert.deepEqual(stacks.map((s) => s.frames.length), [1, 1]);
+  assert.ok(stacks.every(isSingleton), 'a frame with no burst and a burst of one are both lone frames');
+  assert.equal(suggestionSizes(lone, pickFacts).size, 0, 'there is nothing to choose between, so nothing is suggested');
+  assert.deepEqual([...singletonIds(lone)].sort((a, b) => a - b), [9, 10]);
+  assert.deepEqual([...singletonIds(frames)].sort((a, b) => a - b), [7], 'frames inside real bursts are not lone');
+
+  const keepers = keeperIds(frames, facts);
+  const [full] = buildStacks(frames, { facts, keepers });
+  assert.equal(isSingleton(full), false, 'a burst of four is a stack');
+  const filtered = buildStacks([f(3, 1)], { facts, keepers, all: frames });
+  assert.equal(filtered[0].frames.length, 1);
+  assert.equal(isSingleton(filtered[0]), false, 'one visible frame of a real burst is still a stack (it has a total)');
+  assert.equal(isSingleton({ frames: [f(1, 1)] }), true, 'without a total, the frames decide');
 });
 
 test('stacks are built from the filtered list: counts, order and lead follow the filter, the total stays', () => {

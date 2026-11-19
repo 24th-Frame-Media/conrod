@@ -11,6 +11,10 @@ export function decisionOf(frame: StackFrame, fact: StackFact | undefined): Deci
 export function keepersOf<F extends StackFrame>(group: F[], facts: Facts): F[];
 /** Burst size behind each suggested (unaccepted) keeper, by frame id. */
 export function suggestionSizes(frames: StackFrame[], facts: Facts): Map<number, number>;
+/** A stack holding one frame over the whole album: drawn as a plain frame, with no stack chrome. */
+export function isSingleton(stack: Pick<Stack, 'frames'> & { total?: number }): boolean;
+/** Ids of the frames that sit alone in their burst. */
+export function singletonIds(frames: StackFrame[]): Set<number>;
 /** The star rating a burst must reach for the engine to keep one of its frames. */
 export const KEEPER_STARS: number;
 /** Bursts with no keeper because every frame is below `KEEPER_STARS`, keyed by burst key. */

@@ -6,12 +6,15 @@ import { KeeperMark, RankBadge, StarPill } from './Stars';
 import { LoadableImage } from './Media';
 import { Icon } from './basics';
 import { DecisionPill } from './DecisionPill';
+import { FrameChips } from './FrameChips';
 
 const GAP = 10, MIN_W = 190, BODY_H = 64, PAD = 18;
 
 type CardProps = {
   checked?: boolean; onToggle?: (id: number) => void;
   frame: Frame; facts: FrameFacts | undefined; rank?: number; selected: boolean; keeper: boolean;
+  /** The frame is alone in its burst: drawn as a plain frame, with no keeper mark or burst chrome. */
+  single?: boolean;
   /** Frames in the burst when this frame is the engine's unaccepted suggestion. */
   suggestion?: number;
   left: number; top: number; width: number; height: number;
@@ -21,12 +24,11 @@ type CardProps = {
 };
 
 /** A card's keeper, its suggestion, and the green "Suggested" pill that accepts it in one click. */
-const Card = memo(function Card({ frame, facts, rank, selected, keeper, suggestion, left, top, width, height, onSelect, onOpen, onReject, onPick, onDecide, checked, onToggle }: CardProps) {
+const Card = memo(function Card({ frame, facts, rank, selected, keeper, single, suggestion, left, top, width, height, onSelect, onOpen, onReject, onPick, onDecide, checked, onToggle }: CardProps) {
   const verdict = verdictOf(frameStars(frame));
-  const suggested = keeper && !frame.picked && !frame.rejected && !facts?.cull;
+  const suggested = !single && keeper && !frame.picked && !frame.rejected && !facts?.cull;
   const cls = ['card', selected && 'selected current', frame.rejected && 'rejected', frame.picked && 'picked', suggested && 'suggested', facts?.cull && 'culled', verdict !== 'none' && `rated-${verdict}`]
     .filter(Boolean).join(' ');
-  const swatch = facts?.colourCss && CSS.supports('color', facts.colourCss) ? facts.colourCss : undefined;
   return (
     <div className={cls} style={{ left, top, width, height }} role="option" aria-selected={selected}
       onClick={() => onSelect(frame.id)} onDoubleClick={onOpen}>
@@ -43,10 +45,10 @@ const Card = memo(function Card({ frame, facts, rank, selected, keeper, suggesti
             onClick={(e) => { e.stopPropagation(); onPick?.(frame.id); }}>
             <KeeperMark inline /><span>Suggested</span>
           </button>
-        ) : keeper ? (
+        ) : keeper && !single ? (
           <KeeperMark label={frame.picked ? 'Keeper, picked by you' : 'Keeper, the engine\u2019s best of the burst'} />
         ) : null}
-        {rank != null && !keeper && <RankBadge rank={rank} />}
+        {rank != null && !keeper && !single && <RankBadge rank={rank} />}
         {Boolean(frame.picked) && <span className="focus picked" title="Picked (P)">picked</span>}
         <button className="icon-btn" aria-label={facts?.cull ? 'Restore for ML' : 'Reject'} title={facts?.cull ? 'Restore for ML (U)' : 'Reject (X)'}
           onClick={(e) => { e.stopPropagation(); onReject(frame.id, !facts?.cull); }}><Icon name={facts?.cull ? 'undo' : 'x'} size={14} /></button>
@@ -55,13 +57,7 @@ const Card = memo(function Card({ frame, facts, rank, selected, keeper, suggesti
       </div>
       <div className="body">
         <div className="cap" title={frame.path}>{filename(frame.path)}</div>
-        <div className="chips">
-          {facts?.plate && <span className="fact plate">{facts.plate}</span>}
-          {facts?.number && <span className="fact number">#{facts.number}</span>}
-          {facts?.vehicle && <span className="tag">{facts.vehicle}</span>}
-          {facts?.colour && <span className="tag"><i className="swatch" style={{ background: swatch }} />{facts.colour}</span>}
-          {facts?.team && <span className="fact team">{facts.team}</span>}
-        </div>
+        <FrameChips facts={facts} />
       </div>
     </div>
   );
@@ -70,6 +66,8 @@ const Card = memo(function Card({ frame, facts, rank, selected, keeper, suggesti
 type Props = {
   checked?: Set<number>; onToggle?: (id: number) => void;
   frames: Frame[]; facts: Map<number, FrameFacts>; ranks?: Map<number, number>; keepers?: Set<number>;
+  /** Frames alone in their burst: drawn as plain frames, with no stack keeper mark or burst rank. */
+  singletons?: ReadonlySet<number>;
   /** Burst size behind each suggested keeper, by frame id (`suggestionSizes`). */
   suggestions?: Map<number, number>;
   selected: number | null; empty: ReactNode;
@@ -83,7 +81,7 @@ type Props = {
 };
 
 /** Windowed grid: only the rows in view are mounted, so a 5 000-frame album scrolls like a 50-frame one. */
-export function PhotoGrid({ frames, facts, ranks, keepers, suggestions, selected, empty, onSelect, onOpen, onReject, onPick, onDecide, checked, onToggle, onCols }: Props) {
+export function PhotoGrid({ frames, facts, ranks, keepers, singletons, suggestions, selected, empty, onSelect, onOpen, onReject, onPick, onDecide, checked, onToggle, onCols }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 900, h: 600 });
@@ -139,7 +137,7 @@ export function PhotoGrid({ frames, facts, ranks, keepers, suggestions, selected
         {frames.slice(first * cols, last * cols).map((f, n) => {
           const i = first * cols + n;
           return (
-            <Card checked={checked?.has(f.id)} onToggle={onToggle} key={f.id} frame={f} facts={facts.get(f.id)} rank={ranks?.get(f.id)} keeper={Boolean(keepers?.has(f.id))} suggestion={suggestions?.get(f.id)} selected={selected === f.id}
+            <Card checked={checked?.has(f.id)} onToggle={onToggle} key={f.id} frame={f} facts={facts.get(f.id)} rank={ranks?.get(f.id)} keeper={Boolean(keepers?.has(f.id))} single={singletons?.has(f.id)} suggestion={suggestions?.get(f.id)} selected={selected === f.id}
               left={(i % cols) * (width + GAP)} top={Math.floor(i / cols) * rowH} width={width} height={height}
               onSelect={onSelect} onOpen={onOpen} onReject={onReject} onPick={onPick} onDecide={onDecide} />
           );

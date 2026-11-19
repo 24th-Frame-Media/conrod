@@ -5,7 +5,7 @@ import { Inspector } from '../components/Inspector';
 import { PhotoGrid } from '../components/PhotoGrid';
 import { StackGrid, type StackView } from '../components/StackGrid';
 import { burstRankMap, decisionOf, defaultFilters, filename, vehicleGroups, type FrameFacts } from '../lib/review';
-import { buildStacks, groupKeyOf, makeStack, nextUndecided, softBursts as softBurstMapOf, stepFlat, stepInStack as stepWithinStack, stepRow, stepStack, suggestionSizes, type Stack } from '../lib/stacks.mjs';
+import { buildStacks, groupKeyOf, isSingleton, makeStack, nextUndecided, singletonIds, softBursts as softBurstMapOf, stepFlat, stepInStack as stepWithinStack, stepRow, stepStack, suggestionSizes, type Stack } from '../lib/stacks.mjs';
 import { edgeFrameId, stepInStack } from '../lib/navigation.mjs';
 import { reviewedStacks, stackDecision } from '../lib/decisions.mjs';
 import { tasteStacks } from '../lib/taste.mjs';
@@ -159,6 +159,8 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const ranks = useMemo(() => burstRankMap(review.frames, keepers), [review.frames, keepers]);
   // Whole-album, like `keepers`: a filter must not change which frame a burst suggests.
   const suggestions = useMemo(() => suggestionSizes(review.frames, facts), [review.frames, facts]);
+  // Frames alone in their burst: the flat grid draws them as plain frames, with no keeper mark or burst rank.
+  const singletons = useMemo(() => singletonIds(review.frames), [review.frames]);
   // Bursts the engine refused to keep anything from: the grid says "No keeper".
   const softBursts = useMemo(() => softBurstMapOf(review.frames, facts), [review.frames, facts]);
   // Whole-album burst stacks for the progress readout, so narrowing the view does not change the denominator.
@@ -186,7 +188,9 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const navStacks = groupingNow === 'dupes' || groupingNow === 'vehicles' ? shown : burstStacks;
   const stackOf = useMemo(() => byFrame(navStacks), [navStacks]);
   const shownOf = useMemo(() => byFrame(shown), [shown]);
-  const expandedKey = expanded != null ? shownOf.get(expanded)?.key ?? null : null;
+  // A one-frame stack is drawn as a plain frame: it has no strip to open, whatever `expanded` still says.
+  const expandedStack = expanded != null ? shownOf.get(expanded) ?? null : null;
+  const expandedKey = expandedStack != null && !isSingleton(expandedStack) ? expandedStack.key : null;
   const selectedKey = selected != null ? shownOf.get(selected)?.key ?? null : null;
 
   // 1.3: which of grid / loupe (Viewer) / compare is showing; G/E/C reach this through `verbs`.
@@ -209,11 +213,16 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const activeCompareFrame = comparePane === 'left' ? frame : compareRight;
 
   const openViewer = () => { setView('loupe'); onOpenViewer(); };
-  /** Move the selection; an open stack stays open on the stack the selection lands in. */
-  const goTo = (id: number | null) => {
+  /** Show a stack's strip, except on a one-frame stack: that is just a frame, and gets no strip. */
+  const expandOnto = (id: number | null) => {
+    const target = id == null ? null : shownOf.get(id) ?? stackOf.get(id) ?? null;
+    rv.setExpanded(target != null && !isSingleton(target) ? id : null);
+  };
+  /** Move the selection; an open strip follows into a real stack, never onto a one-frame stack. */
+  const goTo = (id: number | null, keepStrip = expanded != null) => {
     if (id == null) return;
     rv.setSelected(id);
-    if (expanded != null) rv.setExpanded(id);
+    if (keepStrip) expandOnto(id);
   };
   const undecided = (f: Frame) => decisionOf(f, facts.get(f.id)) === 'undecided';
   const stackUndecided = (s: Stack<Frame>) => !s.frames.some((f) => f.picked) && s.frames.some(undecided);
@@ -271,7 +280,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     };
     let next = nextUndecided(navStacks.map((s) => s.lead), currentLead, holdsUndecided);
     if (next === currentLead) next = null;
-    if (next != null) { rv.setSelected(next); rv.setExpanded(next); }
+    if (next != null) goTo(next, true);
   };
 
   verbs.current = {
@@ -285,7 +294,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       const stack = selected != null ? byFrame.get(selected) ?? null : null;
       if (!stack) {
         const next = stepWithinStack(list, selected, delta) ?? stepStack(list, selected, delta);
-        if (next != null) { rv.setSelected(next); if (expanded != null) rv.setExpanded(next); }
+        goTo(next);
         return;
       }
       const direction = delta > 0 ? 'forward' : 'back';
@@ -306,8 +315,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       if (step == null) {
         const next = bounded ? null : stepWithinStack(list, selected, delta);
         if (next != null) {
-          rv.setSelected(next);
-          if (expanded != null) rv.setExpanded(next);
+          goTo(next);
         } else if (bounded && view === 'grid' && direction === 'back' && expandedKey === stack.key && selected === stack.frames[0]?.id) {
           // Back from the first frame closes the strip onto the cover.
           rv.setSelected(stack.lead.id);
@@ -321,9 +329,8 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         return;
       }
       const id = edgeFrameId(list[step.stackIndex], direction);
-      if (id == null) return;
-      rv.setSelected(id);
-      rv.setExpanded(id);
+      // Landing on the next stack shows its strip, but a one-frame stack has none: it is just a frame.
+      goTo(id, true);
     },
     stepBurst: (delta) => {
       if (view === 'compare') { const next = stepStack(navStacks, (compareRight ?? frame)?.id ?? null, delta); if (next != null) setCompareRightId(next); return; }
@@ -367,6 +374,8 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     const here = selected != null && stack.frames.some((f) => f.id === selected);
     const target = here ? selected! : stack.lead.id;
     rv.setSelected(target);
+    // A one-frame stack is a frame: a click opens it in the loupe, exactly like a frame inside an open strip.
+    if (isSingleton(stack)) { rv.setExpanded(null); openViewer(); return; }
     rv.setExpanded(expandedKey === stack.key ? null : target);
   };
 
@@ -856,12 +865,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       <div className="review-main">
         <Facets preset={currentProfile} facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
         {stacked
-          ? <StackGrid stacks={shown} selectedKey={selectedKey} selectedId={selected} expandedKey={expandedKey} keeperIds={keepers} suggestions={suggestions} softBursts={softBursts}
+          ? <StackGrid stacks={shown} selectedKey={selectedKey} selectedId={selected} expandedKey={expandedKey} keeperIds={keepers} facts={facts} suggestions={suggestions} softBursts={softBursts}
               culled={(f) => Boolean(facts.get(f.id)?.cull)} onToggle={toggleStack} onSelect={rv.setSelected} onOpen={openViewer} onPick={acceptSuggestion}
-              onDecide={(id, values) => void rv.mark(values, id)} onStackAction={(stack, mode) => stackAction(mode, stack)}
+              onDecide={(id, values) => void rv.mark(values, id)} onReject={(id, rejected) => void rv.mark({ rejected }, id)} onStackAction={(stack, mode) => stackAction(mode, stack)}
               ariaLabel={groupingNow === 'dupes' ? 'Duplicate stacks' : groupingNow === 'vehicles' ? 'Vehicle stacks' : 'Burst stacks'}
               empty={emptyState} />
-          : <PhotoGrid frames={frames} facts={facts} ranks={ranks} keepers={keepers} suggestions={suggestions} selected={selected} onSelect={rv.setSelected} onOpen={openViewer} onCols={setCols}
+          : <PhotoGrid frames={frames} facts={facts} ranks={ranks} keepers={keepers} singletons={singletons} suggestions={suggestions} selected={selected} onSelect={rv.setSelected} onOpen={openViewer} onCols={setCols}
               onReject={(id, rejected) => void rv.mark({ rejected }, id)} onPick={acceptSuggestion} onDecide={(id, values) => void rv.mark(values, id)} empty={emptyState} />}
         <Inspector frame={frame} detections={frame ? facts.get(frame.id)?.dets ?? [] : []} allDetections={review.detections} allFrames={review.frames} known={known} scanning={scanning} kind={kind}
           onMark={(values) => void rv.mark(values)} onOpen={openViewer} onEdit={onEdit} />
