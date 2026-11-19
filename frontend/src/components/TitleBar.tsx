@@ -10,7 +10,6 @@ import { Icon, Mark } from './basics';
 const TABS: [Page, string, string][] = [
   ['Library', 'Library', 'Your albums'],
   ['Review', 'Review', 'Cull, identify and export'],
-  ['Train', 'Train', 'Teach it your eye'],
   ['Settings', 'Settings', 'Settings and vehicles'],
 ];
 

@@ -51,7 +51,7 @@ with a nonzero exit code if a task fails.
 | seed_known | jobId? | looked_at, cars, written, known; grouped consensus fills blanks and preserves aliases |
 | import_entries | csv | path, count; validated CSV is saved under entries/ and selected for subsequent scans |
 | training_status | none | Label counts and active models by region |
-| train_label | detectionId, stars, pan=false | Save rating; Train UI advances its subject queue |
+| train_label | detectionId, stars, pan=false | Save a rating for the sharpness trainer (headless only; the desktop UI has no trainer screen) |
 | undo_label | none | Restore previous training label |
 | train_model | region="vehicle" | Fit/validate sharpness model; region vehicle, person, face, eye |
 | forget_model | region="vehicle" | Remove learned model, preserve labels |

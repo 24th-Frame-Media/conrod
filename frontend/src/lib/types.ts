@@ -135,11 +135,7 @@ export const ATTRIBUTE_KEYS = ['plate', 'race_number', 'make', 'model', 'colour'
 export type AttributeKey = (typeof ATTRIBUTE_KEYS)[number];
 export type Attributes = Partial<Record<AttributeKey, string>> & { colour_hex?: string; sponsors?: string[]; person_name?: string; plate_bbox?: [number, number, number, number]; model_suggested?: boolean; model_evidence?: string; number_source?: string; number_conf?: number; vlm_conf?: number; action?: string[] };
 export type KnownVehicle = { plate: string; old_plate?: string; make?: string; model?: string; colour?: string; team?: string; race_number?: string; driver?: string; country?: string };
-export type Training = { labels: number; active?: boolean; validation?: unknown };
-
-export const REGIONS = ['vehicle', 'person', 'face', 'eye'] as const;
-export type Region = (typeof REGIONS)[number];
-export type Page = 'Library' | 'Scan' | 'Identify' | 'Review' | 'Train' | 'Known vehicles' | 'Settings';
+export type Page = 'Library' | 'Scan' | 'Identify' | 'Review' | 'Known vehicles' | 'Settings';
 export type View = 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook';
 export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick' | 'taste';
 /** Which subjects identification reads: the suggested keeper of each burst, or every subject. */
