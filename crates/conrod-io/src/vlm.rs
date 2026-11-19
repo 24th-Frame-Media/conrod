@@ -2063,11 +2063,13 @@ mod tests {
 
     #[test]
     fn the_opencode_provider_speaks_openai_with_json_object() {
-        let mut settings = Settings::default();
-        settings.vlm_provider = "opencode".into();
-        settings.vlm_model = "qwen3.8-max".into();
-        settings.vlm_api_key = "sk-test".into();
-        settings.vlm_host = String::new();
+        let settings = Settings {
+            vlm_provider: "opencode".into(),
+            vlm_model: "qwen3.8-max".into(),
+            vlm_api_key: "sk-test".into(),
+            vlm_host: String::new(),
+            ..Default::default()
+        };
         let schema = json!({"type": "object", "properties": {"number": {"type": "string"}}});
         let request = build_request(&settings, "read the number", &["abc".into()], &schema, 100)
             .expect("opencode is a provider");
@@ -2099,11 +2101,13 @@ mod tests {
 
     #[test]
     fn the_opencode_go_provider_routes_to_go_with_a_session() {
-        let mut settings = Settings::default();
-        settings.vlm_provider = "opencode-go".into();
-        settings.vlm_model = "deepseek-v4.1-flash".into();
-        settings.vlm_api_key = "sk-test".into();
-        settings.vlm_host = String::new();
+        let settings = Settings {
+            vlm_provider: "opencode-go".into(),
+            vlm_model: "deepseek-v4.1-flash".into(),
+            vlm_api_key: "sk-test".into(),
+            vlm_host: String::new(),
+            ..Default::default()
+        };
         let schema = json!({"type": "object", "properties": {"number": {"type": "string"}}});
         let request = build_request(&settings, "read the number", &["abc".into()], &schema, 100)
             .expect("opencode-go is a provider");

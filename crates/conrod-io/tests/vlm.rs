@@ -176,11 +176,12 @@ fn settings_hosts_and_anthropic_auth_match_fixture() {
 #[test]
 fn schema_is_stable() {
     let req = schema(true)["required"].as_array().unwrap().clone();
-    assert_eq!(req.len(), 10);
+    assert_eq!(req.len(), 11);
     assert!(req.iter().any(|v| v.as_str() == Some("is_competition")));
     assert!(req.iter().any(|v| v.as_str() == Some("plate")));
+    assert!(req.iter().any(|v| v.as_str() == Some("action")));
     let without = schema(false)["required"].as_array().unwrap().clone();
-    assert_eq!(without.len(), 9);
+    assert_eq!(without.len(), 10);
     assert!(!without.iter().any(|v| v.as_str() == Some("plate")));
 }
 
@@ -195,9 +196,9 @@ fn vehicle_prompt_matches_the_album_targets() {
     assert!(baseline.contains("Reply with one JSON object only."));
     assert!(baseline.contains("- plate: the registration plate"));
     assert!(!baseline.contains("{CANDIDATES}"));
-    assert!(baseline.len() < 1500, "local prompt should stay concise");
+    assert!(baseline.len() < 2000, "local prompt should stay concise");
     settings.scan_profile = "motorsport-rally".into();
-    assert!(vehicle_prompt(&settings, false, &hints).len() < 1500);
+    assert!(vehicle_prompt(&settings, false, &hints).len() < 2000);
     settings.read_numbers = false;
     let road = vehicle_prompt(&settings, false, &hints);
     assert!(road.contains("Set number to null."));

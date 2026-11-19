@@ -266,7 +266,7 @@ fn file_name(path: &str) -> String {
 
 fn round(v: f64, places: u32) -> f64 {
     let f = 10f64.powi(places as i32);
-    (v as f64 * f).round() / f
+    (v * f).round() / f
 }
 
 /// Linear-interpolated percentile of `values`, 0 when empty.
