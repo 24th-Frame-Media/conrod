@@ -36,3 +36,7 @@ MEMORY.md
 *.key
 
 .playwright-mcp/
+.claude/
+graphify-out/
+.venv/
+dist/
