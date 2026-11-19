@@ -89,6 +89,19 @@ export function PhotoGrid({ frames, facts, ranks, keepers, suggestions, selected
   const [size, setSize] = useState({ w: 900, h: 600 });
   const [top, setTop] = useState(0);
 
+  // A scroll fires many times a frame; keep the latest offset in a ref and commit it once per frame.
+  const pendingTop = useRef(0);
+  const topFrame = useRef(0);
+  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    pendingTop.current = e.currentTarget.scrollTop;
+    if (topFrame.current) return;
+    topFrame.current = requestAnimationFrame(() => {
+      topFrame.current = 0;
+      setTop(pendingTop.current);
+    });
+  };
+  useEffect(() => () => { if (topFrame.current) cancelAnimationFrame(topFrame.current); }, []);
+
   useLayoutEffect(() => {
     const measure = () => setSize({ w: inner.current!.clientWidth, h: wrap.current!.clientHeight });
     const observer = new ResizeObserver(measure);
@@ -121,7 +134,7 @@ export function PhotoGrid({ frames, facts, ranks, keepers, suggestions, selected
   }, [selected]);
 
   return (
-    <div className="grid-wrap" ref={wrap} onScroll={(e) => setTop(e.currentTarget.scrollTop)}>
+    <div className="grid-wrap" ref={wrap} onScroll={onScroll}>
       <div className="grid-inner" ref={inner} role="listbox" aria-label="Photographs" style={{ height: Math.max(0, rows * rowH - GAP) }}>
         {frames.slice(first * cols, last * cols).map((f, n) => {
           const i = first * cols + n;
