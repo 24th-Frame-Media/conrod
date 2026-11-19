@@ -789,8 +789,10 @@ pub fn cull_frame(
 ) -> Result<FrameResult, String> {
     let preset = ShootPreset::parse(&settings.scan_profile);
     step("read");
-    let frame = raw::read(path)?;
+    let mut frame = raw::read(path)?;
     let image = Rgb::decode_jpeg(&frame.preview, 1)?.orient(frame.orientation);
+    // The encoded preview has no other reader: free it before the long tail.
+    drop(std::mem::take(&mut frame.preview));
     // Resize outside the lock: only the network itself is serial.
     let input = detect::letterbox(&image);
     step("detect:wait");
