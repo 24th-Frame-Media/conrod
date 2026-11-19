@@ -1,0 +1,133 @@
+/* ── unified ingest screen: scan + group + pick + vision on one page.
+   Builds on the identify screen's `id-*` classes (flow nodes, HUD frame, lanes, cards); everything here is `ing-*`.
+   Colours come from the theme variables only, so both themes work; boxes drawn over a picture use the overlay colours. ── */
+
+.ing-head .id-state.stopped i { background: var(--warn2); }
+.ing-statusline { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; }
+.ing-sub-text { font-size: 13px; }
+.id-stats dd.ing-eta { color: var(--text-dim); font-family: inherit; font-size: 14px; line-height: 24px; font-weight: 400; }
+.ing-lock { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin: -6px 0 0; }
+
+/* flowchart: the identify nodes as buttons */
+.ing-flow .id-flow-cell { min-width: 132px; }
+.id-flow .ing-node {
+  width: 100%; height: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; align-content: start;
+}
+.id-flow .ing-node:hover:not(:disabled) { border-color: var(--line-hover); background: var(--surface-2); }
+.id-flow .ing-node:active:not(:disabled) { transform: none; }
+.id-flow .id-node.off { opacity: .35; }
+.id-flow .ing-node.sel { border-color: var(--text-dim); background: var(--surface-3); box-shadow: 0 0 0 1px var(--text-dim); }
+.id-flow .ing-node.active.sel { border-color: var(--scan); }
+.id-node small.ing-meta { font-size: 10.5px; opacity: .85; }
+.id-node.done small.ing-sub { color: var(--text-dim); }
+.id-node.active small.ing-sub { color: var(--text); }
+.ing-flow.still .id-link.flow { background: var(--line-hover); animation: none; }
+.ing-flow.still .id-link.flow::after { border-left-color: var(--line-hover); }
+
+/* page body: workers and the strip, with the rail beside them */
+.ing-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
+.ing-body.solo { grid-template-columns: minmax(0, 1fr); }
+.ing-main { display: grid; gap: 16px; min-width: 0; }
+.ing-workers-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ing-workers-head .section-label { margin: 0; flex: 1; }
+.ing-chip {
+  display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
+  padding: 2px 4px 2px 10px; border-radius: 6px; border: 1px solid var(--line); color: var(--text-dim); background: var(--surface);
+}
+.ing-chip button { padding: 1px 8px; font-size: 11px; border: 0; background: transparent; color: var(--text-mute); }
+.ing-chip button:hover { color: var(--text); }
+.ing-more { justify-self: start; }
+.ing-lanes { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.ing-barrier {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 22px 18px; background: var(--surface-2);
+  border: 1px dashed var(--line-hover); border-radius: var(--radius-lg); font-size: 13px;
+}
+.ing-barrier b { font-weight: 500; letter-spacing: .12em; text-transform: uppercase; font-size: 12px; }
+.ing-empty-note { margin: 0; font-size: 12.5px; padding: 18px 0; }
+
+/* a scan lane */
+.ing-lane.idle { opacity: .5; }
+.ing-lane.idle .id-view { filter: grayscale(.7) brightness(.8); }
+.ing-lane.waiting { border-color: color-mix(in srgb, var(--warn2) 50%, transparent); }
+.ing-lane.paused { border-style: dashed; border-color: color-mix(in srgb, var(--warn2) 50%, transparent); }
+.ing-lane.paused .id-view { filter: saturate(.5) brightness(.85); }
+.id-lane-stage.ing-stage.waiting, .id-lane-stage.ing-stage.paused { color: var(--warn2); border-color: color-mix(in srgb, var(--warn2) 40%, transparent); }
+.id-lane-stage.ing-stage.idle { color: var(--text-mute); }
+.id-lane-stage.ing-stage.busy { color: var(--scan); border-color: color-mix(in srgb, var(--scan) 40%, transparent); }
+.ing-lane-text { margin-left: auto; font-size: 10.5px; color: var(--text-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ing-lane-text.waiting, .ing-lane-text.paused { color: var(--warn2); }
+.id-badge.waiting, .id-badge.paused { color: var(--overlay-warn); border-color: rgba(207, 174, 90, .5); }
+.id-badge.waiting::before, .id-badge.paused::before { content: ""; width: 5px; height: 5px; margin-right: 6px; border-radius: 50%; background: var(--overlay-warn); }
+.id-badge.idle { opacity: .7; }
+.ing-empty { display: grid; gap: 8px; justify-items: center; align-content: center; }
+.ing-ph { width: 54px; height: 36px; border: 1px dashed var(--text-mute); border-radius: 4px; opacity: .6; }
+.ing-result { align-items: center; }
+.ing-stars { font-size: 15px; letter-spacing: .06em; color: var(--accent); line-height: 1; white-space: nowrap; }
+.ing-stars.none { color: var(--text-mute); opacity: .55; }
+.ing-stars-big { font-size: 26px; letter-spacing: .06em; color: var(--accent); line-height: 1; white-space: nowrap; }
+.ing-stars-big.none { color: var(--text-mute); opacity: .55; }
+
+/* the frame, with its boxes: sized to the picture's own shape inside the viewport */
+.ing-frame { position: absolute; inset: 0; container-type: size; display: grid; place-items: center; }
+.id-view .ing-frame-box {
+  position: relative; width: min(100cqw, calc(100cqh * var(--ar, 1.5))); height: min(100cqh, calc(100cqw / var(--ar, 1.5)));
+}
+.id-view .ing-frame-box img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
+.ing-box, .ing-af { position: absolute; box-sizing: border-box; pointer-events: none; animation: ing-pop .38s var(--ease) backwards; transform-origin: center; }
+.ing-box { border: 1.5px solid var(--overlay-good); background: rgba(76, 195, 138, .1); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+.ing-af { border: 1.5px dashed var(--overlay-accent); background: rgba(227, 168, 58, .08); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+.ing-box-tag {
+  position: absolute; left: 0; top: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 9.5px; line-height: 1.5; padding: 0 5px; color: var(--overlay-text); background: rgba(0, 0, 0, .72);
+  border-bottom-right-radius: 3px;
+}
+.ing-box .ing-box-tag { color: var(--overlay-good); }
+.ing-af .ing-box-tag { color: var(--overlay-accent); letter-spacing: .1em; }
+/* The AF tag sits at the bottom-left, so it never meets a detection label at the top-left. */
+.ing-af .ing-af-tag { top: auto; bottom: 0; border-bottom-right-radius: 0; border-top-right-radius: 3px; }
+@keyframes ing-pop { from { opacity: 0; transform: scale(.94); } }
+
+/* the step ladder under the frame */
+.ing-steps { list-style: none; display: flex; gap: 3px; margin: 0; padding: 0; }
+.ing-steps li {
+  flex: 1; min-width: 0; text-align: center; font-family: var(--mono); font-size: 9px; letter-spacing: .04em; padding-top: 3px;
+  color: var(--text-mute); border-top: 2px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ing-steps li.done { border-top-color: color-mix(in srgb, var(--good) 60%, transparent); color: var(--text-dim); }
+.ing-steps li.cur { border-top-color: var(--scan); color: var(--text); animation: ing-step 1.2s ease-in-out infinite; }
+@keyframes ing-step { 50% { opacity: .55; } }
+.ing-lane.paused .ing-steps li.cur, .ing-lane.waiting .ing-steps li.cur { border-top-color: var(--warn2); animation: none; }
+.ing-lane.idle .ing-steps li.cur { animation: none; }
+
+/* the strip: culled frames and identified cars together */
+.ing-strip-head { display: flex; align-items: center; gap: 12px; }
+.ing-strip-head .section-label { margin: 0; flex: 1; }
+.ing-strip-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.ing-strip-row .id-card { animation: thumb-in .18s ease-out backwards; }
+.ing-card.frame .id-card-num { font-size: 11.5px; }
+.ing-card.frame.sharp .id-card-num { color: var(--good); }
+.ing-card.frame.soft { border-color: color-mix(in srgb, var(--warn2) 45%, transparent); }
+.ing-card.frame.soft .id-card-num { color: var(--warn2); }
+.ing-card.frame.blurred { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.ing-card.frame.blurred .id-card-num { color: var(--bad); }
+.ing-card.frame .id-card-conf { color: var(--accent); letter-spacing: .05em; }
+.ing-card.frame.sel, .ing-card.car.sel { border-color: var(--scan); }
+.ing-card .ing-kind { font-family: var(--mono); font-size: 9px; letter-spacing: .12em; color: var(--text-mute); }
+
+/* detail page for a culled frame */
+.ing-verdict { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; padding: 2px 8px; border-radius: 5px; border: 1px solid var(--line); color: var(--text-dim); }
+.ing-verdict.sharp { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+.ing-verdict.soft { color: var(--warn2); border-color: color-mix(in srgb, var(--warn2) 40%, transparent); }
+.ing-verdict.blurred { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+.ing-facts { display: grid; gap: 6px; margin: 0; }
+.ing-facts div { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; }
+.ing-facts dt { color: var(--text-mute); }
+.ing-facts dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.ing-det-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.ing-det-list li { display: flex; justify-content: space-between; font-size: 12.5px; }
+
+@media (max-width: 1000px) { .ing-body { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) {
+  .ing-box, .ing-af, .ing-steps li.cur, .ing-strip-row .id-card { animation: none; }
+  .id-link.flow { animation: none; }
+}

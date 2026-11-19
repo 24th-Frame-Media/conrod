@@ -14,8 +14,8 @@ const TABS: [Page, string, string][] = [
   ['Settings', 'Settings', 'Settings and vehicles'],
 ];
 
-const SCAN_TAB: [Page, string, string] = ['Scan', 'Scan', 'Watch the scan'];
-const IDENTIFY_TAB: [Page, string, string] = ['Identify', 'Identify', 'Watch the identification'];
+/** One tab for a whole ingest: the scan and the identification that follows it (or a standalone identify run) share it. The Identify page key stays for callers. */
+const INGEST_TAB: [Page, string, string] = ['Scan', 'Ingest', 'Watch the scan and the identification'];
 
 export type StatusActions = { pause: () => void; resume: () => void; stop: () => void; cancel: (key: string) => void };
 
@@ -148,13 +148,13 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, actions
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const photos = jobs.reduce((n, j) => n + j.total, 0);
   const [theme, setTheme] = useState(storedTheme);
-  // The Scan and Identify tabs exist only while their run is live, or while their screen is open (to read the summary).
+  // The Ingest tab exists only while a scan or identification is live, or while either screen is open (to read the summary).
   const scanning = status.activeJob != null;
   const identifying = status.operations.some((key) => key.startsWith('Identifying:'));
+  const shown = (id: Page) => page === id || (id === 'Scan' && page === 'Identify');
   const tabs = [
     TABS[0],
-    ...(scanning || page === 'Scan' ? [SCAN_TAB] : []),
-    ...(identifying || page === 'Identify' ? [IDENTIFY_TAB] : []),
+    ...(scanning || identifying || page === 'Scan' || page === 'Identify' ? [INGEST_TAB] : []),
     ...TABS.slice(1),
   ];
   return (
@@ -165,10 +165,9 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, actions
       </div>
       <nav className="tabs" aria-label="Screens">
         {tabs.map(([id, label, title]) => (
-          <button key={id} className={page === id ? 'active' : ''} title={title} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>
+          <button key={id} className={shown(id) ? 'active' : ''} title={title} aria-current={shown(id) ? 'page' : undefined} onClick={() => setPage(id === 'Scan' && identifying && !scanning ? 'Identify' : id)}>
             {label}
-            {id === 'Scan' && scanning && <i className="tab-live" aria-label="running" />}
-            {id === 'Identify' && identifying && <i className="tab-live" aria-label="identifying" />}
+            {id === 'Scan' && (scanning || identifying) && <i className="tab-live" aria-label={identifying ? 'identifying' : 'running'} />}
           </button>
         ))}
       </nav>
