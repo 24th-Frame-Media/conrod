@@ -1,5 +1,6 @@
-//! The cache and the three resets. Ports `GET /api/cache`, `POST /api/cache/clear`
-//! and `POST /api/reset/{identifications,detections}` / `POST /api/reset`.
+//! The cache and the resets. Ports `GET /api/cache`, `POST /api/cache/clear`
+//! and `POST /api/reset/{identifications,detections}` / `POST /api/reset`, plus
+//! the per-album reset that returns one shoot to the state just after import.
 //!
 //! Nothing here reaches a photograph or anything the person made: only files
 //! Conrod cut into its own `cache` folder (and only files named as it names
@@ -334,6 +335,100 @@ pub fn reset_detections(d: &Desktop, job: Option<i64>) -> Result<Value> {
     Ok(json!({"ok": true, "detections_removed": gone, "crops_removed": removed}))
 }
 
+/// Every column of `images`, read from the schema itself: a reset must clear
+/// the columns that exist, not a copy of the list that a later migration would
+/// leave behind.
+fn image_columns(d: &Desktop) -> Result<Vec<String>> {
+    Ok(rows(&lock(&d.reader), "PRAGMA table_info(images)", [])?
+        .iter()
+        .filter_map(|r| r["name"].as_str().map(str::to_owned))
+        .collect())
+}
+
+/// The freshly-imported values of the columns a reset keeps or must not null:
+/// `add_images` writes only the job, the path and the default status, and
+/// `rejected`/`picked` are NOT NULL with a default of 0.
+const FRESH_IMAGES: [(&str, &str); 3] =
+    [("status", "'pending'"), ("rejected", "0"), ("picked", "0")];
+
+/// Return one album to the state it had just after import, in one transaction:
+/// every detection goes, every frame goes back to pending and keeps only its
+/// id, album and path, and the album is ready to scan again. The album's
+/// settings, the global registry and training labels, and every photograph and
+/// sidecar are left alone; only Conrod's own cached crops and thumbnails of
+/// this album are deleted.
+pub fn reset_album(d: &Desktop, job: i64) -> Result<Value> {
+    ensure_idle(d, Some(job))?;
+    require_job(d, job)?;
+    let task = d.hub.start("Resetting album", 0);
+    let crops = crop_paths(d, Some(job))?;
+    // Thumbnails are named `thumb-<image id>.jpg`; the column is the record,
+    // and the canonical name is a fallback for a file whose row was cleared.
+    let mut thumbs: Vec<String> = rows(
+        &lock(&d.reader),
+        "SELECT id, thumb_path FROM images WHERE job_id=?",
+        [job],
+    )?
+    .iter()
+    .flat_map(|r| {
+        let named = r["thumb_path"].as_str().map(str::to_owned);
+        let canonical = r["id"]
+            .as_i64()
+            .map(|id| d.root.join(format!("cache/native/thumb-{id}.jpg")))
+            .map(|p| p.to_string_lossy().into_owned());
+        [named, canonical].into_iter().flatten()
+    })
+    .collect();
+    thumbs.sort_unstable();
+    thumbs.dedup();
+    let columns = image_columns(d)?;
+    let kept = ["id", "job_id", "path"];
+    let assignments: Vec<String> = columns
+        .iter()
+        .filter(|c| !kept.contains(&c.as_str()))
+        .map(
+            |c| match FRESH_IMAGES.iter().find(|(name, _)| *name == c.as_str()) {
+                Some((name, value)) => format!("{name}={value}"),
+                None => format!("{c}=NULL"),
+            },
+        )
+        .collect();
+    let (detections_removed, frames_reset) = {
+        let db = lock(&d.db);
+        let tx = db.unchecked_transaction().map_err(err)?;
+        let gone = tx
+            .execute(
+                "DELETE FROM detections WHERE image_id IN (SELECT id FROM images WHERE job_id=?)",
+                [job],
+            )
+            .map_err(err)?;
+        let frames = tx
+            .execute(
+                &format!(
+                    "UPDATE images SET {} WHERE job_id=?",
+                    assignments.join(", ")
+                ),
+                [job],
+            )
+            .map_err(err)?;
+        // `create_job` leaves a new album 'scanning', ready for its first scan.
+        tx.execute("UPDATE jobs SET status='scanning' WHERE id=?", [job])
+            .map_err(err)?;
+        tx.commit().map_err(err)?;
+        (gone, frames)
+    };
+    let crops_removed = remove_crops(d, &crops);
+    let thumbs_removed = remove_crops(d, &thumbs);
+    task.finish();
+    Ok(json!({
+        "ok": true,
+        "detections_removed": detections_removed,
+        "frames_reset": frames_reset,
+        "thumbs_removed": thumbs_removed,
+        "crops_removed": crops_removed,
+    }))
+}
+
 /// Forget every album and everything read from it, and start again. Settings,
 /// known vehicles and the training labels are kept: they are how the next scan
 /// is set up, not a result of the last one.
@@ -632,6 +727,178 @@ mod tests {
             .root
             .join(format!("cache/native/thumb-{image}.jpg"))
             .exists());
+    }
+
+    #[test]
+    fn reset_album_returns_one_album_to_its_imported_state() {
+        let lib = Lib::new("reset-album");
+        let (image, det) = stocked(&lib);
+        let thumb = lib.root.join(format!("cache/native/thumb-{image}.jpg"));
+        let view = lib.root.join(format!("cache/native/view-{image}.jpg"));
+        let crop = lib.root.join(format!("cache/native/crop-{det}.jpg"));
+        let second = lib.frame("b.jpg", Some(2));
+        let also = lib.detection(image, "vehicle", 0.7);
+        let other_det = lib.detection(second, "vehicle", 0.6);
+        // A row whose crop path is a photograph, not ours: never deleted.
+        let original = lib.root.join("photo.cr3");
+        let sidecar = lib.root.join("photo.cr3.xmp");
+        std::fs::write(&original, b"raw").unwrap();
+        std::fs::write(&sidecar, b"<xmp/>").unwrap();
+        lib.sql(
+            "UPDATE detections SET crop_path=? WHERE id=?",
+            params![original.to_string_lossy(), also],
+        );
+        lib.sql(
+            "UPDATE images SET status='done',error='e',written_at=1,camera='EOS',burst_key=4,
+                taken_at=1.5,rating_in_file=3,label_in_file='keep',sharpness=0.8,rating=0.9,
+                rating_verdict='sharp',stars=5,rejected=1,thumb_path=?,picked=1,phash=7,
+                dupe_key=3,burst_pick=1,set_id=1,set_kind='bracket',exposure_time=0.004,
+                exposure_bias=1.0,f_number=2.8,focal_length=50,focus_distance=5,
+                exposure_verdict='ok',highlight_clip=0.1,shadow_clip=0.2,dark_frame=0,
+                tilt_deg=1,converge_deg=2,level_verdict='level',eye_open_min=0.9,
+                smile_max=0.8,buck_score=0.5,taste=0.4,sharpness_whole=0.7,pan_share=0.3,
+                copy_of=1,time_burst=2,look='#fff',af_x1=0.1,af_y1=0.1,af_x2=0.2,af_y2=0.2,
+                af_mode=1,af_sharpness=0.6,comp_placement=0.4,comp_mode='thirds',
+                comp_balance_x=0.1,comp_balance_y=0.1,comp_symmetry=0.5,comp_clutter=0.2,
+                comp_lines=2,comp_subject_share=0.1,comp_at=9,width=6000,height=4000,
+                preview_path='p.jpg',lens='RF',iso=400,file_size=1000
+              WHERE job_id=?",
+            params![thumb.to_string_lossy(), lib.job],
+        );
+        lib.sql(
+            "UPDATE detections SET stars=4,rejected=1,burst_pick=1,af_bystander=1,
+                cull_reason='blurred',number='7',attributes='{}' WHERE id=?",
+            [other_det],
+        );
+        let settings = json!({"scan_profile": "portrait", "burst_gap": 2.5}).to_string();
+        lib.sql(
+            "UPDATE jobs SET settings_json=? WHERE id=?",
+            params![settings, lib.job],
+        );
+        lib.sql("INSERT INTO known_vehicles(plate) VALUES('KEEP1')", []);
+        lib.sql("INSERT INTO sharpness_labels(path,x1,y1,x2,y2,stars,created_at) VALUES('p',1,2,3,4,3,1)", []);
+        // Another album, already scanned: none of this may change.
+        let other = conrod_store::create_job(
+            &lib.db(),
+            &lib.root.join("other"),
+            Some("Other"),
+            &json!({}),
+        )
+        .unwrap();
+        lib.sql(
+            "INSERT INTO images(job_id,path,status,rating,stars) VALUES(?,'other.jpg','done',0.8,4)",
+            [other],
+        );
+        let other_image: i64 = lib.one("SELECT id FROM images WHERE job_id=?", [other]);
+        let other_det = lib.detection(other_image, "vehicle", 0.9);
+
+        // An operation on this album is refused, like the other resets.
+        crate::lock(&lib.d().operations)
+            .insert(format!("Grouping vehicles:{}", lib.job), Default::default());
+        let err = lib
+            .run("reset_album", json!({"jobId": lib.job}))
+            .unwrap_err();
+        assert!(err.contains("operation is running"), "{err}");
+        crate::lock(&lib.d().operations).clear();
+        assert!(lib
+            .run("reset_album", json!({"jobId": 404}))
+            .unwrap_err()
+            .contains("No such album"));
+        assert!(lib
+            .run("reset_album", json!({}))
+            .unwrap_err()
+            .contains("jobId"));
+
+        let out = lib.run("reset_album", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(
+            out,
+            json!({
+                "ok": true,
+                "detections_removed": 3,
+                "frames_reset": 2,
+                "thumbs_removed": 1,
+                "crops_removed": 1,
+            })
+        );
+        assert!(original.exists(), "a photograph is never deleted");
+        assert!(sidecar.exists(), "nor a sidecar");
+        assert!(!thumb.exists() && !crop.exists(), "ours go");
+        assert!(view.exists(), "the preview is cache_clear's to drop");
+        assert!(
+            lib.root.join("cache/native/notes.txt").exists(),
+            "a stranger in the cache is not ours"
+        );
+
+        let row = |id: i64| -> serde_json::Value {
+            crate::desktop::rows(&lib.db(), "SELECT * FROM images WHERE id=?", [id])
+                .unwrap()
+                .remove(0)
+        };
+        for (id, name) in [(image, "a.jpg"), (second, "b.jpg")] {
+            let frame = row(id);
+            for (key, value) in frame.as_object().unwrap() {
+                match key.as_str() {
+                    "id" => assert_eq!(value, &json!(id)),
+                    "job_id" => assert_eq!(value, &json!(lib.job)),
+                    "path" => assert!(value.as_str().is_some_and(|p| p.ends_with(name)), "{value}"),
+                    "status" => assert_eq!(value, &json!("pending")),
+                    "rejected" | "picked" => assert_eq!(value, &json!(0)),
+                    other => assert!(value.is_null(), "{other} was left as {value}"),
+                }
+            }
+        }
+        let (job_status, job_settings): (String, String) = lib
+            .db()
+            .query_row(
+                "SELECT status, settings_json FROM jobs WHERE id=?",
+                [lib.job],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (job_status.as_str(), job_settings.as_str()),
+            ("scanning", settings.as_str()),
+            "ready for a first scan again, with the same settings"
+        );
+        let left: i64 = lib.one(
+            "SELECT (SELECT COUNT(*) FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?)
+                  + (SELECT COUNT(*) FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?)",
+            params![lib.job, other],
+        );
+        assert_eq!(left, 1, "only the other album's detection is left");
+        let (other_rating, other_stars): (f64, i64) = lib
+            .db()
+            .query_row(
+                "SELECT rating, stars FROM images WHERE id=?",
+                [other_image],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((other_rating, other_stars), (0.8, 4));
+        let _ = other_det;
+        let kept: i64 = lib.one(
+            "SELECT (SELECT COUNT(*) FROM known_vehicles)+(SELECT COUNT(*) FROM sharpness_labels)",
+            [],
+        );
+        assert_eq!(
+            kept, 2,
+            "the registry and training labels are not album results"
+        );
+
+        // A second call is harmless: nothing is there to remove.
+        let again = lib.run("reset_album", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(
+            again,
+            json!({
+                "ok": true,
+                "detections_removed": 0,
+                "frames_reset": 2,
+                "thumbs_removed": 0,
+                "crops_removed": 0,
+            })
+        );
+        let frames: i64 = lib.one("SELECT COUNT(*) FROM images WHERE job_id=?", [lib.job]);
+        assert_eq!(frames, 2);
     }
 
     #[test]

@@ -93,6 +93,10 @@ button.ghost { background: transparent; }
 button.ghost:hover:not(:disabled) { background: var(--surface-2); }
 button.danger { color: var(--bad); border-color: rgba(229, 87, 92, .3); }
 button.danger:hover:not(:disabled) { color: var(--bad-hover); border-color: var(--bad); }
+/* A destructive confirmation is filled, not just outlined: the one button a
+   person must not hit by accident reads as the warning it is. */
+button.danger.solid { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 500; }
+button.danger.solid:hover:not(:disabled) { background: var(--bad-hover); border-color: var(--bad-hover); color: #fff; }
 button.small { padding: 4px 12px; font-size: 12px; }
 .field-row { display: flex; gap: 8px; margin-bottom: 12px; }
 .field-row input { flex: 1; min-width: 0; }
@@ -347,6 +351,11 @@ dialog[open] { animation: dialog-in .18s var(--ease); }
 .dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .dialog-head h3 { margin: 0; font-size: 16px; letter-spacing: 0; color: var(--text); font-weight: 500; }
 .dialog-body { color: var(--text-dim); font-size: 13px; }
+/* What a destructive reset deletes and keeps, then the word that arms it. */
+.reset-ledger { margin: 8px 0 12px; padding-left: 18px; }
+.reset-ledger li { margin: 2px 0; }
+.reset-confirm { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; font-size: 12px; color: var(--text-mute); }
+.reset-confirm input { font-family: var(--mono); letter-spacing: .12em; text-transform: uppercase; }
 .keys { margin: 0; display: grid; gap: 4px; }
 .keys > div { display: grid; grid-template-columns: 9.5rem 1fr; gap: 12px; align-items: center; padding: 4px 0; }
 .keys dt { display: flex; gap: 4px; flex-wrap: wrap; } .keys dd { margin: 0; color: var(--text-dim); font-size: 13px; }
