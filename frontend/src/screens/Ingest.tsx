@@ -82,8 +82,8 @@ export function IngestScreen({
     if (idLive?.current?.prompt) prompts.current[idLive.current.detection_id] = idLive.current.prompt;
   }, [idLive]);
 
-  const scanState = !p ? (running ? 'starting' : job?.status === 'done' ? 'done' : 'idle')
-    : p.state === 'running' && !running && job?.status !== 'scanning' ? 'stopped' : p.state;
+  const scanState = !p ? (running ? 'starting' : job?.status === 'done' || job?.status === 'done_errors' ? 'done' : 'idle')
+    : p.state === 'running' && !running && job?.status !== 'scanning' ? 'stopped' : p.state === 'done_errors' ? 'done' : p.state;
   const phase = ingestPhase({ mode, scan: mode === 'ingest' ? { state: scanState, stage: p?.stage } : null, identify: idLive, identifying: Boolean(operation) });
   if (!job || phase === 'idle') {
     return mode === 'identify' ? (
@@ -225,9 +225,11 @@ export function IngestScreen({
             <div className="ss-mark"><Icon name={phase === 'done' ? 'check' : 'x'} size={20} /></div>
             <div className="ss-text">
               <b>{phase === 'done'
-                ? summaryLine(total, p.found) + (idLive?.done ? ` · ${idLive.done.toLocaleString()} ${idLive.done === 1 ? 'car' : 'cars'} read` : '')
+                ? summaryLine(total, p.found) + (idLive?.done ? ` · ${idLive.done.toLocaleString()} ${idLive.done === 1 ? 'car' : 'cars'} read` : '') + (job.errors ? ` · ${job.errors.toLocaleString()} could not be read` : '')
                 : `Stopped at ${pct}% · ${p.found.subjects.toLocaleString()} subjects found so far`}</b>
-              <span className="muted">{phase === 'done' ? 'Keepers are suggestions. Nothing is rejected or written until you say so.' : 'Frames that were read can be reviewed now. Resume the scan from the Library to finish grouping and picking.'}</span>
+              <span className="muted">{phase !== 'done' ? 'Frames that were read can be reviewed now. Resume the scan from the Library to finish grouping and picking.'
+                : job.errors ? `${job.error_samples?.[0] ?? 'Some files could not be read'}. The rest are ready to review; retry the failed frames from the Library.`
+                  : 'Keepers are suggestions. Nothing is rejected or written until you say so.'}</span>
             </div>
             <button className="primary" autoFocus={phase === 'done'} onClick={onReview}>Review</button>
           </section>

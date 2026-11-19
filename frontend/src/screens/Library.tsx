@@ -37,7 +37,7 @@ function JobCard({ job, scanning, active, live, onOpen, onIdentify, onResume, on
         {!cover && <div className="state">{active ? `Scanning ${fraction}%` : jobState(job)}</div>}
         <span className="badge">{plural(job.total, 'photo')}</span>
         {(active || job.status === 'scanning') && <div className="bar cover-bar"><div className="fill" style={{ width: `${fraction}%` }} /></div>}
-        {resumable && <button className="resume" onClick={(e) => { e.stopPropagation(); onResume(); }}>{job.status === 'indexed' ? 'Suggest culls' : 'Resume'}</button>}
+        {resumable && <button className="resume" onClick={(e) => { e.stopPropagation(); onResume(); }}>{job.status === 'indexed' ? 'Suggest culls' : job.status === 'done_errors' ? 'Retry failed' : 'Resume'}</button>}
         <div className="job-menu">
           <button className="iconbtn danger" title="Forget this album. Your photographs are not touched" onClick={(e) => { e.stopPropagation(); onAsk(); }}>Delete</button>
         </div>
@@ -53,7 +53,7 @@ function JobCard({ job, scanning, active, live, onOpen, onIdentify, onResume, on
       )}
       <div className="steps">
         <button className="step" onClick={(e) => { e.stopPropagation(); onOpen(); }}>{active ? 'Watch scan' : 'Review'}</button>
-        {job.status === 'done' && !active && (
+        {['done', 'done_errors'].includes(job.status) && !active && (
           <button className="step" title={`Name what this album's identify scope covers: ${identifyScope === 'everything' ? 'every subject' : 'the suggested keeper of each burst'}.`} onClick={(e) => { e.stopPropagation(); onIdentify(); }}>
             Identify {identifyScope === 'everything' ? 'everything' : 'keepers'}
           </button>
@@ -104,7 +104,7 @@ export function Library({ jobs, models, scanning, live, activeJob, onOpen, onNew
             <div className="big-label">Frames scanned</div>
             <div className="stat-grid">
               <div><div className="n">{jobs.length}</div><div className="big-label">Albums</div></div>
-              <div><div className="n">{jobs.filter((j) => j.status === 'done').length}</div><div className="big-label">Ready to review</div></div>
+              <div><div className="n">{jobs.filter((j) => j.status === 'done' || j.status === 'done_errors').length}</div><div className="big-label">Ready to review</div></div>
             </div>
             {jobs.length > 0 && (
               <div className="rail-actions">

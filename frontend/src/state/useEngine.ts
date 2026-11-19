@@ -87,7 +87,10 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
     const last = status.tasks.reduce<Status['tasks'][number] | null>((a, t) => (!a || t.id > a.id ? t : a), null);
     if (last?.state === 'cancelled' || (last?.state === 'failed' && last.error === 'stopped')) toast('Scan stopped. You can resume it later.');
     else if (last?.state === 'failed') toast(`Scan failed: ${last.error ?? 'unknown error'}`, { tone: 'error' });
-    else toast(name ? `Scan complete: ${name}` : 'Scan complete', { tone: 'ok' });
+    else if (status.scan?.job === was && status.scan.errors > 0) {
+      const n = status.scan.errors;
+      toast(`${name ?? 'Scan'} finished with ${n.toLocaleString()} ${n === 1 ? 'photo' : 'photos'} that could not be read. ${status.scan.error_samples[0] ?? ''}`.trim(), { tone: 'error' });
+    } else toast(name ? `Scan complete: ${name}` : 'Scan complete', { tone: 'ok' });
     if (inTauri) void getCurrentWindow().requestUserAttention(last?.state === 'failed' ? UserAttentionType.Critical : UserAttentionType.Informational);
   }, [status, toast]);
 

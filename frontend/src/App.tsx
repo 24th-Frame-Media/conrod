@@ -98,11 +98,21 @@ export function App() {
             workflowMode: defaults.workflow_mode, identifyScope: defaults.identify_scope,
           }
         : args;
-      const { jobId: id } = await engine.scan(scan);
+      const { jobId: id, duplicates = 0, added = 0, scanning: started = true } = await engine.scan(scan);
       await eng.refreshJobs();
-      setJobId(id);
+      if (id != null) setJobId(id);
       eng.setStatus(await engine.status());
       setShowImport(false);
+      // A folder that is already an album gains only its new frames: say what
+      // was skipped instead of silently scanning (or duplicating) again.
+      if (!started && added === 0 && duplicates > 0) {
+        setPage('Library');
+        toast(`${duplicates.toLocaleString()} photos are already in this library. Nothing was imported.`, { tone: 'ok' });
+        return;
+      }
+      if (duplicates > 0) {
+        toast(`${duplicates.toLocaleString()} already-imported photos were skipped${added ? `; ${added} new ${added === 1 ? 'frame' : 'frames'} added` : ''}.`, { tone: 'ok' });
+      }
       setPage('Scan');
       if (inTauri) void getCurrentWindow().requestUserAttention(UserAttentionType.Informational);
     });

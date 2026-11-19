@@ -13,6 +13,7 @@ export const hiddenCopies = (copies?: number): string => (copies ? ` · ${plural
 /** The one-line state of an album, in the words the Python home screen uses for its cover. */
 export function jobState(job: Job): string {
   if (job.status === 'done') return 'Ready to review';
+  if (job.status === 'done_errors') return `Ready to review · ${plural(job.errors ?? 0, 'photo')} could not be read`;
   if (job.status === 'indexed') return 'Indexed — ready to cull';
   if (job.status === 'scanning') return `Scanning ${pct(job.done, job.total)}%`;
   if (job.status === 'stopped' || job.status === 'incomplete') return `Stopped at ${pct(job.done, job.total)}%`;
