@@ -20,6 +20,11 @@ use std::time::{Duration, SystemTime};
 
 use crate::settings::Settings;
 
+/// Lock a mutex, carrying on with the data if a panicking thread poisoned it.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
 /// OpenCode Console / Go: one key for the models it lists, OpenAI-compatible.
 /// The chat endpoint lives under `inference/openai/v1`; the model list under
@@ -104,9 +109,13 @@ pub const FATAL_STATUSES: [u16; 6] = [400, 401, 403, 404, 405, 422];
 /// Consecutive unusable answers before the run gives up on the configuration.
 pub const GIVE_UP_AFTER: u32 = 5;
 /// The longest backoff invented for ourselves. A provider's own Retry-After
-/// is obeyed exactly as given, however long -- it is a fact about when the
-/// limit lifts, not a guess, and clamping it just buys another refusal.
+/// is obeyed as given up to [`MAX_RETRY_AFTER`] -- it is a fact about when the
+/// limit lifts, not a guess, and clamping it short just buys another refusal.
 pub const MAX_WAIT: f64 = 60.0;
+/// The longest a provider's Retry-After is honoured. Far beyond any real
+/// limit window; it only stops a nonsense header parking a worker forever or
+/// reaching `Duration` as a value it cannot hold.
+pub const MAX_RETRY_AFTER: f64 = 3600.0;
 /// How long a single sleep runs before the stop flag is checked again.
 pub const WAIT_SLICE: f64 = 0.5;
 
@@ -138,8 +147,8 @@ impl Clock for RealClock {
         self.start.elapsed().as_secs_f64()
     }
     fn sleep(&self, seconds: f64) {
-        if seconds > 0.0 {
-            std::thread::sleep(Duration::from_secs_f64(seconds));
+        if seconds.is_finite() && seconds > 0.0 {
+            std::thread::sleep(Duration::from_secs_f64(seconds.min(MAX_RETRY_AFTER)));
         }
     }
 }
@@ -165,7 +174,7 @@ impl RateGate {
     /// Give the waiters a way to notice the scan was stopped. Port of
     /// `set_stop_check`.
     pub fn set_stop_check(&self, check: Option<Arc<dyn Fn() -> bool + Send + Sync>>) {
-        *self.stop_check.lock().unwrap() = check;
+        *lock(&self.stop_check) = check;
     }
 
     /// Sleep, looking up often enough to notice a Stop. Port of `_sleep`.
@@ -173,10 +182,11 @@ impl RateGate {
     /// would be a loop waking up hundreds of times to ask a question nobody
     /// is answering.
     pub fn sleep_interruptible(&self, seconds: f64) -> Result<(), VlmError> {
-        if seconds <= 0.0 {
+        if !seconds.is_finite() || seconds <= 0.0 {
             return Ok(());
         }
-        let check = self.stop_check.lock().unwrap().clone();
+        let seconds = seconds.min(MAX_RETRY_AFTER);
+        let check = lock(&self.stop_check).clone();
         let Some(check) = check else {
             self.clock.sleep(seconds);
             return Ok(());
@@ -197,37 +207,39 @@ impl RateGate {
     /// Ask every worker to wait, not just the one that was refused. Port of
     /// `_hold_off`: never moved backwards.
     pub fn hold_off(&self, seconds: f64) {
-        let mut not_before = self.not_before.lock().unwrap();
-        let candidate = self.clock.now() + seconds;
-        if candidate > *not_before {
+        let mut not_before = lock(&self.not_before);
+        let candidate = self.clock.now() + seconds.min(MAX_RETRY_AFTER);
+        if candidate.is_finite() && candidate > *not_before {
             *not_before = candidate;
         }
     }
 
     /// Port of `_wait_turn`.
     pub fn wait_turn(&self) -> Result<(), VlmError> {
-        let delay = *self.not_before.lock().unwrap() - self.clock.now();
+        let delay = *lock(&self.not_before) - self.clock.now();
         self.sleep_interruptible(delay)
     }
 }
 
 /// How long the provider asked for, or a backed-off guess.
 ///
-/// A stated `Retry-After` is taken at face value and uncapped, whether it is
-/// plain seconds or an HTTP-date (parsed with the `httpdate` crate, which
-/// only reads the RFC 7231 IMF-fixdate form; that is the only form a real
-/// `Retry-After` header uses in practice).
+/// A stated `Retry-After` is taken at face value, whether it is plain seconds
+/// or an HTTP-date (parsed with the `httpdate` crate, which only reads the
+/// RFC 7231 IMF-fixdate form; that is the only form a real `Retry-After`
+/// header uses in practice), up to [`MAX_RETRY_AFTER`]. A value that is not a
+/// finite number (`inf`, `NaN`) is ignored like any unreadable header.
 pub fn retry_after(headers: &[(String, String)], attempt: u32, jitter: f64) -> f64 {
     if let Some(header) = header_get(headers, "retry-after") {
         if let Ok(seconds) = header.trim().parse::<f64>() {
-            return seconds.max(0.0);
-        }
-        if let Ok(when) = httpdate::parse_http_date(header.trim()) {
+            if seconds.is_finite() {
+                return seconds.clamp(0.0, MAX_RETRY_AFTER);
+            }
+        } else if let Ok(when) = httpdate::parse_http_date(header.trim()) {
             let seconds = when
                 .duration_since(SystemTime::now())
                 .map(|d| d.as_secs_f64())
                 .unwrap_or(0.0);
-            return seconds.max(0.0);
+            return seconds.clamp(0.0, MAX_RETRY_AFTER);
         }
     }
     // Jittered, so several workers refused at once do not all come back in
@@ -364,7 +376,7 @@ impl FatalTracker {
     /// Count one answer that means the configuration is wrong. Returns the
     /// new run length.
     pub fn note_fatal(&self, said: &str) -> u32 {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         state.run += 1;
         state.said = said.to_string();
         state.run
@@ -372,14 +384,14 @@ impl FatalTracker {
 
     /// A call worked, so whatever came before it was not the configuration.
     pub fn clear(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock(&self.state);
         state.run = 0;
         state.said.clear();
     }
 
     /// The reason the run should stop, or `None` while it should carry on.
     pub fn given_up(&self) -> Option<String> {
-        let state = self.state.lock().unwrap();
+        let state = lock(&self.state);
         (state.run >= GIVE_UP_AFTER).then(|| state.said.clone())
     }
 }
@@ -477,9 +489,7 @@ impl HostPool {
     }
 
     pub fn acquire(&self) -> String {
-        self.rx
-            .lock()
-            .unwrap()
+        lock(&self.rx)
             .recv()
             .expect("a HostPool is never dropped while a caller still holds a sender")
     }
@@ -500,7 +510,7 @@ pub struct HostPools {
 
 impl HostPools {
     pub fn pool_for(&self, hosts: Vec<String>) -> Arc<HostPool> {
-        let mut pools = self.pools.lock().unwrap();
+        let mut pools = lock(&self.pools);
         pools
             .entry(hosts.clone())
             .or_insert_with(|| Arc::new(HostPool::new(hosts)))
@@ -1798,6 +1808,47 @@ mod tests {
             .map(|_| pick_service("round_robin", &ids(3), None, &turn))
             .collect();
         assert_eq!(order, [0, 1, 2, 0, 1]);
+    }
+
+    fn header(value: &str) -> Vec<(String, String)> {
+        vec![("Retry-After".to_string(), value.to_string())]
+    }
+
+    #[test]
+    fn retry_after_reads_plain_seconds_up_to_the_cap() {
+        assert_eq!(retry_after(&header("120"), 0, 0.0), 120.0);
+        assert_eq!(retry_after(&header("-5"), 0, 0.0), 0.0);
+        assert_eq!(retry_after(&header("1e308"), 0, 0.0), MAX_RETRY_AFTER);
+        assert_eq!(retry_after(&header("999999999"), 0, 0.0), MAX_RETRY_AFTER);
+    }
+
+    #[test]
+    fn retry_after_ignores_a_value_that_is_not_a_finite_number() {
+        for bad in ["inf", "-inf", "infinity", "NaN", "nan"] {
+            let wait = retry_after(&header(bad), 2, 0.25);
+            assert_eq!(wait, 4.25, "{bad} should fall back to the backoff guess");
+        }
+    }
+
+    #[test]
+    fn a_hostile_wait_cannot_panic_the_gate() {
+        struct Quick;
+        impl Clock for Quick {
+            fn now(&self) -> f64 {
+                0.0
+            }
+            fn sleep(&self, _seconds: f64) {}
+        }
+        let gate = RateGate::new(Arc::new(Quick));
+        for seconds in [f64::INFINITY, f64::NAN, 1e308, -1.0] {
+            gate.hold_off(seconds);
+            gate.sleep_interruptible(seconds).unwrap();
+        }
+        gate.wait_turn().unwrap();
+        // The real clock must clamp rather than hand `Duration` something it
+        // cannot hold.
+        RealClock::default().sleep(f64::NAN);
+        RealClock::default().sleep(f64::NEG_INFINITY);
     }
 
     #[test]

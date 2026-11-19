@@ -633,7 +633,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
                 });
             }
         });
-        if let Some(e) = failure.into_inner().unwrap() {
+        if let Some(e) = failure.into_inner().unwrap_or_else(|e| e.into_inner()) {
             end.finish("error");
             return Err(e);
         }

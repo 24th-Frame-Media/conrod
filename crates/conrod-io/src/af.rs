@@ -95,8 +95,9 @@ type PixelBox = (f64, f64, f64, f64, f64, f64);
 
 /// The makers' readers, in the order tried when the record carries no `Make`
 /// this module recognises.
-const MAKERS: [fn(&Tags, (f64, f64)) -> Option<PixelBox>; 5] =
-    [canon, nikon, sony, fuji, panasonic];
+const MAKERS: [Maker; 5] = [canon, nikon, sony, fuji, panasonic];
+
+type Maker = fn(&Tags, (f64, f64)) -> Option<PixelBox>;
 
 /// Parse one `exiftool -n -json -G1` record.
 ///

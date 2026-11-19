@@ -200,11 +200,14 @@ fn remeasure_pixels(
         .map_or(4, |n| n.get() * 4 / 5)
         .clamp(2, 16);
     let pan_ok = ShootPreset::parse(&cfg.scan_profile).pan_compatible();
+    let failed = AtomicBool::new(false);
+    let first_error: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
     std::thread::scope(|s| {
         for _ in 0..workers {
             s.spawn(|| loop {
                 let n = next.fetch_add(1, Ordering::Relaxed);
-                if n >= images.len() || stop.load(Ordering::Relaxed) {
+                if n >= images.len() || stop.load(Ordering::Relaxed) || failed.load(Ordering::Relaxed)
+                {
                     return;
                 }
                 let image = &images[n];
@@ -219,20 +222,35 @@ fn remeasure_pixels(
                     pan_ok,
                 ) {
                     Ok(m) => {
-                        let db = lock(&d.db);
-                        for (det, focus) in m.subjects {
-                            let _ = db.execute(
-                                "UPDATE detections SET features=?,heuristic=?,panning=?,sharp_end=? WHERE id=?",
-                                params![serde_json::to_string(&focus.features).unwrap_or_default(), focus.heuristic, focus.panning, focus.sharp_end, det],
-                            );
+                        // One transaction per frame: a failure part-way leaves
+                        // the frame as it was, not half re-measured.
+                        let saved = (|| -> Result<()> {
+                            let db = lock(&d.db);
+                            let tx = db.unchecked_transaction().map_err(err)?;
+                            for (det, focus) in &m.subjects {
+                                let features =
+                                    serde_json::to_string(&focus.features).map_err(err)?;
+                                tx.execute(
+                                    "UPDATE detections SET features=?,heuristic=?,panning=?,sharp_end=? WHERE id=?",
+                                    params![features, focus.heuristic, focus.panning, focus.sharp_end, det],
+                                )
+                                .map_err(err)?;
+                            }
+                            // Written even when empty: a frame that is no longer a
+                            // pan must not keep its old share, nor a frame that
+                            // gained a subject its old whole-frame score.
+                            tx.execute(
+                                "UPDATE images SET sharpness=COALESCE(?,sharpness),sharpness_whole=?,pan_share=? WHERE id=?",
+                                params![m.sharpness, m.whole_raw, m.pan_share, id],
+                            )
+                            .map_err(err)?;
+                            tx.commit().map_err(err)
+                        })();
+                        if let Err(e) = saved {
+                            lock(&first_error).get_or_insert(e);
+                            failed.store(true, Ordering::Relaxed);
+                            return;
                         }
-                        // Written even when empty: a frame that is no longer a
-                        // pan must not keep its old share, nor a frame that
-                        // gained a subject its old whole-frame score.
-                        let _ = db.execute(
-                            "UPDATE images SET sharpness=COALESCE(?,sharpness),sharpness_whole=?,pan_share=? WHERE id=?",
-                            params![m.sharpness, m.whole_raw, m.pan_share, id],
-                        );
                     }
                     Err(_) => {
                         unread.fetch_add(1, Ordering::Relaxed);
@@ -242,6 +260,9 @@ fn remeasure_pixels(
             });
         }
     });
+    if let Some(e) = first_error.into_inner().unwrap_or_else(|e| e.into_inner()) {
+        return Err(format!("Could not save the re-measured scores: {e}"));
+    }
     Ok(unread.into_inner())
 }
 

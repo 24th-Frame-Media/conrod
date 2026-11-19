@@ -334,7 +334,7 @@ pub fn connect(path: Option<&Path>) -> Result<Connection> {
     register_needs_review(&conn)?;
 
     let key = target.to_string_lossy().into_owned();
-    let mut done = prepared().lock().unwrap();
+    let mut done = prepared().lock().unwrap_or_else(|e| e.into_inner());
     if !done.contains(&key) {
         // WAL lets the UI read while a scan writes; NORMAL is the matching
         // durability setting -- a crash can lose the last commits, which for

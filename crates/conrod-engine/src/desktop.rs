@@ -953,10 +953,13 @@ impl Desktop {
                     }
                 }
                 Err((path, e)) => {
-                    let _ = lock(&desktop.db).execute(
+                    let saved = lock(&desktop.db).execute(
                         "UPDATE images SET status='error',error=? WHERE job_id=? AND path=?",
                         params![e, job, path.to_string_lossy()],
                     );
+                    if let Err(e) = saved {
+                        desktop.hub.start("Saving scan result", 0).fail(err(e));
+                    }
                 }
             },
         ));
@@ -1042,20 +1045,27 @@ impl Desktop {
                 }
             }
             let db = lock(&desktop.db);
+            // A count that cannot be read counts as incomplete: the scan is
+            // not called done on a guess.
             let incomplete: i64 = db
                 .query_row(
                     "SELECT count(*) FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0",
                     [job],
                     |r| r.get(0),
                 )
-                .unwrap_or(1);
+                .unwrap_or_else(|e| {
+                    desktop.hub.start("Checking scan result", 0).fail(err(e));
+                    1
+                });
             if !stopped && final_status == "done" && incomplete > 0 {
                 final_status = "error";
             }
-            let _ = db.execute(
+            if let Err(e) = db.execute(
                 "UPDATE jobs SET status=? WHERE id=?",
                 params![final_status, job],
-            );
+            ) {
+                desktop.hub.start("Saving scan status", 0).fail(err(e));
+            }
             drop(db);
             if let Some(progress) = desktop.progress() {
                 progress.finish(final_status);

@@ -689,7 +689,7 @@ fn hough_lines(gradient: &Sobel, threshold: f64, subject: Option<PxBox>, point: 
             }
         }
     }
-    peaks.sort_by(|a, b| b.0.cmp(&a.0));
+    peaks.sort_by_key(|a| std::cmp::Reverse(a.0));
     let Some(&(strongest, _, _)) = peaks.first() else {
         return 0;
     };
