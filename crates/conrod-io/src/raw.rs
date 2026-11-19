@@ -6,6 +6,8 @@
 //! that is a few MB a frame instead of thirty. Serial and capture time come
 //! from rawler, which decodes the Canon makernotes; verified against exiftool.
 
+use crate::af::{self, AfArea};
+use crate::canon_af::{self, CanonAf};
 use crate::tiff::{self, Tiff};
 use conrod_core::bursts::{self, Tags};
 use serde_json::Value;
@@ -24,6 +26,9 @@ pub struct Frame {
     pub tags: Tags,
     /// Shutter, aperture, ISO and friends: what tells a bracket from a burst.
     pub exposure: Exposure,
+    /// The first AF point from a Canon body's makernote, in the AF image's own
+    /// pixels. Turn it into a box with [`Frame::af_area`].
+    pub af: Option<CanonAf>,
 }
 
 /// A frame's exposure settings, as the keep-together finder needs them.
@@ -97,6 +102,56 @@ impl Frame {
     pub fn taken(&self) -> Option<f64> {
         bursts::taken_at(&self.tags)
     }
+
+    /// The camera's AF area as fractions of the upright frame, the same box
+    /// [`crate::af::read`] gets from exiftool. `frame` is the upright frame's
+    /// size, in the orientation this frame is displayed in.
+    pub fn af_area(&self, frame: (u32, u32)) -> Option<AfArea> {
+        af::from_canon(self.af.as_ref()?, frame, self.orientation)
+    }
+}
+
+/// Only what the AF area needs, read from the file header: no preview, no
+/// decode. A scan that already holds a [`Frame`] reads [`Frame::af`] instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AfHeader {
+    /// EXIF orientation, as in [`Frame::orientation`].
+    pub orientation: u16,
+    pub af: Option<CanonAf>,
+}
+
+/// Orientation and the Canon AF record of a CR3 or CR2, by reading the header
+/// alone (one `moov` box for a CR3, the first 64 KB of a CR2).
+pub fn af_header(path: &Path) -> Result<AfHeader> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let (header, af) = match ext.as_str() {
+        "cr3" => {
+            let moov = cr3_moov(&mut file)?;
+            (cmt1(&moov), cr3_af(&moov))
+        }
+        "cr2" => {
+            let header = header_prefix(&mut file)?;
+            let af = cr2_af(&header);
+            (header, af)
+        }
+        other => return Err(format!("{}: .{other} has no Canon AF", path.display())),
+    };
+    Ok(AfHeader {
+        orientation: orientation_of(&header),
+        af,
+    })
+}
+
+fn orientation_of(header: &[u8]) -> u16 {
+    Tiff::new(header)
+        .and_then(|t| t.first_ifd().map(|o| t.ifd(o)))
+        .and_then(|ifd0| ifd0.get(&tiff::ORIENTATION).and_then(tiff::Value::first))
+        .map_or(1, |o| o as u16)
 }
 
 pub type Result<T> = std::result::Result<T, String>;
@@ -108,14 +163,14 @@ pub fn read(path: &Path) -> Result<Frame> {
         .unwrap_or("")
         .to_ascii_lowercase();
     let mut file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let (preview, header) = match ext.as_str() {
+    let (preview, header, af) = match ext.as_str() {
         "cr3" => cr3(&mut file)?,
         "cr2" => cr2(&mut file)?,
         "jpg" | "jpeg" => {
             let mut all = Vec::new();
             file.read_to_end(&mut all).map_err(|e| e.to_string())?;
             let exif = jpeg_exif(&all).map(<[u8]>::to_vec).unwrap_or_default();
-            (all, exif)
+            (all, exif, None)
         }
         other => return Err(format!("{}: .{other} is not read yet", path.display())),
     };
@@ -171,6 +226,7 @@ pub fn read(path: &Path) -> Result<Frame> {
         orientation,
         tags,
         exposure,
+        af,
     })
 }
 
@@ -332,7 +388,20 @@ fn read_at(file: &mut File, offset: u64, len: usize) -> Result<Vec<u8>> {
 
 // --- CR2: a TIFF whose first IFD is the full-size JPEG --------------------------
 
-fn cr2(file: &mut File) -> Result<(Vec<u8>, Vec<u8>)> {
+/// A frame's preview JPEG, its header TIFF and its Canon AF record.
+type Parts = (Vec<u8>, Vec<u8>, Option<CanonAf>);
+
+/// The Canon makernote's AF record in a CR2's header: the makernote is a blob
+/// in the EXIF IFD whose own IFD uses the file's offsets.
+fn cr2_af(header: &[u8]) -> Option<CanonAf> {
+    let t = Tiff::new(header)?;
+    let ifd0 = t.ifd(t.first_ifd()?);
+    let exif = usize::try_from(ifd0.get(&tiff::EXIF_IFD)?.first()?).ok()?;
+    let (makernote, _) = t.entry_span(exif, tiff::MAKER_NOTE)?;
+    canon_af::from_makernote(&t, makernote)
+}
+
+fn cr2(file: &mut File) -> Result<Parts> {
     // IFD0 and the strings it points at sit well inside the first 64 KB.
     let header = header_prefix(file)?;
     let t = Tiff::new(&header).ok_or("CR2: not a TIFF")?;
@@ -347,7 +416,8 @@ fn cr2(file: &mut File) -> Result<(Vec<u8>, Vec<u8>)> {
         .ok_or("CR2: no preview size")?;
     let size = usize::try_from(size).map_err(|_| "CR2: preview size out of range")?;
     let preview = read_at(file, offset, size)?;
-    Ok((preview, header))
+    let af = cr2_af(&header);
+    Ok((preview, header, af))
 }
 
 // --- CR3: ISO base media, previews as track samples -----------------------------
@@ -465,15 +535,27 @@ fn cmt1(moov: &[u8]) -> Vec<u8> {
     header
 }
 
+/// The Canon AF record in a CR3: CMT3 is a TIFF of its own, whose first IFD is
+/// the Canon makernote.
+fn cr3_af(moov: &[u8]) -> Option<CanonAf> {
+    let cmt3 = boxes(moov)
+        .into_iter()
+        .filter(|(kind, _)| kind == b"uuid")
+        .find_map(|(_, body)| child(body, b"CMT3"))?;
+    let t = Tiff::new(cmt3)?;
+    canon_af::from_makernote(&t, t.first_ifd()?)
+}
+
 /// The CR3's CMT1 box: Canon's IFD0, carrying the EXIF fields and pointers.
 fn cr3_header(file: &mut File) -> Result<Vec<u8>> {
     Ok(cmt1(&cr3_moov(file)?))
 }
 
-fn cr3(file: &mut File) -> Result<(Vec<u8>, Vec<u8>)> {
+fn cr3(file: &mut File) -> Result<Parts> {
     let len = file.metadata().map_err(|e| e.to_string())?.len();
     let moov = cr3_moov(file)?;
     let header = cmt1(&moov);
+    let af = cr3_af(&moov);
 
     // The full-size JPEG is the largest track whose sample is a JPEG.
     let mut best: Option<(u64, u64)> = None;
@@ -495,7 +577,7 @@ fn cr3(file: &mut File) -> Result<(Vec<u8>, Vec<u8>)> {
     }
     let (offset, size) = best.ok_or("CR3: no JPEG track")?;
     let size = usize::try_from(size).map_err(|_| "CR3: preview size out of range")?;
-    Ok((read_at(file, offset, size)?, header))
+    Ok((read_at(file, offset, size)?, header, af))
 }
 
 // --- JPEG ---------------------------------------------------------------------
@@ -636,6 +718,113 @@ mod exposure_tests {
         // A header with a lens still has no other reading recorded.
         assert_eq!(got.iso, None);
         assert_eq!(got.exposure_time, None);
+    }
+}
+
+#[cfg(test)]
+mod canon_af_tests {
+    use super::*;
+
+    fn boxed(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(kind);
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// A little-endian TIFF whose first IFD holds one AFInfo2 entry: a single
+    /// point of 100x50 at (-20, 30) on a 6000x4000 canvas.
+    fn cmt3() -> Vec<u8> {
+        let points = 1usize;
+        let mut words = vec![0u16; 8 + 4 * points];
+        words[0] = (words.len() * 2) as u16;
+        words[1] = 13;
+        words[2] = points as u16;
+        words[3] = 1;
+        words[6] = 6000;
+        words[7] = 4000;
+        words[8] = 100;
+        words[9] = 50;
+        words[10] = (-20i16) as u16;
+        words[11] = 30;
+        let payload: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let mut out = b"II".to_vec();
+        out.extend_from_slice(&42u16.to_le_bytes());
+        out.extend_from_slice(&8u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&0x0026u16.to_le_bytes());
+        out.extend_from_slice(&3u16.to_le_bytes());
+        out.extend_from_slice(&(words.len() as u32).to_le_bytes());
+        out.extend_from_slice(&26u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&payload);
+        out
+    }
+
+    fn moov_with(cmt3: &[u8]) -> Vec<u8> {
+        let mut uuid = vec![0u8; 16];
+        uuid.extend_from_slice(&boxed(b"CMT3", cmt3));
+        boxed(b"uuid", &uuid)
+    }
+
+    #[test]
+    fn a_cr3_moov_yields_the_af_point_from_cmt3() {
+        // `boxes` reads a uuid's body after its 16-byte user type, so the
+        // moov here is the uuid box alone.
+        let af = cr3_af(&moov_with(&cmt3())).expect("an AF record");
+        assert_eq!((af.width, af.height, af.x, af.y), (100, 50, -20, 30));
+        assert_eq!(af.mode, 13);
+        assert_eq!(af.canvas, (6000, 4000));
+        // Centre (3000 - 20, 2000 - 30), 100 x 50, as fractions of 6000 x 4000.
+        let area = af::from_canon(&af, (6000, 4000), 1).expect("a box");
+        assert!((area.x1 - (2980.0 - 50.0) / 6000.0).abs() < 1e-9);
+        assert!((area.y2 - (1970.0 + 25.0) / 4000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_damaged_cmt3_has_no_af_point() {
+        let good = cmt3();
+        for len in 0..good.len() {
+            assert_eq!(cr3_af(&moov_with(&good[..len])), None, "len {len}");
+        }
+        assert_eq!(cr3_af(&[]), None);
+        assert_eq!(cr3_af(&moov_with(&[0xFF; 64])), None);
+    }
+
+    /// A real R7 frame whose exiftool box is in the album database; both the
+    /// full read and the header-only read must land on it.
+    #[test]
+    #[ignore = "reads a real CR3 from the read-only D: originals"]
+    fn real_r7_frame_matches_exiftool() {
+        let file = Path::new(
+            r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-08_Thursday\20261008-IMGC2130.CR3",
+        );
+        if !file.exists() {
+            eprintln!("skipping: {} is missing", file.display());
+            return;
+        }
+        let want = [
+            0.36954022988505747,
+            0.38491379310344825,
+            0.7741379310344828,
+            0.5866379310344828,
+        ];
+        let frame = read(file).expect("frame");
+        let full = frame.af_area((6960, 4640)).expect("an AF area");
+        let head = af_header(file).expect("header");
+        let quick = af::from_canon(&head.af.expect("AF record"), (6960, 4640), head.orientation)
+            .expect("an AF area");
+        assert_eq!(full, quick);
+        for (got, want) in [full.x1, full.y1, full.x2, full.y2].into_iter().zip(want) {
+            assert!((got - want).abs() < 1e-6, "{full:?}");
+        }
+    }
+
+    #[test]
+    fn a_cr2_header_without_a_makernote_has_no_af_point() {
+        assert_eq!(cr2_af(&[]), None);
+        assert_eq!(cr2_af(&cmt3()), None);
+        assert_eq!(cr2_af(&[0xFF; 64]), None);
     }
 }
 

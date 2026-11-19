@@ -8,6 +8,8 @@ pub const ORIENTATION: u16 = 0x0112;
 pub const STRIP_OFFSETS: u16 = 0x0111;
 pub const STRIP_BYTE_COUNTS: u16 = 0x0117;
 pub const EXIF_IFD: u16 = 0x8769;
+/// The EXIF IFD's makernote: a maker-specific blob, here Canon's own IFD.
+pub const MAKER_NOTE: u16 = 0x927C;
 pub const DATE_TIME: u16 = 0x0132;
 pub const DATE_TIME_ORIGINAL: u16 = 0x9003;
 pub const DATE_TIME_DIGITIZED: u16 = 0x9004;
@@ -110,6 +112,48 @@ impl<'a> Tiff<'a> {
     /// Offset of the first IFD, from the header.
     pub fn first_ifd(&self) -> Option<usize> {
         self.u32_at(4).map(|v| v as usize)
+    }
+
+    /// Whether multi-byte values are little-endian.
+    pub fn is_little(&self) -> bool {
+        self.little
+    }
+
+    /// Where `tag`'s value bytes sit in the buffer: (offset, length). Works for
+    /// any entry type, so it reaches the blobs [`Tiff::ifd`] does not decode (a
+    /// makernote, a Canon info array). `None` when the tag is missing or its
+    /// bytes are not all inside the buffer.
+    pub fn entry_span(&self, ifd: usize, tag: u16) -> Option<(usize, usize)> {
+        let count = self.u16_at(ifd)?;
+        for i in 0..usize::from(count) {
+            let entry = ifd.checked_add(2usize.checked_add(i.checked_mul(12)?)?)?;
+            if self.u16_at(entry)? != tag {
+                continue;
+            }
+            let kind = self.u16_at(entry.checked_add(2)?)?;
+            let n = self.u32_at(entry.checked_add(4)?)? as usize;
+            let width = match kind {
+                1 | 2 | 6 | 7 => 1,
+                3 | 8 => 2,
+                4 | 9 | 11 => 4,
+                5 | 10 | 12 => 8,
+                _ => return None,
+            };
+            let len = n.checked_mul(width)?;
+            let at = if len <= 4 {
+                entry.checked_add(8)?
+            } else {
+                self.u32_at(entry.checked_add(8)?)? as usize
+            };
+            self.slice(at, len)?;
+            return Some((at, len));
+        }
+        None
+    }
+
+    /// `len` bytes at `at`, or `None` if they are not all in the buffer.
+    pub fn bytes_at(&self, at: usize, len: usize) -> Option<&'a [u8]> {
+        self.slice(at, len)
     }
 
     /// Every entry of the IFD at `offset` that is ASCII or an unsigned
@@ -243,6 +287,38 @@ mod tests {
         let t = Tiff::new(&bytes).unwrap();
         assert!(t.ifd(usize::MAX).is_empty());
         assert!(t.ifd(usize::MAX - 3).is_empty());
+    }
+
+    #[test]
+    fn entry_span_survives_hostile_counts_and_offsets() {
+        for kind in [1, 3, 4, 5, 7, 10, 12, 99] {
+            for count in [0, 1, 2, u32::MAX] {
+                for value in [0, 26, u32::MAX] {
+                    let bytes = one_entry(kind, count, value);
+                    let t = Tiff::new(&bytes).unwrap();
+                    let _ = t.entry_span(8, ORIENTATION);
+                    let _ = t.entry_span(usize::MAX, ORIENTATION);
+                    let _ = t.entry_span(usize::MAX - 5, ORIENTATION);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn entry_span_locates_inline_and_pointed_values() {
+        let bytes = one_entry(3, 1, 6);
+        let t = Tiff::new(&bytes).unwrap();
+        // One SHORT sits inline in the entry's value field.
+        assert_eq!(t.entry_span(8, ORIENTATION), Some((18, 2)));
+        assert_eq!(t.entry_span(8, MODEL), None);
+        // Eight bytes at offset 8 are in the buffer; eight at 30 are not.
+        let t8 = one_entry(1, 8, 8);
+        assert_eq!(
+            Tiff::new(&t8).unwrap().entry_span(8, ORIENTATION),
+            Some((8, 8))
+        );
+        let far = one_entry(1, 8, 30);
+        assert_eq!(Tiff::new(&far).unwrap().entry_span(8, ORIENTATION), None);
     }
 
     #[test]

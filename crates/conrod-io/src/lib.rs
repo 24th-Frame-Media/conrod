@@ -2,6 +2,7 @@
 
 pub mod af;
 pub mod assets;
+pub mod canon_af;
 pub mod raw;
 pub mod settings;
 pub mod tiff;
