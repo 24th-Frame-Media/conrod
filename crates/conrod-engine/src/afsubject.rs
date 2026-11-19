@@ -1,8 +1,9 @@
 //! What the camera's autofocus area says about a frame's subject.
 //!
-//! One rule, shared by the scan (`cull_frame`) and a re-score (`rescore`), so
-//! the two cannot disagree. The AF area is the camera's own word on where the
-//! subject is, and has three possible relations to the detector's boxes:
+//! One rule, shared by the scan (`cull_frame`), a re-score (`rescore`) and the
+//! focus-point backfill (`rescore::measure_af_frames`), so the three cannot
+//! disagree. The AF area is the camera's own word on where the subject is, and
+//! has three possible relations to the detector's boxes:
 //!
 //! - its centre is inside a detection: a second opinion on that subject's
 //!   sharpness, which can only lower the score (`rescore::second_opinion`);
@@ -12,6 +13,16 @@
 //! - the AF area is unusable: absent, a zone covering a large share of the
 //!   frame, or featureless. Then nothing here applies and the frame is rated
 //!   exactly as it was before the camera's word was consulted.
+//!
+//! A focus grid needs a fourth answer. On an EOS R7 the camera reports ~100
+//! cells in focus on a shot of a car filling a third of the frame: the grid is
+//! a depth-of-field map, not a point on the subject, so taking it as the subject
+//! demoted real keepers by two stars. Its union is trusted only when the
+//! detector found nothing but small objects (a background truck, a distant
+//! spectator): then everything it found is background and the camera's focus
+//! is the only word left on the subject. A grid with any real detection on it
+//! is unusable, as it was before the grid was read at all.
+use conrod_io::af::AreaKind;
 use conrod_vision::imageops::Gray;
 use conrod_vision::sharpness;
 
@@ -20,6 +31,12 @@ use conrod_vision::sharpness;
 /// subject, so it is not authoritative. A spot or flexible-zone area on the R7
 /// is 3-11% of the frame.
 pub const MAX_AF_SHARE: f64 = 0.40;
+
+/// A detection smaller than this share of the frame is background for the
+/// grid gate: too small to be the frame's subject, where a subject is what the
+/// photographer would deliver. 0202's misplaced truck reads at 3%; a car filling
+/// the frame at 30-50%.
+pub const SMALL_DETECTION: f64 = 0.05;
 
 /// An AF centre this close outside a detection's box (as a share of the
 /// frame's long edge) is still taken as being on that subject: detector boxes
@@ -48,34 +65,61 @@ impl Call {
     }
 }
 
+/// The camera's AF area for one frame, with the kind of record it came from.
+/// `area` is in frame pixels; the record kind decides whether the area may
+/// speak for the frame at all (see [`usable`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FocusArea {
+    pub area: [f64; 4],
+    pub kind: AreaKind,
+}
+
 /// Does `subject` contain the centre of `af`? Both are frame pixels.
 pub fn holds_middle(subject: [f64; 4], af: [f64; 4]) -> bool {
     let (cx, cy) = ((af[0] + af[2]) / 2.0, (af[1] + af[3]) / 2.0);
     cx >= subject[0] && cx <= subject[2] && cy >= subject[1] && cy <= subject[3]
 }
 
-/// The AF box's share of the frame, 0..1.
+/// The box's share of the frame, 0..1 (also used for a detection's box).
 pub fn share(af: [f64; 4], frame: (usize, usize)) -> f64 {
     let area = (af[2] - af[0]).max(0.0) * (af[3] - af[1]).max(0.0);
     area / (frame.0.max(1) as f64 * frame.1.max(1) as f64)
 }
 
+/// May the record speak for this frame at all? A point always may, up to
+/// [`MAX_AF_SHARE`]. A grid may only when the detector found at least one and
+/// nothing but small objects: then its union stands in for the subject the
+/// detector missed, and every detection is background. `boxes` are the
+/// vehicle and person detections.
+pub fn usable(af: FocusArea, frame: (usize, usize), boxes: &[[f64; 4]]) -> bool {
+    if share(af.area, frame) > MAX_AF_SHARE {
+        return false;
+    }
+    match af.kind {
+        AreaKind::Point => true,
+        AreaKind::Grid => {
+            !boxes.is_empty() && boxes.iter().all(|b| share(*b, frame) < SMALL_DETECTION)
+        }
+    }
+}
+
 /// The geometry half of the rule, which needs no pixels: is the AF area, by its
-/// size and where its centre falls among the detection `boxes`, a candidate to
-/// be the subject? `Some(true)` when it is, `Some(false)` when a detection
-/// holds it, `None` when it cannot decide (the box is a zone).
-pub fn geometry(af: [f64; 4], frame: (usize, usize), boxes: &[[f64; 4]]) -> Option<bool> {
-    if share(af, frame) > MAX_AF_SHARE {
+/// kind, size and where its centre falls among the detection `boxes`, a
+/// candidate to be the subject? `Some(true)` when it is, `Some(false)` when a
+/// detection holds it, `None` when it cannot decide (unusable, or a zone).
+pub fn geometry(af: FocusArea, frame: (usize, usize), boxes: &[[f64; 4]]) -> Option<bool> {
+    if !usable(af, frame, boxes) {
         return None;
     }
-    if boxes.iter().any(|b| holds_middle(*b, af)) {
+    let area = af.area;
+    if boxes.iter().any(|b| holds_middle(*b, area)) {
         return Some(false);
     }
     let margin = NEAR_MARGIN * frame.0.max(frame.1) as f64;
     let near = boxes.iter().any(|b| {
         holds_middle(
             [b[0] - margin, b[1] - margin, b[2] + margin, b[3] + margin],
-            af,
+            area,
         )
     });
     Some(!near)
@@ -102,16 +146,16 @@ pub fn rate_box(grey: &Gray, af: [f64; 4], strictness: &str) -> Option<f64> {
     )
 }
 
-/// The whole rule. `af` is the AF box in the preview's pixels, `boxes` the
+/// The whole rule. `af` is the AF area in the preview's pixels, `boxes` the
 /// detections' person and vehicle boxes (faces and eyes sit inside those).
-pub fn decide(grey: &Gray, af: Option<[f64; 4]>, boxes: &[[f64; 4]], strictness: &str) -> Call {
+pub fn decide(grey: &Gray, af: Option<FocusArea>, boxes: &[[f64; 4]], strictness: &str) -> Call {
     let Some(af) = af else {
         return Call::Unused;
     };
     match geometry(af, (grey.width, grey.height), boxes) {
         None => Call::Unused,
         Some(false) => Call::OnSubject,
-        Some(true) => rate_box(grey, af, strictness).map_or(Call::Unused, Call::Subject),
+        Some(true) => rate_box(grey, af.area, strictness).map_or(Call::Unused, Call::Subject),
     }
 }
 
@@ -122,7 +166,7 @@ pub fn decide(grey: &Gray, af: Option<[f64; 4]>, boxes: &[[f64; 4]], strictness:
 pub(crate) fn apply(
     subjects: &mut [crate::Subject],
     grey: &Gray,
-    af: Option<[f64; 4]>,
+    af: Option<FocusArea>,
     strictness: &str,
 ) -> Call {
     let boxes: Vec<[f64; 4]> = subjects
@@ -150,11 +194,31 @@ mod tests {
         [cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0]
     }
 
+    fn point(at: [f64; 4]) -> FocusArea {
+        FocusArea {
+            area: at,
+            kind: AreaKind::Point,
+        }
+    }
+
+    fn grid(at: [f64; 4]) -> FocusArea {
+        FocusArea {
+            area: at,
+            kind: AreaKind::Grid,
+        }
+    }
+
+    /// A box `w` by `h` fractions of the frame, its top-left at (x, y).
+    fn boxed(x: f64, y: f64, w: f64, h: f64) -> [f64; 4] {
+        let (fw, fh) = (FRAME.0 as f64, FRAME.1 as f64);
+        [x * fw, y * fh, (x + w) * fw, (y + h) * fh]
+    }
+
     #[test]
     fn a_centre_inside_a_detection_is_on_the_subject() {
         let car = [1000.0, 1000.0, 3000.0, 2000.0];
         assert_eq!(
-            geometry(af(2000.0, 1500.0, 300.0, 200.0), FRAME, &[car]),
+            geometry(point(af(2000.0, 1500.0, 300.0, 200.0)), FRAME, &[car]),
             Some(false)
         );
     }
@@ -163,12 +227,12 @@ mod tests {
     fn a_centre_outside_every_detection_makes_the_area_the_subject() {
         let truck = [5200.0, 1500.0, 6000.0, 2500.0];
         assert_eq!(
-            geometry(af(2000.0, 1500.0, 300.0, 200.0), FRAME, &[truck]),
+            geometry(point(af(2000.0, 1500.0, 300.0, 200.0)), FRAME, &[truck]),
             Some(true)
         );
         // No detection at all: nothing else could be the subject.
         assert_eq!(
-            geometry(af(2000.0, 1500.0, 300.0, 200.0), FRAME, &[]),
+            geometry(point(af(2000.0, 1500.0, 300.0, 200.0)), FRAME, &[]),
             Some(true)
         );
     }
@@ -178,11 +242,11 @@ mod tests {
         let car = [1000.0, 1000.0, 3000.0, 2000.0];
         // 60 px outside, with a margin of 2% of 6000 = 120 px.
         assert_eq!(
-            geometry(af(3060.0, 1500.0, 300.0, 200.0), FRAME, &[car]),
+            geometry(point(af(3060.0, 1500.0, 300.0, 200.0)), FRAME, &[car]),
             Some(false)
         );
         assert_eq!(
-            geometry(af(3300.0, 1500.0, 300.0, 200.0), FRAME, &[car]),
+            geometry(point(af(3300.0, 1500.0, 300.0, 200.0)), FRAME, &[car]),
             Some(true)
         );
     }
@@ -192,11 +256,60 @@ mod tests {
         // 45% of the frame: a whole-area mode, not a point on a subject.
         let zone = af(3000.0, 2000.0, 6000.0 * 0.67, 4000.0 * 0.67);
         assert!(share(zone, FRAME) > MAX_AF_SHARE);
-        assert_eq!(geometry(zone, FRAME, &[]), None);
-        assert_eq!(geometry(zone, FRAME, &[[100.0, 100.0, 400.0, 400.0]]), None);
+        assert_eq!(geometry(point(zone), FRAME, &[]), None);
+        assert_eq!(
+            geometry(point(zone), FRAME, &[[100.0, 100.0, 400.0, 400.0]]),
+            None
+        );
         // The R7's 2631x1285 spot area is a point on a subject.
         let spot = af(3000.0, 2000.0, 2631.0, 1285.0);
         assert!(share(spot, FRAME) < MAX_AF_SHARE);
+    }
+
+    #[test]
+    fn a_grid_whose_only_detections_are_small_is_the_subject() {
+        // 0202: the camera's in-focus cells span a third of the frame over the
+        // car; the detector found a 3% background truck.
+        let union = boxed(0.2, 0.13, 0.68, 0.49);
+        assert!(share(union, FRAME) < MAX_AF_SHARE);
+        let truck = boxed(0.7, 0.1, 0.17, 0.17);
+        assert!(share(truck, FRAME) < SMALL_DETECTION);
+        assert_eq!(geometry(grid(union), FRAME, &[truck]), Some(true));
+    }
+
+    #[test]
+    fn a_grid_with_a_real_detection_is_unusable() {
+        let union = boxed(0.2, 0.13, 0.68, 0.49);
+        // A car at 12% of the frame: the detector has said what the subject is,
+        // and the grid would only demote it.
+        let car = boxed(0.3, 0.3, 0.4, 0.3);
+        assert_eq!(geometry(grid(union), FRAME, &[car]), None);
+        assert_eq!(geometry(grid(union), FRAME, &[]), None);
+        // A point is unchanged: it is the camera's own spot.
+        assert_eq!(
+            geometry(point(af(500.0, 500.0, 300.0, 200.0)), FRAME, &[car]),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn a_grid_centre_on_a_small_detection_is_only_a_second_opinion() {
+        // The union's centre sits on a small car; the area is never the subject.
+        let union = boxed(0.2, 0.3, 0.4, 0.2);
+        let car = boxed(0.35, 0.35, 0.08, 0.06);
+        assert!(share(car, FRAME) < SMALL_DETECTION);
+        assert!(holds_middle(car, union));
+        assert_eq!(geometry(grid(union), FRAME, &[car]), Some(false));
+    }
+
+    #[test]
+    fn the_cap_applies_to_a_grid_union() {
+        // A grid whose in-focus cells span half the frame is a zone, small
+        // detections or not.
+        let wide = boxed(0.05, 0.05, 0.9, 0.7);
+        assert!(share(wide, FRAME) > MAX_AF_SHARE);
+        let truck = boxed(0.7, 0.1, 0.17, 0.17);
+        assert_eq!(geometry(grid(wide), FRAME, &[truck]), None);
     }
 
     /// A flat grey frame: no edges anywhere.
@@ -209,7 +322,10 @@ mod tests {
         let grey = flat();
         let area = [800.0, 600.0, 1400.0, 1000.0];
         assert_eq!(rate_box(&grey, area, "balanced"), None);
-        assert_eq!(decide(&grey, Some(area), &[], "balanced"), Call::Unused);
+        assert_eq!(
+            decide(&grey, Some(point(area)), &[], "balanced"),
+            Call::Unused
+        );
     }
 
     #[test]
@@ -284,7 +400,7 @@ mod tests {
             subject("face", [2000.0, 750.0, 2100.0, 850.0], ""),
         ];
         let af = [300.0, 600.0, 700.0, 900.0];
-        let call = apply(&mut subjects, &grey, Some(af), "moderate");
+        let call = apply(&mut subjects, &grey, Some(point(af)), "moderate");
         let score = call.subject().expect("the textured area is the subject");
         assert_eq!(Some(score), rate_box(&grey, af, "moderate"));
         assert!(subjects.iter().all(|s| s.bystander));
@@ -295,13 +411,40 @@ mod tests {
     }
 
     #[test]
+    fn the_scan_reads_a_grid_when_every_detection_is_small() {
+        let grey = textured();
+        // A 3% background object, and the camera's grid over a third of the
+        // frame: the grid is the subject and the object is a bystander.
+        let small = subject("vehicle", [2000.0, 1400.0, 2100.0, 1500.0], "1 star");
+        let mut subjects = vec![small];
+        let union = [300.0, 300.0, 1500.0, 1100.0];
+        let call = apply(&mut subjects, &grey, Some(grid(union)), "moderate");
+        assert_eq!(call.subject(), rate_box(&grey, union, "moderate"));
+        assert!(subjects[0].bystander);
+        assert!(subjects[0].cull_reason.is_empty());
+
+        // The same grid with a car filling a fifth of the frame: nothing moves.
+        let mut big = vec![subject(
+            "vehicle",
+            [600.0, 400.0, 1800.0, 1200.0],
+            "2 stars",
+        )];
+        assert_eq!(
+            apply(&mut big, &grey, Some(grid(union)), "moderate"),
+            Call::Unused
+        );
+        assert!(!big[0].bystander);
+        assert_eq!(big[0].cull_reason, "2 stars");
+    }
+
+    #[test]
     fn the_scan_leaves_subjects_alone_when_a_detection_holds_the_area() {
         let grey = textured();
         let mut subjects = vec![subject("vehicle", [200.0, 500.0, 900.0, 1000.0], "2 stars")];
         let call = apply(
             &mut subjects,
             &grey,
-            Some([300.0, 600.0, 700.0, 900.0]),
+            Some(point([300.0, 600.0, 700.0, 900.0])),
             "moderate",
         );
         assert_eq!(call, Call::OnSubject);
@@ -321,7 +464,7 @@ mod tests {
         let zone = [100.0, 100.0, 1700.0, 1300.0];
         assert!(share(zone, (2400, 1600)) > MAX_AF_SHARE);
         assert_eq!(
-            apply(&mut subjects, &grey, Some(zone), "moderate"),
+            apply(&mut subjects, &grey, Some(point(zone)), "moderate"),
             Call::Unused
         );
         assert!(!subjects[0].bystander);
@@ -331,7 +474,7 @@ mod tests {
             apply(
                 &mut flat_subjects,
                 &flat(),
-                Some([300.0, 600.0, 700.0, 900.0]),
+                Some(point([300.0, 600.0, 700.0, 900.0])),
                 "moderate"
             ),
             Call::Unused
@@ -346,9 +489,20 @@ mod tests {
         let call = apply(
             &mut [],
             &grey,
-            Some([300.0, 600.0, 700.0, 900.0]),
+            Some(point([300.0, 600.0, 700.0, 900.0])),
             "moderate",
         );
         assert!(call.subject().is_some());
+        // A grid with no detection at all names nothing: the frame is rated as
+        // it always was.
+        assert_eq!(
+            apply(
+                &mut [],
+                &grey,
+                Some(grid([300.0, 600.0, 700.0, 900.0])),
+                "moderate"
+            ),
+            Call::Unused
+        );
     }
 }

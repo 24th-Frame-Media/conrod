@@ -86,6 +86,13 @@ impl CanonAf {
         let first = bits.next()?;
         bits.next().is_none().then_some(first)
     }
+
+    /// True when the bitmap names several points in focus: a focus grid rather
+    /// than one point. Where only the kind matters (a re-score reading the file
+    /// again), this saves building the box.
+    pub fn names_grid(&self) -> bool {
+        self.in_focus().nth(1).is_some()
+    }
 }
 
 /// The set bits of a bitmap, as point indices, stopping at `count` points (the

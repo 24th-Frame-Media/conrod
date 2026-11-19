@@ -760,16 +760,22 @@ pub fn cull_frame(
     let tilt = level.as_ref().and_then(|l| l.tilt_deg.map(|t| t as f32));
     let framing_policy = framing_policy(preset);
     let boxes: Vec<[f64; 4]> = found.iter().map(|det| det.bbox).collect();
-    // The camera's focus area, read from the makernote already in memory.
-    let af = frame.af_area((fw as u32, fh as u32));
-    let af_px = af.map(|a| {
-        [
-            a.x1 * fw as f64,
-            a.y1 * fh as f64,
-            a.x2 * fw as f64,
-            a.y2 * fh as f64,
-        ]
-    });
+    // The camera's focus area, read from the makernote already in memory. A
+    // focus grid holds only when the detector found nothing but small objects
+    // (`afsubject::usable`): its union is a depth-of-field map, not a point.
+    let af_area = frame.af_area((fw as u32, fh as u32));
+    let af = af_area
+        .map(|a| afsubject::FocusArea {
+            area: [
+                a.x1 * fw as f64,
+                a.y1 * fh as f64,
+                a.x2 * fw as f64,
+                a.y2 * fh as f64,
+            ],
+            kind: a.kind,
+        })
+        .filter(|af| afsubject::usable(*af, (fw, fh), &boxes));
+    let af_px = af.map(|af| af.area);
 
     let mut subjects = Vec::new();
     for det in &found {
@@ -1008,7 +1014,7 @@ pub fn cull_frame(
     };
     // Where the camera focused outside every detection, the focus area is the
     // subject: the frame is rated on it and the detections are bystanders.
-    let af_sharpness = afsubject::apply(&mut subjects, &grey, af_px, &strictness).subject();
+    let af_sharpness = afsubject::apply(&mut subjects, &grey, af, &strictness).subject();
     // A pan's frame rating reads the picture, not the car; the subjects keep
     // their own ratings, which is what picks the keeper of a burst.
     let panning = subjects
@@ -1034,7 +1040,12 @@ pub fn cull_frame(
     // Exposure on the main subject, so a backlit rider's clipped whites are
     // told from a blown sky. A frame the focus area rates is of that area.
     let subject_box = match (af_sharpness, af) {
-        (Some(_), Some(af)) => Some([af.x1, af.y1, af.x2, af.y2]),
+        (Some(_), Some(af)) => Some([
+            af.area[0] / fw as f64,
+            af.area[1] / fh as f64,
+            af.area[2] / fw as f64,
+            af.area[3] / fh as f64,
+        ]),
         _ => subjects
             .iter()
             .filter(|s| s.region_type != "face" && s.region_type != "eye")
@@ -1073,7 +1084,7 @@ pub fn cull_frame(
         buck,
         whole_raw: bare.as_ref().and_then(|bare| bare.whole),
         pan_share,
-        af,
+        af: af_area,
         af_sharpness,
     })
 }

@@ -350,9 +350,17 @@ pub(crate) fn measure_af_frames(
             ["af_x1", "af_y1", "af_x2", "af_y2"].map(|key| row[key].as_f64().unwrap_or_default());
         let area = [frac[0] * w, frac[1] * h, frac[2] * w, frac[3] * h];
         let held = boxes.get(&id).map_or(&[][..], Vec::as_slice);
+        // A grid's union is stored like a point's box; the makernote says which
+        // it is, so the gate can be applied here as at scan time.
+        let path = std::path::Path::new(row["path"].as_str().unwrap_or_default());
+        let kind = frame_kind(path);
         let candidate = w > 0.0
             && h > 0.0
-            && afsubject::geometry(area, (w as usize, h as usize), held) == Some(true);
+            && afsubject::geometry(
+                afsubject::FocusArea { area, kind },
+                (w as usize, h as usize),
+                held,
+            ) == Some(true);
         if candidate {
             to_read.push((id, row, frac));
         } else {
@@ -394,6 +402,24 @@ pub(crate) fn measure_af_frames(
     }
     tx.commit().map_err(err)?;
     Ok((measured, unread))
+}
+
+/// Whether a frame's makernote names a focus grid rather than one point. Only
+/// the record's kind is needed here, not its box: the box is already stored.
+/// A file that cannot be read again is taken as a point, so its stored box
+/// behaves as it did before grids were read at all.
+fn frame_kind(path: &std::path::Path) -> conrod_io::af::AreaKind {
+    use conrod_io::af::AreaKind;
+    conrod_io::raw::af_header(path)
+        .ok()
+        .and_then(|h| h.af)
+        .map_or(AreaKind::Point, |af| {
+            if af.names_grid() {
+                AreaKind::Grid
+            } else {
+                AreaKind::Point
+            }
+        })
 }
 
 /// One AF box's edge-blur rating, on the upright preview's native luma. The box
@@ -454,12 +480,13 @@ pub fn second_opinion(detection: Option<f64>, af: Option<f64>) -> Option<f64> {
 /// What `cull_frame` would have measured for each stored subject of one frame
 /// (subject id, measure), and for the frame as a whole.
 ///
-/// `af` is the frame's AF box in fractions, and `afsubject` says what it means:
-/// when its centre lies inside a subject's detection box it is a second
-/// opinion on that subject's sharpness that can only lower the score; when it
-/// lies outside every detection it is the subject itself. `cull_frame` makes
-/// the same call at scan time from the makernote, so a scan and a re-score
-/// agree.
+/// `af` is the frame's AF box in fractions; its kind comes from the makernote
+/// (the scan does not persist it, a grid's box is still the box). `afsubject`
+/// says what it means: when its centre lies inside a subject's detection box it
+/// is a second opinion on that subject's sharpness that can only lower the
+/// score; when it lies outside every detection it is the subject itself. A
+/// grid speaks only when every detection is small. `cull_frame` makes the same
+/// call at scan time, so a scan and a re-score agree.
 fn measure_frame(
     path: &std::path::Path,
     subjects: &[&Value],
@@ -477,16 +504,44 @@ fn measure_frame(
     };
     let grey = image.to_gray();
     let (fw, fh) = (image.width, image.height);
+    // The detections that count for the AF rule, as the scan builds them.
+    let boxes: Vec<[f64; 4]> = subjects
+        .iter()
+        .filter(|s| {
+            matches!(
+                s["region"].as_str().unwrap_or("vehicle"),
+                "vehicle" | "person"
+            )
+        })
+        .map(|s| ["x1", "y1", "x2", "y2"].map(|k| s[k].as_f64().unwrap_or_default()))
+        .collect();
     // The AF box is fractions of the upright frame; the edge census works in
-    // the preview's pixels.
-    let af_px = af.map(|[x1, y1, x2, y2]| {
-        [
-            x1 * fw as f64,
-            y1 * fh as f64,
-            x2 * fw as f64,
-            y2 * fh as f64,
-        ]
-    });
+    // the preview's pixels. The record kind comes from the file itself: a grid
+    // whose union is stored is only trusted when everything the detector found
+    // is small (`afsubject::usable`), exactly as at scan time.
+    let kind = frame
+        .af
+        .as_ref()
+        .map_or(conrod_io::af::AreaKind::Point, |af| {
+            if af.names_grid() {
+                conrod_io::af::AreaKind::Grid
+            } else {
+                conrod_io::af::AreaKind::Point
+            }
+        });
+    let af_present = af.is_some();
+    let af = af
+        .map(|[x1, y1, x2, y2]| afsubject::FocusArea {
+            area: [
+                x1 * fw as f64,
+                y1 * fh as f64,
+                x2 * fw as f64,
+                y2 * fh as f64,
+            ],
+            kind,
+        })
+        .filter(|af| afsubject::usable(*af, (fw, fh), &boxes));
+    let af_px = af.map(|af| af.area);
     let mut out = Vec::new();
     let mut panning = false;
     for s in subjects {
@@ -583,17 +638,7 @@ fn measure_frame(
     // Where the camera focused outside every detection, the focus area is the
     // subject (the scan's rule, `afsubject::decide`): no pan, and the frame is
     // rated on it.
-    let boxes: Vec<[f64; 4]> = subjects
-        .iter()
-        .filter(|s| {
-            matches!(
-                s["region"].as_str().unwrap_or("vehicle"),
-                "vehicle" | "person"
-            )
-        })
-        .map(|s| ["x1", "y1", "x2", "y2"].map(|k| s[k].as_f64().unwrap_or_default()))
-        .collect();
-    let af_sharpness = afsubject::decide(&grey, af_px, &boxes, &cfg.effective_blur()).subject();
+    let af_sharpness = afsubject::decide(&grey, af, &boxes, &cfg.effective_blur()).subject();
     let panning = panning && af_sharpness.is_none();
     let pan_share = panning
         .then(|| sharpness::frame_sharp_share(&grey))
@@ -603,7 +648,7 @@ fn measure_frame(
         sharpness,
         whole_raw,
         pan_share,
-        af_present: af.is_some(),
+        af_present,
         af_sharpness,
     })
 }

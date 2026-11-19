@@ -56,6 +56,7 @@ fn parse_rows(text: &str) -> Vec<Row> {
                     x2,
                     y2,
                     mode: c[7].parse().ok(),
+                    kind: conrod_io::af::AreaKind::Point,
                 }),
                 _ => None,
             };
