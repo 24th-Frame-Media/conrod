@@ -852,6 +852,18 @@ pub fn bench_pick(conn: &Connection) -> Result<Vec<BenchPick>> {
     rows.collect()
 }
 
+/// Whether `path` is a frame of a scanned album. `DescribeImage` is a webview
+/// command, so it may only read a photograph the library already holds: an
+/// arbitrary filesystem path would put any file's preview in front of the
+/// cloud model.
+pub fn frame_exists(conn: &Connection, path: &str) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM images WHERE path = ?1)",
+        [path],
+        |row| row.get(0),
+    )
+}
+
 /// The largest vehicle box on a photo, in the embedded preview's pixels.
 pub fn largest_vehicle_box(conn: &Connection, path: &str) -> Result<Option<[f64; 4]>> {
     conn.query_row(

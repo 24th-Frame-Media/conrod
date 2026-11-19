@@ -23,9 +23,22 @@ pub fn pick(d: &Desktop) -> Result<Value> {
         .collect::<Vec<_>>()))
 }
 
+/// `describe_image` comes from the webview with a path it chose, so it may only
+/// read a frame of an album this library has scanned. Anything else (a path
+/// outside the albums, a `..` walk, a file on another drive) is refused before
+/// its preview could be sent to a cloud model.
+fn require_library_frame(d: &Desktop, path: &str) -> Result<()> {
+    if conrod_store::frame_exists(&lock(&d.reader), path).map_err(err)? {
+        Ok(())
+    } else {
+        Err("DescribeImage only reads frames in the library".into())
+    }
+}
+
 /// What the VLM sees: the largest vehicle cut from the raw's embedded
 /// preview, the same pixels the scan crops from. Whole preview if no box.
 fn load(d: &Desktop, path: &str) -> Result<Rgb> {
+    require_library_frame(d, path)?;
     let raw = conrod_io::raw::read(std::path::Path::new(path))?;
     let image = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
     let Some(b) = conrod_store::largest_vehicle_box(&lock(&d.reader), path).map_err(err)? else {
@@ -390,6 +403,25 @@ mod tests {
             rows.iter().map(|r| r.model.as_str()).collect::<Vec<_>>(),
             vec!["fast-perfect", "slow-perfect", "worse"]
         );
+    }
+
+    #[test]
+    fn only_a_library_frame_can_be_described() {
+        let lib = crate::testkit::Lib::new("describe-frame");
+        let id = lib.frame("known.jpg", None);
+        let known: String = lib.one("SELECT path FROM images WHERE id=?", (id,));
+        assert!(
+            require_library_frame(lib.d(), &known).is_ok(),
+            "an album frame is read"
+        );
+
+        let foreign = lib.root.join("someone-elses-file.jpg");
+        let err = require_library_frame(lib.d(), &foreign.to_string_lossy())
+            .expect_err("a path outside the library must be refused");
+        assert!(err.contains("frames in the library"), "{err}");
+        // A path that merely walks out of a frame's folder is still foreign.
+        let escaped = lib.root.join("..").join("elsewhere.jpg");
+        assert!(require_library_frame(lib.d(), &escaped.to_string_lossy()).is_err());
     }
 
     #[test]

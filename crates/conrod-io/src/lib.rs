@@ -6,7 +6,6 @@ pub mod canon_af;
 pub mod raw;
 pub mod settings;
 pub mod tiff;
-pub mod update;
 pub mod vlm;
 pub mod watch;
 pub mod writer;
