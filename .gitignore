@@ -29,4 +29,10 @@ crates/conrod-app/resources/exiftool/
 
 MEMORY.md
 
+# Local secrets never ship
+.env
+.env.*
+*.pem
+*.key
+
 .playwright-mcp/
