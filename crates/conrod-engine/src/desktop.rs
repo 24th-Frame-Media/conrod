@@ -2489,8 +2489,10 @@ mod tests {
         // Scope picks which subjects the lane works on, never whether it runs:
         // a "cull" album runs neither, an "everything" album still runs.
         for scope in ["keepers", "everything", " EVERYTHING "] {
-            let mut settings = Settings::default();
-            settings.identify_scope = scope.into();
+            let settings = Settings {
+                identify_scope: scope.into(),
+                ..Default::default()
+            };
             assert!(wants_identify(settings.workflow(), true, true));
             assert!(
                 !wants_identify("cull", true, true),

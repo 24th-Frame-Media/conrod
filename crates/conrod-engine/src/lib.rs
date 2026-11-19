@@ -1429,7 +1429,7 @@ mod tests {
         let corner = (edge - side) / 2;
         for y in corner..corner + side {
             for x in corner..corner + side {
-                let on = ((x - corner) / 6 + (y - corner) / 6) % 2 == 0;
+                let on = ((x - corner) / 6 + (y - corner) / 6).is_multiple_of(2);
                 data[y * edge + x] = if on { 235 } else { 20 };
             }
         }
@@ -1599,7 +1599,7 @@ mod tests {
         (0..w * h)
             .map(|i| {
                 let (x, y) = (i % w, i / w);
-                let on = hash(x / cell + seed, y / cell) % 2 == 0;
+                let on = hash(x / cell + seed, y / cell).is_multiple_of(2);
                 if on {
                     hi
                 } else {

@@ -725,8 +725,10 @@ mod tests {
 
     #[test]
     fn the_preset_default_blur_applies_until_the_album_chooses() {
-        let mut s = Settings::default();
-        s.scan_profile = "portrait".into();
+        let mut s = Settings {
+            scan_profile: "portrait".into(),
+            ..Default::default()
+        };
         assert_eq!(
             s.effective_blur(),
             "strict",

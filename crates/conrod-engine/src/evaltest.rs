@@ -48,10 +48,17 @@ fn slug(text: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
+/// One raw detection from the network: class, confidence, box in xyxy pixels.
+type Detection = (usize, f32, [f64; 4]);
+/// An image and every raw detection on it.
+type RawFrame = (Rgb, Vec<Detection>);
+/// Name, size and mtime of one file, as `snapshot` records it.
+type DirEntry = (String, u64, u128);
+
 /// Names, sizes and mtimes of everything in `dir`: the same list before and
 /// after a run means nothing was written beside the photographer's originals.
-fn snapshot(dir: &Path) -> Vec<(String, u64, u128)> {
-    let mut out: Vec<(String, u64, u128)> = std::fs::read_dir(dir)
+fn snapshot(dir: &Path) -> Vec<DirEntry> {
+    let mut out: Vec<DirEntry> = std::fs::read_dir(dir)
         .map(|entries| {
             entries
                 .flatten()
@@ -186,20 +193,19 @@ struct Subj {
 /// list and the confidence threshold in `detect::decode` drop any of them.
 /// `Detector::raw` runs the network alone (`detect.rs:161`); asking for all
 /// 80 COCO classes at a floor of 0.01 is what production never does.
-fn raw_listing(
-    path: &Path,
-    detector: &Mutex<Detector>,
-) -> Result<(Rgb, Vec<(usize, f32, [f64; 4])>), String> {
+fn raw_listing(path: &Path, detector: &Mutex<Detector>) -> Result<RawFrame, String> {
     let frame = raw::read(path)?;
     let image = Rgb::decode_jpeg(&frame.preview, 1)?.orient(frame.orientation);
-    let mut opts = DetectOptions::default();
-    opts.classes = (0..80).collect();
-    opts.conf = 0.01;
+    let opts = DetectOptions {
+        classes: (0..80).collect(),
+        conf: 0.01,
+        ..Default::default()
+    };
     let found = lock(detector).raw(&image, &opts)?;
     Ok((image, found))
 }
 
-fn raw_text(found: &[(usize, f32, [f64; 4])], image: &Rgb) -> String {
+fn raw_text(found: &[Detection], image: &Rgb) -> String {
     let area = (image.width.max(1) * image.height.max(1)) as f64;
     found
         .iter()
@@ -414,7 +420,7 @@ fn export_recall() {
                     .then(|| e.file_name().to_string_lossy().into_owned())
             })
             .collect();
-        names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        names.sort_by_key(|a| a.to_lowercase());
         let at = names
             .iter()
             .position(|n| n.eq_ignore_ascii_case(&name))
@@ -452,7 +458,7 @@ fn export_recall() {
         .collect();
     watched.sort();
     watched.dedup();
-    let before: Vec<(PathBuf, Vec<(String, u64, u128)>)> =
+    let before: Vec<(PathBuf, Vec<DirEntry>)> =
         watched.iter().map(|d| (d.clone(), snapshot(d))).collect();
 
     let _ = std::fs::remove_dir_all(&out_dir);

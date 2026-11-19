@@ -64,7 +64,7 @@ fn largest_jpeg(bytes: &[u8]) -> Option<&[u8]> {
         if bytes[i] == 0xFF && bytes[i + 1] == 0xD8 {
             if let Some(end) = jpeg_end(bytes, i) {
                 let seg = &bytes[i..end];
-                if best.map_or(true, |b| seg.len() > b.len()) {
+                if best.is_none_or(|b| seg.len() > b.len()) {
                     best = Some(seg);
                 }
                 i = end;
@@ -402,7 +402,7 @@ fn expressions_on_real_portraits() {
                 (bbox[2], bbox[3]),
             ],
         };
-        let mut time = |model: &mut ExpressionModel| -> f64 {
+        let time = |model: &mut ExpressionModel| -> f64 {
             for _ in 0..3 {
                 let _ = model.read(image, &face);
             }

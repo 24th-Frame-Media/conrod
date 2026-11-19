@@ -8,4 +8,3 @@ publish = false
 
 [dependencies]
 rawler = "0.8"
-nom-exif = "3.8"
