@@ -7,6 +7,7 @@ export type GroupingValues = {
   grouping_sensitivity: GroupingSensitivity;
   grouping_pause: number;
   grouping_keep_pans: boolean;
+  grouping_merge?: boolean;
   grouping_focus_anchor: boolean;
 };
 export type GroupingSensitivity = 'off' | 'gentle' | 'normal' | 'eager';
@@ -16,6 +17,7 @@ export const GROUPING_DEFAULTS: GroupingValues = {
   grouping_sensitivity: 'normal',
   grouping_pause: 0.8,
   grouping_keep_pans: true,
+  grouping_merge: true,
   grouping_focus_anchor: true,
 };
 
@@ -40,6 +42,7 @@ export function groupingOf(settings: Settings | Record<string, unknown> | null |
     grouping_sensitivity: sensitivity,
     grouping_pause: Number.isFinite(pause) && pause >= 0 ? Math.min(10, pause) : GROUPING_DEFAULTS.grouping_pause,
     grouping_keep_pans: raw.grouping_keep_pans !== false,
+    grouping_merge: raw.grouping_merge !== false,
     grouping_focus_anchor: raw.grouping_focus_anchor !== false,
   };
 }
@@ -86,6 +89,11 @@ export function GroupingFields({ value, onChange, disabled = false, idPrefix = '
           <input type="checkbox" checked={value.grouping_keep_pans} disabled={off}
             onChange={(e) => onChange({ grouping_keep_pans: e.target.checked })} />
           <span><b>Keep pans together</b><small>A pan is one action however far the car travels, so its frames stay one stack.</small></span>
+        </label>
+        <label className="import-check">
+          <input type="checkbox" checked={value.grouping_merge !== false} disabled={off}
+            onChange={(e) => onChange({ grouping_merge: e.target.checked })} />
+          <span><b>Join look-alike bursts</b><small>Stacks shots of the same subject taken a few seconds apart.</small></span>
         </label>
         <label className="import-check">
           <input type="checkbox" checked={value.grouping_focus_anchor} disabled={off}

@@ -409,6 +409,12 @@ pub fn look_distance(a: &[u8], b: &[u8]) -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MomentFrame {
     pub burst: i64,
+    /// An album-local id for the camera, so two bodies' bursts are never joined
+    /// ([`merge_bursts`]) and never share a time burst to begin with.
+    pub camera: u32,
+    /// The frame is displayed taller than wide. Two frames of different
+    /// orientation are never one subject: the photographer turned the camera.
+    pub portrait: bool,
     /// The camera's wall clock as seconds since the Unix epoch, or `None` when the file carries no
     /// time. EXIF carries no zone, so this is never shifted into the viewer's zone; it is
     /// formatted back as UTC.
@@ -461,6 +467,152 @@ fn livery_distance(a: Option<Look>, b: Option<Look>) -> Option<f64> {
         return None;
     }
     Some(look_distance(&a.subject?, &b.subject?))
+}
+
+/// A burst seen the next one starts within this many seconds of its last frame
+/// is joined to it, when the two look like the same subject. Measured on album
+/// 109 (2026-10-06 Race-Week): 20261006_B1000_0201 and 0202 are the same green
+/// car from the same angle 3.5 s apart and were split into two stacks by the
+/// time gap alone, while the already-stacked 0198/0199 are 0.8 s apart. Ten
+/// seconds keeps a short pause in a walkaround together without reaching into
+/// the next car.
+pub const MERGE_GAP: f64 = 10.0;
+/// ...and the two frames' whole-frame colour layouts are at most this far
+/// apart (0 identical, 1 disjoint). 0201 and 0202 measure 0.098, the same as
+/// 0198/0199; 0.12 keeps that pair and stays under the distance between two
+/// different cars at a meet (0.2 and up; see the album sweep in the change
+/// log).
+pub const MERGE_SCENE: f64 = 0.12;
+/// A merged burst is at most this long, first frame to last: a slow walkaround
+/// of a car is one subject, but a lap of the paddock is not. Twenty seconds is
+/// about three pauses of [`MERGE_GAP`] chained, and covers one approach.
+pub const MERGE_SPAN: f64 = 30.0;
+/// The box leeway a join uses: 1.5x the moment splitter's own limits, because
+/// the two frames are in different bursts and a burst boundary is exactly where
+/// a photographer shuffles their feet.
+pub const MERGE_LEEWAY: f64 = 1.5;
+
+/// How freely [`merge_bursts`] joins neighbouring time bursts. The album's
+/// `grouping_merge` setting turns the pass on or off; these are its measured
+/// defaults.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MergeRules {
+    pub gap: f64,
+    pub scene: f64,
+    pub span: f64,
+    pub leeway: f64,
+}
+
+impl Default for MergeRules {
+    fn default() -> Self {
+        MergeRules {
+            gap: MERGE_GAP,
+            scene: MERGE_SCENE,
+            span: MERGE_SPAN,
+            leeway: MERGE_LEEWAY,
+        }
+    }
+}
+
+/// Join neighbouring time bursts that are the same subject a few seconds
+/// apart, with the measured defaults ([`MergeRules::default()`]). Input is in
+/// time order, one frame per position; the answer is the burst key per frame,
+/// which is the earlier burst's key for every frame of a joined group.
+///
+/// The time cut is a fixed gap ([`assign_bursts`]): a frame 3.5 s after the
+/// last one starts a new burst even when it is the same car from the same
+/// angle, and the moment splitter only ever *splits* a burst. This pass looks
+/// the other way, at the boundary between two neighbouring bursts of one
+/// camera (A's last frame `a`, B's first `b`), and joins them when:
+///
+/// * `b` is no more than [`MERGE_GAP`] seconds after `a`;
+/// * both are the same orientation (the photographer did not turn the camera);
+/// * their scene layouts are within [`MERGE_SCENE`] of each other;
+/// * when both have a main subject box, the boxes continue each other with
+///   [`MERGE_LEEWAY`] (see [`continues`]);
+/// * when both are vehicles, their liveries are within
+///   [`MOMENT_SUBJECT_DISTANCE`].
+///
+/// A join may chain, but never past [`MERGE_SPAN`] from the group's first
+/// frame. A frame with no time or no look is never joined across: today's
+/// behaviour is kept where there is nothing to compare.
+pub fn merge_bursts(frames: &[MomentFrame]) -> Vec<i64> {
+    merge_bursts_with(frames, &MergeRules::default())
+}
+
+/// [`merge_bursts`], with the album's own limits.
+pub fn merge_bursts_with(frames: &[MomentFrame], rules: &MergeRules) -> Vec<i64> {
+    // Each burst's first and last frame, and each camera's bursts in the order
+    // they first appear (the input is in time order).
+    let mut span: std::collections::HashMap<(u32, i64), (usize, usize)> =
+        std::collections::HashMap::new();
+    let mut cameras: std::collections::BTreeMap<u32, Vec<i64>> = std::collections::BTreeMap::new();
+    for (i, frame) in frames.iter().enumerate() {
+        let entry = span.entry((frame.camera, frame.burst)).or_insert_with(|| {
+            cameras.entry(frame.camera).or_default().push(frame.burst);
+            (i, i)
+        });
+        entry.1 = i;
+    }
+    // The joined key of every burst; a group carries the key of its first.
+    let mut joined: std::collections::HashMap<(u32, i64), i64> = std::collections::HashMap::new();
+    for (camera, bursts) in cameras {
+        // The open group: its key, first frame's time, and the last frame so far.
+        let mut group: Option<(i64, f64, usize)> = None;
+        for burst in bursts {
+            let (first, last) = span[&(camera, burst)];
+            let key = match group {
+                Some((key, started, previous))
+                    if joins(&frames[previous], &frames[first], rules)
+                        && frames[first]
+                            .taken
+                            .is_some_and(|taken| taken - started <= rules.span) =>
+                {
+                    key
+                }
+                _ => {
+                    group = Some((burst, frames[first].taken.unwrap_or_default(), first));
+                    burst
+                }
+            };
+            let (_, started, _) = group.expect("a group is open");
+            group = Some((key, started, last));
+            joined.insert((camera, burst), key);
+        }
+    }
+    frames
+        .iter()
+        .map(|frame| joined[&(frame.camera, frame.burst)])
+        .collect()
+}
+
+/// Are these two frames the same subject a few seconds apart? `a` is the last
+/// frame of one burst, `b` the first of the next.
+fn joins(a: &MomentFrame, b: &MomentFrame, rules: &MergeRules) -> bool {
+    let (Some(ta), Some(tb)) = (a.taken, b.taken) else {
+        return false;
+    };
+    let (Some(la), Some(lb)) = (a.look, b.look) else {
+        return false;
+    };
+    if tb < ta || tb - ta > rules.gap {
+        return false;
+    }
+    if a.portrait != b.portrait {
+        return false;
+    }
+    if look_distance(&la.scene, &lb.scene) > rules.scene {
+        return false;
+    }
+    let boxes = match (a.subject, b.subject) {
+        (Some(previous), Some(next)) => {
+            continues(previous, next, rules.leeway, &MomentRules::default())
+        }
+        _ => true,
+    };
+    boxes
+        && livery_distance(Some(la), Some(lb))
+            .is_none_or(|distance| distance <= MOMENT_SUBJECT_DISTANCE)
 }
 
 /// Does this frame belong to the moment `open` holds?
@@ -804,6 +956,8 @@ mod moment_tests {
     fn mf(burst: i64, subject: Option<[f64; 4]>) -> MomentFrame {
         MomentFrame {
             burst,
+            camera: 0,
+            portrait: false,
             taken: None,
             look: None,
             subject,
@@ -998,6 +1152,114 @@ mod moment_tests {
             },
         ];
         assert_eq!(split_moments(&frames), vec![1, 1]);
+    }
+
+    /// A frame of `burst` at `taken`, with scene bin `scene` and a vehicle's
+    /// livery in bin `livery`.
+    fn burst_shot(
+        burst: i64,
+        taken: f64,
+        scene: usize,
+        livery: usize,
+        subject: Option<[f64; 4]>,
+    ) -> MomentFrame {
+        MomentFrame {
+            burst,
+            ..shot(taken, subject, scene, colour(livery))
+        }
+    }
+
+    #[test]
+    fn a_look_alike_burst_a_few_seconds_later_is_joined() {
+        // 0201/0202: the same car and angle 3.5 s after the last frame of the
+        // burst before it (the time cut is 1.5 s).
+        let frames = vec![
+            burst_shot(1, 0.0, 3, 0, boxed(0.5, 0.5, 0.1)),
+            burst_shot(1, 0.8, 3, 0, boxed(0.5, 0.52, 0.1)),
+            burst_shot(2, 4.3, 3, 0, boxed(0.52, 0.5, 0.11)),
+        ];
+        assert_eq!(merge_bursts(&frames), vec![1, 1, 1]);
+    }
+
+    #[test]
+    fn a_burst_well_after_the_last_frame_is_not_joined() {
+        let frames = vec![
+            burst_shot(1, 0.0, 3, 0, boxed(0.5, 0.5, 0.1)),
+            burst_shot(2, 15.0, 3, 0, boxed(0.5, 0.5, 0.1)),
+        ];
+        assert_eq!(merge_bursts(&frames), vec![1, 2]);
+    }
+
+    #[test]
+    fn a_turned_camera_is_not_joined() {
+        let frames = vec![
+            burst_shot(1, 0.0, 3, 0, boxed(0.5, 0.5, 0.1)),
+            MomentFrame {
+                portrait: true,
+                ..burst_shot(2, 4.0, 3, 0, boxed(0.5, 0.5, 0.1))
+            },
+        ];
+        assert_eq!(merge_bursts(&frames), vec![1, 2]);
+    }
+
+    #[test]
+    fn a_different_livery_is_not_joined() {
+        let frames = vec![
+            burst_shot(1, 0.0, 3, 0, boxed(0.5, 0.5, 0.1)),
+            burst_shot(2, 4.0, 3, 7, boxed(0.5, 0.5, 0.1)),
+        ];
+        assert_eq!(merge_bursts(&frames), vec![1, 2]);
+    }
+
+    #[test]
+    fn a_different_scene_is_not_joined() {
+        let frames = vec![
+            burst_shot(1, 0.0, 3, 0, boxed(0.5, 0.5, 0.1)),
+            burst_shot(2, 4.0, 20, 0, boxed(0.5, 0.5, 0.1)),
+        ];
+        assert_eq!(merge_bursts(&frames), vec![1, 2]);
+    }
+
+    #[test]
+    fn a_chain_of_joins_stops_at_the_span_cap() {
+        // Each burst starts 8 s after the last one, so every pair is within the
+        // gap, but the group may not run past 30 s from its first frame.
+        let frames: Vec<_> = (0..5i64)
+            .map(|i| burst_shot(i + 1, i as f64 * 8.0, 3, 0, boxed(0.5, 0.5, 0.1)))
+            .collect();
+        assert_eq!(merge_bursts(&frames), vec![1, 1, 1, 1, 5]);
+    }
+
+    #[test]
+    fn another_camera_is_never_joined() {
+        let frames = vec![
+            burst_shot(1, 0.0, 3, 0, boxed(0.5, 0.5, 0.1)),
+            MomentFrame {
+                camera: 1,
+                ..burst_shot(2, 4.0, 3, 0, boxed(0.5, 0.5, 0.1))
+            },
+        ];
+        assert_eq!(merge_bursts(&frames), vec![1, 2]);
+    }
+
+    #[test]
+    fn frames_without_a_time_or_a_look_are_not_joined() {
+        let untimed = vec![
+            burst_shot(1, 0.0, 3, 0, boxed(0.5, 0.5, 0.1)),
+            MomentFrame {
+                taken: None,
+                ..burst_shot(2, 4.0, 3, 0, boxed(0.5, 0.5, 0.1))
+            },
+        ];
+        assert_eq!(merge_bursts(&untimed), vec![1, 2]);
+        let unlooked = vec![
+            burst_shot(1, 0.0, 3, 0, boxed(0.5, 0.5, 0.1)),
+            MomentFrame {
+                look: None,
+                ..burst_shot(2, 4.0, 3, 0, boxed(0.5, 0.5, 0.1))
+            },
+        ];
+        assert_eq!(merge_bursts(&unlooked), vec![1, 2]);
     }
 
     #[test]
