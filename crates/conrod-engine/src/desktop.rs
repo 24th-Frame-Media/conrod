@@ -361,6 +361,7 @@ impl Desktop {
             grouping_sensitivity: None,
             grouping_pause: None,
             grouping_keep_pans: None,
+            grouping_merge: None,
             grouping_focus_anchor: None,
             workflow_mode: None,
             identify_scope: None,
@@ -481,10 +482,11 @@ impl Desktop {
                 // grouping choice needs the same, and it lives here so the
                 // album on screen changes as the control does.
                 const LIBRARY_REGROUPS: [&str; 2] = ["burst_gap", "scan_profile"];
-                const GROUPING: [&str; 5] = [
+                const GROUPING: [&str; 6] = [
                     "grouping_sensitivity",
                     "grouping_pause",
                     "grouping_keep_pans",
+                    "grouping_merge",
                     "grouping_focus_anchor",
                     "grouping_stacks",
                 ];
@@ -864,6 +866,9 @@ impl Desktop {
             }
             if let Some(keep) = a.grouping_keep_pans {
                 settings.grouping_keep_pans = keep;
+            }
+            if let Some(merge) = a.grouping_merge {
+                settings.grouping_merge = merge;
             }
             if let Some(anchor) = a.grouping_focus_anchor {
                 settings.grouping_focus_anchor = anchor;
@@ -1998,34 +2003,61 @@ impl Desktop {
                 .total_cmp(&frames[b].taken.unwrap_or_default())
                 .then_with(|| frames[a].path.cmp(&frames[b].path))
         });
-        let moment_frames: Vec<_> = order
-            .iter()
-            .map(|&i| {
-                let (w, h) = (images[i]["width"].as_f64(), images[i]["height"].as_f64());
-                let id = images[i]["id"].as_i64().unwrap_or_default();
-                let subject = match (main.get(&id), w, h) {
-                    (Some(&(_, [x1, y1, x2, y2])), Some(w), Some(h)) if w > 0.0 && h > 0.0 => {
-                        Some([x1 / w, y1 / h, x2 / w, y2 / h])
+        let mut moment_frames: Vec<_> = {
+            // An album-local id per camera: two bodies' bursts are never joined.
+            let mut camera_ids: std::collections::HashMap<String, u32> =
+                std::collections::HashMap::new();
+            let mut next_camera = 0u32;
+            order
+                .iter()
+                .map(|&i| {
+                    let (w, h) = (images[i]["width"].as_f64(), images[i]["height"].as_f64());
+                    let id = images[i]["id"].as_i64().unwrap_or_default();
+                    let subject = match (main.get(&id), w, h) {
+                        (Some(&(_, [x1, y1, x2, y2])), Some(w), Some(h)) if w > 0.0 && h > 0.0 => {
+                            Some([x1 / w, y1 / h, x2 / w, y2 / h])
+                        }
+                        // The album can turn the focus-area anchor off, leaving a
+                        // frame the detector missed with no subject at all.
+                        _ if cfg.grouping_focus_anchor || af_subject.contains(&id) => {
+                            af_boxes.get(&id).copied()
+                        }
+                        _ => None,
+                    };
+                    let camera = *camera_ids
+                        .entry(frames[i].camera.clone())
+                        .or_insert_with(|| {
+                            next_camera += 1;
+                            next_camera - 1
+                        });
+                    conrod_core::bursts::MomentFrame {
+                        burst: i64::from(frames[i].burst),
+                        camera,
+                        portrait: h.is_some_and(|h| w.is_some_and(|w| h > w)),
+                        taken: frames[i].taken,
+                        look: looks.get(&id).map(|look| conrod_core::bursts::Look {
+                            vehicle: vehicles.contains(&id),
+                            ..*look
+                        }),
+                        subject,
+                        panning: pans.contains(&id),
                     }
-                    // The album can turn the focus-area anchor off, leaving a
-                    // frame the detector missed with no subject at all.
-                    _ if cfg.grouping_focus_anchor || af_subject.contains(&id) => {
-                        af_boxes.get(&id).copied()
-                    }
-                    _ => None,
-                };
-                conrod_core::bursts::MomentFrame {
-                    burst: i64::from(frames[i].burst),
-                    taken: frames[i].taken,
-                    look: looks.get(&id).map(|look| conrod_core::bursts::Look {
-                        vehicle: vehicles.contains(&id),
-                        ..*look
-                    }),
-                    subject,
-                    panning: pans.contains(&id),
-                }
-            })
-            .collect();
+                })
+                .collect()
+        };
+        // The time cut is a fixed gap: join the neighbouring time bursts that
+        // are the same subject a few seconds apart before moments are cut, so
+        // two stacks of one car become one. The joined group is one time burst
+        // from here on, which is what the album shows as its stack.
+        if cfg.grouping_merge {
+            for (position, &key) in conrod_core::bursts::merge_bursts(&moment_frames)
+                .iter()
+                .enumerate()
+            {
+                moment_frames[position].burst = key;
+                frames[order[position]].burst = key as u32;
+            }
+        }
         let moment_keys = conrod_core::bursts::split_moments_with(&moment_frames, &rules);
         let mut key = vec![0; frames.len()];
         for (&i, moment) in order.iter().zip(moment_keys) {
@@ -2844,6 +2876,55 @@ mod tests {
         let stored: String = lib.one("SELECT settings_json FROM jobs WHERE id=?", [lib.job]);
         assert!(
             stored.contains("\"grouping_sensitivity\":\"off\""),
+            "the album stores its own choice: {stored}"
+        );
+    }
+
+    #[test]
+    fn look_alike_bursts_join_unless_the_album_turns_it_off() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("regroup-merge");
+        // Two frames 4 s apart: the time cut (1.5 s) makes two bursts, but the
+        // same camera, size, scene, box and livery say one subject.
+        let thumb = lib.root.join("thumb.jpg");
+        let image = image::RgbImage::from_fn(420, 280, |x, y| {
+            let inside = (150..270).contains(&x) && (110..170).contains(&y);
+            image::Rgb(if inside { [200, 30, 30] } else { [90, 90, 92] })
+        });
+        image.save(&thumb).unwrap();
+        let mut frames = Vec::new();
+        for (i, taken) in [(0, 0.0), (1, 4.0)] {
+            let id = lib.frame(&format!("{i}.jpg"), None);
+            lib.sql(
+                "UPDATE images SET camera='cam',taken_at=?,thumb_path=? WHERE id=?",
+                params![taken, thumb.to_string_lossy(), id],
+            );
+            lib.detection(id, "vehicle", 0.8);
+            frames.push(id);
+        }
+        let key =
+            |image: i64| -> i64 { lib.one("SELECT burst_key FROM images WHERE id=?", [image]) };
+
+        lib.d().regroup(lib.job).unwrap();
+        assert_eq!(
+            key(frames[0]),
+            key(frames[1]),
+            "look-alikes join by default"
+        );
+
+        lib.run(
+            "update_job_settings",
+            json!({"jobId": lib.job, "patch": {"grouping_merge": false}}),
+        )
+        .unwrap();
+        assert_ne!(
+            key(frames[0]),
+            key(frames[1]),
+            "the album can keep the time cut final"
+        );
+        let stored: String = lib.one("SELECT settings_json FROM jobs WHERE id=?", [lib.job]);
+        assert!(
+            stored.contains("\"grouping_merge\":false"),
             "the album stores its own choice: {stored}"
         );
     }

@@ -233,6 +233,9 @@ pub struct Settings {
     /// Compare a pan's box like any other, rather than allowing it to travel
     /// further between frames.
     pub grouping_keep_pans: bool,
+    /// Join neighbouring time bursts that look like the same subject a few
+    /// seconds apart (see `bursts::merge_bursts`). Off, the time cut is final.
+    pub grouping_merge: bool,
     /// Anchor a frame the detector missed on the camera's focus area. Off, such
     /// a frame has no subject at all.
     pub grouping_focus_anchor: bool,
@@ -362,6 +365,7 @@ impl Default for Settings {
             grouping_sensitivity: "normal".into(),
             grouping_pause: crate::bursts::MOMENT_PAUSE,
             grouping_keep_pans: true,
+            grouping_merge: true,
             grouping_focus_anchor: true,
             grouping_stacks: true,
             workflow_mode: WORKFLOW_BOTH.into(),
@@ -707,18 +711,20 @@ mod tests {
         assert_eq!(settings.grouping_sensitivity, "normal");
         assert_eq!(settings.grouping_pause, crate::bursts::MOMENT_PAUSE);
         assert!(settings.grouping_keep_pans);
+        assert!(settings.grouping_merge);
         assert!(settings.grouping_focus_anchor);
         assert!(settings.grouping_stacks);
 
         // A patch stores the album's own choice and keeps it on reload.
         let patch: Map<String, Value> = serde_json::from_str(
-            r#"{"grouping_sensitivity":"eager","grouping_pause":0.0,"grouping_keep_pans":false,"grouping_focus_anchor":false,"grouping_stacks":false}"#,
+            r#"{"grouping_sensitivity":"eager","grouping_pause":0.0,"grouping_keep_pans":false,"grouping_merge":false,"grouping_focus_anchor":false,"grouping_stacks":false}"#,
         )
         .unwrap();
         let chosen = Settings::default().apply(&patch);
         assert_eq!(chosen.grouping_sensitivity, "eager");
         assert_eq!(chosen.grouping_pause, 0.0);
         assert!(!chosen.grouping_keep_pans);
+        assert!(!chosen.grouping_merge);
         assert!(!chosen.grouping_focus_anchor);
         assert!(!chosen.grouping_stacks);
         let reloaded: Settings =

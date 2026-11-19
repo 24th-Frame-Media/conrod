@@ -1224,6 +1224,7 @@ fn settings_match_snapshot() {
         m.remove("grouping_sensitivity");
         m.remove("grouping_pause");
         m.remove("grouping_keep_pans");
+        m.remove("grouping_merge");
         m.remove("grouping_focus_anchor");
         m.remove("grouping_stacks");
         m.remove("vlm_services");

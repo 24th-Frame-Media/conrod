@@ -115,6 +115,10 @@ pub struct ScanArgs {
     pub grouping_pause: Option<f64>,
     #[serde(default)]
     pub grouping_keep_pans: Option<bool>,
+    /// Grouping for a new album: join look-alike neighbouring bursts a few
+    /// seconds apart.
+    #[serde(default)]
+    pub grouping_merge: Option<bool>,
     #[serde(default)]
     pub grouping_focus_anchor: Option<bool>,
     /// What a *new* album's scan should do: "both", "cull" or "identify".
@@ -552,6 +556,7 @@ mod tests {
                 "groupingSensitivity": "eager",
                 "groupingPause": 0.0,
                 "groupingKeepPans": false,
+                "groupingMerge": false,
                 "groupingFocusAnchor": false,
             }),
         ) else {
@@ -561,6 +566,7 @@ mod tests {
         assert_eq!(scan.grouping_sensitivity.as_deref(), Some("eager"));
         assert_eq!(scan.grouping_pause, Some(0.0));
         assert_eq!(scan.grouping_keep_pans, Some(false));
+        assert_eq!(scan.grouping_merge, Some(false));
         assert_eq!(scan.grouping_focus_anchor, Some(false));
 
         // The sheet may send none of them: absent is None, not a default.
@@ -574,6 +580,7 @@ mod tests {
         assert_eq!(scan.grouping_stacks, None);
         assert_eq!(scan.grouping_pause, None);
         assert_eq!(scan.grouping_keep_pans, None);
+        assert_eq!(scan.grouping_merge, None);
         assert_eq!(scan.grouping_focus_anchor, None);
         // Settings keys are snake_case on the wire only as JSON patch keys; a
         // scan takes the camelCase arg names.
