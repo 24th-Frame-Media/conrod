@@ -297,7 +297,9 @@
   {
    "provider": "gemini",
    "request": {
-    "headers": {},
+    "headers": {
+     "x-goog-api-key": "AIzaTest"
+    },
     "json": {
      "contents": [
       {
@@ -321,9 +323,7 @@
       "temperature": 0.0
      }
     },
-    "query": {
-     "key": "AIzaTest"
-    },
+    "query": {},
     "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
    }
   }
