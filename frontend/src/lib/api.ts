@@ -3,6 +3,20 @@ import type {
   Bootstrap, GlobalStats, Job, MarkValues, Review, ScanArgs, Settings, Status, KnownVehicle,
 } from './types';
 
+/** The engine's answer to `scan`: the album it started (or found), and what a
+ *  re-import did with the frames that were already there. */
+export type ScanStarted = {
+  jobId: number | null;
+  /** Frames the import found already in the library; they are never imported twice. */
+  duplicates?: number;
+  /** Frames added by this import. */
+  added?: number;
+  /** True when the folder was already an album and this import joined it. */
+  existing?: boolean;
+  /** False when nothing was added, so no scan started. */
+  scanning?: boolean;
+};
+
 /** `?mock=1` under `vite dev` only. The whole branch is dead code in production builds. */
 export const mocked: boolean = import.meta.env.DEV && new URLSearchParams(location.search).has('mock');
 export const inTauri = '__TAURI_INTERNALS__' in window;
@@ -27,7 +41,7 @@ export const engine = {
   jobs: () => call<Job[]>('jobs'),
   globalStats: () => call<GlobalStats>('global_stats'),
   review: (jobId: number) => call<Review>('review', { jobId }),
-  scan: (args: ScanArgs) => call<{ jobId: number }>('scan', args),
+  scan: (args: ScanArgs) => call<ScanStarted>('scan', args),
   pause: () => call('pause'),
   resumeScan: () => call('resume_scan'),
   stop: () => call('stop'),
