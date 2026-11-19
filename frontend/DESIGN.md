@@ -37,9 +37,8 @@ Card left edge = verdict colour (good/fair/poor); `current` = 2px accent ring; c
 | scan (form on home + live rail) | `Scan` | folder + name + scan type (profile) + Start; live progress rail while a scan runs |
 | review (toolbar, facets, grid) | `Review` | view tabs, search, star filter, sort, Numbers/Plates facets, virtual card grid, inspector with inline editing |
 | frame dialog | `Viewer` | native `<dialog>`, full preview, fractional detection boxes (B toggles), prev/next, stars/reject |
-| train | `Train` | subject over its frame with box, 1-5/Pan/Can't tell/Undo, learn/forget |
 | known cars (in settings) | `Known` | search, add row, inline-editable table |
-| settings | `Settings` | setting groups (label + hint + input), Save, "Learn from my ratings" |
+| settings | `Settings` | setting groups (label + hint + input), Save |
 | album/setup | folded into Library/Scan rails | no dedicated screens: the Rust engine has no album-sheet or install actions |
 
 Shell: `TitleBar` = brand + tabs + stats + scan-type chip + status pill + window controls. The
@@ -50,7 +49,6 @@ event log. Splash card while bootstrapping.
 
 Review / Viewer: `J` `K` or arrows move; `0`-`5` stars; `X`/`Del` reject; `U` reset (stars cleared,
 un-rejected); `Enter` open viewer; `B` boxes (viewer); `Esc` close; `?` shortcut list.
-Train: `1`-`5` rate + next; `X` can't tell; `P` pan; `U` undo; `B` box; `Z` 100% crop; `J` `K` move.
 Inputs/selects swallow keys. Ctrl/Meta/Alt combos are ignored.
 
 ## Native flare (on top of the web look)

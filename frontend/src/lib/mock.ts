@@ -1,5 +1,5 @@
 /* Dev-only engine stand-in: `vite dev` + `?mock=1`. Imported dynamically behind import.meta.env.DEV, so it is not in `dist`.
-   Extra params: page=library|scan|ingest|identify|review|train|known|settings, viewer, popover, scan (a scan is running), profile=<shoot preset id>. */
+   Extra params: page=library|scan|ingest|identify|review|known|settings, viewer, popover, scan (a scan is running), profile=<shoot preset id>. */
 import { startIngestSim, type IngestSim } from './mockIngest';
 import type { ShootStats } from './shot.mjs';
 import type { Bootstrap, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, Settings, Status, WorkerLimits } from './types';
@@ -14,11 +14,11 @@ const params = () => new URLSearchParams(location.search);
 /** `?mock=1&page=ingest` (or `page=scan`) plays a ~80 s ingest of album 3: scan lanes, group, pick, vision, done. `page=identify` plays only the vision phase.
     Tuning: `&speed=4` hurries it, `&at=30` starts 30 s in (scan 0-61, group 61-64, pick 64-67, vision 67-89, done after 90), `&paused` starts it paused, `&frames=` `&cars=` size it, `&theme=light`. */
 export function devStart(): DevStart {
-  const pages: Record<string, Page> = { library: 'Library', scan: 'Scan', ingest: 'Scan', identify: 'Identify', review: 'Review', train: 'Train', known: 'Known vehicles', settings: 'Settings' };
+  const pages: Record<string, Page> = { library: 'Library', scan: 'Scan', ingest: 'Scan', identify: 'Identify', review: 'Review', known: 'Known vehicles', settings: 'Settings' };
   const page = pages[params().get('page') ?? ''];
   const lightroom = params().get('lightroom');
   return {
-    page, jobId: page === 'Review' || page === 'Train' || page === 'Identify' ? 1 : page === 'Scan' ? 3 : undefined, viewer: params().has('viewer'), popover: params().has('popover'),
+    page, jobId: page === 'Review' || page === 'Identify' ? 1 : page === 'Scan' ? 3 : undefined, viewer: params().has('viewer'), popover: params().has('popover'),
     lightroom: lightroom === 'export' || lightroom === 'sent' || lightroom === 'import' || lightroom === 'imported' || lightroom === 'stats' ? lightroom : undefined,
   };
 }
@@ -46,7 +46,7 @@ function scene(hue: number, cx: number, s: number, paint: string, w: number, h: 
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-type Db = { jobs: Job[]; frames: Frame[]; dets: Detection[]; known: KnownVehicle[]; settings: Settings; labels: number; ticks: number; identifySkipped: boolean };
+type Db = { jobs: Job[]; frames: Frame[]; dets: Detection[]; known: KnownVehicle[]; settings: Settings; ticks: number; identifySkipped: boolean };
 let cache: Db | undefined;
 
 function makeDb(): Db {
@@ -93,7 +93,7 @@ function makeDb(): Db {
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
     overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', close_to_tray: false,
   };
-  return { jobs, frames, dets, known, settings, labels: 14, ticks: 0, identifySkipped: false };
+  return { jobs, frames, dets, known, settings, ticks: 0, identifySkipped: false };
 }
 
 /* ── ingest simulator (see mockIngest.ts): one timeline feeds both the scan and the identify event streams ── */
@@ -414,12 +414,6 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'save_known': { const v = args as KnownVehicle; db.known = [...db.known.filter((k) => k.plate !== v.plate), v].sort((p, q) => p.plate.localeCompare(q.plate)); return out(null); }
     case 'delete_known': db.known = db.known.filter((k) => k.plate !== a.plate); return out(null);
     case 'delete_all_known': { const removed = db.known.length; db.known = []; return out({removed}); }
-    case 'training_status': return out({ labels: db.labels, active: false, validation: null });
-    case 'train_label': db.labels += 1; return out(null);
-    case 'undo_label': db.labels = Math.max(0, db.labels - 1); return out(null);
-    case 'train_model': return out({ labels: db.labels, active: true, validation: { exact: 0.62, within_one: 0.93, n: db.labels } });
-    case 'forget_model': return out({ labels: db.labels, active: false, validation: null });
-    case 'train_taste': return out({ n: 42 });
     case 'save_settings': db.settings = { ...db.settings, ...(args as Settings) }; return out(db.settings);
     case 'stop': if (ingest && !ingest.finished) ingest.stop(); return out(status(db));
     case 'pause': ingest?.setPaused(true); return out(null);

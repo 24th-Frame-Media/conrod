@@ -13,7 +13,6 @@ import { ImportDialog, type ImportDefaults, type ScanDraft } from './screens/Imp
 import { IdentifyScreen } from './screens/Identify';
 import { ScanScreen } from './screens/Scan';
 import { Settings } from './screens/Settings';
-import { noTrainVerbs, Train, type TrainVerbs } from './screens/Train';
 import { useFolderDrop, useLocalFlag, useRun } from './state/hooks';
 import { useToast } from './state/toast';
 import { useEngine } from './state/useEngine';
@@ -38,7 +37,6 @@ export function App() {
   const [help, setHelp] = useState(false);
   const [showBoxes, setShowBoxes] = useLocalFlag('conrod.boxes', true);
   const [dev, setDev] = useState<DevStart | null>(null);
-  const trainVerbs = useRef<TrainVerbs>(noTrainVerbs);
   const reviewVerbs = useRef<ReviewVerbs>(noReviewVerbs);
 
   const rv = useReview(jobId, run);
@@ -136,8 +134,8 @@ export function App() {
 
   useHotkeys({
     page: view, viewerOpen: viewer, rejected: () => reviewVerbs.current.rejected(), picked: () => reviewVerbs.current.picked(),
-    stepFrame: (d, repeat) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepFrame(d, repeat)),
-    stepBurst: (d) => (page === 'Train' ? trainVerbs.current.step(d) : reviewVerbs.current.stepBurst(d)),
+    stepFrame: (d, repeat) => reviewVerbs.current.stepFrame(d, repeat),
+    stepBurst: (d) => reviewVerbs.current.stepBurst(d),
     nextBurst: (d) => reviewVerbs.current.nextBurst(d),
     nextUndecided: () => reviewVerbs.current.nextUndecided(),
     enter: () => reviewVerbs.current.enter(),
@@ -152,9 +150,7 @@ export function App() {
       reviewVerbs.current.escape();
     },
     toggleHelp: () => setHelp((v) => !v),
-    toggleBoxes: () => setShowBoxes((v) => !v),
     setView: (v) => { setViewer(v === 'loupe'); reviewVerbs.current.setView(v); },
-    train: { rate: (n) => trainVerbs.current.rate(n), pan: () => trainVerbs.current.pan(), undo: () => trainVerbs.current.undo(), zoom: () => trainVerbs.current.zoom() },
   });
 
   return (
@@ -213,10 +209,6 @@ export function App() {
               onWrite={(dryRun) => jobId != null && write(jobId, dryRun)}
               lightroomDev={dev?.lightroom}
               onEdit={(id, updates) => run(async () => { await engine.editDetection(id, updates); await rv.refresh(); })} />
-        )}
-        {view === 'Train' && (
-          <Train rv={rv} jobs={eng.jobs} jobId={jobId} run={run} toast={toast} showBoxes={showBoxes} verbs={trainVerbs} onPickJob={setJobId}
-            onLibrary={() => setPage('Library')} />
         )}
         {view === 'Settings' && <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status} />}
       </main>

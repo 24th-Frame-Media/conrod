@@ -954,24 +954,6 @@ dialog.viewer {
   border: 1px dashed var(--line);
 }
 
-/* ── train ── */
-.train { flex: 1; min-height: 0; display: flex; }
-.train-stage { flex: 1; min-width: 0; overflow: auto; background: var(--bg); display: flex; align-items: center; justify-content: center; }
-/* Sized from the frame's aspect ratio, not from percentages of an auto-sized box, so the outline lines up with the picture. */
-.train-frame { position: relative; flex: none; width: min(calc(100vw - 342px), calc((100vh - 110px) * var(--ar, 1.5))); aspect-ratio: var(--ar, 1.5); line-height: 0; border-radius: var(--radius); overflow: hidden; }
-.train-box { position: absolute; border: 2px solid var(--warn2); pointer-events: none; }
-.train-empty { color: var(--text-dim); padding: 24px; max-width: 46ch; text-align: center; line-height: 1.5; }
-.train-side { width: 320px; flex: none; padding: 20px; overflow: auto; background: var(--surface); border-left: 1px solid var(--line); }
-.train-side h3 { margin: 16px 0 6px; font-size: 16px; text-transform: none; letter-spacing: 0; color: var(--text); }
-.train-selects { display: flex; gap: 8px; } .train-selects select { flex: 1; min-width: 0; }
-.train-stars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 14px 0; }
-.train-stars button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 2px; line-height: 1.1; }
-.train-stars button:hover:not(:disabled) { border-color: var(--line-hover); }
-.train-stars b { font-size: 18px; } .train-stars small { font-size: 11px; color: var(--text-mute); }
-.train-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-.train-row button.on { background: var(--good); border-color: var(--good); color: var(--on-good); }
-.train-progress { margin: 14px 0; color: var(--text-dim); font-size: 13px; }
-.train-fit { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .small { font-size: 12px; }
 
 /* ── finished album: compact burst stacks, keeper first ── */
@@ -1677,17 +1659,6 @@ dialog.viewer {
   line-height: 1.45;
 }
 .settings-advanced > summary .tab-dirty-dot { position: absolute; right: 2px; top: 18px; }
-
-.settings-action-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 0 12px;
-  border-top: 1px solid var(--line-soft);
-}
-.settings-action-row b { font-size: 13.5px; font-weight: 500; }
-.settings-action-row .hint { margin: 2px 0 0; font-size: 12px; color: var(--text-mute); }
 
 /* Search results read like sections, with the tab name as a caption. */
 .settings-search-head {

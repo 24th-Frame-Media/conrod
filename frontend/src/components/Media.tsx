@@ -221,7 +221,7 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
     [getDimensions, onZoomChange, reset, toggleZoom, view.scale, zoomTo],
   );
 
-  // Sync with external zoomed prop (e.g., Train screen)
+  // Sync with the external zoomed prop
   useEffect(() => {
     if (zoomed) {
       const { containerW, containerH, scale1to1, imageW, imageH } = getDimensions();

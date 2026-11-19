@@ -23,7 +23,7 @@ Download the latest release from [Releases](../../releases):
 
 - **Non-destructive**: RAW files are never modified; metadata is written to `.xmp` sidecars. JPEGs update in place.
 - **Burst Culling**: Identifies identical cars through bursts and picks the sharpest keeper of each pass.
-- **Trainable Sharpness**: Customizes subject scoring to your photography style (e.g. sharp car on panning motion blur) using user ratings in the Train tab.
+- **Sharpness Scoring**: Subject-level focus scoring that tells a soft frame from a sharp car against a deliberately streaked pan.
 - **Entry List Matching**: Drop in an event entry CSV (`number,driver,team,...`) to guarantee accurate keywords for competitors. (See [`samples/entries-example.csv`](samples/entries-example.csv)).
 - **Folder Watch**: Automatically processes new frames as they copy from memory cards.
 - **Formats**: Tested on Canon `.cr3` and `.cr2`, alongside `.jpg` / `.jpeg`.

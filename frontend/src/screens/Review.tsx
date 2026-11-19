@@ -30,7 +30,7 @@ import { Compare } from './Compare';
 
 /** G/E/C hotkeys switch between the grid, the loupe (Viewer) and the compare view. */
 export type ReviewView = 'grid' | 'loupe' | 'compare';
-/** How App's global hotkey handler reaches into whichever view Review currently owns (mirrors Train's `verbs` ref). */
+/** How App's global hotkey handler reaches into whichever view Review currently owns. */
 export type ReviewVerbs = {
   view: ReviewView; setView: (v: ReviewView) => void;
   /** `repeat` is true on a held key's auto-repeat: within-stack movement continues, a jump into the next stack does not. */

@@ -148,7 +148,6 @@ const KEYS: [string, string][] = [
   ['0', 'clear the stars, back to the measured rating'],
   ['Ctrl+Z  /  Ctrl+Shift+Z', 'undo / redo the last decision (a stack action is one step)'],
   ['G  /  E  /  C', 'grid, full frame, compare the burst side by side'],
-  ['B (full frame, Train)', 'show or hide detection outlines'],
   ['?', 'this list'],
 ];
 
@@ -161,7 +160,7 @@ export function KeysDialog({ onClose }: { onClose: () => void }) {
           <div key={k}><dt>{k.split(/\s{2}\/\s{2}/).map((part) => <kbd key={part}>{part}</kbd>)}</dt><dd>{what}</dd></div>
         ))}
       </dl>
-      <p className="muted small-print">With auto-advance on (Manage shoot), P and X move on to the next burst or frame, and with cross-stack arrows on, ← and → carry on into the stack beside them. On Train: <kbd>1</kbd>-<kbd>5</kbd> rate, <kbd>X</kbd> can&apos;t tell, <kbd>P</kbd> pan, <kbd>U</kbd> undo, <kbd>Z</kbd> 200%.</p>
+      <p className="muted small-print">With auto-advance on (Manage shoot), P and X move on to the next burst or frame, and with cross-stack arrows on, ← and → carry on into the stack beside them.</p>
     </Modal>
   );
 }

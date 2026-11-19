@@ -582,11 +582,6 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
 
   const discard = () => setDraft(settings);
 
-  const learn = () => void run(async () => {
-    const out = await engine.trainTaste();
-    toast(typeof out.n === 'number' ? `Learned from ${out.n} of your ratings.` : 'Learned from your ratings.', { tone: 'ok' });
-  });
-
   const openTab = (id: SettingsTabId) => {
     setQuery('');
     setActiveTab(id);
@@ -729,17 +724,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
               tabIndex={0}
             >
               {activeTab === 'culling' && SECTIONS.filter((section) => section.tab === 'culling').map((section) => (
-                <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue}>
-                  {section.id === 'culling' && (
-                    <div className="settings-action-row">
-                      <div>
-                        <b>Learn from my ratings</b>
-                        <p className="hint">Fit Conrod's star ratings to the ones you have given by hand.</p>
-                      </div>
-                      <button type="button" className="ghost small" onClick={learn}>Learn now</button>
-                    </div>
-                  )}
-                </SettingsSection>
+                <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue} />
               ))}
 
               {activeTab === 'identification' && (
