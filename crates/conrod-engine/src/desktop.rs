@@ -527,6 +527,11 @@ impl Desktop {
             Command::BenchRun(a) => crate::bench::run(self, &a),
             Command::WorkerLimits {} => Ok(self.worker_limits()),
             Command::DescribeImage { path } => crate::bench::describe_one(self, &path),
+            Command::LightroomExport(a) => crate::lightroom::export(self, a.job_id),
+            Command::LightroomPending(a) => crate::lightroom::pending(self, a.dir.as_deref()),
+            Command::LightroomImport(a) => {
+                crate::lightroom::import(self, a.job_id, a.catalog.as_deref())
+            }
         }
     }
 
@@ -1328,6 +1333,7 @@ impl Desktop {
             "stars": stars,
             "taken_from": totals["taken_from"].clone(),
             "taken_to": totals["taken_to"].clone(),
+            "catalog_match": crate::lightroom::catalog_match(&db, job)?,
         }))
     }
 

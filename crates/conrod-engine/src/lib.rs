@@ -114,6 +114,7 @@ mod evaltest;
 pub mod housekeeping;
 pub mod identify_live;
 pub mod library;
+pub mod lightroom;
 mod looks;
 pub mod operations;
 #[cfg(test)]

@@ -280,6 +280,15 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("images", "comp_lines", "INTEGER"),
     ("images", "comp_subject_share", "REAL"),
     ("images", "comp_at", "REAL"),
+    // What Lightroom Classic said about the frame -- the Conrod Bridge
+    // plugin's `to-conrod` package, or a read-only `.lrcat`. A second opinion
+    // and a training label, never a command: conrod's own stars/picked/
+    // rejected are left alone. `catalog_at` is when the entry was applied, so
+    // an album can say how many of its frames have a catalog entry at all.
+    ("images", "catalog_rating", "INTEGER"),
+    ("images", "catalog_pick", "INTEGER"),
+    ("images", "catalog_label", "TEXT"),
+    ("images", "catalog_at", "REAL"),
 ];
 
 fn now_unix() -> f64 {
@@ -1405,4 +1414,52 @@ pub fn sharpness_label_counts(conn: &Connection) -> Result<HashMap<i64, i64>> {
         conn.prepare("SELECT stars, count(*) AS n FROM sharpness_labels GROUP BY stars")?;
     let rows = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
     rows.collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn columns(conn: &Connection, table: &str) -> HashSet<String> {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap();
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1)).unwrap();
+        rows.map(Result::unwrap).collect()
+    }
+
+    #[test]
+    fn the_catalog_columns_are_added_without_touching_the_frames() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO jobs(id,root,created_at) VALUES(1,'C:\\Photos',0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO images(job_id,path,status,stars) VALUES(1,'C:\\Photos\\a.CR3','done',4)",
+            [],
+        )
+        .unwrap();
+        migrate(&conn).unwrap();
+        let columns = columns(&conn, "images");
+        for column in [
+            "catalog_rating",
+            "catalog_pick",
+            "catalog_label",
+            "catalog_at",
+        ] {
+            assert!(columns.contains(column), "{column} is missing: {columns:?}");
+        }
+        // Additive only: the frame the photographer already rated is intact.
+        let (stars, catalog): (i64, Option<i64>) = conn
+            .query_row(
+                "SELECT stars,catalog_pick FROM images WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((stars, catalog), (4, None));
+    }
 }
