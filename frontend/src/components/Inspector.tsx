@@ -86,6 +86,10 @@ export function Inspector({
     } catch { /* ignore */ }
   }, [width]);
 
+  // The listeners only came off on mouseup, so unmounting mid-drag left them calling setWidth.
+  const detachDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => detachDrag.current?.(), []);
+
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     setResizing(true);
@@ -101,10 +105,16 @@ export function Inspector({
 
     const onMouseUp = () => {
       setResizing(false);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      detach();
     };
 
+    const detach = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      detachDrag.current = null;
+    };
+
+    detachDrag.current = detach;
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
   };
