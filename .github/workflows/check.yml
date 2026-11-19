@@ -38,6 +38,14 @@ jobs:
       - run: npm test
         working-directory: frontend
       - run: node scripts/check-version.mjs
+      # ort-sys copies DirectML.dll three ancestors above its nested OUT_DIR and
+      # panics on a cold cache when build/examples and build/deps are missing
+      # (same workaround as release.yml, for the debug profile used here).
+      - name: Prepare the build directories for ort-sys
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force target/debug/build/examples | Out-Null
+          New-Item -ItemType Directory -Force target/debug/build/deps | Out-Null
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
