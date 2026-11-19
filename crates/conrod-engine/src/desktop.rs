@@ -11,7 +11,7 @@ use conrod_core::{
     tasks::TaskHub,
 };
 use conrod_vision::{imageops::Rgb, similarity};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -42,6 +42,189 @@ fn wants_identify(mode: &str, profile_identifies: bool, reads_text: bool) -> boo
     conrod_core::settings::workflow_mode_word(mode) != conrod_core::settings::WORKFLOW_CULL
         && profile_identifies
         && reads_text
+}
+
+/// The album setting that records how far its pipeline got, so Resume can
+/// continue at that stage instead of starting over. Stored next to
+/// `native_scan_stage` in the album's `settings_json`.
+const RESUME_STAGE: &str = "native_resume_stage";
+
+/// How far an album's pipeline got. Ordered: every stage before it is done.
+///
+/// A crash or Stop leaves the album in one of these; a resume starts at the
+/// stored one. `Scan` also means "read the frames that are not done yet".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Tail {
+    Scan,
+    Group,
+    Pick,
+    Identify,
+    Taste,
+    Done,
+}
+
+impl Tail {
+    fn parse(word: &str) -> Tail {
+        match word {
+            "group" => Tail::Group,
+            "pick" => Tail::Pick,
+            "identify" => Tail::Identify,
+            "taste" => Tail::Taste,
+            "done" => Tail::Done,
+            _ => Tail::Scan,
+        }
+    }
+
+    fn word(self) -> &'static str {
+        match self {
+            Tail::Scan => "scan",
+            Tail::Group => "group",
+            Tail::Pick => "pick",
+            Tail::Identify => "identify",
+            Tail::Taste => "taste",
+            Tail::Done => "done",
+        }
+    }
+}
+
+/// The tail a resume continues at: the album's own record, or its start.
+fn stored_tail(settings: &Map<String, Value>) -> Tail {
+    settings
+        .get(RESUME_STAGE)
+        .and_then(Value::as_str)
+        .map_or(Tail::Scan, Tail::parse)
+}
+
+/// Where a resume that has no frames left to read picks the pipeline up. An
+/// album that finished (`done`) is run again from the grouping, as before.
+fn resume_tail(settings: &Map<String, Value>) -> Tail {
+    match stored_tail(settings) {
+        Tail::Done => Tail::Scan,
+        tail => tail,
+    }
+}
+
+/// The workflow a resume runs: the album's stored scan stage, never the
+/// sheet's (a resume has no sheet). An album that was only indexed is culled.
+fn stored_stage(settings: &Map<String, Value>) -> crate::commands::ScanStage {
+    match settings.get("native_scan_stage").and_then(Value::as_str) {
+        Some("all") => crate::commands::ScanStage::All,
+        _ => crate::commands::ScanStage::Cull,
+    }
+}
+
+/// The frames a resume still has to read: not done, not rejected by hand, not
+/// a hidden copy. Frames already done are never read again.
+fn unfinished_paths(db: &Connection, job: i64) -> Result<Vec<PathBuf>> {
+    Ok(rows(
+        db,
+        "SELECT path FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0",
+        [job],
+    )?
+    .iter()
+    .filter_map(|v| v["path"].as_str().map(PathBuf::from))
+    .collect())
+}
+
+/// The frames a finished scan could not read: how many, and a few reasons in
+/// the words the reader reported. One unreadable file never fails an album.
+fn scan_errors(db: &Connection, job: i64) -> (i64, Vec<String>) {
+    let count = scalar(
+        db,
+        "SELECT count(*) FROM images WHERE job_id=? AND status='error' AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0",
+        [job],
+    )
+    .unwrap_or(0);
+    if count == 0 {
+        return (0, Vec::new());
+    }
+    let samples = rows(
+        db,
+        "SELECT path,error FROM images WHERE job_id=? AND status='error' AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 ORDER BY id LIMIT 3",
+        [job],
+    )
+    .map(|found| {
+        found
+            .iter()
+            .filter_map(|row| {
+                let path = row["path"].as_str()?;
+                let name = Path::new(path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                let reason = row["error"].as_str().unwrap_or("could not be read");
+                Some(format!("{name}: {reason}"))
+            })
+            .collect()
+    })
+    .unwrap_or_default();
+    (count, samples)
+}
+
+/// The status a finished scan leaves behind. Per-frame failures are
+/// `done_errors` (Review opens, the album offers a retry); only a failed
+/// pipeline is `error`.
+fn album_status(
+    stopped: bool,
+    pipeline_failed: bool,
+    incomplete: i64,
+    errors: i64,
+) -> &'static str {
+    if stopped {
+        "stopped"
+    } else if pipeline_failed {
+        "error"
+    } else if incomplete > 0 && errors == incomplete {
+        "done_errors"
+    } else if incomplete > 0 {
+        "error"
+    } else {
+        "done"
+    }
+}
+
+/// What importing a folder would do to the library: the album that already
+/// holds this root, the files already in *any* album (never imported twice),
+/// and the files that are genuinely new.
+struct ImportPlan {
+    album: Option<i64>,
+    duplicates: usize,
+    fresh: Vec<PathBuf>,
+}
+
+fn plan_import(db: &Connection, root: &Path, paths: &[PathBuf]) -> Result<ImportPlan> {
+    let album: Option<i64> = db
+        .query_row(
+            "SELECT id FROM jobs WHERE root=?1 COLLATE NOCASE ORDER BY id LIMIT 1",
+            [root.to_string_lossy().as_ref()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    // A photograph already in an album is not imported again, even under
+    // another root: two rows would mean two scans of the same file.
+    let mut probe = db
+        .prepare("SELECT EXISTS(SELECT 1 FROM images WHERE path=?)")
+        .map_err(err)?;
+    let mut duplicates = 0;
+    let mut fresh = Vec::with_capacity(paths.len());
+    for path in paths {
+        let text = path.to_string_lossy();
+        let known: bool = probe
+            .query_row([text.as_ref()], |r| r.get(0))
+            .map_err(err)?;
+        if known {
+            duplicates += 1;
+        } else {
+            fresh.push(path.clone());
+        }
+    }
+    Ok(ImportPlan {
+        album,
+        duplicates,
+        fresh,
+    })
 }
 
 /// Burst keys stay small and positive; a keep-set's key is offset past them so
@@ -291,7 +474,65 @@ impl Desktop {
             operations: Mutex::new(std::collections::BTreeMap::new()),
         });
         crate::watching::restore(&desktop);
+        // Before anything can offer to resume: an album a crash left mid-scan
+        // still says `scanning`, which hides Resume. Mark it stopped instead;
+        // every finished frame and its results are kept.
+        if let Err(e) = desktop.reconcile_interrupted() {
+            desktop
+                .hub
+                .note(format!("Could not reconcile interrupted albums: {e}"));
+        }
         Ok(desktop)
+    }
+
+    /// Mark every album a previous run left in an in-progress status as
+    /// stopped, so it is resumable again. Returns how many were fixed.
+    ///
+    /// Statuses other than `scanning` are not written today, but they are the
+    /// in-progress words a future stage could leave behind; treating them the
+    /// same costs nothing and keeps a crash from stranding an album.
+    fn reconcile_interrupted(&self) -> Result<usize> {
+        lock(&self.db)
+            .execute(
+                "UPDATE jobs SET status='stopped' WHERE status IN ('scanning','indexing','grouping','picking','identifying')",
+                [],
+            )
+            .map_err(err)
+    }
+
+    /// Record how far the album's pipeline got, so a later resume continues at
+    /// that stage. Best effort: a failure is noted, never fatal to the scan.
+    fn note_resume_stage(&self, job: i64, stage: Tail) {
+        let db = lock(&self.db);
+        let stored: String =
+            match db.query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                r.get(0)
+            }) {
+                Ok(stored) => stored,
+                Err(e) => {
+                    drop(db);
+                    self.hub
+                        .note(format!("Could not record the scan stage: {}", err(e)));
+                    return;
+                }
+            };
+        let mut map: Map<String, Value> = serde_json::from_str(&stored).unwrap_or_default();
+        if map.get(RESUME_STAGE).and_then(Value::as_str) == Some(stage.word()) {
+            return;
+        }
+        map.insert(RESUME_STAGE.into(), json!(stage.word()));
+        let saved = match serde_json::to_string(&map) {
+            Ok(saved) => saved,
+            Err(_) => return,
+        };
+        if let Err(e) = db.execute(
+            "UPDATE jobs SET settings_json=? WHERE id=?",
+            params![saved, job],
+        ) {
+            drop(db);
+            self.hub
+                .note(format!("Could not record the scan stage: {}", err(e)));
+        }
     }
 
     /// The scan in progress (or the one that just ended), if any.
@@ -650,15 +891,39 @@ impl Desktop {
 
     pub fn status(&self) -> Value {
         let tasks: Vec<_> = self.hub.snapshot().iter().map(|t| json!({"id":t.id,"label":t.label,"detail":t.detail,"state":format!("{:?}",t.state).to_lowercase(),"done":t.done,"total":t.total,"elapsed":t.elapsed.as_secs_f64(),"eta":t.eta.map(|d|d.as_secs_f64()),"error":t.error})).collect();
-        let active = lock(&self.active);
+        let (active_job, ended) = {
+            let active = lock(&self.active);
+            (
+                active
+                    .as_ref()
+                    .filter(|(_, s)| !s.is_finished())
+                    .map(|(j, _)| *j),
+                active
+                    .as_ref()
+                    .filter(|(_, s)| s.is_finished())
+                    .map(|(j, _)| *j),
+            )
+        };
         let operations: Vec<_> = lock(&self.operations).keys().cloned().collect();
-        json!({"revision":self.hub.version(),"tasks":tasks,"log":self.hub.log(),"operations":operations,"activeJob":active.as_ref().filter(|(_,s)|!s.is_finished()).map(|(j,_)|*j)})
+        // Frames the scan that just ended could not read, with a few reasons:
+        // the UI says "done with errors" from this instead of calling the album failed.
+        let scan = ended.map(|job| {
+            let (errors, error_samples) = scan_errors(&lock(&self.reader), job);
+            json!({"job": job, "errors": errors, "error_samples": error_samples})
+        });
+        json!({"revision":self.hub.version(),"tasks":tasks,"log":self.hub.log(),"operations":operations,"activeJob":active_job,"scan":scan})
     }
 
     fn jobs(&self) -> Result<Vec<Value>> {
         let fallback_gap = lock(&self.settings).burst_gap;
-        let mut jobs = rows(&lock(&self.reader), "SELECT j.*, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND COALESCE(i.copy_of,0)=0) AS total, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.status='done' AND COALESCE(i.copy_of,0)=0) AS done, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND COALESCE(i.copy_of,0)<>0) AS copies FROM jobs j ORDER BY j.id DESC", [])?;
+        let reader = lock(&self.reader);
+        let mut jobs = rows(&reader, "SELECT j.*, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND COALESCE(i.copy_of,0)=0) AS total, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.status='done' AND COALESCE(i.copy_of,0)=0) AS done, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.status='error' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0) AS errors, (SELECT count(*) FROM images i WHERE i.job_id=j.id AND COALESCE(i.copy_of,0)<>0) AS copies FROM jobs j ORDER BY j.id DESC", [])?;
         for job in &mut jobs {
+            if job["errors"].as_i64().unwrap_or(0) > 0 {
+                if let Some(id) = job["id"].as_i64() {
+                    job["error_samples"] = json!(scan_errors(&reader, id).1);
+                }
+            }
             if job["label"].as_str().is_none_or(|s| s.trim().is_empty()) {
                 job["label"] = json!(Path::new(job["root"].as_str().unwrap_or_default())
                     .file_name()
@@ -797,25 +1062,27 @@ impl Desktop {
         }
         let mut settings = lock(&self.settings).clone();
         let task = self.hub.start("Indexing album", 0);
-        let (job, paths) = if let Some(job) = a.job_id {
+        // How far this run's tail goes, which stage it reads at, and what the
+        // import found. A resume keeps the album's own stage; a folder that is
+        // already an album only gains the frames it does not have yet.
+        let (job, paths, stage, from, existing, duplicates, added) = if let Some(job) = a.job_id {
             let db = lock(&self.db);
             let stored: String = db
                 .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
                     r.get(0)
                 })
                 .map_err(err)?;
-            if let Ok(map) = serde_json::from_str::<Map<String, Value>>(&stored) {
-                settings = settings.apply(&map);
-            }
-            let paths = rows(
-                &db,
-                "SELECT path FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0",
-                [job],
-            )?
-            .iter()
-            .filter_map(|v| v["path"].as_str().map(PathBuf::from))
-            .collect();
-            (job, paths)
+            let map = serde_json::from_str::<Map<String, Value>>(&stored).unwrap_or_default();
+            settings = settings.apply(&map);
+            let paths = unfinished_paths(&db, job)?;
+            // Frames left to read start the pipeline at the scan again; with
+            // none, continue at the stage the album stopped in.
+            let from = if paths.is_empty() {
+                resume_tail(&map)
+            } else {
+                Tail::Scan
+            };
+            (job, paths, stored_stage(&map), from, true, 0, 0)
         } else {
             // dunce: plain `canonicalize` returns a `\\?\` verbatim path on
             // Windows, which would be stored and then no longer match the
@@ -825,99 +1092,180 @@ impl Desktop {
             if !root.is_dir() {
                 return Err("Choose a photo folder".into());
             }
-            // The sheet's choices belong to the album being created, not to the
-            // global defaults: they are written once, into its settings_json.
-            let profile = a
-                .scan_profile
-                .as_deref()
-                .or(a.profile.as_deref())
-                .unwrap_or(&settings.scan_profile);
-            settings.scan_profile = ShootPreset::parse(profile).name().into();
-            if let Some(read) = a.read_plates {
-                settings.read_plates = read;
-            }
-            if let Some(read) = a.read_numbers {
-                settings.read_numbers = read;
-            }
-            if let Some(people) = a.include_people {
-                settings.include_people = people;
-            }
-            if let Some(strictness) = a.blur_strictness.as_deref() {
-                if !["critical", "strict", "moderate", "lenient"].contains(&strictness) {
-                    return Err("Strictness must be critical, strict, moderate or lenient".into());
-                }
-                settings.blur_strictness = strictness.to_string();
-                settings.blur_explicit = true;
-            }
-            if let Some(gap) = a.burst_gap {
-                if !(gap.is_finite() && gap > 0.0) {
-                    return Err("Burst gap must be a positive number of seconds".into());
-                }
-                settings.burst_gap = gap;
-            }
-            // The grouping sheet's choices go through the same normalisers the
-            // settings loader and regroup use: an unknown word is "normal", and
-            // a pause is clamped to the 0..=10 the cut honours (0 disables it).
-            if let Some(stacks) = a.grouping_stacks {
-                settings.grouping_stacks = stacks;
-            }
-            if let Some(word) = a.grouping_sensitivity.as_deref() {
-                settings.grouping_sensitivity = conrod_core::bursts::sensitivity_word(word);
-            }
-            if let Some(pause) = a.grouping_pause {
-                settings.grouping_pause = conrod_core::bursts::clamped_pause(pause);
-            }
-            if let Some(keep) = a.grouping_keep_pans {
-                settings.grouping_keep_pans = keep;
-            }
-            if let Some(merge) = a.grouping_merge {
-                settings.grouping_merge = merge;
-            }
-            if let Some(anchor) = a.grouping_focus_anchor {
-                settings.grouping_focus_anchor = anchor;
-            }
-            if let Some(word) = a.workflow_mode.as_deref() {
-                settings.workflow_mode =
-                    conrod_core::settings::workflow_mode_word(word).to_string();
-            }
-            if let Some(word) = a.identify_scope.as_deref() {
-                settings.identify_scope =
-                    conrod_core::settings::identify_scope_word(word).to_string();
-            }
-            settings.extra.insert(
-                "native_scan_stage".into(),
-                json!(match a.stage {
-                    ScanStage::Index => "index",
-                    ScanStage::All => "all",
-                    _ => "cull",
-                }),
-            );
-            let paths = crate::files_with_recursion(&root, a.recursive);
-            if paths.is_empty() {
+            let found = crate::files_with_recursion(&root, a.recursive);
+            if found.is_empty() {
                 return Err("No CR2, CR3 or JPEG photos found in that folder".into());
             }
             let db = lock(&self.db);
-            let tx = db.unchecked_transaction().map_err(err)?;
-            let job = conrod_store::create_job(&tx, &root, a.label.as_deref(), &json!(settings))
-                .map_err(err)?;
-            conrod_store::add_images(&tx, job, &paths).map_err(err)?;
-            tx.commit().map_err(err)?;
-            (job, paths)
+            let plan = plan_import(&db, &root, &found)?;
+            if let Some(job) = plan.album {
+                // The folder already is an album: it gains only the frames it
+                // has not seen, and keeps the settings it was created with.
+                let added = plan.fresh.len();
+                if added == 0 {
+                    task.finish();
+                    return Ok(json!({
+                        "jobId": job,
+                        "duplicates": plan.duplicates,
+                        "added": 0,
+                        "existing": true,
+                        "scanning": false,
+                    }));
+                }
+                let tx = db.unchecked_transaction().map_err(err)?;
+                conrod_store::add_images(&tx, job, &plan.fresh).map_err(err)?;
+                tx.commit().map_err(err)?;
+                let stored: String = db
+                    .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                        r.get(0)
+                    })
+                    .map_err(err)?;
+                let map = serde_json::from_str::<Map<String, Value>>(&stored).unwrap_or_default();
+                settings = settings.apply(&map);
+                // The sheet can still ask for an index-only import; otherwise
+                // the new frames are read the way the album was created.
+                let stage = if a.stage == ScanStage::Index {
+                    ScanStage::Index
+                } else {
+                    stored_stage(&map)
+                };
+                (
+                    job,
+                    unfinished_paths(&db, job)?,
+                    stage,
+                    Tail::Scan,
+                    true,
+                    plan.duplicates,
+                    added,
+                )
+            } else if plan.fresh.is_empty() {
+                // Every frame is already in another album. Nothing is created:
+                // report the album that holds them so the sheet can say so.
+                let holder: Option<i64> = db
+                    .query_row(
+                        "SELECT job_id FROM images WHERE path=? LIMIT 1",
+                        [found[0].to_string_lossy().as_ref()],
+                        |r| r.get(0),
+                    )
+                    .optional()
+                    .map_err(err)?;
+                task.finish();
+                return Ok(json!({
+                    "jobId": holder,
+                    "duplicates": plan.duplicates,
+                    "added": 0,
+                    "existing": true,
+                    "scanning": false,
+                }));
+            } else {
+                // The sheet's choices belong to the album being created, not to the
+                // global defaults: they are written once, into its settings_json.
+                let profile = a
+                    .scan_profile
+                    .as_deref()
+                    .or(a.profile.as_deref())
+                    .unwrap_or(&settings.scan_profile);
+                settings.scan_profile = ShootPreset::parse(profile).name().into();
+                if let Some(read) = a.read_plates {
+                    settings.read_plates = read;
+                }
+                if let Some(read) = a.read_numbers {
+                    settings.read_numbers = read;
+                }
+                if let Some(people) = a.include_people {
+                    settings.include_people = people;
+                }
+                if let Some(strictness) = a.blur_strictness.as_deref() {
+                    if !["critical", "strict", "moderate", "lenient"].contains(&strictness) {
+                        return Err(
+                            "Strictness must be critical, strict, moderate or lenient".into()
+                        );
+                    }
+                    settings.blur_strictness = strictness.to_string();
+                    settings.blur_explicit = true;
+                }
+                if let Some(gap) = a.burst_gap {
+                    if !(gap.is_finite() && gap > 0.0) {
+                        return Err("Burst gap must be a positive number of seconds".into());
+                    }
+                    settings.burst_gap = gap;
+                }
+                // The grouping sheet's choices go through the same normalisers the
+                // settings loader and regroup use: an unknown word is "normal", and
+                // a pause is clamped to the 0..=10 the cut honours (0 disables it).
+                if let Some(stacks) = a.grouping_stacks {
+                    settings.grouping_stacks = stacks;
+                }
+                if let Some(word) = a.grouping_sensitivity.as_deref() {
+                    settings.grouping_sensitivity = conrod_core::bursts::sensitivity_word(word);
+                }
+                if let Some(pause) = a.grouping_pause {
+                    settings.grouping_pause = conrod_core::bursts::clamped_pause(pause);
+                }
+                if let Some(keep) = a.grouping_keep_pans {
+                    settings.grouping_keep_pans = keep;
+                }
+                if let Some(merge) = a.grouping_merge {
+                    settings.grouping_merge = merge;
+                }
+                if let Some(anchor) = a.grouping_focus_anchor {
+                    settings.grouping_focus_anchor = anchor;
+                }
+                if let Some(word) = a.workflow_mode.as_deref() {
+                    settings.workflow_mode =
+                        conrod_core::settings::workflow_mode_word(word).to_string();
+                }
+                if let Some(word) = a.identify_scope.as_deref() {
+                    settings.identify_scope =
+                        conrod_core::settings::identify_scope_word(word).to_string();
+                }
+                settings.extra.insert(
+                    "native_scan_stage".into(),
+                    json!(match a.stage {
+                        ScanStage::Index => "index",
+                        ScanStage::All => "all",
+                        _ => "cull",
+                    }),
+                );
+                let added = plan.fresh.len();
+                let tx = db.unchecked_transaction().map_err(err)?;
+                let job =
+                    conrod_store::create_job(&tx, &root, a.label.as_deref(), &json!(settings))
+                        .map_err(err)?;
+                conrod_store::add_images(&tx, job, &plan.fresh).map_err(err)?;
+                tx.commit().map_err(err)?;
+                (
+                    job,
+                    plan.fresh,
+                    a.stage,
+                    Tail::Scan,
+                    false,
+                    plan.duplicates,
+                    added,
+                )
+            }
         };
-        if a.stage == ScanStage::Index {
+        if stage == ScanStage::Index {
             self.db
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .execute("UPDATE jobs SET status='indexed' WHERE id=?", [job])
                 .map_err(err)?;
             task.finish();
-            return Ok(json!({"jobId": job}));
+            return Ok(
+                json!({"jobId": job, "duplicates": duplicates, "added": added, "existing": existing, "scanning": false}),
+            );
         }
         self.db
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .execute("UPDATE jobs SET status='scanning' WHERE id=?", [job])
             .map_err(err)?;
+        // A run that reads frames starts the pipeline at the scan; one that
+        // only continues a stage keeps the stage it already recorded.
+        if from == Tail::Scan {
+            self.note_resume_stage(job, Tail::Scan);
+        }
         task.finish();
         let desktop = self.clone();
         let eligibility = self.clone();
@@ -969,7 +1317,7 @@ impl Desktop {
         let desktop = self.clone();
         // A one-shot scan runs every stage to the end: bursts and keepers, then
         // identification when the album's preset reads numbers or plates.
-        let one_shot = a.stage == ScanStage::All;
+        let one_shot = stage == ScanStage::All;
         std::thread::spawn(move || {
             // ponytail: polls an AtomicBool rather than joining a handle
             // because `scan` has none to join -- its workers report through
@@ -980,96 +1328,120 @@ impl Desktop {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
             let stopped = scan.stop.load(Ordering::Relaxed);
-            let status = if stopped {
+            let mut final_status = if stopped {
                 "stopped"
             } else if lock(&scan.error).is_some() {
                 "error"
             } else {
                 "done"
             };
-            let mut final_status = status;
             if !stopped {
-                // An identify-only album was not scanned to cull: the automatic
-                // cull the scan just measured is cleared before regrouping picks
-                // keepers, and before the identification lane, so a rescan
-                // cannot put it back. A hand reject, the stars and the measured
-                // scores are left exactly as they are.
-                if one_shot && final_status == "done" {
-                    if let Err(e) = desktop.clear_automatic_culls_if_identify(job) {
-                        desktop.hub.start("Clearing automatic culls", 0).fail(e);
+                // Only the stages that had not finished run again: a resume
+                // continues where the album stopped instead of starting over.
+                if from <= Tail::Group {
+                    // An identify-only album was not scanned to cull: the automatic
+                    // cull the scan just measured is cleared before regrouping picks
+                    // keepers, and before the identification lane, so a rescan
+                    // cannot put it back. A hand reject, the stars and the measured
+                    // scores are left exactly as they are.
+                    if one_shot && final_status == "done" {
+                        if let Err(e) = desktop.clear_automatic_culls_if_identify(job) {
+                            desktop.hub.start("Clearing automatic culls", 0).fail(e);
+                        }
                     }
+                    desktop.note_resume_stage(job, Tail::Group);
+                    if let Some(p) = &desktop.progress() {
+                        p.phase("group");
+                    }
+                    if let Err(e) = desktop.regroup(job) {
+                        desktop.hub.start("Grouping album", 0).fail(e);
+                        final_status = "error";
+                    }
+                    desktop.note_resume_stage(job, Tail::Pick);
                 }
-                if let Some(p) = &desktop.progress() {
-                    p.phase("group");
-                }
-                if let Err(e) = desktop.regroup(job) {
-                    desktop.hub.start("Grouping album", 0).fail(e);
-                    final_status = "error";
-                }
-                if let Some(p) = &desktop.progress() {
-                    p.phase("pick");
-                }
-                // Identify when this shoot's presets read numbers or plates:
-                // identification is the slow lane, so it runs last and the
-                // scan is not "done" until it is.
-                let wants_identify = one_shot
-                    && final_status == "done"
-                    && crate::operations::settings(&desktop, job).is_ok_and(|cfg| {
-                        wants_identify(
-                            cfg.workflow(),
-                            ScanProfile::parse(&cfg.scan_profile).identifies_vehicles(),
-                            cfg.read_plates || cfg.read_numbers,
-                        )
-                    });
-                if wants_identify {
-                    // No scope argument: the album's own setting applies
-                    // (keepers unless it chose everything).
-                    if let Err(e) = crate::operations::identify(&desktop, job, None) {
-                        desktop.hub.start("Identification", 0).fail(e);
-                    } else {
-                        // `identify` runs as its own operation; hold the scan
-                        // open until it has finished, so Review waits for the
-                        // whole pipeline rather than opening half-identified.
-                        let key = format!("Identifying:{job}");
-                        while lock(&desktop.operations).contains_key(&key) {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
+                if from <= Tail::Pick {
+                    if let Some(p) = &desktop.progress() {
+                        p.phase("pick");
+                    }
+                    // Identify when this shoot's presets read numbers or plates:
+                    // identification is the slow lane, so it runs last and the
+                    // scan is not "done" until it is.
+                    let wants_identify = one_shot
+                        && final_status == "done"
+                        && crate::operations::settings(&desktop, job).is_ok_and(|cfg| {
+                            wants_identify(
+                                cfg.workflow(),
+                                ScanProfile::parse(&cfg.scan_profile).identifies_vehicles(),
+                                cfg.read_plates || cfg.read_numbers,
+                            )
+                        });
+                    if wants_identify {
+                        desktop.note_resume_stage(job, Tail::Identify);
+                        // No scope argument: the album's own setting applies
+                        // (keepers unless it chose everything).
+                        if let Err(e) = crate::operations::identify(&desktop, job, None) {
+                            desktop.hub.start("Identification", 0).fail(e);
+                        } else {
+                            // `identify` runs as its own operation; hold the scan
+                            // open until it has finished, so Review waits for the
+                            // whole pipeline rather than opening half-identified.
+                            let key = format!("Identifying:{job}");
+                            while lock(&desktop.operations).contains_key(&key) {
+                                std::thread::sleep(std::time::Duration::from_millis(100));
+                            }
                         }
                     }
                 }
                 // The learned taste order comes last, after the pick it sits
                 // beside: without a head file it is skipped without a word.
-                if final_status == "done" {
+                if final_status == "done" && from <= Tail::Taste {
+                    desktop.note_resume_stage(job, Tail::Taste);
                     if let Some(p) = &desktop.progress() {
                         p.phase("pick");
                     }
                     crate::taste::after_scan(&desktop, job);
                 }
             }
-            let db = lock(&desktop.db);
-            // A count that cannot be read counts as incomplete: the scan is
-            // not called done on a guess.
-            let incomplete: i64 = db
-                .query_row(
-                    "SELECT count(*) FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0",
-                    [job],
-                    |r| r.get(0),
-                )
-                .unwrap_or_else(|e| {
-                    desktop.hub.start("Checking scan result", 0).fail(err(e));
-                    1
-                });
-            if !stopped && final_status == "done" && incomplete > 0 {
-                final_status = "error";
+            // Frames that could not be read are counted, with a few reasons:
+            // one unreadable file finishes the album done-with-errors instead
+            // of failing it, and a retry of those frames resumes the scan.
+            let (incomplete, errors) = {
+                let db = lock(&desktop.db);
+                // A count that cannot be read counts as incomplete: the scan is
+                // not called done on a guess.
+                let incomplete: i64 = db
+                    .query_row(
+                        "SELECT count(*) FROM images WHERE job_id=? AND status!='done' AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0",
+                        [job],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or_else(|e| {
+                        desktop.hub.start("Checking scan result", 0).fail(err(e));
+                        1
+                    });
+                let (errors, _) = scan_errors(&db, job);
+                (incomplete, errors)
+            };
+            let outcome = album_status(stopped, final_status == "error", incomplete, errors);
+            if !stopped {
+                desktop.note_resume_stage(
+                    job,
+                    match outcome {
+                        "done" => Tail::Done,
+                        // The failed frames are a scan again, even though the
+                        // rest of the pipeline finished.
+                        "done_errors" => Tail::Scan,
+                        _ => from,
+                    },
+                );
             }
-            if let Err(e) = db.execute(
-                "UPDATE jobs SET status=? WHERE id=?",
-                params![final_status, job],
-            ) {
+            if let Err(e) = lock(&desktop.db)
+                .execute("UPDATE jobs SET status=? WHERE id=?", params![outcome, job])
+            {
                 desktop.hub.start("Saving scan status", 0).fail(err(e));
             }
-            drop(db);
             if let Some(progress) = desktop.progress() {
-                progress.finish(final_status);
+                progress.finish(outcome);
             }
             desktop.finishing.store(false, Ordering::Release);
             desktop.hub.note(if stopped {
@@ -1078,7 +1450,9 @@ impl Desktop {
                 "Album processing updated"
             });
         });
-        Ok(json!({"jobId":job}))
+        Ok(
+            json!({"jobId": job, "duplicates": duplicates, "added": added, "existing": existing, "scanning": true}),
+        )
     }
 
     /// The shoot's own numbers, for the statistics card in the settings sheet:
@@ -2430,10 +2804,14 @@ mod tests {
         assert_eq!(effective.blur_strictness, "lenient");
         assert_eq!(effective.burst_gap, 2.5);
 
-        // Nonsense is refused before an album exists.
+        // Nonsense is refused before an album exists (a folder that already is
+        // an album only gains frames and takes no sheet choices).
+        let fresh = root.join("fresh");
+        std::fs::create_dir_all(&fresh).unwrap();
+        std::fs::write(fresh.join("b.jpg"), b"y").unwrap();
         for args in [
-            json!({"root": root.to_string_lossy(), "stage": "index", "burstGap": 0}),
-            json!({"root": root.to_string_lossy(), "stage": "index", "blurStrictness": "loud"}),
+            json!({"root": fresh.to_string_lossy(), "stage": "index", "burstGap": 0}),
+            json!({"root": fresh.to_string_lossy(), "stage": "index", "blurStrictness": "loud"}),
         ] {
             assert!(desktop.dispatch("scan", args).is_err());
         }
@@ -2512,6 +2890,219 @@ mod tests {
         assert!(plain.grouping_stacks);
         drop(desktop);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_album_left_scanning_by_a_crash_is_stopped_when_the_app_opens() {
+        let root = std::env::temp_dir().join(format!(
+            "conrod-stale-scan-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let desktop = Desktop::open(root.clone()).unwrap();
+        let job = conrod_store::create_job(
+            &lock(&desktop.db),
+            &root,
+            Some("Interrupted"),
+            &json!(Settings::default()),
+        )
+        .unwrap();
+        // One frame finished before the crash, one still waiting: the crash
+        // leaves the album in `scanning`.
+        lock(&desktop.db)
+            .execute(
+                "INSERT INTO images(job_id,path,status) VALUES(?,?,'done'),(?,?,'pending')",
+                params![
+                    job,
+                    root.join("done.jpg").to_string_lossy(),
+                    job,
+                    root.join("waiting.jpg").to_string_lossy()
+                ],
+            )
+            .unwrap();
+        desktop.note_resume_stage(job, Tail::Identify);
+        lock(&desktop.db)
+            .execute("UPDATE jobs SET status='scanning' WHERE id=?", [job])
+            .unwrap();
+        drop(desktop);
+
+        let reopened = Desktop::open(root.clone()).unwrap();
+        let (status, settings): (String, String) = lock(&reopened.db)
+            .query_row(
+                "SELECT status,settings_json FROM jobs WHERE id=?",
+                [job],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "stopped", "so the Library offers Resume again");
+        let settings: Map<String, Value> = serde_json::from_str(&settings).unwrap();
+        assert_eq!(stored_tail(&settings), Tail::Identify, "the stage is kept");
+        let (frames, done): (i64, i64) = lock(&reopened.db)
+            .query_row(
+                "SELECT count(*), COALESCE(SUM(status='done'),0) FROM images WHERE job_id=?",
+                [job],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((frames, done), (2, 1), "nothing is deleted or re-read");
+        drop(reopened);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_scan_that_could_not_read_some_frames_is_done_with_errors() {
+        assert_eq!(album_status(false, false, 0, 0), "done");
+        assert_eq!(
+            album_status(false, false, 2, 2),
+            "done_errors",
+            "per-frame failures do not fail the album"
+        );
+        assert_eq!(album_status(true, false, 3, 1), "stopped");
+        assert_eq!(
+            album_status(false, false, 3, 1),
+            "error",
+            "frames left unread beside the failed ones are not a clean finish"
+        );
+        assert_eq!(album_status(false, true, 1, 0), "error");
+        assert_eq!(
+            album_status(false, false, 2, 0),
+            "error",
+            "frames left without a reason are not a clean finish"
+        );
+
+        // The payload carries the count and a few reasons for the UI.
+        use crate::testkit::Lib;
+        let lib = Lib::new("scan-errors");
+        let bad = lib.frame("bad.cr3", None);
+        let worse = lib.frame("worse.cr3", None);
+        lib.sql(
+            "UPDATE images SET status='error',error='unsupported RAW' WHERE id=?",
+            [bad],
+        );
+        lib.sql(
+            "UPDATE images SET status='error',error='file is missing' WHERE id=?",
+            [worse],
+        );
+        let (errors, samples) = scan_errors(&lib.db(), lib.job);
+        assert_eq!(errors, 2);
+        assert_eq!(samples.len(), 2);
+        assert!(samples.iter().any(|s| s.contains("unsupported RAW")));
+        let jobs = lib.run("jobs", json!({})).unwrap();
+        assert_eq!(jobs[0]["errors"], 2);
+        assert_eq!(jobs[0]["error_samples"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_resume_keeps_the_album_stage_and_skips_finished_frames() {
+        use crate::commands::ScanStage;
+        let one_shot = json!({"native_scan_stage": "all", "native_resume_stage": "identify"});
+        let one_shot = one_shot.as_object().unwrap();
+        assert_eq!(stored_stage(one_shot), ScanStage::All);
+        assert_eq!(
+            stored_tail(one_shot),
+            Tail::Identify,
+            "a vision run that stopped resumes at vision"
+        );
+        let indexed = json!({"native_scan_stage": "index"});
+        assert_eq!(
+            stored_stage(indexed.as_object().unwrap()),
+            ScanStage::Cull,
+            "an album that was only indexed resumes as a cull"
+        );
+        let fresh = Map::new();
+        assert_eq!(stored_tail(&fresh), Tail::Scan);
+        assert_eq!(stored_stage(&fresh), ScanStage::Cull);
+        let finished = json!({"native_resume_stage": "done"});
+        assert_eq!(
+            resume_tail(finished.as_object().unwrap()),
+            Tail::Scan,
+            "a finished album resumes from the grouping, as before"
+        );
+
+        // Only frames that are not done are read again.
+        use crate::testkit::Lib;
+        let lib = Lib::new("resume-stage");
+        lib.frame("done.jpg", None);
+        let waiting = lib.frame("waiting.jpg", None);
+        lib.sql("UPDATE images SET status='pending' WHERE id=?", [waiting]);
+        let paths = unfinished_paths(&lib.db(), lib.job).unwrap();
+        assert_eq!(paths, vec![lib.root.join("waiting.jpg")]);
+    }
+
+    #[test]
+    fn importing_a_folder_that_is_already_an_album_adds_only_new_frames() {
+        let root =
+            std::env::temp_dir().join(format!("conrod-reimport-{}-{}", std::process::id(), now()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.jpg"), b"x").unwrap();
+        std::fs::write(root.join("b.jpg"), b"x").unwrap();
+        let desktop = Desktop::open(root.clone()).unwrap();
+        let scan = |desktop: &Arc<Desktop>| {
+            desktop
+                .dispatch(
+                    "scan",
+                    json!({"root": root.to_string_lossy(), "stage": "index"}),
+                )
+                .unwrap()
+        };
+
+        let first = scan(&desktop);
+        let job = first["jobId"].as_i64().unwrap();
+        assert_eq!(first["duplicates"], 0);
+        assert_eq!(first["added"], 2);
+
+        // The same folder again: no second album, nothing added, and the
+        // duplicate count the sheet needs to say so.
+        let again = scan(&desktop);
+        assert_eq!(again["jobId"], job, "the album that already holds it");
+        assert_eq!(again["duplicates"], 2);
+        assert_eq!(again["added"], 0);
+        assert_eq!(again["existing"], true);
+        assert_eq!(again["scanning"], false);
+        // Asking for a full scan changes nothing either: no frame is new.
+        let culled = desktop
+            .dispatch("scan", json!({"root": root.to_string_lossy()}))
+            .unwrap();
+        assert_eq!(
+            (culled["added"].as_u64(), culled["scanning"].as_bool()),
+            (Some(0), Some(false))
+        );
+        assert_eq!(culled["duplicates"], 2);
+        assert!(desktop.progress().is_none(), "no scan was started");
+        assert_eq!(
+            lock(&desktop.db)
+                .query_row("SELECT count(*) FROM jobs", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            lock(&desktop.db)
+                .query_row("SELECT count(*) FROM images WHERE job_id=?", [job], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap(),
+            2
+        );
+
+        // A frame that arrived since joins the same album.
+        std::fs::write(root.join("c.jpg"), b"x").unwrap();
+        let third = scan(&desktop);
+        assert_eq!(third["jobId"], job);
+        assert_eq!(third["duplicates"], 2);
+        assert_eq!(third["added"], 1);
+        assert_eq!(
+            lock(&desktop.db)
+                .query_row("SELECT count(*) FROM images WHERE job_id=?", [job], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap(),
+            3
+        );
+        drop(desktop);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
