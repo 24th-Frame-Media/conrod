@@ -1,4 +1,11 @@
-export type Job = { id: number; label: string; root: string; status: string; total: number; done: number; copies?: number; created_at: number; scan_profile?: string; include_people?: boolean; settings_json?: string | null; burst_gap?: number };
+export type Job = {
+  id: number; label: string; root: string; status: string; total: number; done: number; copies?: number;
+  created_at: number; scan_profile?: string; include_people?: boolean; settings_json?: string | null; burst_gap?: number;
+  /** Frames the scan could not read. A `done_errors` album opens in Review and offers a retry. */
+  errors?: number;
+  /** Up to three `name: reason` lines for the errors, for the album card. */
+  error_samples?: string[];
+};
 export type Frame = {
   id: number; path: string; status: string; thumb_path: string | null; preview_path: string | null;
   width: number; height: number; rating: number | null; manual_stars: number | null; rejected: number; picked: number;
@@ -77,7 +84,11 @@ export type Detection = {
   known_person_match?: { name: string; country?: string; similarity?: number };
 };
 export type Task = { id: number; label: string; detail: string; state: string; done: number; total: number; elapsed?: number; eta: number | null; error: string | null };
-export type Status = { revision?: number; tasks: Task[]; log: string[]; activeJob: number | null; operations: string[] };
+export type Status = {
+  revision?: number; tasks: Task[]; log: string[]; activeJob: number | null; operations: string[];
+  /** The scan that just ended: frames it could not read, with a few `name: reason` lines. */
+  scan?: { job: number; errors: number; error_samples: string[] } | null;
+};
 export type Review = { frames: Frame[]; detections: Detection[]; tasteHead?: boolean };
 
 /**
@@ -311,7 +322,8 @@ export type ScanOverall = {
 
 export type ScanProgress = {
   job_id: number;
-  state: 'running' | 'done' | 'stopped' | 'error';
+  /** `done_errors` is a finished scan with frames it could not read. */
+  state: 'running' | 'done' | 'done_errors' | 'stopped' | 'error';
   /** The stage the header shows, and its place in `stage_count`. */
   stage: string;
   stage_index: number;
