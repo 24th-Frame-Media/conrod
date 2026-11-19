@@ -60,7 +60,7 @@ with a nonzero exit code if a task fails.
 | cache_clear | orphaned=false, previews=false, jobId? | Clear only selected native cache files |
 | reset_identifications | jobId? | Remove identification results; preserve detections/manual work |
 | reset_detections | jobId? | Remove detections/crops, return images to pending; keep photographs |
-| reset_album | jobId (required) | Return one album to just after import, in one transaction: delete every detection and clear every measurement, star, pick, reject and identification on its frames, delete its cached crops and thumbnails, and leave the album ready for a first scan ("scanning", 0 done). Keeps its settings, the global registry and training labels, and every photograph and XMP sidecar. Frames keep only id, album and path |
+| reset_album | jobId (required) | Return one album to just after import, in one transaction: delete every detection and clear every measurement, star, pick, reject and identification on its frames, delete its cached crops and thumbnails, and leave the album ready for a first scan ("indexed", 0 done). Keeps its settings, the global registry and training labels, and every photograph and XMP sidecar. Frames keep only id, album and path |
 | reset_all | none | Empty albums and native caches; keep registry, training, settings and originals |
 | watch_status | none | active, folder, jobId, recursive, interval, added, checked, message |
 | set_watch | active, jobId?, path?, recursive?, interval? | Persistent watch; newly settled files resume the album's selected processing stage |
