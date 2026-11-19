@@ -1,6 +1,7 @@
 //! Region labels supplement, rather than replace, the scan's own vehicle labels.
 use crate::commands::{LabelArgs, Region};
 use crate::desktop::{rows, Desktop, Result};
+use crate::err;
 use crate::lock;
 use conrod_core::ridge;
 use conrod_vision::{sharpness, similarity};
@@ -8,9 +9,6 @@ use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 const REGIONS: [&str; 4] = ["vehicle", "person", "face", "eye"];
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 pub(crate) fn path(d: &Desktop, r: &str) -> PathBuf {
     d.root.join("models").join(if r == "vehicle" {
         "sharpness.json".into()

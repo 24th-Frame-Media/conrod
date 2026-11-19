@@ -1,7 +1,9 @@
 //! Application operations shared by Tauri and the CLI. Database writes and
 //! scans stay here; the frontend receives data, never arbitrary SQL or paths.
 use crate::commands::{Command, KnownArgs, MarkArgs, ScanArgs};
+use crate::err;
 use crate::lock;
+use crate::now;
 use crate::{FrameResult, Scan};
 use conrod_core::{
     profile::{ScanProfile, ShootPreset},
@@ -16,9 +18,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub type Result<T> = std::result::Result<T, String>;
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 /// The single number a counting query returns.
 fn scalar(db: &Connection, sql: &str, args: impl rusqlite::Params) -> Result<i64> {
     db.query_row(sql, args, |row| row.get(0)).map_err(err)
@@ -29,12 +28,6 @@ fn scalar(db: &Connection, sql: &str, args: impl rusqlite::Params) -> Result<i64
 fn holds_middle(subject: [f64; 4], af: [f64; 4]) -> bool {
     let (cx, cy) = ((af[0] + af[2]) / 2.0, (af[1] + af[3]) / 2.0);
     cx >= subject[0] && cx <= subject[2] && cy >= subject[1] && cy <= subject[3]
-}
-fn now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64()
 }
 
 /// The burst gap to group an album with: its own setting, or the one default.

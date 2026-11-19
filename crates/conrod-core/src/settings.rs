@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
+/// Focus score at or above which a frame reads as sharp. The one definition:
+/// `conrod-vision`'s sharpness measure re-exports both of these.
 pub const SHARP_AT: f64 = 0.825;
+/// Focus score below which a frame reads as blurred.
 pub const BLURRED_BELOW: f64 = 0.606;
 /// Bumped whenever the focus scale is re-derived; see `load`.
 pub const FOCUS_SCALE: i64 = 3;

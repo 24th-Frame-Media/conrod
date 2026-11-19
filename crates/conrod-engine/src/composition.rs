@@ -16,8 +16,10 @@
 //! it is a measure, not a snapshot, and `comp_at` says how fresh it is.
 
 use crate::desktop::{rows, Desktop, Result};
+use crate::err;
 use crate::library::require_job;
 use crate::lock;
+use crate::now;
 use crate::operations::launch;
 use conrod_core::tasks::Task;
 use conrod_vision::{composition, imageops::Rgb};
@@ -28,23 +30,12 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 /// Thumbnails decoded between two transactions. Big enough that the write lock
 /// is taken once per couple of seconds of work, small enough that a cancelled
 /// pass still keeps what it measured.
 const BATCH: usize = 200;
-
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
-
-fn now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64()
-}
 
 /// One frame to measure: its thumbnail, and its main subject as fractions of
 /// the frame (`None` when no detection boxed anything).

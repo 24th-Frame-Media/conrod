@@ -7,16 +7,13 @@
 //! written back, so an album scanned before this existed works without a
 //! re-scan, and every later regroup only reads text.
 use crate::desktop::{rows, Result};
+use crate::err;
 use conrod_core::bursts::Look;
 use conrod_vision::{imageops::Rgb, look};
 use rayon::prelude::*;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::Path;
-
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 
 /// The look of every visible frame of the album that has a readable
 /// thumbnail. `boxes` holds each frame's main subject box as fractions of the

@@ -3,14 +3,11 @@
 //! Missing thumbnails are filled on demand when an album opens.
 use crate::commands::{RenameArgs, UpdateJobSettingsArgs};
 use crate::desktop::{rows, Desktop, Result};
+use crate::err;
 use crate::lock;
 use rusqlite::params;
 use serde_json::{json, Map, Value};
 use std::path::Path;
-
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 
 /// A readable error, rather than SQLite's, for an album that is not there.
 pub(crate) fn require_job(d: &Desktop, job: i64) -> Result<()> {

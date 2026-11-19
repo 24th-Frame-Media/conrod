@@ -11,6 +11,7 @@
 //! head is not an error either -- it reports `"head": false` and spends no time.
 
 use crate::desktop::{rows, Desktop, Result};
+use crate::err;
 use crate::library::require_job;
 use crate::lock;
 use crate::operations::launch;
@@ -22,10 +23,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 
 /// Both halves on disk: the tower and the head. The tower alone is not enough.
 pub fn available() -> bool {

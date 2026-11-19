@@ -27,8 +27,9 @@ use ort::value::Tensor;
 use serde_json::Value;
 use std::path::Path;
 
-/// What the tower was trained on: 224px square, ImageNet statistics.
-pub const INPUT_EDGE: usize = 224;
+/// What the tower was trained on: 224px square, ImageNet statistics. The same
+/// DINOv2-small export's input geometry as [`crate::similarity`]'s embedder.
+pub use crate::similarity::INPUT_EDGE;
 /// The experiment's handcrafted features were measured on 512px previews.
 pub const FEATURE_EDGE: usize = 512;
 const MEAN: [f32; 3] = [0.485, 0.456, 0.406];

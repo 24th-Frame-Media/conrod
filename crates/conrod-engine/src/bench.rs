@@ -3,6 +3,7 @@
 //! Read-only -- nothing here writes to the database or a photograph.
 
 use crate::desktop::{Desktop, Result};
+use crate::err;
 use crate::lock;
 use conrod_core::normalise;
 use conrod_core::text::casefold;
@@ -13,10 +14,6 @@ use serde_json::{json, Value};
 use std::time::Instant;
 
 use crate::commands::{BenchItem, BenchRunArgs, BenchTruth};
-
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
 
 pub fn pick(d: &Desktop) -> Result<Value> {
     let picks = conrod_store::bench_pick(&lock(&d.reader)).map_err(err)?;

@@ -53,8 +53,9 @@ use crate::imageops::Gray;
 pub const PAN_COHERENCE: f64 = 0.80;
 /// Long edge (px) the structure is computed at: 32 px tiles need a plane of
 /// about this size for a useful number of them, and the estimate is about the
-/// arrangement of edges, not their native-pixel width.
-const FEATURE_EDGE: usize = 768;
+/// arrangement of edges, not their native-pixel width. Shared with
+/// `crate::level`'s working plane.
+pub(crate) const FEATURE_EDGE: usize = 768;
 /// Tile edge in analysis pixels.
 const TILE: usize = 32;
 /// Analysis pixels around the subject box a tile must clear. The 1 px
