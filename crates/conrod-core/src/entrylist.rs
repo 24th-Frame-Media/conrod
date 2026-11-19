@@ -163,7 +163,7 @@ impl EntryList {
                 scored.push((entry, score));
             }
         }
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by_key(|a| std::cmp::Reverse(a.1));
         let (best, top) = *scored.first()?;
         if scored.iter().skip(1).any(|(_, score)| *score == top) {
             return None;

@@ -83,8 +83,14 @@ impl<'a> Tiff<'a> {
         Some(Tiff { buf, little })
     }
 
+    /// `len` bytes at `at`, or `None` if they are not all in the buffer.
+    /// Offsets and counts come from the file, so the sum is checked.
+    fn slice(&self, at: usize, len: usize) -> Option<&'a [u8]> {
+        self.buf.get(at..at.checked_add(len)?)
+    }
+
     fn u16_at(&self, at: usize) -> Option<u16> {
-        let b: [u8; 2] = self.buf.get(at..at + 2)?.try_into().ok()?;
+        let b: [u8; 2] = self.slice(at, 2)?.try_into().ok()?;
         Some(if self.little {
             u16::from_le_bytes(b)
         } else {
@@ -93,7 +99,7 @@ impl<'a> Tiff<'a> {
     }
 
     fn u32_at(&self, at: usize) -> Option<u32> {
-        let b: [u8; 4] = self.buf.get(at..at + 4)?.try_into().ok()?;
+        let b: [u8; 4] = self.slice(at, 4)?.try_into().ok()?;
         Some(if self.little {
             u32::from_le_bytes(b)
         } else {
@@ -114,7 +120,9 @@ impl<'a> Tiff<'a> {
             return out;
         };
         for i in 0..usize::from(count) {
-            let entry = offset + 2 + i * 12;
+            let Some(entry) = offset.checked_add(2 + i * 12) else {
+                break;
+            };
             let (Some(tag), Some(kind), Some(n)) = (
                 self.u16_at(entry),
                 self.u16_at(entry + 2),
@@ -130,7 +138,7 @@ impl<'a> Tiff<'a> {
                 5 | 10 => 8,
                 _ => continue,
             };
-            let at = if n * width <= 4 {
+            let at = if n.saturating_mul(width) <= 4 {
                 entry + 8
             } else {
                 match self.u32_at(entry + 8) {
@@ -138,9 +146,16 @@ impl<'a> Tiff<'a> {
                     None => continue,
                 }
             };
+            // A count larger than the buffer can hold would only spin through
+            // reads that all miss.
+            let n = if matches!(kind, 3..=5 | 10) {
+                n.min(self.buf.len().saturating_sub(at) / width)
+            } else {
+                n
+            };
             let value = match kind {
                 2 => {
-                    let Some(bytes) = self.buf.get(at..at + n) else {
+                    let Some(bytes) = self.slice(at, n) else {
                         continue;
                     };
                     let text = String::from_utf8_lossy(bytes);
@@ -180,8 +195,7 @@ impl<'a> Tiff<'a> {
                         .collect(),
                 ),
                 _ => Value::Numbers(
-                    self.buf
-                        .get(at..at + n)
+                    self.slice(at, n)
                         .map(|b| b.iter().map(|&x| u64::from(x)).collect())
                         .unwrap_or_default(),
                 ),
@@ -189,5 +203,52 @@ impl<'a> Tiff<'a> {
             out.insert(tag, value);
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Little-endian TIFF whose IFD0 holds one entry of `kind` with `count`
+    /// values at `value` (an offset when they do not fit inline).
+    fn one_entry(kind: u16, count: u32, value: u32) -> Vec<u8> {
+        let mut out = b"II".to_vec();
+        out.extend_from_slice(&42u16.to_le_bytes());
+        out.extend_from_slice(&8u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&ORIENTATION.to_le_bytes());
+        out.extend_from_slice(&kind.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&value.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn a_count_far_past_the_buffer_does_not_spin_or_panic() {
+        for kind in [1, 2, 3, 4, 5, 7, 10] {
+            for value in [0, 26, u32::MAX] {
+                let bytes = one_entry(kind, u32::MAX, value);
+                let t = Tiff::new(&bytes).unwrap();
+                // Returns at once, whatever it finds.
+                let _ = t.ifd(8);
+            }
+        }
+    }
+
+    #[test]
+    fn an_ifd_offset_at_the_end_of_the_address_space_is_empty() {
+        let bytes = one_entry(3, 1, 1);
+        let t = Tiff::new(&bytes).unwrap();
+        assert!(t.ifd(usize::MAX).is_empty());
+        assert!(t.ifd(usize::MAX - 3).is_empty());
+    }
+
+    #[test]
+    fn a_short_value_is_still_read() {
+        let bytes = one_entry(3, 1, 6);
+        let t = Tiff::new(&bytes).unwrap();
+        assert_eq!(t.ifd(8).get(&ORIENTATION).and_then(Value::first), Some(6));
     }
 }

@@ -311,7 +311,18 @@ fn rawler_metadata(path: &Path, tags: Option<&mut Tags>) -> Exposure {
     out
 }
 
+/// `len` bytes at `offset`. The range is checked against the file first, so a
+/// size read out of a damaged header cannot ask for a huge allocation.
 fn read_at(file: &mut File, offset: u64, len: usize) -> Result<Vec<u8>> {
+    let file_len = file.metadata().map_err(|e| e.to_string())?.len();
+    if !offset
+        .checked_add(len as u64)
+        .is_some_and(|end| end <= file_len)
+    {
+        return Err(format!(
+            "{len} bytes at {offset} run past the end of the {file_len}-byte file"
+        ));
+    }
     let mut buf = vec![0u8; len];
     file.seek(SeekFrom::Start(offset))
         .map_err(|e| e.to_string())?;
@@ -334,7 +345,8 @@ fn cr2(file: &mut File) -> Result<(Vec<u8>, Vec<u8>)> {
         .get(&tiff::STRIP_BYTE_COUNTS)
         .and_then(tiff::Value::first)
         .ok_or("CR2: no preview size")?;
-    let preview = read_at(file, offset, size as usize)?;
+    let size = usize::try_from(size).map_err(|_| "CR2: preview size out of range")?;
+    let preview = read_at(file, offset, size)?;
     Ok((preview, header))
 }
 
@@ -345,22 +357,27 @@ fn cr2(file: &mut File) -> Result<(Vec<u8>, Vec<u8>)> {
 fn boxes(buf: &[u8]) -> Vec<([u8; 4], &[u8])> {
     let mut out = Vec::new();
     let mut at = 0usize;
-    while at + 8 <= buf.len() {
-        let size32 = u32::from_be_bytes(buf[at..at + 4].try_into().unwrap()) as usize;
+    while buf.len() - at >= 8 {
+        let left = buf.len() - at;
+        let size32 = u32::from_be_bytes(buf[at..at + 4].try_into().unwrap());
         let kind: [u8; 4] = buf[at + 4..at + 8].try_into().unwrap();
         let (header, size) = match size32 {
-            0 => (8, buf.len() - at),
-            1 if at + 16 <= buf.len() => (
+            0 => (8, left as u64),
+            1 if left >= 16 => (
                 16,
-                u64::from_be_bytes(buf[at + 8..at + 16].try_into().unwrap()) as usize,
+                u64::from_be_bytes(buf[at + 8..at + 16].try_into().unwrap()),
             ),
-            n => (8, n),
+            n => (8, u64::from(n)),
         };
-        if size < header || at + size > buf.len() {
+        // Sizes come from the file: compare before converting or adding.
+        if size < header || size > left as u64 {
             break;
         }
+        let size = size as usize;
         let skip = if &kind == b"uuid" { 16 } else { 0 };
-        let body = buf.get(at + header + skip..at + size).unwrap_or(&[]);
+        let body = buf
+            .get(at + header as usize + skip..at + size)
+            .unwrap_or(&[]);
         out.push((kind, body));
         at += size;
     }
@@ -394,6 +411,9 @@ fn first_sample(trak: &[u8]) -> Option<(u64, u64)> {
     Some((offset, u64::from(size)))
 }
 
+/// The most of a moov box that is read; real ones are tens of KB.
+const MAX_MOOV: u64 = 64 * 1024 * 1024;
+
 /// The moov box, read whole: it holds every track's sample table and the EXIF
 /// blocks, and is tens of KB rather than the file's megabytes.
 fn cr3_moov(file: &mut File) -> Result<Vec<u8>> {
@@ -401,22 +421,32 @@ fn cr3_moov(file: &mut File) -> Result<Vec<u8>> {
     // Walk the top level by headers alone, so nothing but moov is read.
     let mut at = 0u64;
     loop {
-        if at + 8 > len {
+        let left = len.saturating_sub(at);
+        if left < 8 {
             return Err("CR3: no moov box".into());
         }
-        let head = read_at(file, at, 16.min((len - at) as usize))?;
+        let head = read_at(file, at, left.min(16) as usize)?;
         let size32 = u32::from_be_bytes(head[0..4].try_into().unwrap());
-        let size = match size32 {
-            0 => len - at,
-            1 => u64::from_be_bytes(head[8..16].try_into().unwrap()),
-            n => u64::from(n),
+        let (header, size) = match size32 {
+            0 => (8, left),
+            1 => {
+                let wide = head.get(8..16).ok_or("CR3: truncated box header")?;
+                (16, u64::from_be_bytes(wide.try_into().unwrap()))
+            }
+            n => (8, u64::from(n)),
         };
-        if size < 8 {
+        if size < header {
             return Err("CR3: malformed box".into());
         }
+        if size > left {
+            return Err("CR3: box runs past the end of the file".into());
+        }
         if &head[4..8] == b"moov" {
-            let header = if size32 == 1 { 16 } else { 8 };
-            return read_at(file, at + header, (size - header) as usize);
+            let body = size - header;
+            if body > MAX_MOOV {
+                return Err(format!("CR3: moov box is {body} bytes, too large to read"));
+            }
+            return read_at(file, at + header, body as usize);
         }
         at += size;
     }
@@ -454,7 +484,9 @@ fn cr3(file: &mut File) -> Result<(Vec<u8>, Vec<u8>)> {
         let Some((offset, size)) = first_sample(body) else {
             continue;
         };
-        if best.is_some_and(|(_, s)| s >= size) || offset + size > len {
+        if best.is_some_and(|(_, s)| s >= size)
+            || !offset.checked_add(size).is_some_and(|end| end <= len)
+        {
             continue;
         }
         if read_at(file, offset, 2)? == [0xFF, 0xD8] {
@@ -462,7 +494,8 @@ fn cr3(file: &mut File) -> Result<(Vec<u8>, Vec<u8>)> {
         }
     }
     let (offset, size) = best.ok_or("CR3: no JPEG track")?;
-    Ok((read_at(file, offset, size as usize)?, header))
+    let size = usize::try_from(size).map_err(|_| "CR3: preview size out of range")?;
+    Ok((read_at(file, offset, size)?, header))
 }
 
 // --- JPEG ---------------------------------------------------------------------
@@ -603,5 +636,126 @@ mod exposure_tests {
         // A header with a lens still has no other reading recorded.
         assert_eq!(got.iso, None);
         assert_eq!(got.exposure_time, None);
+    }
+}
+
+#[cfg(test)]
+mod damaged_file_tests {
+    use super::*;
+
+    /// A file holding `bytes`, removed on drop.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str, bytes: &[u8]) -> Scratch {
+            let path =
+                std::env::temp_dir().join(format!("conrod-raw-{}-{name}", std::process::id()));
+            std::fs::write(&path, bytes).unwrap();
+            Scratch(path)
+        }
+
+        fn moov(&self) -> Result<Vec<u8>> {
+            cr3_moov(&mut File::open(&self.0).unwrap())
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn header(size32: u32, kind: &[u8; 4]) -> Vec<u8> {
+        let mut out = size32.to_be_bytes().to_vec();
+        out.extend_from_slice(kind);
+        out
+    }
+
+    #[test]
+    fn a_truncated_wide_box_header_is_an_error() {
+        // size32 == 1 promises a 64-bit size, but only 12 bytes exist.
+        let mut bytes = header(1, b"moov");
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        let err = Scratch::new("short-header", &bytes).moov().unwrap_err();
+        assert!(err.contains("truncated"), "{err}");
+    }
+
+    #[test]
+    fn a_box_larger_than_the_file_is_an_error() {
+        let mut bytes = header(u32::MAX, b"moov");
+        bytes.extend_from_slice(&[0; 32]);
+        assert!(Scratch::new("huge32", &bytes).moov().is_err());
+
+        let mut wide = header(1, b"moov");
+        wide.extend_from_slice(&u64::MAX.to_be_bytes());
+        assert!(Scratch::new("huge64", &wide).moov().is_err());
+    }
+
+    #[test]
+    fn a_box_size_that_would_overflow_the_walk_is_an_error() {
+        // The first box is not moov and its size, added to its offset,
+        // would wrap a u64.
+        let mut bytes = header(1, b"free");
+        bytes.extend_from_slice(&(u64::MAX - 4).to_be_bytes());
+        bytes.extend_from_slice(&[0; 32]);
+        assert!(Scratch::new("overflow", &bytes).moov().is_err());
+    }
+
+    #[test]
+    fn a_box_smaller_than_its_own_header_is_an_error() {
+        let mut bytes = header(4, b"moov");
+        bytes.extend_from_slice(&[0; 16]);
+        assert!(Scratch::new("tiny", &bytes).moov().is_err());
+    }
+
+    #[test]
+    fn an_oversized_moov_is_refused_before_it_is_read() {
+        let size = MAX_MOOV + 64;
+        let mut bytes = header(1, b"moov");
+        bytes.extend_from_slice(&(size + 16).to_be_bytes());
+        bytes.resize((size + 16) as usize, 0);
+        let err = Scratch::new("big-moov", &bytes).moov().unwrap_err();
+        assert!(err.contains("too large"), "{err}");
+    }
+
+    #[test]
+    fn a_well_formed_moov_is_read() {
+        let mut bytes = header(8 + 4, b"moov");
+        bytes.extend_from_slice(b"body");
+        assert_eq!(Scratch::new("good", &bytes).moov().unwrap(), b"body");
+    }
+
+    #[test]
+    fn walking_boxes_survives_hostile_sizes() {
+        let mut huge32 = header(u32::MAX, b"trak");
+        huge32.extend_from_slice(&[0; 8]);
+        assert!(boxes(&huge32).is_empty());
+
+        let mut huge64 = header(1, b"trak");
+        huge64.extend_from_slice(&u64::MAX.to_be_bytes());
+        assert!(boxes(&huge64).is_empty());
+
+        // A wide header cut short.
+        let mut short = header(1, b"trak");
+        short.extend_from_slice(&[0; 4]);
+        assert!(boxes(&short).is_empty());
+
+        // One good box, then a hostile one.
+        let mut mixed = header(12, b"free");
+        mixed.extend_from_slice(b"data");
+        mixed.extend_from_slice(&header(u32::MAX, b"trak"));
+        let found = boxes(&mixed);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1, b"data");
+    }
+
+    #[test]
+    fn reading_past_the_end_of_the_file_is_an_error() {
+        let scratch = Scratch::new("read-at", &[0; 16]);
+        let mut file = File::open(&scratch.0).unwrap();
+        assert_eq!(read_at(&mut file, 4, 12).unwrap().len(), 12);
+        assert!(read_at(&mut file, 4, 13).is_err());
+        assert!(read_at(&mut file, u64::MAX, 16).is_err());
+        assert!(read_at(&mut file, 0, usize::MAX).is_err());
     }
 }

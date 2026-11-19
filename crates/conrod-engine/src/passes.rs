@@ -996,8 +996,7 @@ pub fn redetect(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         let failed = std::sync::atomic::AtomicUsize::new(0);
         let first_error = std::sync::Mutex::new(None::<String>);
         std::thread::scope(|scope| {
-            for lane in 0..lanes {
-                let detector = &detectors[lane];
+            for detector in detectors.iter().take(lanes) {
                 let (frames, low, profile, models, faces, expression, quality) = (
                     &frames,
                     &low,
@@ -1042,7 +1041,7 @@ pub fn redetect(d: &Arc<Desktop>, job: i64) -> Result<Value> {
                                 }
                                 Err(e) => {
                                     failed.fetch_add(1, Ordering::Relaxed);
-                                    let mut slot = first_error.lock().unwrap();
+                                    let mut slot = crate::lock(first_error);
                                     if slot.is_none() {
                                         *slot = Some(e);
                                     }

@@ -179,7 +179,7 @@ pub fn pack(stored: &Stored) -> String {
 
 /// The inverse of [`pack`]; `None` for text of another version or length.
 pub fn unpack(text: &str) -> Option<Stored> {
-    if text.len() % 2 != 0 || !text.is_ascii() {
+    if !text.len().is_multiple_of(2) || !text.is_ascii() {
         return None;
     }
     let bytes: Vec<u8> = (0..text.len() / 2)

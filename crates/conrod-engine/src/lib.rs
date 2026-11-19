@@ -716,7 +716,7 @@ pub fn cull_frame(
     let input = detect::letterbox(&image);
     step("detect:wait");
     let found = {
-        let mut detector = detector.lock().unwrap();
+        let mut detector = lock(detector);
         step("detect");
         detector.detect_letterboxed(input, &options(settings, profile))?
     };
