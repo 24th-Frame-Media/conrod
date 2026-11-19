@@ -15,7 +15,7 @@ export type ScanDraft = { root: string; label: string };
 export type ImportDefaults = {
   scan_profile: string; blur_strictness?: string; burst_gap: number;
   grouping_stacks: boolean; grouping_sensitivity: string; grouping_pause: number;
-  grouping_keep_pans: boolean; grouping_focus_anchor: boolean;
+  grouping_keep_pans: boolean; grouping_focus_anchor: boolean; grouping_merge?: boolean;
   /** `both` | `cull` | `identify`; travels with the scan and becomes the album's own setting. */
   workflow_mode: string;
   /** `keepers` | `everything`; travels with the scan (as `identifyScope`) and becomes the album's setting. */

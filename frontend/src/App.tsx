@@ -96,6 +96,7 @@ export function App() {
             ...args, scanProfile: defaults.scan_profile, blurStrictness: defaults.blur_strictness, burstGap: defaults.burst_gap,
             groupingStacks: defaults.grouping_stacks, groupingSensitivity: defaults.grouping_sensitivity, groupingPause: defaults.grouping_pause,
             groupingKeepPans: defaults.grouping_keep_pans, groupingFocusAnchor: defaults.grouping_focus_anchor,
+            groupingMerge: defaults.grouping_merge,
             workflowMode: defaults.workflow_mode, identifyScope: defaults.identify_scope,
           }
         : args;
