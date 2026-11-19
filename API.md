@@ -50,12 +50,6 @@ with a nonzero exit code if a task fails.
 | import_known | csv | written, skipped; supplied nonblank fields win |
 | seed_known | jobId? | looked_at, cars, written, known; grouped consensus fills blanks and preserves aliases |
 | import_entries | csv | path, count; validated CSV is saved under entries/ and selected for subsequent scans |
-| training_status | none | Label counts and active models by region |
-| train_label | detectionId, stars, pan=false | Save a rating for the sharpness trainer (headless only; the desktop UI has no trainer screen) |
-| undo_label | none | Restore previous training label |
-| train_model | region="vehicle" | Fit/validate sharpness model; region vehicle, person, face, eye |
-| forget_model | region="vehicle" | Remove learned model, preserve labels |
-| train_taste | none | Learn visual preferences from manual ratings |
 | cache_info | none | path and file/byte totals for thumbs, previews, crops, orphaned, total |
 | cache_clear | orphaned=false, previews=false, jobId? | Clear only selected native cache files |
 | reset_identifications | jobId? | Remove identification results; preserve detections/manual work |
@@ -66,6 +60,15 @@ with a nonzero exit code if a task fails.
 | set_watch | active, jobId?, path?, recursive?, interval? | Persistent watch; newly settled files resume the album's selected processing stage |
 | check_update | none | ok, current, latest, newer, tag, size, notes, installable (or error) |
 | install_update | none | Verified installer download and restart; installed copies only, requires idle work |
+
+## Removed commands
+
+`training_status`, `train_label`, `undo_label`, `train_model`, `forget_model` and
+`train_taste` were removed with the Train tab (be1df63) and are no longer
+accepted: they now fail to parse like any unknown action. The `sharpness_labels`,
+`native_labels` and `native_label_undo` tables and the `detections.predicted_stars`
+column are kept, along with any labels a person saved in them; nothing trains
+from them or writes them any more.
 
 ## Detection edits
 

@@ -274,7 +274,6 @@ impl Desktop {
         std::fs::create_dir_all(root.join("cache/native")).map_err(err)?;
         let db = conrod_store::connect(Some(&root.join("conrod.db"))).map_err(err)?;
         let reader = conrod_store::connect(Some(&root.join("conrod.db"))).map_err(err)?;
-        crate::region_training::prepare(&db)?;
         let settings = Settings::load(&root.join("settings.json"));
         task.finish();
         let desktop = Arc::new(Self {
@@ -459,12 +458,6 @@ impl Desktop {
             Command::SaveKnown(a) => self.save_known(&a),
             Command::DeleteKnown(a) => self.delete_known(&a.plate),
             Command::DeleteAllKnown {} => self.delete_all_known(),
-            Command::TrainingStatus {} => crate::region_training::status(self),
-            Command::TrainLabel(a) => crate::region_training::label(self, &a),
-            Command::UndoLabel {} => crate::region_training::undo(self),
-            Command::TrainModel(a) => crate::region_training::train(self, a.region),
-            Command::ForgetModel(a) => crate::region_training::forget(self, a.region),
-            Command::TrainTaste {} => crate::region_training::taste(self),
             Command::Rescore(a) => crate::rescore::rescore(self, a.job_id),
             Command::Rescan(a) => crate::rescore::rescan(self, a.job_id),
             Command::PickKeepers(a) => crate::passes::pick_keepers(self, a.job_id),
@@ -3173,66 +3166,6 @@ mod tests {
                 "a frame the camera's focus area was not read for has no {column}: {none}"
             );
         }
-    }
-
-    #[test]
-    fn manual_zero_and_region_label_undo_survive_reopen() {
-        let root =
-            std::env::temp_dir().join(format!("conrod-desktop-{}-{}", std::process::id(), now()));
-        let desktop = Desktop::open(root.clone()).unwrap();
-        let (job, image, detection) = {
-            let db = lock(&desktop.db);
-            let job =
-                conrod_store::create_job(&db, &root, Some("Test"), &json!(Settings::default()))
-                    .unwrap();
-            conrod_store::add_images(&db, job, &[root.join("test.jpg")]).unwrap();
-            let image: i64 = db
-                .query_row("SELECT id FROM images WHERE job_id=?", [job], |r| r.get(0))
-                .unwrap();
-            db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,features,region_type) VALUES(?,1,2,30,40,'person',0.9,?,'face')",params![image,serde_json::to_string(&vec![0.5;conrod_vision::sharpness::FEATURE_NAMES.len()]).unwrap()]).unwrap();
-            (job, image, db.last_insert_rowid())
-        };
-        desktop
-            .dispatch("mark", json!({"imageId":image,"stars":0}))
-            .unwrap();
-        desktop
-            .dispatch("train_label", json!({"detectionId":detection,"stars":2}))
-            .unwrap();
-        desktop
-            .dispatch("train_label", json!({"detectionId":detection,"stars":5}))
-            .unwrap();
-        desktop.dispatch("undo_label", json!({})).unwrap();
-        assert_eq!(
-            desktop
-                .db
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .query_row("SELECT stars FROM native_labels", [], |r| r
-                    .get::<_, i64>(0))
-                .unwrap(),
-            2
-        );
-        assert_eq!(
-            desktop
-                .db
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .query_row("SELECT count(*) FROM sharpness_labels", [], |r| r
-                    .get::<_, i64>(0))
-                .unwrap(),
-            0
-        );
-        drop(desktop);
-        let reopened = Desktop::open(root.clone()).unwrap();
-        let review = reopened.dispatch("review", json!({"jobId":job})).unwrap();
-        assert_eq!(review["frames"][0]["manual_stars"], 0);
-        reopened.dispatch("undo_label", json!({})).unwrap();
-        assert_eq!(
-            reopened.dispatch("training_status", json!({})).unwrap()["labels"],
-            0
-        );
-        drop(reopened);
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -138,34 +138,12 @@ fn ridge_matches_snapshot() {
                     fitted += 1;
                 }
             },
-            "taste" => match ridge::fit_taste(&vectors, &stars) {
-                None => {
-                    assert!(want.is_null());
-                    refused += 1;
-                }
-                Some(model) => {
-                    assert_all_close(&model.weights, &floats(&want["weights"]), "taste weights");
-                    let expected: Vec<i64> = case["predictions"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|v| v.as_i64().unwrap())
-                        .collect();
-                    for (probe, want) in probes.iter().zip(&expected) {
-                        assert_eq!(
-                            i64::from(ridge::predict_taste(&model, probe).unwrap()),
-                            *want
-                        );
-                    }
-                    fitted += 1;
-                }
-            },
             other => panic!("unknown fixture kind {other}"),
         }
     }
     assert_eq!(
         (fitted, refused),
-        (5, 2),
+        (3, 2),
         "every fixture case must be exercised"
     );
 }

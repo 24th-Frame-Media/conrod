@@ -304,44 +304,6 @@ pub struct KnownArgs {
     pub country: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LabelArgs {
-    #[serde(deserialize_with = "positive")]
-    pub detection_id: i64,
-    pub stars: i64,
-    #[serde(default)]
-    pub pan: bool,
-}
-
-/// The kinds of subject a sharpness model is trained for.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Region {
-    #[default]
-    Vehicle,
-    Person,
-    Face,
-    Eye,
-}
-
-impl Region {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Region::Vehicle => "vehicle",
-            Region::Person => "person",
-            Region::Face => "face",
-            Region::Eye => "eye",
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RegionArgs {
-    #[serde(default)]
-    pub region: Region,
-}
-
 /// `provider_models`: ask a provider which models its key can call.
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -421,12 +383,6 @@ pub enum Command {
     SaveKnown(KnownArgs),
     DeleteKnown(PlateArgs),
     DeleteAllKnown {},
-    TrainingStatus {},
-    TrainLabel(LabelArgs),
-    UndoLabel {},
-    TrainModel(RegionArgs),
-    ForgetModel(RegionArgs),
-    TrainTaste {},
     // Album operations (see API.md).
     Rescore(JobArgs),
     Rescan(JobArgs),
@@ -797,20 +753,6 @@ mod tests {
             Command::parse("reset_all", Value::Null),
             Ok(Command::ResetAll {})
         ));
-    }
-
-    #[test]
-    fn a_region_defaults_to_vehicle_and_rejects_unknown_ones() {
-        let Ok(Command::TrainModel(a)) = Command::parse("train_model", json!({})) else {
-            panic!()
-        };
-        assert_eq!(a.region, Region::Vehicle);
-        let Ok(Command::ForgetModel(a)) = Command::parse("forget_model", json!({"region": "eye"}))
-        else {
-            panic!()
-        };
-        assert_eq!(a.region.as_str(), "eye");
-        assert!(Command::parse("train_model", json!({"region": "cat"})).is_err());
     }
 }
 
