@@ -858,6 +858,7 @@ name = "conrod-engine"
 version = "1.0.0-beta.8"
 dependencies = [
  "conrod-core",
+ "conrod-decider",
  "conrod-io",
  "conrod-store",
  "conrod-vision",

@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 conrod-core = { path = "../conrod-core" }
 conrod-io = { path = "../conrod-io" }
+conrod-decider = { path = "../conrod-decider" }
 conrod-vision = { path = "../conrod-vision" }
 conrod-store = { path = "../conrod-store" }
 dunce = "1"

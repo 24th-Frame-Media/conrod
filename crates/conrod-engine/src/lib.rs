@@ -115,6 +115,7 @@ pub mod catalog;
 pub mod commands;
 pub mod composition;
 pub mod copies;
+pub mod decider;
 pub mod desktop;
 #[cfg(test)]
 mod edgetest;

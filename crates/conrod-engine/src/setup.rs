@@ -39,8 +39,10 @@ const GROUPS: [(&str, &[&str]); 6] = [
     ("ExifTool", WRITE),
 ];
 
-fn present(asset: &Asset) -> bool {
-    if asset.extract {
+pub(crate) fn present(asset: &Asset) -> bool {
+    if asset.id() == models::DECIDER_RUNTIME {
+        models::decider_runtime().is_some()
+    } else if asset.extract {
         models::exiftool().is_some() || exiftool_on_path()
     } else {
         models::find(&asset.name).is_some()
@@ -120,10 +122,12 @@ pub fn ensure(hub: &TaskHub, stop: &AtomicBool, ids: &[&str]) -> Result<(), Stri
     }
 }
 
-/// Every asset the manifest lists, for "install what is missing".
+/// Every asset the manifest lists, for "install what is missing", minus the opt-in ones
+/// (`optional` in the manifest: the multi-GB decision model installs from its own Settings card).
 pub fn everything() -> Vec<String> {
     assets::manifest()
         .iter()
+        .filter(|a| !a.optional)
         .map(|a| a.id().to_string())
         .filter(|id| !QUALITY.contains(&id.as_str()))
         .collect()
@@ -149,4 +153,34 @@ pub fn install_missing(d: &Arc<Desktop>) -> Result<Value, String> {
         lock(&desktop.operations).remove(&operation);
     });
     Ok(json!({"operation": key}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_decision_model_is_opt_in_and_never_part_of_install_everything() {
+        let manifest = assets::manifest();
+        let decider: Vec<_> = manifest.iter().filter(|a| a.optional).collect();
+        // Weights, vision projector, and the llama.cpp runtime.
+        assert_eq!(decider.len(), 3, "{decider:?}");
+        assert!(decider
+            .iter()
+            .any(|a| a.id() == models::DECIDER_INT8 && a.size > 5_000_000_000));
+        assert!(decider.iter().any(|a| a.id() == models::DECIDER_MMPROJ));
+        assert!(decider
+            .iter()
+            .any(|a| a.id() == models::DECIDER_RUNTIME && a.extract));
+        let everything = everything();
+        for a in &decider {
+            assert!(
+                !everything.iter().any(|id| id == a.id()),
+                "{} would be fetched by default",
+                a.id()
+            );
+        }
+        // The big file has upstream sources to resume from (no release mirror hosts it).
+        assert!(decider.iter().all(|a| !a.sources.is_empty()));
+    }
 }
