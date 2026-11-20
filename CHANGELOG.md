@@ -46,7 +46,7 @@ Culling works with the camera's own focus point, Conrod talks to Lightroom, inge
 - If Conrod crashes or is closed mid-scan, the next start tidies up and the album shows what really happened.
 - A scan that finishes with problem frames says done with errors and lists them, instead of looking clean.
 - Resuming a scan carries on from the stage it reached.
-- Importing a folder you have already imported asks first instead of duplicating it.
+- Importing a folder you have already imported adds only the new photos and tells you how many were already there, instead of making a second album.
 - The autofocus label no longer lands on top of a detection label.
 
 ## 1.0.0-beta.8 - 2026-11-19
