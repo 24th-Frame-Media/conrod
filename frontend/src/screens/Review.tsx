@@ -24,6 +24,8 @@ import { Identifications } from '../components/Identifications';
 import type { Frame, Job, KnownVehicle, MarkValues, Scope, Settings, Status, Task } from '../lib/types';
 import { profileLabel, profileParent } from '../lib/types';
 import { facetsFor } from '../lib/facets.mjs';
+import { usePresetPolicy } from '../state/usePresetPolicy';
+import { isOn, overridesOf } from '../lib/presetPolicy.mjs';
 import type { ReviewModel } from '../state/useReview';
 import { Viewer } from './Viewer';
 import { Compare } from './Compare';
@@ -200,7 +202,9 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const currentJob = jobs.find((j) => j.id === jobId);
   const currentProfile = String(currentJob?.scan_profile || settings.scan_profile || 'motorsport');
   // Vehicle-only controls (by-vehicle grouping, "needs a look" for unread numbers and plates) go away for shoots with no vehicles to read.
-  const vehicleBrowse = facetsFor(currentProfile).some((k) => k === 'number' || k === 'plate' || k === 'make');
+  const albumOverrides = overridesOf(albumSetting(currentJob, 'overrides', settings));
+  const policy = usePresetPolicy(currentProfile, albumOverrides);
+  const vehicleBrowse = facetsFor(currentProfile, albumOverrides).some((k) => k === 'number' || k === 'plate' || k === 'make');
   const groupingNow = grouping === 'vehicles' && !vehicleBrowse ? 'bursts' : grouping;
   const identifyTask = jobId == null ? undefined : status.tasks.find((task) => (task.state === 'running' || task.state === 'paused') && /^Identifying\b/.test(task.label) && task.label.includes(`album ${jobId}`));
   const identifying = Boolean(identifyTask || (jobId != null && status.operations.some((key) => key === `Identifying:${jobId}`)));
@@ -478,6 +482,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     await onJobsChanged();
     await rv.refresh();
   };
+  const switchFeature = async (feature: string, value: boolean) => {
+    const result = await engine.setFeature(jobId, feature, value);
+    await onJobsChanged();
+    await rv.refresh();
+    if (result.needsRescan) toast('Rescan this album to look for it.');
+  };
   const workflow = workflowModeOf(albumSetting(currentJob, 'workflow_mode', settings));
   // The stepper reads the album's own data, not `job.status`: a long-finished album can still say "scanning".
   const scanned = Boolean(currentJob && currentJob.total > 0 && currentJob.done >= currentJob.total) && !scanning;
@@ -650,10 +660,10 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       id: 'toggle_numbers',
       label: 'Read race numbers',
       hint: 'Detect vehicle competition numbers (#0–999)',
-      checked: albumSettings.read_numbers !== false,
-      onChange: (checked) => {
-        void run(async () => {
-          await saveAlbum({ read_numbers: checked });
+      checked: isOn(policy, 'numbers'),
+          onChange: (checked) => {
+            void run(async () => {
+            await switchFeature('numbers', checked);
           toast(`Race number detection turned ${checked ? 'on' : 'off'}.`);
         });
       },
@@ -663,10 +673,10 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       id: 'toggle_plates',
       label: 'Read licence plates',
       hint: 'Detect vehicle licence and registration plates',
-      checked: albumSettings.read_plates !== false,
-      onChange: (checked) => {
-        void run(async () => {
-          await saveAlbum({ read_plates: checked });
+      checked: isOn(policy, 'plates'),
+          onChange: (checked) => {
+            void run(async () => {
+            await switchFeature('plates', checked);
           toast(`Licence plate detection turned ${checked ? 'on' : 'off'}.`);
         });
       },
@@ -822,7 +832,16 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         visible={shootSettingsOpen}
         onClose={() => setShootSettingsOpen(false)}
         onSave={async (patch) => {
-          await engine.updateJobSettings(jobId, patch);
+          const { overrides: wanted, ...rest } = patch;
+      await engine.updateJobSettings(jobId, rest);
+      // Each changed detector or reader goes through `set_feature`: it re-rates, and finds faces for a shoot that had none.
+      let rescan = false;
+      for (const key of new Set([...Object.keys(wanted), ...Object.keys(albumOverrides)])) {
+        if (wanted[key] === albumOverrides[key]) continue;
+        const result = await engine.setFeature(jobId, key, wanted[key] ?? null);
+        rescan = rescan || result.needsRescan;
+      }
+      if (rescan) toast('Rescan this album to look for the newly switched-on subjects.');
           // A grouping choice only shows once the album is regrouped; a preset or detection change is safe to regroup too.
           await call('regroup', { jobId });
           await onJobsChanged();
@@ -950,7 +969,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       )}
       {identifyTask && <IdentificationBanner task={identifyTask} settings={settings} onSkip={onSkipIdentify} />}
       <div className="review-main">
-        <Facets preset={currentProfile} facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
+        <Facets preset={currentProfile} overrides={albumOverrides} facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
         {stacked
           ? <StackGrid stacks={shown} selectedKey={selectedKey} selectedId={selected} expandedKey={expandedKey} keeperIds={keepers} facts={facts} suggestions={suggestions} softBursts={softBursts}
               culled={(f) => Boolean(facts.get(f.id)?.cull)} onToggle={toggleStack} onSelect={rv.setSelected} onOpen={openViewer} onPick={acceptSuggestion}

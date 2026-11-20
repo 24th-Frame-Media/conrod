@@ -2,6 +2,7 @@
    Extra params: page=library|scan|ingest|identify|review|known|settings, viewer, popover, scan (a scan is running), profile=<shoot preset id>. */
 import { startIngestSim, type IngestSim } from './mockIngest';
 import type { ShootStats } from './shot.mjs';
+import { applyOverrides, defaultSummary, overridesOf } from './presetPolicy.mjs';
 import type { Bootstrap, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, Settings, Status, WorkerLimits } from './types';
 
 export type DevStart = {
@@ -340,6 +341,20 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
         timed_albums: albums,
       } satisfies GlobalStats);
     }
+    case 'preset_policy': {
+      const given = (a.overrides ?? {}) as Record<string, boolean>;
+      return out(applyOverrides(defaultSummary(String(a.preset ?? 'mix')), overridesOf(given)));
+    }
+    case 'set_feature': {
+      const job = db.jobs.find((j) => j.id === a.jobId);
+      if (!job) throw new Error('No such album');
+      const stored = JSON.parse(job.settings_json || '{}') as Record<string, unknown>;
+      const next = overridesOf(stored.overrides);
+      if (typeof a.value === 'boolean') next[String(a.feature)] = a.value; else delete next[String(a.feature)];
+      job.settings_json = JSON.stringify({ ...stored, overrides: next });
+      const lanes = applyOverrides(defaultSummary(job.scan_profile ?? 'motorsport'), next);
+      return out({ ok: true, jobId: a.jobId, settings: { overrides: next }, operation: null, needsRescan: false, lanes });
+    }
     case 'update_job_settings': {
       const job = db.jobs.find((j) => j.id === a.jobId);
       if (job) {
@@ -370,7 +385,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       if (a.jobId == null && typeof a.root === 'string') {
         const id = Math.max(0, ...db.jobs.map((j) => j.id)) + 1;
         const label = String(a.label || '').trim() || a.root.split(/[\\/]/).filter(Boolean).pop() || 'Album';
-        db.jobs.unshift({ id, label, root: a.root, status: 'scanning', total: 0, done: 0, created_at: Math.floor(Date.now() / 1000), scan_profile: String(a.profile ?? 'motorsport') });
+        db.jobs.unshift({ id, label, root: a.root, status: 'scanning', total: 0, done: 0, created_at: Math.floor(Date.now() / 1000), scan_profile: String(a.profile ?? 'motorsport'), settings_json: JSON.stringify({ overrides: a.overrides ?? {} }) });
         if (a.stage === 'all') startSim(db, id);
         return out({ jobId: id });
       }

@@ -1455,6 +1455,36 @@ mod tests {
         assert_eq!(a["reads"][1]["label"], "Registrations");
     }
 
+    /// The frontend's copy of every preset's default summary (browser mock,
+    /// facet tabs, first paint). The app itself asks the engine.
+    fn policies_module() -> String {
+        let mut all = serde_json::Map::new();
+        for preset in ShootPreset::ALL {
+            all.insert(preset.name().to_string(), lanes(preset).summary());
+        }
+        format!(
+            "// Generated from the Rust policy table (conrod-core profile.rs). Do not edit:\n// UPDATE_PRESET_POLICIES=1 cargo test -p conrod-core presets_match_the_frontend_copy\nexport default {};\n",
+            serde_json::to_string_pretty(&all).unwrap()
+        )
+    }
+
+    #[test]
+    fn presets_match_the_frontend_copy() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../frontend/src/lib/presetPolicies.mjs");
+        let want = policies_module();
+        if std::env::var_os("UPDATE_PRESET_POLICIES").is_some() {
+            std::fs::write(&path, &want).unwrap();
+        }
+        let have = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
+        assert!(
+            have == want,
+            "frontend/src/lib/presetPolicies.mjs is stale: run with UPDATE_PRESET_POLICIES=1"
+        );
+    }
+
     #[test]
     fn defaults_never_read_without_something_to_read_from() {
         for preset in ShootPreset::ALL {
