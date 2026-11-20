@@ -83,8 +83,15 @@
 }
 .ing-box .ing-box-tag { color: var(--overlay-good); }
 .ing-af .ing-box-tag { color: var(--overlay-accent); letter-spacing: .1em; }
-/* The AF tag sits at the bottom-left, so it never meets a detection label at the top-left. */
-.ing-af .ing-af-tag { top: auto; bottom: 0; border-bottom-right-radius: 0; border-top-right-radius: 3px; }
+.ing-af.grid { border-style: dotted; }
+/* The AF tag starts at the bottom-left; the picture's script (afTagSpot) moves it to the corner, or just outside the box, that no detection label covers. */
+.ing-af .ing-af-tag { border-radius: 0; }
+.ing-af .at-bl { top: auto; bottom: 0; left: 0; border-top-right-radius: 3px; }
+.ing-af .at-br { top: auto; bottom: 0; left: auto; right: 0; border-top-left-radius: 3px; }
+.ing-af .at-tr { top: 0; left: auto; right: 0; border-bottom-left-radius: 3px; }
+.ing-af .at-tl { top: 0; left: 0; border-bottom-right-radius: 3px; }
+.ing-af .at-below { top: 100%; bottom: auto; left: 0; border-radius: 0 0 3px 0; }
+.ing-af .at-above { top: auto; bottom: 100%; left: 0; border-radius: 3px 3px 0 0; }
 @keyframes ing-pop { from { opacity: 0; transform: scale(.94); } }
 
 /* the step ladder under the frame */
