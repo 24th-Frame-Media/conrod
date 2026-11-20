@@ -398,6 +398,7 @@ impl Service {
             "quant": plan.quant.map(Quant::label),
             "forced": lock(&self.cfg).forced.map(Quant::label),
             "installed": installed.has(Quant::Int8) || installed.has(Quant::Int4),
+            "needs_install": plan.quant.is_some_and(|q| !installed.has(q)),
             "download_bytes": missing_bytes,
             "gpu": gpu.as_ref().map(|g| json!({"name": g.name, "total": g.total, "free": g.free})),
             "needs": {"int8": Quant::Int8.vram_needed(), "int4": Quant::Int4.vram_needed()},

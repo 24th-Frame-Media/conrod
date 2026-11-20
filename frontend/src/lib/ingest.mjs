@@ -1,5 +1,6 @@
 // Pure logic for the unified ingest screen: one flowchart for scan + group + pick + vision, lane state words,
 // which lanes the grid shows, and the single progress bar. The contract the engine fills is in docs/plans/ingest-live-contract.md.
+import { deciderNode } from './decider.mjs';
 import { flowNodes } from './identifyFlow.mjs';
 import { STAGE_ORDER, orderStages, stageStatus } from './scan.mjs';
 
@@ -79,8 +80,9 @@ function visionNode(identify, identifyStage, model, finished) {
  * The merged flowchart of one ingest run: every scan stage the engine reports (READ to PICK, in flow order), then VISION when the
  * run identifies, then DONE. A scan `identify` stage is VISION's fallback while no identify-progress has arrived, so it never
  * draws a node of its own. A stage the engine has not reported yet is drawn pending, so the row is whole from the first frame.
+ * decider (the decision model's live snapshot) adds the DECIDER node before DONE, dimmed while it is off or unavailable.
  */
-export function ingestNodes({ stages, identify = null, model = '', finished = false } = {}) {
+export function ingestNodes({ stages, identify = null, model = '', finished = false, decider = null } = {}) {
   const ordered = orderStages(stages);
   const byId = new Map(ordered.map((s) => [s.id, s]));
   const ids = [...SCAN_NODE_IDS, ...ordered.map((s) => s.id).filter((id) => id !== 'identify' && !SCAN_NODE_IDS.includes(id))];
@@ -88,6 +90,8 @@ export function ingestNodes({ stages, identify = null, model = '', finished = fa
   ids.sort((a, b) => rank(a) - rank(b));
   const nodes = ids.map((id) => scanNode(id, byId.get(id), finished));
   if (visionExpected(ordered, identify)) nodes.push(visionNode(identify, byId.get('identify'), model, finished));
+  // The decision model sits after VISION: it answers about the same frames, on the same GPU, when the shoot type asks it.
+  if (decider) nodes.push(deciderNode(decider));
   nodes.push({
     id: 'done', number: '', label: 'DONE', sub: finished ? 'ready to review' : 'review opens', meta: '', title: '',
     state: finished ? 'done' : 'pending', off: false, filter: null,
