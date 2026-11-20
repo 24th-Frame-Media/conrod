@@ -26,6 +26,9 @@ pub struct Asset {
     pub size: u64,
     /// Upstream URLs, tried after the release mirror.
     pub sources: Vec<String>,
+    /// Opt-in: not part of the release bundle or install everything (GB-sized,
+    /// and only for a feature the user turns on). Fetched resumably.
+    pub optional: bool,
 }
 
 impl Asset {
@@ -66,6 +69,7 @@ fn parse(text: &str) -> (Vec<Asset>, String) {
                         name: a["name"].as_str()?.to_string(),
                         dest: a["dest"].as_str()?.to_string(),
                         extract: a["extract"].as_bool().unwrap_or(false),
+                        optional: a["optional"].as_bool().unwrap_or(false),
                         sha256: a["sha256"].as_str()?.to_lowercase(),
                         size: a["size"].as_u64().unwrap_or(0),
                         sources: a["sources"]
@@ -127,7 +131,10 @@ fn install_from(
         match download(url, &part, asset, stop, progress) {
             Ok(()) => return finish(asset, &part, into),
             Err(e) => {
-                let _ = std::fs::remove_file(&part);
+                // A big download keeps what it has so the next try resumes it.
+                if !resumable(asset) {
+                    let _ = std::fs::remove_file(&part);
+                }
                 if stop.load(Ordering::Relaxed) {
                     return Err("stopped".into());
                 }
@@ -149,7 +156,97 @@ fn download(
     stop: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<(), String> {
-    fetch(url, part, &asset.sha256, asset.size, stop, progress)
+    if resumable(asset) {
+        fetch_resumable(url, part, &asset.sha256, asset.size, stop, progress)
+    } else {
+        fetch(url, part, &asset.sha256, asset.size, stop, progress)
+    }
+}
+
+/// Files this big are worth resuming after an interruption.
+const RESUME_FROM: u64 = 256 << 20;
+
+fn resumable(asset: &Asset) -> bool {
+    asset.size >= RESUME_FROM
+}
+
+/// Like [etch], but continues a partial part from where it stopped (HTTP Range)
+/// and leaves it in place on an interruption. A checksum mismatch removes it.
+pub fn fetch_resumable(
+    url: &str,
+    part: &Path,
+    sha256: &str,
+    size_hint: u64,
+    stop: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<(), String> {
+    let have = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
+    let resume = have > 0 && have < size_hint;
+    let agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(20)))
+        .timeout_global(Some(Duration::from_secs(6 * 60 * 60)))
+        .build()
+        .new_agent();
+    let mut request = agent.get(url);
+    if resume {
+        request = request.header("Range", format!("bytes={have}-"));
+    }
+    let mut response = request.call().map_err(|e| e.to_string())?;
+    let partial = resume && response.status().as_u16() == 206;
+    let mut hasher = Sha256::new();
+    let mut done = 0u64;
+    let mut file = if partial {
+        let mut old = std::fs::File::open(part).map_err(|e| e.to_string())?;
+        let mut buffer = vec![0u8; 1 << 20];
+        loop {
+            let n = old.read(&mut buffer).map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+            done += n as u64;
+        }
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(part)
+            .map_err(|e| e.to_string())?
+    } else {
+        std::fs::File::create(part).map_err(|e| e.to_string())?
+    };
+    let total = if partial {
+        done + response
+            .body()
+            .content_length()
+            .unwrap_or(size_hint.saturating_sub(done))
+    } else {
+        response.body().content_length().unwrap_or(size_hint)
+    }
+    .max(1);
+    let mut reader = response.body_mut().as_reader();
+    let mut buffer = vec![0u8; 256 * 1024];
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return Err("stopped".into());
+        }
+        let n = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+        file.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
+        done += n as u64;
+        progress(done, total);
+    }
+    file.flush().map_err(|e| e.to_string())?;
+    let got = format!("{:x}", hasher.finalize());
+    if got == sha256 {
+        Ok(())
+    } else {
+        let _ = std::fs::remove_file(part);
+        Err(format!(
+            "the download does not match the checksum (got {got}, expected {sha256})"
+        ))
+    }
 }
 
 /// Stream `url` into `part`, hashing as it goes, and succeed only if the SHA-256
@@ -281,6 +378,7 @@ mod tests {
             sha256: format!("{:x}", Sha256::digest(body)),
             size: body.len() as u64,
             sources: vec![],
+            optional: false,
         }
     }
 
@@ -363,5 +461,136 @@ mod tests {
         assert!(err.contains("does not match its checksum"), "{err}");
         assert!(!into.join("model.onnx").exists() && !into.join("model.onnx.part").exists());
         std::fs::remove_dir_all(&into).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    /// Serves `body` for one connection, honouring `Range: bytes=N-` like a CDN.
+    fn serve_ranged(body: Vec<u8>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 2048];
+            let n = stream.read(&mut request).unwrap_or(0);
+            let text = String::from_utf8_lossy(&request[..n]).to_lowercase();
+            let from = text
+                .split("range: bytes=")
+                .nth(1)
+                .and_then(|r| r.split('-').next())
+                .and_then(|n| n.trim().parse::<usize>().ok());
+            let reply = match from {
+                Some(from) => {
+                    let rest = &body[from..];
+                    let mut r = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {from}-{}/{}\r\nConnection: close\r\n\r\n",
+                        rest.len(),
+                        body.len() - 1,
+                        body.len()
+                    )
+                    .into_bytes();
+                    r.extend_from_slice(rest);
+                    r
+                }
+                None => {
+                    let mut r = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .into_bytes();
+                    r.extend_from_slice(&body);
+                    r
+                }
+            };
+            let _ = stream.write_all(&reply);
+        });
+        base
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("conrod-resume-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Real network: the pinned llama.cpp runtime installs (hash-checked, unpacked) from GitHub.
+    #[test]
+    #[ignore = "downloads 38 MB from github.com"]
+    fn the_decision_runtime_installs_from_its_upstream_source() {
+        let asset = manifest()
+            .into_iter()
+            .find(|a| a.name.starts_with("llama-b12359-bin-win-vulkan"))
+            .unwrap();
+        let into = scratch("runtime");
+        install_from(
+            &asset,
+            &asset.sources,
+            &into,
+            &AtomicBool::new(false),
+            &mut |_, _| {},
+        )
+        .unwrap();
+        for dll in [
+            "llama.dll",
+            "mtmd.dll",
+            "ggml.dll",
+            "ggml-base.dll",
+            "ggml-vulkan.dll",
+        ] {
+            assert!(into.join(dll).is_file(), "{dll}");
+        }
+        std::fs::remove_dir_all(&into).unwrap();
+    }
+
+    #[test]
+    fn an_interrupted_download_continues_where_it_stopped() {
+        let body: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let base = serve_ranged(body.clone());
+        let dir = scratch("ok");
+        let part = dir.join("m.gguf.part");
+        std::fs::write(&part, &body[..120_000]).unwrap();
+        let sha = format!("{:x}", Sha256::digest(&body));
+        let mut seen = Vec::new();
+        fetch_resumable(
+            &format!("{base}/m"),
+            &part,
+            &sha,
+            body.len() as u64,
+            &AtomicBool::new(false),
+            &mut |d, t| seen.push((d, t)),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&part).unwrap(), body);
+        // Progress starts past what was already on disk and ends at the full size.
+        assert!(seen.first().unwrap().0 > 120_000);
+        assert_eq!(*seen.last().unwrap(), (300_000, 300_000));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_resumed_file_that_fails_the_checksum_is_discarded() {
+        let body = vec![5u8; 50_000];
+        let base = serve_ranged(body.clone());
+        let dir = scratch("bad");
+        let part = dir.join("m.gguf.part");
+        std::fs::write(&part, vec![9u8; 10_000]).unwrap(); // not a prefix of the real file
+        let sha = format!("{:x}", Sha256::digest(&body));
+        let err = fetch_resumable(
+            &format!("{base}/m"),
+            &part,
+            &sha,
+            body.len() as u64,
+            &AtomicBool::new(false),
+            &mut |_, _| {},
+        )
+        .unwrap_err();
+        assert!(err.contains("does not match"), "{err}");
+        assert!(!part.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
