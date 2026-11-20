@@ -25,7 +25,11 @@ jobs:
       contents: write
     timeout-minutes: 90
     steps:
+      # Full history and tags: scripts/release-notes.mjs walks commits between tags to write the
+      # release notes below, which a shallow, single-tag checkout would not have.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
       - name: Work out the version
         id: version
@@ -45,6 +49,36 @@ jobs:
         env:
           VERSION: v${{ steps.version.outputs.value }}
         run: node scripts/check-version.mjs "$env:VERSION"
+
+      # The release body and the in-app "What's new" come from the same generator: user-facing
+      # commits since the previous tag, grouped New/Improved/Fixed and worded by
+      # scripts/release-notes.overrides.json. `--version` measures from the previous tag to this
+      # one when the tag already exists (the normal, tag-triggered run), or to HEAD otherwise
+      # (a workflow_dispatch build ahead of tagging).
+      - name: Generate the release notes
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          mkdir -p dist
+          node scripts/release-notes.mjs --version "$VERSION" --body dist/notes.md
+          {
+            echo "## Conrod $VERSION"
+            echo
+            cat dist/notes.md
+            echo
+            echo "---"
+            echo
+            echo "**Installer** (\`-setup.exe\`, per-user, no admin) or **portable** (unzip, run \`Conrod.exe\`)."
+            echo "ExifTool is bundled; the AI models (~97 MB) download and verify themselves on first"
+            echo "run. An existing \`~/.conrod\` library, settings and trained models are used as they are."
+            echo
+            echo "Optional: **Ollama** plus \`ollama pull qwen2.5vl:7b\` (~6 GB) names make, model,"
+            echo "colour and team. Without it Conrod still culls, reads plates, numbers and livery text."
+            echo
+            echo "The installer is not code-signed, so Windows SmartScreen will ask you to confirm."
+          } > dist/release-body.md
+          cat dist/release-body.md
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -135,7 +169,7 @@ jobs:
           v="$VERSION"
           node scripts/latest-json.mjs "$v" "$(ls target/release/bundle/nsis/*-setup.exe.sig | head -1)" \
             "https://github.com/${{ github.repository }}/releases/download/v$v/Conrod-$v-win64-setup.exe" \
-            dist/latest.json "Conrod $v"
+            dist/latest.json "$(cat dist/notes.md)"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -157,17 +191,7 @@ jobs:
             dist/SHA256SUMS.txt
             dist/latest.json
           generate_release_notes: true
-          body: |
-            ## Conrod ${{ steps.version.outputs.value }}
-
-            **Installer** (`-setup.exe`, per-user, no admin) or **portable** (unzip, run `Conrod.exe`).
-            ExifTool is bundled; the AI models (~97 MB) download and verify themselves on first
-            run. An existing `~/.conrod` library, settings and trained models are used as they are.
-
-            Optional: **Ollama** plus `ollama pull qwen2.5vl:7b` (~6 GB) names make, model,
-            colour and team. Without it Conrod still culls, reads plates, numbers and livery text.
-
-            The installer is not code-signed, so Windows SmartScreen will ask you to confirm.
+          body_path: dist/release-body.md
 
       # A fixed tag the app's endpoint points at:
       #   /releases/download/updater/latest.json
