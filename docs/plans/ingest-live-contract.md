@@ -103,6 +103,25 @@ type ScanRecentFrame = {
 - Flowchart node text: `done / total` from `pipeline.stages[]`, busy/total workers, the stage `model`. The VISION node's model is `identify-progress.model`.
 - Clicking a flowchart node filters the grid to that stage's lanes (by `PipelineWorker.stage`).
 
+## 6a. What the engine sends now (U2)
+
+Engine and UI both implement the contract; the following goes beyond or narrows it:
+
+- `pipeline.workers[]` has `lane` (dense 0..N-1 over every lane listed) and `current` (`null` when idle). Lanes publish into the shared lane slot
+  (`Progress::lanes`), which `snapshot()` clones: no DB query, no decoding. The slot is dropped when the lane moves to another file or goes idle.
+- `current.step` is `read` | `decode` | `detect` | `sharpness` | `faces` | `persist`; `persist` is the write of the frame's row. `detect:wait` and `faces:wait`
+  report as `detect` / `faces` with the lane `waiting` and `waiting_for` `detector` / `faces`.
+- `current.thumb_url` appears right after the preview is decoded: the lane writes the thumbnail (`cache/native/thumb-<id>.jpg`) at that moment and
+  `persist_frame` does not write it a second time. `current.af` (+ `af_kind`: `point` | `grid`) is sent with it, from the makernote already in memory.
+- `current.boxes` are the detector's kept detections as fractions of the upright frame; `stars` / `verdict` (`sharp` | `soft` | `blurred`) / `panning`
+  follow the frame's rating (display only; the same values the row stores).
+- `recent[]` gains `file`, `stars`, `boxes`, `af`, `af_kind`; `verdict` can be `blurred`. (`found.soft` still counts everything short of sharp.)
+- `pipeline.stages[]` gains `errors`: frames that failed inside that stage this run. A failed frame leaves that stage's and later stages' `total`, and a hand-rejected
+  frame leaves all of them, so a finished stage reads `done == total`. A resumed album counts the frames its earlier run finished in both `done` and `total`.
+  `group` / `pick` carry `total` = frames in the album and settle to `done == total` when their pass ends.
+- Not sent: `state: 'paused'` (lanes finish their frame and idle before pausing, so a paused scan shows idle lanes; the UI uses the task state), `waiting_for` `writer` /
+  `disk` (the DB and disk waits are not instrumented).
+
 ## 6. Compatibility notes
 
 - A lane `state: 'paused'` is unknown to older UIs; they treat unknown states as idle. Ship the UI first (this change), the engine second.

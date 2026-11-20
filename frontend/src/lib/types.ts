@@ -230,8 +230,11 @@ export type PipelineStage = {
   workers_total: number;
   workers_busy: number;
   queue_len: number;
+  /** Frames that finished this stage. A frame that failed inside it is in `errors` and no longer in `total`, so `done` reaches `total`. */
   done: number;
   total: number;
+  /** Frames that failed inside this stage in this run; absent from older engines. */
+  errors?: number;
   rate_per_s: number;
   eta_s: number | null;
 };
@@ -252,11 +255,15 @@ export type LaneFrame = {
   boxes?: LaneBox[];
   /** The autofocus area, [x1, y1, x2, y2] as fractions of the upright frame. */
   af?: [number, number, number, number];
-  /** 0..5 */
+  /** One point, or the union of a focus grid's cells (a depth-of-field map, not a point). Absent means a point. */
+  af_kind?: AfKind;
+  /** 1..5 */
   stars?: number;
   verdict?: 'sharp' | 'soft' | 'blurred';
   panning?: boolean;
 };
+
+export type AfKind = 'point' | 'grid';
 
 /** One worker lane: what that worker is doing this instant. */
 export type PipelineWorker = {
@@ -291,10 +298,11 @@ export type ScanRecentFrame = {
   label?: string | null;
   /** The file name; lets a lane find its last finished thumbnail. */
   file?: string;
-  /** 0..5 */
+  /** 1..5 */
   stars?: number;
   boxes?: LaneBox[];
   af?: [number, number, number, number];
+  af_kind?: AfKind;
 };
 
 export type ScanFound = {

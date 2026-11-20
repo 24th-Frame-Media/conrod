@@ -1271,11 +1271,28 @@ impl Desktop {
         let eligibility = self.clone();
         // One progress object per scan: the pools write to it and the app
         // emits its snapshot as `scan-progress`.
-        let progress = crate::progress::for_scan(
-            job,
-            &settings,
-            ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people),
-        );
+        let faces_on =
+            ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people);
+        let progress = crate::progress::for_scan(job, &settings, faces_on);
+        // Frames an earlier run of this album already read count as done, so a
+        // resume reads `500 / 1000` and the counters add up to the album.
+        let carried = scalar(
+            &lock(&self.reader),
+            "SELECT count(*) FROM images WHERE job_id=? AND status='done' AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0",
+            [job],
+        )
+        .unwrap_or(0)
+        .max(0) as u64;
+        for stage in ["read", "detect", "sharpness"]
+            .into_iter()
+            .chain(faces_on.then_some("faces"))
+        {
+            progress.carry(stage, carried);
+        }
+        // Grouping and picking each pass the whole album once, at the end.
+        for stage in ["group", "pick"] {
+            progress.plan(stage, carried + paths.len() as u64);
+        }
         *lock(&self.progress) = Some(progress.clone());
         let scan = Arc::new(crate::scan_files_filtered(
             paths,
@@ -1284,16 +1301,25 @@ impl Desktop {
             self.hub.clone(),
             Some(progress.clone()),
             move |path| {
-                eligibility
+                // The frame's row, which a hand reject or a missing row skips.
+                let image_id = eligibility
                     .reader
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .query_row(
-                        "SELECT COALESCE(rejected,0)=0 FROM images WHERE job_id=? AND path=?",
+                        "SELECT id FROM images WHERE job_id=? AND path=? AND COALESCE(rejected,0)=0",
                         params![job, path.to_string_lossy()],
-                        |r| r.get::<_, bool>(0),
+                        |r| r.get::<_, i64>(0),
                     )
-                    .unwrap_or(false)
+                    .ok()?;
+                Some(crate::Pickup {
+                    image_id,
+                    thumb: Some(
+                        eligibility
+                            .root
+                            .join(format!("cache/native/thumb-{image_id}.jpg")),
+                    ),
+                })
             },
             move |result| match result {
                 Ok(frame) => {
@@ -2157,7 +2183,10 @@ impl Desktop {
         // Encoding and writing the thumbnail is the slow part; do it before taking
         // the write lock, so sixteen workers do not queue behind each other for it.
         let thumb = self.root.join(format!("cache/native/thumb-{image}.jpg"));
-        save_jpeg(&f.thumb, &thumb)?;
+        // The scan's lane may have written it already, to show the frame early.
+        if !f.thumb_saved {
+            save_jpeg(&f.thumb, &thumb)?;
+        }
         let db = lock(&self.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         tx.execute("DELETE FROM detections WHERE image_id=?", [image])
@@ -2183,14 +2212,11 @@ impl Desktop {
         // A pan is an extra flag, never a replacement for the sharpness verdict:
         // a panned car can still come out soft, and the strip must say which.
         let panning = f.subjects.iter().any(|subject| subject.panning);
-        let verdict = match conrod_vision::sharpness::verdict_for(
+        let verdict = conrod_vision::sharpness::verdict_for(
             f.rating,
             settings.sharp_at,
             settings.blurred_below,
-        ) {
-            "sharp" => "sharp",
-            _ => "soft",
-        };
+        );
         let subject = f
             .subjects
             .iter()
@@ -2199,7 +2225,9 @@ impl Desktop {
                 area(a).total_cmp(&area(b))
             })
             .map_or("frame", |s| s.region_type);
-        let soft = verdict == "soft";
+        // "Soft" in the found counts is anything short of sharp, as it always
+        // was; the strip itself can now say blurred.
+        let soft = verdict != "sharp";
         let closed = f
             .subjects
             .iter()
@@ -2217,6 +2245,14 @@ impl Desktop {
             verdict: verdict.to_string(),
             panning,
             label: None,
+            file: f
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned()),
+            stars: Some(f.stars),
+            boxes: f.kept.clone(),
+            af: f.af.map(|a| [a.x1, a.y1, a.x2, a.y2]),
+            af_kind: f.af.map(|a| crate::progress::af_kind(a.kind)),
         });
     }
 
@@ -2491,6 +2527,9 @@ impl Desktop {
         )
         .map_err(err)?;
         tx.commit().map_err(err)?;
+        if let Some(progress) = self.progress() {
+            progress.settle("group", frames.len() as u64);
+        }
         // A frame with no subject in a burst where another frame has one is a
         // shot the detector missed: rate it on the whole frame before the
         // keepers below are picked on the ratings.
@@ -2528,6 +2567,7 @@ impl Desktop {
                 found.bursts = bursts as u64;
                 found.keepers = keepers;
             });
+            progress.settle("pick", frames.len() as u64);
         }
         task.finish();
         Ok(json!({"bursts": bursts, "moments": moments, "keepers": keepers}))
