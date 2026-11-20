@@ -3,7 +3,9 @@
 //
 // Bumps the workspace version (the single source of truth, see
 // check-version.mjs), refreshes Cargo.lock, and re-checks. With --tag,
-// commits and tags the release (never pushes).
+// regenerates CHANGELOG.md and frontend/src/lib/whatsNew.json for the new
+// version (scripts/release-notes.mjs --release), then commits and tags the
+// release (never pushes).
 import { readFileSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
@@ -106,6 +108,10 @@ function main() {
   execFileSync('node', ['scripts/check-version.mjs'], { cwd: here, stdio: 'inherit' })
 
   if (tag) {
+    // Files the unreleased work under the version just set, so the GitHub release and the
+    // in-app "What's new" both see it as soon as the tag is pushed.
+    execFileSync('node', ['scripts/release-notes.mjs', '--all', '--write', '--release', next], { cwd: here, stdio: 'inherit' })
+    execFileSync('git', ['add', 'CHANGELOG.md', 'frontend/src/lib/whatsNew.json'], { cwd: here, stdio: 'inherit' })
     execFileSync('git', ['commit', '-am', `chore: release v${next}`], { cwd: here, stdio: 'inherit' })
     execFileSync('git', ['tag', `v${next}`], { cwd: here, stdio: 'inherit' })
     console.log(`\nTagged v${next}. To publish: git push origin main v${next}`)

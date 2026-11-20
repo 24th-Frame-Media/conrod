@@ -396,9 +396,10 @@ type UpdateCardProps = {
   version: string | null;
   onCheck: () => void;
   onInstall: () => void;
+  onOpenWhatsNew?: () => void;
 };
 
-function UpdateCard({ info, upToDate, error, checking, installing, progress, version, onCheck, onInstall }: UpdateCardProps) {
+function UpdateCard({ info, upToDate, error, checking, installing, progress, version, onCheck, onInstall, onOpenWhatsNew }: UpdateCardProps) {
   const badge = checking
     ? <span className="pill-badge checking">Checking…</span>
     : info
@@ -450,9 +451,12 @@ function UpdateCard({ info, upToDate, error, checking, installing, progress, ver
           <button type="button" className="secondary small" disabled={checking || installing} onClick={onCheck}>
             {checking ? 'Checking…' : 'Check for updates'}
           </button>
-          <button type="button" className="sidebar-ext-link" onClick={() => void openUrl('https://github.com/kapsikkum/conrod/releases')}>
-            Releases ↗
-          </button>
+          <span className="sidebar-link-group">
+            <button type="button" className="sidebar-ext-link" onClick={onOpenWhatsNew}>What's new</button>
+            <button type="button" className="sidebar-ext-link" onClick={() => void openUrl('https://github.com/kapsikkum/conrod/releases')}>
+              Releases ↗
+            </button>
+          </span>
         </div>
       </div>
     </section>
@@ -468,10 +472,11 @@ type Props = {
   jobs?: Job[];
   models?: ModelInfo[];
   onModelsChanged?: () => void;
+  onOpenWhatsNew?: () => void;
 };
 
 /** Settings shared with the Python library; Save writes the whole block back. */
-export function Settings({ settings, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status }: Props) {
+export function Settings({ settings, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status, onOpenWhatsNew }: Props) {
   const [draft, setDraft] = useState<SettingsMap>(settings);
   useEffect(() => setDraft(settings), [settings]);
 
@@ -805,6 +810,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
             version={appVersion}
             onCheck={() => void checkForUpdates(true)}
             onInstall={handleInstallUpdate}
+            onOpenWhatsNew={onOpenWhatsNew}
           />
 
           <section className="sidebar-card" aria-labelledby="settings-library">
