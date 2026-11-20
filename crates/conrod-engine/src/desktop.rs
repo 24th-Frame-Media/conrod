@@ -458,6 +458,7 @@ impl Desktop {
         let db = conrod_store::connect(Some(&root.join("conrod.db"))).map_err(err)?;
         let reader = conrod_store::connect(Some(&root.join("conrod.db"))).map_err(err)?;
         let settings = Settings::load(&root.join("settings.json"));
+        crate::decider::service().configure(&settings);
         task.finish();
         let desktop = Arc::new(Self {
             hub,
@@ -683,6 +684,8 @@ impl Desktop {
                 Ok(Value::Null)
             }
             Command::InstallModels {} => crate::setup::install_missing(self),
+            Command::DeciderStatus {} => Ok(crate::decider::service().status()),
+            Command::InstallDecider {} => crate::decider::install_in_background(self),
             Command::SaveSettings(updates) => self.save_settings(&updates),
             Command::Mark(a) => self.mark(&a),
             Command::EditDetection(a) => crate::edits::edit_detection(self, &a),
@@ -800,6 +803,7 @@ impl Desktop {
         }
         let task = self.hub.start("Saving settings", 0);
         next.save(&self.root.join("settings.json")).map_err(err)?;
+        crate::decider::service().configure(&next);
         *stored = next;
         task.finish();
         Ok(json!(*stored))
@@ -861,7 +865,11 @@ impl Desktop {
     }
 
     fn models(&self) -> Value {
-        crate::setup::rows()
+        let mut rows = crate::setup::rows();
+        if let Some(list) = rows.as_array_mut() {
+            list.push(crate::decider::service().model_row());
+        }
+        rows
     }
 
     /// The worker count of every pool, its cap and whether a change applies

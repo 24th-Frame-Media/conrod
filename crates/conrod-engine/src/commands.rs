@@ -389,6 +389,9 @@ pub enum Command {
     Write(WriteArgs),
     CancelOperation(KeyArgs),
     InstallModels {},
+    /// The decision model card: install state, VRAM, quantization.
+    DeciderStatus {},
+    InstallDecider {},
     SaveSettings(Map<String, Value>),
     Mark(MarkArgs),
     EditDetection(EditArgs),
