@@ -515,9 +515,13 @@ mod tests {
             verdict = e.verdict;
         }
         assert_eq!(verdict, "ok");
+        // CI runs unoptimised builds on shared runners, where this measure sits
+        // right at 10 ms (one run read 10.2 ms); the guard is for a regression
+        // of several times, not for scheduler noise.
+        let budget = if cfg!(debug_assertions) { 40 } else { 10 };
         assert!(
-            spent < std::time::Duration::from_millis(10),
-            "measure took {spent:?}"
+            spent < std::time::Duration::from_millis(budget),
+            "measure took {spent:?} (budget {budget} ms)"
         );
     }
 }
