@@ -122,6 +122,7 @@ mod edgetest;
 pub mod edits;
 #[cfg(test)]
 mod evaltest;
+pub mod gpu;
 pub mod housekeeping;
 pub mod identify_live;
 pub mod library;
@@ -1396,6 +1397,9 @@ pub(crate) fn scan_files_filtered(
             loading.fail(format!("could not install the models: {e}"));
             return;
         }
+        // The sessions below share the card with the decision model: hold the gate
+        // until they are dropped (declared first, so released last).
+        let _gpu = gpu::stage();
         let detectors: Vec<Mutex<Detector>> = {
             let sessions = conrod_core::settings::clamp_workers(
                 settings.detect_workers,

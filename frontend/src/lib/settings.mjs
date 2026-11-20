@@ -60,7 +60,7 @@ export const FIELDS = {
   // ── identification ──
   moments_backend: {
     label: 'Judge moments with', kind: 'segmented',
-    hint: 'The vision model names tags it is sure of but has no real probability, so its readings are marked unverified. The decision model answers calibrated probabilities.',
+    hint: 'The vision model names tags it is sure of but has no real probability, so its readings are marked unverified. The decision model answers calibrated probabilities: on this PC when Use the decision model is on (below), else through OpenRouter if you add a key.',
     options: [{ id: 'vlm', name: 'Vision model' }, { id: 'decider', name: 'Decision model' }],
   },
   moments_threshold: {
