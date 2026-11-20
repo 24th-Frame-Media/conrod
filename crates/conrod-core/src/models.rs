@@ -30,6 +30,14 @@ pub const TASTE_TOWER: &str = "dinov2-small-tower.onnx";
 /// The learned head beside it: weights, feature order and standardisation.
 /// Absent means taste is off; `scripts/taste/train_head.py` writes it.
 pub const TASTE_HEAD: &str = "taste-head.json";
+/// The decision model (Perplexity pplx-decider-flash-v1.2, official GGUF): int8 weights,
+/// the vision projector, and the int4 file derived from the int8 on the machine.
+/// All opt-in (optional in scripts/assets.json).
+pub const DECIDER_INT8: &str = "decider-flash-v1.2-q8_0.gguf";
+pub const DECIDER_INT4: &str = "decider-flash-v1.2-q4_k_m.gguf";
+pub const DECIDER_MMPROJ: &str = "mmproj-decider-flash-v1.2-f16.gguf";
+/// The llama.cpp runtime asset (a folder id, unpacked under <data>/tools).
+pub const DECIDER_RUNTIME: &str = "decider-runtime";
 const OCR_DETECTOR_V3: &str = "ch_PP-OCRv3_det_infer.onnx";
 
 /// The plate models' homes in the OCR libraries' on-disk caches, under
@@ -99,6 +107,12 @@ pub fn exiftool() -> Option<PathBuf> {
         .chain([data_root().join("tools").join("exiftool")])
         .flat_map(|dir| ["exiftool.exe", "exiftool(-k).exe"].map(|n| dir.join(n)))
         .find(|p| p.is_file())
+}
+
+/// The unpacked llama.cpp runtime for the decision model, if installed.
+pub fn decider_runtime() -> Option<PathBuf> {
+    let dir = data_root().join("tools").join(DECIDER_RUNTIME);
+    dir.join("llama.dll").is_file().then_some(dir)
 }
 
 #[cfg(test)]

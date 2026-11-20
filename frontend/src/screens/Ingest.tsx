@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { IdentifyDetail, IdentifyLane, hash } from '../components/IdentifyParts';
 import { FrameDetail, ScanLane } from '../components/IngestLane';
 import { WorkerPanel } from '../components/WorkerPanel';
+import { DeciderLane } from '../components/DeciderLane';
+import { deciderActive } from '../lib/decider.mjs';
+import { useDeciderProgress } from '../state/useDeciderProgress';
 import { Empty, Icon } from '../components/basics';
 import { asset } from '../lib/api';
 import { confidencePercent, confidenceTone, displayItem, elapsed, progressPercent, rateLabel, workerLanes } from '../lib/identifyFlow.mjs';
@@ -68,6 +71,7 @@ export function IngestScreen({
   const [picked, setPicked] = useState<Pick | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const decider = useDeciderProgress();
   // Prompts only ride on the cars being read and on the snapshot's active list, not on the
   // finished strip; keep the last one per car so a finished car can still show what was asked.
   const prompts = useRef<Record<number, string>>({});
@@ -109,18 +113,20 @@ export function IngestScreen({
   const frac = mode === 'identify' ? progressPercent(idLive?.done, idLive?.total) / 100
     : phase === 'done' ? 1 : ingestFraction({ scanFraction: scanFrac, identify: idLive, vision });
   const pct = Math.round(frac * 100);
-  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model) : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done' });
+  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model) : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: mode === 'ingest' ? decider : null });
 
   const visionLanes = workerLanes(idLive);
-  const scanFilter = filter && filter !== 'vision' ? filter : null;
+  const scanFilter = filter && filter !== 'vision' && filter !== 'decider' ? filter : null;
   const picks = selectLanes(p?.pipeline.workers, { filter: scanFilter, cap: 8, all: showAll, paused, identify: !idLive });
   const allScan = selectLanes(p?.pipeline.workers, { cap: 1000, paused, identify: !idLive }).lanes;
   const awake = allScan.filter((w) => laneState(w, paused) !== 'idle').length;
   // Scan lanes that have nothing left to do give way to the barrier note (group, pick) and to the vision workers.
   const barrier = mode === 'ingest' && (phase === 'group' || phase === 'pick') && filter == null;
   const hideScan = filter == null && awake === 0 && (barrier || visionLanes.length > 0);
-  const showScan = mode === 'ingest' && Boolean(p) && filter !== 'vision' && !hideScan;
+  const showScan = mode === 'ingest' && Boolean(p) && filter !== 'vision' && filter !== 'decider' && !hideScan;
   const showVision = visionLanes.length > 0 && (filter == null || filter === 'vision');
+  // The decision model's page: when picked in the flowchart, or while it has something to show.
+  const showDecider = mode === 'ingest' && decider != null && (filter === 'decider' || (filter == null && deciderActive(decider)));
 
   const total = stages[0]?.total || p?.total || job.total;
   const done = idLive?.done ?? 0;
@@ -271,7 +277,7 @@ export function IngestScreen({
                 <IdentifyDetail detail={detailCar} prompt={detailCar.prompt ?? prompts.current[detailCar.detection_id]} live={detailCar.stage !== 'done' && phase === 'vision'} />
               ) : detailFrame ? (
                 <FrameDetail frame={detailFrame} />
-              ) : (showScan && picks.lanes.length) || showVision || barrier ? (
+              ) : (showScan && picks.lanes.length) || showVision || showDecider || barrier ? (
                 <>
                   {barrier && (
                     <div className="ing-barrier" role="status">
@@ -281,6 +287,7 @@ export function IngestScreen({
                     </div>
                   )}
                   <div className="id-lanes ing-lanes">
+              {showDecider && decider && <DeciderLane live={decider} />}
                     {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} />)}
                     {showVision && visionLanes.map((lane) => (
                       <IdentifyLane key={`vision:${lane.worker}`} name="VISION" worker={lane.worker} item={lane.item} live={lane.live}

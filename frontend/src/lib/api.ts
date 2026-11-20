@@ -53,6 +53,8 @@ export const engine = {
   acceptIdentifications: (ids: number[]) => call('bulk_edit', { ids, reviewed: true }),
   write: (jobId: number, dryRun = false) => call('write', { jobId, dryRun }),
   cancelOperation: (key: string) => call('cancel_operation', { key }),
+  deciderStatus: () => call<import('./types').DeciderStatus>('decider_status'),
+  installDecider: () => call('install_decider'),
   saveSettings: (settings: Settings) => call<Settings>('save_settings', settings),
   workerLimits: () => call<import('./types').WorkerLimits>('worker_limits'),
   known: () => call<KnownVehicle[]>('known'),

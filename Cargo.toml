@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-io", "crates/conrod-store", "crates/conrod-cli", "crates/conrod-engine", "crates/conrod-app"]
+members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-io", "crates/conrod-store", "crates/conrod-cli", "crates/conrod-engine", "crates/conrod-app", "crates/conrod-decider"]
 # The old spikes/ crates (rawprobe, detbench) are out of the workspace: they are
 # stale, and they pull ONNX Runtime and GPU runtimes for no product benefit.
 # Their history stays in git; resurrect one with `cargo new` if it is ever needed.
-default-members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-io", "crates/conrod-store", "crates/conrod-cli", "crates/conrod-engine", "crates/conrod-app"]
+default-members = ["crates/conrod-core", "crates/conrod-vision", "crates/conrod-io", "crates/conrod-store", "crates/conrod-cli", "crates/conrod-engine", "crates/conrod-app", "crates/conrod-decider"]
 
 
 [workspace.package]

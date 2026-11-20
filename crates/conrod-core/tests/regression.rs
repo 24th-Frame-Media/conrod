@@ -1204,6 +1204,8 @@ fn settings_match_snapshot() {
             m.remove(key); // Rust-only: moment judge
         }
         m.remove("use_quality_score"); // Rust-only
+        m.remove("use_decider"); // Rust-only: opt-in decision model
+        m.remove("decider_quant"); // Rust-only
         m.remove("blur_strictness"); // Rust-only
         m.remove("entry_list"); // Rust-only
         m.remove("workflow_mode"); // Rust-only: album-level scan/identify workflow

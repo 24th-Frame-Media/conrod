@@ -1,0 +1,93 @@
+import { asset } from '../lib/api';
+import { barTone, deciderWord, msWords, percent } from '../lib/decider.mjs';
+import type { DeciderLive, DeciderSaid } from '../lib/types';
+import '../styles/ingest.css';
+
+/** The file name of a frame path, for the lane's caption. */
+const fileOf = (label: string) => label.split(/[\\/]/).pop() || label;
+
+/** One answered question: what was asked, the model's pick, and the top options as small bars. */
+function Answer({ said }: { said: DeciderSaid }) {
+  const tone = barTone(said.p);
+  return (
+    <li className="dec-answer">
+      <span className="dec-q" title={said.text}>{said.text}</span>
+      <span className={`dec-pick mono ${tone}`}>{said.label} <b>{percent(said.p)}</b></span>
+      <span className="dec-bars" aria-hidden="true">
+        {said.bars.map((bar) => (
+          <span className="dec-bar" key={bar.label} title={`${bar.label} ${percent(bar.p)}`}>
+            <i className={bar.label === said.label ? `top ${tone}` : ''} style={{ width: `${Math.round(bar.p * 100)}%` }} />
+          </span>
+        ))}
+      </span>
+    </li>
+  );
+}
+/**
+ * The decision model's page in the workers grid, animated like a vision worker: the frame it is looking at, ASKING (the
+ * questions in flight), DECIDES (its answers with their probabilities as small bars), and counters. When the model is
+ * off or the machine cannot run it, the same page says so instead of showing activity.
+ */
+export function DeciderLane({ live }: { live: DeciderLive }) {
+  const current = live.current;
+  const last = live.recent[0] ?? null;
+  const busy = live.busy > 0 || live.state === 'loading' || (current != null && !current.queued);
+  const waiting = current?.queued === true;
+  const unavailable = ['off', 'not_installed', 'installing', 'no_gpu', 'no_vram'].includes(live.state) && !busy && !last;
+  const shown = current ?? last;
+  const image = shown?.thumb ? asset(shown.thumb) : undefined;
+  const asking = current?.asking ?? [];
+  const says = last?.says ?? [];
+  const badge = busy ? 'LIVE' : waiting ? 'QUEUED' : unavailable ? 'OFF' : last ? 'DONE' : 'IDLE';
+  const cls = busy ? ' live' : last ? ' done' : ' idle';
+  return (
+    <section className={`id-lane decider-lane${cls}${unavailable ? ' off' : ''}`} aria-label="Decision model">
+      <header className="id-lane-head">
+        <span className="id-lane-name mono">DECIDER</span>
+        <span className={`id-lane-stage ${busy ? 'ing-stage busy' : 'ing-stage idle'}`}>{busy ? (live.state === 'loading' ? 'loading' : 'deciding') : deciderWord(live.state)}</span>
+        {busy && <i className="id-lane-dot" aria-hidden="true" />}
+      </header>
+
+      <div className="id-view id-view-lane">
+        {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
+        {image
+          ? <img src={image} alt="" draggable={false} loading="eager" />
+          : <span className="id-view-empty">{unavailable ? live.message : live.state === 'loading' ? 'Loading the model onto the GPU…' : 'Waiting for a frame…'}</span>}
+        <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
+        <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
+        {busy && <span className="id-scanline" aria-hidden="true" />}
+        <span className={`id-badge${busy ? ' live' : ''}${waiting ? ' waiting' : ''}`}>{badge}</span>
+        {shown && <span className="id-file" title={shown.label}>{fileOf(shown.label)}</span>}
+      </div>
+      <dl className="dec-counters">
+        <div><dt>Frames</dt><dd className="mono">{live.done.toLocaleString('en-US')}</dd></div>
+        <div><dt>Failed</dt><dd className={live.errors ? 'mono bad' : 'mono'}>{live.errors.toLocaleString('en-US')}</dd></div>
+        <div><dt>Per frame</dt><dd className="mono">{live.avg_ms ? msWords(live.avg_ms) : '-'}</dd></div>
+        <div><dt>GPU slots</dt><dd className="mono">{live.busy}/{live.capacity}{live.queued > 0 && <small> +{live.queued} queued</small>}</dd></div>
+      </dl>
+      <section className="id-panel id-lane-panel">
+        <h4>ASKING</h4>
+        {asking.length ? (
+          <ol className="dec-asks">
+            {asking.map((ask) => <li key={ask.id}><span className="dec-kind mono">{ask.kind}</span><span>{ask.text}</span></li>)}
+          </ol>
+        ) : unavailable
+          ? <p className="muted id-panel-empty">{live.message}</p>
+          : <p className="muted id-panel-empty">{last ? 'Between frames.' : 'Waiting for the first frame…'}</p>}
+      </section>
+      <section className="id-panel id-lane-panel">
+        <h4>DECIDES</h4>
+        {says.length ? (
+          <ul className={`dec-answers${busy ? ' stale' : ''}`}>
+            {says.map((said) => <Answer said={said} key={said.id} />)}
+          </ul>
+        ) : <p className="muted id-panel-empty">{busy ? 'Deciding…' : unavailable ? 'No answers: the decision model is not running.' : 'No answers yet.'}</p>}
+        {last && !last.ok && <span className="id-failures">The last frame failed; the scan went on without it.</span>}
+      </section>
+      <p className="muted dec-foot mono">
+        {[live.model, live.quant, live.device].filter(Boolean).join(' · ') || 'pplx-decider-flash'}
+        {last?.ms ? ` · ${msWords(last.ms)} · ${last.tokens} tokens` : ''}
+      </p>
+    </section>
+  );
+}

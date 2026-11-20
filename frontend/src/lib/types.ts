@@ -141,7 +141,50 @@ export type Settings = Record<string, SettingValue> & {
   identify_scope?: Scope;
   workflow_mode?: string;
 };
-export type ModelInfo = { id?: string; name: string; file: string; ready: boolean; detail?: string };
+export type ModelInfo = { id?: string; name: string; file: string; ready: boolean; detail?: string; /** Opt-in (the decision model): not counted against the machine when missing. */ optional?: boolean };
+
+/** The decision model's states: what the DECIDER node and the Settings card say. */
+export type DeciderState = 'off' | 'not_installed' | 'installing' | 'no_gpu' | 'no_vram' | 'ready' | 'loading' | 'running' | 'error';
+export type DeciderKind = 'choice' | 'noul' | 'score';
+export type DeciderAsk = { id: string; kind: DeciderKind; text: string; options: number };
+export type DeciderBar = { label: string; p: number };
+export type DeciderSaid = { id: string; kind: DeciderKind; text: string; label: string; p: number; bars: DeciderBar[] };
+export type DeciderResult = { label: string; thumb: string | null; ms: number; tokens: number; ok: boolean; says: DeciderSaid[] };
+/** The payload of the `decider-progress` event. */
+export type DeciderLive = {
+  state: DeciderState;
+  enabled: boolean;
+  message: string;
+  model: string | null;
+  device: string | null;
+  quant: 'int8' | 'int4' | null;
+  /** Requests the GPU takes at once. */
+  capacity: number;
+  busy: number;
+  queued: number;
+  done: number;
+  errors: number;
+  avg_ms: number | null;
+  current: { label: string; thumb: string | null; queued: boolean; elapsed_ms: number; asking: DeciderAsk[] } | null;
+  /** Newest first. */
+  recent: DeciderResult[];
+  install: { done: number; total: number } | null;
+};
+/** Answer of `decider_status`: the Settings card. */
+export type DeciderStatus = {
+  state: DeciderState;
+  enabled: boolean;
+  message: string;
+  quant: 'int8' | 'int4' | null;
+  forced: 'int8' | 'int4' | null;
+  installed: boolean;
+  /** Something the chosen precision needs is missing: the Install button applies. */
+  needs_install: boolean;
+  download_bytes: number;
+  gpu: { name: string; total: number; free: number } | null;
+  needs: { int8: number; int4: number };
+  install: { done: number; total: number } | null;
+};
 export type Bootstrap = { jobs: Job[]; settings: Settings; models: ModelInfo[]; status: Status };
 
 export const ATTRIBUTE_KEYS = ['plate', 'race_number', 'make', 'model', 'colour', 'team', 'driver', 'country', 'plate_state', 'body_type'] as const;
