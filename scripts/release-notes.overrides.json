@@ -23,7 +23,12 @@
     "1.0.0-beta.6": { "highlights": "Safer update and metadata handling, and one version number across the app." },
     "1.0.0-beta.7": { "highlights": "Use several vision servers at once, compare vision models on your own photos, and cull shoots with people in them." },
     "1.0.0-beta.8": { "highlights": "A much smarter cull: sharpness measured on the subject itself, better pans and bursts, top-three picks, undo, a light theme and live identification." },
-    "Unreleased": { "highlights": "Culling works with the camera's own focus point, Conrod talks to Lightroom, ingest is one live screen, and a crash no longer loses your place." }
+    "Unreleased": {
+      "highlights": "Culling works with the camera's own focus point, Conrod talks to Lightroom, ingest is one live screen, and a crash no longer loses your place.",
+      "add": [
+        { "section": "New", "text": "An optional decision model, switched on in Settings, answers yes/no questions about your frames on your own graphics card. It is a large one-time download and stays off until you choose it; with it off, or on a card without enough video memory, nothing changes." }
+      ]
+    }
   },
   "commits": {
     "bce9f44": { "section": "New", "text": "Conrod remembers what each plate turned out to be, so a car it has seen before is not read again (and not read differently)." },
@@ -204,6 +209,12 @@
     "f70f502": { "section": "Improved", "text": "Safer by design: the app only reads files you chose, a cloud key is no longer put in a web address, and stricter rules for what the app window may load." },
     "8d37e10": { "section": "New", "text": "The ingest screen shows what each worker is doing right now, with live frames and counters that match what is actually done." },
     "36d835f": "The autofocus label no longer lands on top of a detection label.",
-    "5e0d842": { "section": "New", "text": "Conrod tells you what's new: a short summary of each update opens by itself the first time, and Settings can reopen it any time." }
+    "5e0d842": { "section": "New", "text": "Conrod tells you what's new: a short summary of each update opens by itself the first time, and Settings can reopen it any time." },
+    "85e6865": { "section": "New", "text": "Each kind of shoot (wedding, motorsport, wildlife, rodeo and so on) now has its own sensible way of culling, and you can see and change it per album." },
+    "bdd3ac6": "Turning a step on or off for one album, or for one kind of shoot, now takes effect in the whole import, not just on screen.",
+    "fdf2cb4": { "section": "New", "text": "When you import, Conrod lists what it will do for that kind of shoot, with a switch for each step, and the same list sits in the album's settings." },
+    "22e79d5": { "section": "New", "text": "Conrod can pick out the moments that matter for the shoot, like a first kiss, the ride's peak or a car in the air, and use them to choose between near-identical frames. It never keeps a blurry frame over a sharp one." },
+    "6c73e5a": { "section": "New", "text": "Review shows each moment on the frame, marks the less certain ones as maybe, tells you when a moment decided a pick, and lets you filter by moment. Moments have their own switches and a confidence setting." },
+    "e91848b": { "section": "New", "text": "Moments can be judged by the decision model running on your own graphics card, with no account or internet. Its questions and answers show live in the import flowchart, and on a smaller card it waits for the cull to finish rather than running out of video memory." }
   }
 }
