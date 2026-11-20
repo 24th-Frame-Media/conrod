@@ -67,6 +67,7 @@ function makeDb(): Db {
       id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > count - 4 ? 'pending' : 'done',
       thumb_path: scene(hue, cx, s, colour, 420, 280), preview_path: null, width: W, height: H, rating,
       manual_stars: soft ? null : i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, picked: i % 17 === 5 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
+      moments: i % 7 === 3 ? JSON.stringify({ backend: 'decider', strength: 0.9, readings: [{ tag: 'tyre_smoke', p: 0.93, calibrated: true }, { tag: 'flames', p: 0.62, calibrated: true }] }) : null,
       comp_placement: 0.52 + ((i * 23) % 42) / 100, comp_mode: COMP_MODES[i % 3],
       comp_balance_x: ((i * 13 + 15) % 40 - 20) / 100, comp_balance_y: ((i * 19 + 10) % 40 - 20) / 100,
       comp_symmetry: ((i * 29) % 80) / 100, comp_clutter: clutter,

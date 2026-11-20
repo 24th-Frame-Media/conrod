@@ -3,7 +3,7 @@
 import { applyOverrides, defaultSummary, facetsFromSummary } from './presetPolicy.mjs';
 
 /** Every facet kind, in the order the sidebar lists them. */
-export const FACET_KINDS = ['number', 'plate', 'make', 'team', 'person', 'subject'];
+export const FACET_KINDS = ['number', 'plate', 'make', 'team', 'person', 'subject', 'moment'];
 
 /** Tabs a shoot may show, in order. An empty list means the sidebar has nothing to offer. */
 export function facetsFor(preset, overrides = {}) {

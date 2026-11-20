@@ -2647,3 +2647,10 @@ dialog.viewer {
 .policy-row input { flex: none; }
 .policy-tag { color: var(--accent, var(--text-dim)); font-size: 11px; }
 .policy-notes { margin: 6px 0 0; font-size: 12px; line-height: 1.4; }
+
+/* Moment tags: sure ones in the accent, maybes dimmed and dashed. */
+.moment-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+.tag.moment.sure { border-color: var(--accent, var(--line)); color: var(--text); }
+.tag.moment.maybe { border-style: dashed; color: var(--text-mute); }
+.moment-lift { flex-basis: 100%; }
+.policy-moments { margin: 2px 0 0; font-size: 12px; line-height: 1.4; }

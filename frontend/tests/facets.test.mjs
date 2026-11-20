@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {facetsFor, tabsWithData, validTab, FACET_KINDS} from '../src/lib/facets.mjs';
+import {facetsFor as facetsWithMoments, tabsWithData, validTab, FACET_KINDS} from '../src/lib/facets.mjs';
+
+/** The people-and-vehicle tabs; moments are covered on their own below. */
+const facetsFor = (id, overrides) => facetsWithMoments(id, overrides).filter((k) => k !== 'moment');
 
 test('rodeo, equestrian and portraits never offer numbers or plates', () => {
   for (const id of ['sport-rodeo', 'sport-equestrian', 'portrait', 'portrait-group', 'portrait-couple', 'wedding', 'event', 'event-shows', 'event-parties', 'concert', 'portrait-pets', 'wildlife-birds']) {
@@ -58,4 +61,11 @@ test('the selected tab stays valid when tabs change', () => {
   assert.equal(validTab('plate', ['number', 'person']), 'number');
   assert.equal(validTab(null, ['person']), 'person');
   assert.equal(validTab('number', []), null);
+});
+
+test('moments get a tab wherever the shoot has moments to judge, and switching them off removes it', () => {
+  for (const id of ['wedding', 'motorsport-track', 'sport-rodeo', 'portrait', 'astro', 'mix']) assert.ok(facetsWithMoments(id).includes('moment'), id);
+  for (const id of ['property-listing', 'property-report', 'auto-dealer']) assert.ok(!facetsWithMoments(id).includes('moment'), id);
+  assert.ok(!facetsWithMoments('wedding', { moments_detect: false }).includes('moment'));
+  assert.equal(facetsWithMoments('wedding').at(-1), 'moment');
 });

@@ -6,6 +6,10 @@ import policies from './presetPolicies.mjs';
 /** Detector and reader keys, as the engine stores them in the album's `overrides`. */
 export const DETECT_KEYS = ['vehicles', 'people', 'faces', 'animals'];
 export const READ_KEYS = ['numbers', 'plates', 'make_model', 'sponsors', 'names'];
+/** The moment judge's two switches: spot moments, and let them lift ranking. */
+export const MOMENT_KEYS = ['moments_detect', 'moments_rank'];
+
+const rowsOf = (summary) => [...summary.detects, ...summary.reads, summary.moments.detect, summary.moments.rank];
 
 /** The summary the browser keeps for each preset's defaults (generated from the Rust table). */
 export function defaultSummary(preset) {
@@ -17,20 +21,24 @@ export function defaultSummary(preset) {
 export function overridesOf(stored) {
   const out = {};
   if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
-    for (const key of [...DETECT_KEYS, ...READ_KEYS]) if (typeof stored[key] === 'boolean') out[key] = stored[key];
+    for (const key of [...DETECT_KEYS, ...READ_KEYS, ...MOMENT_KEYS]) if (typeof stored[key] === 'boolean') out[key] = stored[key];
   }
   return out;
 }
 
 /** The summary with these switches applied, the way the engine resolves them (a reader needs its detector). */
 export function applyOverrides(summary, overrides = {}) {
-  const rows = [...summary.detects, ...summary.reads];
-  const raw = new Map(rows.map((r) => [r.key, typeof overrides[r.key] === 'boolean' ? overrides[r.key] : r.default]));
+  const raw = new Map(rowsOf(summary).map((r) => [r.key, typeof overrides[r.key] === 'boolean' ? overrides[r.key] : r.default]));
   const row = (r) => {
     const blocked = r.requires != null && raw.get(r.requires) !== true;
     return { ...r, on: raw.get(r.key) === true && !blocked, overridden: typeof overrides[r.key] === 'boolean', blocked };
   };
-  return { ...summary, detects: summary.detects.map(row), reads: summary.reads.map(row) };
+  return {
+    ...summary,
+    detects: summary.detects.map(row),
+    reads: summary.reads.map(row),
+    moments: { ...summary.moments, detect: row(summary.moments.detect), rank: row(summary.moments.rank) },
+  };
 }
 
 /** The overrides after the photographer flips `row`: a switch back at the type's default stops being an override. */
@@ -43,7 +51,7 @@ export function nextOverrides(overrides, row, on) {
 
 /** Whether the row's reader is on in this summary. */
 export function isOn(summary, key) {
-  return [...summary.detects, ...summary.reads].some((r) => r.key === key && r.on);
+  return rowsOf(summary).some((r) => r.key === key && r.on);
 }
 
 const BLUR_WORDS = { critical: 'critical', strict: 'strict', moderate: 'moderate', lenient: 'lenient' };
@@ -62,12 +70,12 @@ export function noteList(summary) {
 /** The label of the row a blocked row waits for ("needs Cars & bikes"). */
 export function needsLabel(summary, row) {
   if (!row.requires) return '';
-  const need = [...summary.detects, ...summary.reads].find((r) => r.key === row.requires);
+  const need = rowsOf(summary).find((r) => r.key === row.requires);
   return need ? `needs ${need.label}` : '';
 }
 
-/** Sidebar tabs the shoot can fill, from what it reads: numbers, plates, makes, teams (sponsors), people, subjects. */
-export const FACET_ORDER = ['number', 'plate', 'make', 'team', 'person', 'subject'];
+/** Sidebar tabs the shoot can fill, from what it reads: numbers, plates, makes, teams (sponsors), people, subjects, moments. */
+export const FACET_ORDER = ['number', 'plate', 'make', 'team', 'person', 'subject', 'moment'];
 export function facetsFromSummary(summary) {
   const on = (key) => isOn(summary, key);
   const wanted = {
@@ -77,6 +85,7 @@ export function facetsFromSummary(summary) {
     team: on('sponsors'),
     person: on('names') || on('faces') || on('people'),
     subject: on('animals'),
+    moment: on('moments_detect'),
   };
   return FACET_ORDER.filter((kind) => wanted[kind]);
 }
