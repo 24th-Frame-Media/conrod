@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { asset } from '../lib/api';
 import {
-  SCAN_STEPS, STEP_STAGE, boxLabel, boxStyle, laneBadge, laneFrame, laneNumber, laneState, laneText, starsText, stepIndex, tagFits, verdictText,
+  SCAN_STEPS, STEP_STAGE, afLabel, afTagSpot, boxLabel, boxStyle, laneBadge, laneFrame, laneNumber, laneState, laneText, starsText, stepIndex, tagFits,
+  verdictText,
 } from '../lib/ingest.mjs';
-import type { LaneBox, PipelineWorker, ScanRecentFrame } from '../lib/types';
+import type { AfKind, LaneBox, PipelineWorker, ScanRecentFrame } from '../lib/types';
 import '../styles/ingest.css';
 
 type Af = [number, number, number, number] | null | undefined;
 
 /**
  * A frame with its detection boxes and autofocus area drawn over it. Boxes are fractions of the upright frame, so the stage sizes
- * itself to the picture's own aspect ratio (contained in the viewport) and the boxes are plain percentages of it.
+ * itself to the picture's own aspect ratio (contained in the viewport) and the boxes are plain percentages of it. The AF tag moves
+ * to whichever corner of its box (or just outside it) is free of detection labels.
  */
-export function FrameStage({ src, boxes, af }: { src: string; boxes: LaneBox[]; af?: Af }) {
+export function FrameStage({ src, boxes, af, afKind }: { src: string; boxes: LaneBox[]; af?: Af; afKind?: AfKind | null }) {
   const [shape, setShape] = useState<{ src: string; ar: number } | null>(null);
   const [width, setWidth] = useState(320);
   const stage = useRef<HTMLDivElement>(null);
@@ -26,6 +28,8 @@ export function FrameStage({ src, boxes, af }: { src: string; boxes: LaneBox[]; 
   }, []);
   const ar = shape?.src === src ? shape.ar : 1.5;
   const afStyle = boxStyle(af);
+  const afText = afLabel(afKind);
+  const afSpot = afStyle ? afTagSpot(af, boxes, { width, height: width / ar }, afText) : null;
   return (
     <div className="ing-frame">
       <div className="ing-frame-box" ref={stage} style={{ '--ar': ar } as CSSProperties}>
@@ -41,8 +45,8 @@ export function FrameStage({ src, boxes, af }: { src: string; boxes: LaneBox[]; 
           );
         })}
         {afStyle && (
-          <span className="ing-af" style={afStyle} key={`af:${af?.join(',')}`}>
-            {tagFits(af, width, 'AF') && <span className="ing-box-tag ing-af-tag mono">AF</span>}
+          <span className={`ing-af${afKind === 'grid' ? ' grid' : ''}`} style={afStyle} key={`af:${af?.join(',')}`}>
+            {afSpot && <span className={`ing-box-tag ing-af-tag at-${afSpot} mono`}>{afText}</span>}
           </span>
         )}
       </div>
@@ -88,7 +92,7 @@ export function ScanLane({ worker, paused, recent }: { worker: PipelineWorker; p
       <div className="id-view id-view-lane">
         {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
         {image
-          ? <FrameStage src={image} boxes={frame.boxes} af={frame.af} />
+          ? <FrameStage src={image} boxes={frame.boxes} af={frame.af} afKind={frame.af_kind} />
           : <span className="id-view-empty ing-empty"><i className="ing-ph" aria-hidden="true" />{empty}</span>}
         <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
         <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
@@ -125,7 +129,7 @@ export function FrameDetail({ frame }: { frame: ScanRecentFrame }) {
       <section className="id-left" aria-label="Frame">
         <div className="id-view">
           {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
-          {image ? <FrameStage src={image} boxes={boxes} af={frame.af} /> : <span className="id-view-empty">No picture for this frame.</span>}
+          {image ? <FrameStage src={image} boxes={boxes} af={frame.af} afKind={frame.af_kind} /> : <span className="id-view-empty">No picture for this frame.</span>}
           <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
           <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
           <span className="id-badge">DONE</span>
@@ -157,7 +161,7 @@ export function FrameDetail({ frame }: { frame: ScanRecentFrame }) {
         </section>
         <section className="id-panel">
           <h4>AUTOFOCUS</h4>
-          <p className="muted id-panel-empty">{frame.af ? 'The dashed amber box on the picture is where the camera focused.' : 'No autofocus area was read for this frame.'}</p>
+          <p className="muted id-panel-empty">{frame.af ? (frame.af_kind === 'grid' ? 'The dashed amber box is the union of the focus cells the camera reported in focus.' : 'The dashed amber box on the picture is where the camera focused.') : 'No autofocus area was read for this frame.'}</p>
         </section>
       </aside>
     </div>

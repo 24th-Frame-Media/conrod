@@ -1261,6 +1261,7 @@ fn find_people(
                 cfg,
                 &strictness,
                 &region_models,
+                &|_| {},
             )?;
             let db = lock(&d.db);
             let tx = db.unchecked_transaction().map_err(err)?;
