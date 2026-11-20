@@ -46,6 +46,13 @@ impl<T> Pool<T> {
 
     /// A free item if there is one, else wait on the next in turn.
     pub fn lock(&self) -> MutexGuard<'_, T> {
+        self.lock_noting(&|_| {})
+    }
+
+    /// [`Pool::lock`] that tells `waiting(true)` before it blocks and
+    /// `waiting(false)` once it has an item again. Nothing is called when an
+    /// item is free.
+    pub fn lock_noting(&self, waiting: &dyn Fn(bool)) -> MutexGuard<'_, T> {
         let start = self.turn.fetch_add(1, Ordering::Relaxed);
         for k in 0..self.items.len() {
             match self.items[(start + k) % self.items.len()].try_lock() {
@@ -54,7 +61,10 @@ impl<T> Pool<T> {
                 Err(std::sync::TryLockError::WouldBlock) => {}
             }
         }
-        lock(&self.items[start % self.items.len()])
+        waiting(true);
+        let guard = lock(&self.items[start % self.items.len()]);
+        waiting(false);
+        guard
     }
 }
 
@@ -266,6 +276,44 @@ pub struct FrameResult {
     /// The edge-blur rating inside that area when it is the frame's subject
     /// (see `afsubject`); `None` when a detection holds it or it is unusable.
     pub af_sharpness: Option<f64>,
+    /// The detections the detector kept, as fractions of the upright frame:
+    /// what the live view draws. Display only; no decision reads it.
+    pub kept: Vec<conrod_core::progress::LiveBox>,
+    /// The thumbnail is already on disk (the lane wrote it as soon as it had
+    /// it, so the live view could show it); the persist step does not write it
+    /// again.
+    pub thumb_saved: bool,
+}
+
+/// What a cull lane learns about the frame it holds, told as it learns it so
+/// the live view can show the frame before it is finished. Reporting only.
+pub enum Live<'a> {
+    /// The upright thumbnail, as soon as the preview is decoded.
+    Picture(&'a Rgb),
+    /// The camera's focus area, once read.
+    Af(conrod_io::af::AfArea),
+    /// The kept detections.
+    Boxes(&'a [conrod_core::progress::LiveBox]),
+    /// The frame has passed `read`, `detect`, `sharpness` or `faces`.
+    Stage(&'static str),
+    /// The frame's rating.
+    Rated {
+        stars: u8,
+        verdict: &'static str,
+        panning: bool,
+    },
+}
+
+/// The stages a cull lane carries a frame through, in the order it finishes
+/// them; `faces` only on shoots that read faces.
+const CULL_STAGES: [&str; 4] = ["read", "detect", "sharpness", "faces"];
+
+/// What a lane needs to know about a frame before it reads it.
+pub(crate) struct Pickup {
+    /// The frame's database row; 0 when the scan has no database.
+    pub image_id: i64,
+    /// Where this frame's thumbnail goes, when the live view may write it early.
+    pub thumb: Option<PathBuf>,
 }
 
 fn crop_gray(frame: &Gray, crop_box: [f64; 4]) -> Gray {
@@ -444,6 +492,8 @@ pub(crate) fn face_subjects(
     settings: &Settings,
     strictness: &str,
     models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
+    // Told when a face or expression session has to be waited for.
+    waiting: &dyn Fn(bool),
 ) -> Result<Faces, String> {
     let (fw, fh) = (image.width, image.height);
     let mut out = Faces::default();
@@ -453,13 +503,13 @@ pub(crate) fn face_subjects(
             continue;
         }
         let crop = image.crop(x0, y0, x1.min(fw), y1.min(fh));
-        let found = detector.lock().detect(&crop)?;
+        let found = detector.lock_noting(waiting).detect(&crop)?;
         for face in found {
-            let open = detector.lock().eyes_open(&crop, &face);
+            let open = detector.lock_noting(waiting).eyes_open(&crop, &face);
             // When the blendshape mesh agrees with the detector, its continuous
             // eye-open replaces the binary OCEC verdict.
             let judged = expression.and_then(|model| {
-                let mut model = model.lock();
+                let mut model = model.lock_noting(waiting);
                 model.read(&crop, &face).ok()
             });
             let closed = match judged {
@@ -788,12 +838,53 @@ pub fn cull_frame(
     quality: Option<&Mutex<conrod_vision::quality::QualityModel>>,
     step: impl Fn(&'static str),
 ) -> Result<FrameResult, String> {
+    cull_frame_live(
+        path,
+        detector,
+        settings,
+        profile,
+        models,
+        faces,
+        expression,
+        quality,
+        step,
+        &|_| {},
+    )
+}
+
+/// [`cull_frame`] that also tells `live` what it learns about the frame as it
+/// goes. The result is the same either way: `live` only reports.
+#[allow(clippy::too_many_arguments)]
+pub fn cull_frame_live(
+    path: &Path,
+    detector: &Mutex<Detector>,
+    settings: &Settings,
+    profile: ScanProfile,
+    models: &std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
+    faces: Option<&Pool<FaceDetector>>,
+    expression: Option<&Pool<expression::ExpressionModel>>,
+    quality: Option<&Mutex<conrod_vision::quality::QualityModel>>,
+    step: impl Fn(&'static str),
+    live: &dyn Fn(Live<'_>),
+) -> Result<FrameResult, String> {
     let preset = ShootPreset::parse(&settings.scan_profile);
     step("read");
     let mut frame = raw::read(path)?;
+    step("decode");
     let image = Rgb::decode_jpeg(&frame.preview, 1)?.orient(frame.orientation);
     // The encoded preview has no other reader: free it before the long tail.
     drop(std::mem::take(&mut frame.preview));
+    let (fw, fh) = (image.width, image.height);
+    // The thumbnail and the camera's focus area are known as soon as the
+    // preview is decoded, so the live view can draw them before the detector.
+    let thumb = thumbnail(&image);
+    live(Live::Picture(&thumb));
+    // The camera's focus area, read from the makernote already in memory.
+    let af_area = frame.af_area((fw as u32, fh as u32));
+    if let Some(area) = af_area {
+        live(Live::Af(area));
+    }
+    live(Live::Stage("read"));
     // Resize outside the lock: only the network itself is serial.
     let input = detect::letterbox(&image);
     step("detect:wait");
@@ -802,8 +893,21 @@ pub fn cull_frame(
         step("detect");
         detector.detect_letterboxed(input, &options(settings, profile))?
     };
+    let kept: Vec<conrod_core::progress::LiveBox> = found
+        .iter()
+        .map(|det| {
+            conrod_core::progress::LiveBox::from_pixels(
+                detect::class_name(det.class_id),
+                det.conf,
+                det.bbox,
+                fw,
+                fh,
+            )
+        })
+        .collect();
+    live(Live::Boxes(&kept));
+    live(Live::Stage("detect"));
 
-    let (fw, fh) = (image.width, image.height);
     // Native-resolution luma, once: the subject's blur is measured on it.
     let grey = image.to_gray();
     step("sharpness");
@@ -818,10 +922,8 @@ pub fn cull_frame(
     let tilt = level.as_ref().and_then(|l| l.tilt_deg.map(|t| t as f32));
     let framing_policy = framing_policy(preset);
     let boxes: Vec<[f64; 4]> = found.iter().map(|det| det.bbox).collect();
-    // The camera's focus area, read from the makernote already in memory. A
-    // focus grid holds only when the detector found nothing but small objects
+    // A focus grid holds only when the detector found nothing but small objects
     // (`afsubject::usable`): its union is a depth-of-field map, not a point.
-    let af_area = frame.af_area((fw as u32, fh as u32));
     let af = af_area
         .map(|a| afsubject::FocusArea {
             area: [
@@ -966,6 +1068,7 @@ pub fn cull_frame(
             bystander: false,
         });
     }
+    live(Live::Stage("sharpness"));
     let mut eye_open_min = None;
     let mut smile_max = None;
     if let Some(detector) = faces {
@@ -983,10 +1086,12 @@ pub fn cull_frame(
             settings,
             &strictness,
             models,
+            &|waiting| step(if waiting { "faces:wait" } else { "faces" }),
         )?;
         subjects.extend(read.subjects);
         eye_open_min = read.eye_open_min;
         smile_max = read.smile_max;
+        live(Live::Stage("faces"));
     }
     // Rodeo and equestrian: the rider and the animal are one subject, and how
     // much the animal is rearing ranks the frames of a ride.
@@ -1106,6 +1211,11 @@ pub fn cull_frame(
         .any(|s| !s.bystander && matches!(s.region_type, "vehicle" | "person") && s.panning);
     let pan_share = panning.then_some(share_measured).flatten();
     let stars = sharpness::stars_for(rating);
+    live(Live::Rated {
+        stars,
+        verdict: sharpness::verdict_for(rating, settings.sharp_at, settings.blurred_below),
+        panning,
+    });
     // Exposure on the main subject, so a backlit rider's clipped whites are
     // told from a blown sky. A frame the focus area rates is of that area.
     let subject_box = match (af_sharpness, af) {
@@ -1141,7 +1251,7 @@ pub fn cull_frame(
         subjects,
         whole,
         stars,
-        thumb: thumbnail(&image),
+        thumb,
         rating,
         exposure,
         exif: frame.exposure.clone(),
@@ -1155,6 +1265,8 @@ pub fn cull_frame(
         pan_share,
         af: af_area,
         af_sharpness,
+        kept,
+        thumb_saved: false,
     })
 }
 
@@ -1213,18 +1325,33 @@ pub fn scan_files(
     progress: Option<Arc<crate::progress::Progress>>,
     on_frame: impl Fn(ScanResult) + Send + Sync + 'static,
 ) -> Scan {
-    scan_files_filtered(paths, settings, profile, hub, progress, |_| true, on_frame)
+    scan_files_filtered(
+        paths,
+        settings,
+        profile,
+        hub,
+        progress,
+        |_| {
+            Some(Pickup {
+                image_id: 0,
+                thumb: None,
+            })
+        },
+        on_frame,
+    )
 }
 
 /// The cull lane. `progress`, when given, is told which stage and step every
-/// worker is on, and gets the frame counts the status area cannot show.
+/// worker is on, what it has found on its frame so far, and gets the frame
+/// counts the status area cannot show. `should_scan` says whether a path is
+/// read at all (`None` skips it) and what the lane needs to know about it.
 pub(crate) fn scan_files_filtered(
     paths: Vec<PathBuf>,
     settings: Settings,
     profile: ScanProfile,
     hub: TaskHub,
     progress: Option<Arc<crate::progress::Progress>>,
-    should_scan: impl Fn(&Path) -> bool + Send + Sync + 'static,
+    should_scan: impl Fn(&Path) -> Option<Pickup> + Send + Sync + 'static,
     on_frame: impl Fn(ScanResult) + Send + Sync + 'static,
 ) -> Scan {
     let stop = Arc::new(AtomicBool::new(false));
@@ -1331,9 +1458,12 @@ pub(crate) fn scan_files_filtered(
         // album's `workers` setting overrides it within that cap.
         let workers = settings.cull_workers() as usize;
         let workers = workers.min(paths.len().max(1));
+        // The stages a frame passes through here: the faces stage is off on
+        // shoots that do not read faces, and then has no frames at all.
+        let stages = &CULL_STAGES[..if faces.is_some() { 4 } else { 3 }];
         if let Some(p) = &progress {
-            for stage in ["read", "detect", "sharpness", "faces"] {
-                p.total(stage, paths.len() as u64);
+            for stage in stages {
+                p.plan(stage, paths.len() as u64);
             }
             p.phase("detect");
             p.describe("detect", detector_name.clone(), device);
@@ -1394,20 +1524,30 @@ pub(crate) fn scan_files_filtered(
                     }
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(path) = paths.get(i) else { break };
-                    if !should_scan(path) {
+                    let Some(pickup) = should_scan(path) else {
+                        // Never read: it leaves every stage's total.
+                        if let Some(p) = progress.as_ref() {
+                            p.abandon(stages, 0, false);
+                        }
                         let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                         task.progress(n as u64, paths.len() as u64);
                         continue;
-                    }
+                    };
                     let file = path
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
+                    if let Some(p) = progress.as_ref() {
+                        p.pickup("read", lane, pickup.image_id, &file);
+                    }
                     let step = |step: &'static str| {
                         let Some(p) = progress.as_ref() else { return };
                         match step {
                             "detect:wait" => {
-                                p.waiting("read", lane, "detect", "lock", step, &file);
+                                p.waiting("read", lane, "detect", "detector", step, &file);
+                            }
+                            "faces:wait" => {
+                                p.waiting("read", lane, "faces", "faces", step, &file);
                             }
                             "detect" => p.busy("read", lane, "detect", step, &file),
                             "sharpness" => p.busy("read", lane, "sharpness", step, &file),
@@ -1415,8 +1555,46 @@ pub(crate) fn scan_files_filtered(
                             _ => p.busy("read", lane, "read", step, &file),
                         }
                     };
+                    // Stages the frame has finished, and whether its thumbnail
+                    // was written early, for the live view.
+                    let passed = std::cell::Cell::new(0usize);
+                    let thumb_saved = std::cell::Cell::new(false);
+                    let live = |event: Live<'_>| {
+                        let Some(p) = progress.as_ref() else { return };
+                        match event {
+                            Live::Picture(thumb) => {
+                                if let Some(path) = &pickup.thumb {
+                                    if crate::desktop::save_jpeg(thumb, path).is_ok() {
+                                        thumb_saved.set(true);
+                                        let url = path.to_string_lossy().into_owned();
+                                        p.live("read", lane, |f| f.thumb_url = Some(url));
+                                    }
+                                }
+                            }
+                            Live::Af(area) => p.live("read", lane, |f| {
+                                f.af = Some([area.x1, area.y1, area.x2, area.y2]);
+                                f.af_kind = Some(crate::progress::af_kind(area.kind));
+                            }),
+                            Live::Boxes(boxes) => {
+                                p.live("read", lane, |f| f.boxes = Some(boxes.to_vec()))
+                            }
+                            Live::Stage(stage) => {
+                                passed.set(passed.get() + 1);
+                                p.advance(stage, 1);
+                            }
+                            Live::Rated {
+                                stars,
+                                verdict,
+                                panning,
+                            } => p.live("read", lane, |f| {
+                                f.stars = Some(stars);
+                                f.verdict = Some(verdict.to_string());
+                                f.panning = Some(panning);
+                            }),
+                        }
+                    };
                     let detector = &detectors[lane % detectors.len()];
-                    match cull_frame(
+                    match cull_frame_live(
                         path,
                         detector,
                         settings,
@@ -1426,18 +1604,28 @@ pub(crate) fn scan_files_filtered(
                         expression.as_ref(),
                         quality.as_ref(),
                         step,
+                        &live,
                     ) {
-                        Ok(result) => on_frame(Ok(result)),
+                        Ok(mut result) => {
+                            result.thumb_saved = thumb_saved.get();
+                            if let Some(p) = progress.as_ref() {
+                                let last = stages[stages.len() - 1];
+                                p.busy("read", lane, last, "persist", &file);
+                            }
+                            on_frame(Ok(result));
+                        }
                         Err(e) => {
+                            // It came to nothing in the first stage it had not
+                            // finished: counted there, and out of what follows.
+                            if let Some(p) = progress.as_ref() {
+                                p.abandon(stages, passed.get().min(stages.len() - 1), true);
+                            }
                             on_frame(Err((path.clone(), e.clone())));
                             let t = hub.start(format!("Skipped {}", path.display()), 0);
                             t.fail(e);
                         }
                     }
                     if let Some(p) = progress.as_ref() {
-                        for stage in ["read", "detect", "sharpness", "faces"] {
-                            p.advance(stage, 1);
-                        }
                         p.idle("read", lane);
                     }
                     let n = done.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1478,6 +1666,117 @@ pub fn load_region_model(region: &str) -> Option<conrod_core::ridge::SharpModel>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The whole lane against the real detector: the live slot fills while a
+    /// frame is held and is empty after, the thumbnail is written once and early,
+    /// and the stage counters add up with a corrupt file in the folder.
+    #[test]
+    #[ignore = "needs the detector model in the data directory"]
+    fn a_real_scan_reports_live_frames_and_honest_counters() {
+        let dir = std::env::temp_dir().join(format!("conrod-live-lane-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("thumbs")).unwrap();
+        let mut paths = Vec::new();
+        for i in 0..5usize {
+            let pixels: Vec<u8> = (0..64 * 48 * 3).map(|n| (n * (i + 3)) as u8).collect();
+            let path = dir.join(format!("frame-{i}.jpg"));
+            crate::desktop::save_jpeg(&Rgb::new(64, 48, pixels), &path).unwrap();
+            paths.push(path);
+        }
+        let bad = dir.join("frame-bad.jpg");
+        std::fs::write(&bad, b"not a picture").unwrap();
+        paths.push(bad);
+
+        let settings = Settings::default();
+        let faces = ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people);
+        let progress = crate::progress::for_scan(1, &settings, faces);
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let sink = results.clone();
+        let thumbs = dir.join("thumbs");
+        let order = paths.clone();
+        let scan = scan_files_filtered(
+            paths,
+            settings.clone(),
+            ScanProfile::parse(&settings.scan_profile),
+            TaskHub::new(),
+            Some(progress.clone()),
+            move |path| {
+                let id = order.iter().position(|p| p == path)? as i64;
+                Some(Pickup {
+                    image_id: id,
+                    thumb: Some(thumbs.join(format!("thumb-{id}.jpg"))),
+                })
+            },
+            move |result| lock(&sink).push(result),
+        );
+        let mut held = 0;
+        while !scan.is_finished() {
+            for lane in progress.snapshot().pipeline.workers {
+                if let Some(frame) = lane.current {
+                    held += 1;
+                    assert_eq!(Some(frame.file.as_str()), lane.file.as_deref());
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let snap = progress.snapshot();
+        assert!(
+            snap.pipeline.workers.iter().all(|w| w.current.is_none()),
+            "a finished worker holds nothing: {held} frames were seen in flight"
+        );
+        let results = lock(&results);
+        let good: Vec<_> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+        assert_eq!(good.len(), 5);
+        assert!(
+            good.iter().all(|f| f.thumb_saved),
+            "written early, by the lane"
+        );
+        for (id, _) in good.iter().enumerate() {
+            assert!(thumbs_dir_has(&dir, id), "thumb-{id}.jpg is on disk");
+        }
+        let stage = |id: &str| snap.pipeline.stages.iter().find(|s| s.id == id).unwrap();
+        assert_eq!((stage("read").done, stage("read").total), (5, 5));
+        assert_eq!(stage("read").errors, 1, "the corrupt file failed reading");
+        for id in ["detect", "sharpness"] {
+            assert_eq!(
+                (stage(id).done, stage(id).total, stage(id).errors),
+                (5, 5, 0)
+            );
+        }
+        if faces {
+            assert_eq!((stage("faces").done, stage("faces").total), (5, 5));
+        } else {
+            assert_eq!((stage("faces").done, stage("faces").total), (0, 0));
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        fn thumbs_dir_has(dir: &Path, id: usize) -> bool {
+            dir.join("thumbs").join(format!("thumb-{id}.jpg")).is_file()
+        }
+    }
+
+    #[test]
+    fn a_pool_says_when_a_lane_has_to_wait_for_a_session() {
+        use std::sync::atomic::AtomicU32;
+        let pool = Pool::new(vec![1u8]);
+        let told = AtomicU32::new(0);
+        let note = |waiting: bool| {
+            told.fetch_add(if waiting { 1 } else { 10 }, Ordering::SeqCst);
+        };
+        drop(pool.lock_noting(&note));
+        assert_eq!(told.load(Ordering::SeqCst), 0, "a free session is no wait");
+        std::thread::scope(|s| {
+            let held = pool.lock();
+            let waiter = s.spawn(|| drop(pool.lock_noting(&note)));
+            while told.load(Ordering::SeqCst) == 0 {
+                std::thread::yield_now();
+            }
+            assert_eq!(told.load(Ordering::SeqCst), 1, "told before it blocks");
+            drop(held);
+            waiter.join().unwrap();
+        });
+        assert_eq!(told.load(Ordering::SeqCst), 11, "and told when it has one");
+    }
 
     #[test]
     fn a_condition_report_culls_only_clearly_blurred_subjects() {

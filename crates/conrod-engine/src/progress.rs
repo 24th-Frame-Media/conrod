@@ -7,8 +7,8 @@
 //! sends it as one event; the frontend draws the scan screen from that.
 
 use conrod_core::progress::{
-    Found, Overall, Pipeline, RateMeter, RecentFrame, ScanProgress, StageNode, WorkerLane,
-    RECENT_LIMIT, STAGES,
+    Found, LiveFrame, Overall, Pipeline, RateMeter, RecentFrame, ScanProgress, StageNode,
+    WorkerLane, RECENT_LIMIT, STAGES,
 };
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -52,6 +52,7 @@ struct StageState {
     workers_total: u32,
     done: u64,
     total: u64,
+    errors: u64,
     meter: RateMeter,
 }
 
@@ -72,6 +73,9 @@ struct LaneState {
     file: Option<String>,
     step: Option<&'static str>,
     since: Instant,
+    /// The frame the lane holds, filled in by the worker as it learns things.
+    /// Dropped whenever the lane moves to another file or goes idle.
+    current: Option<LiveFrame>,
 }
 
 pub struct Progress {
@@ -127,6 +131,7 @@ impl Progress {
                     file: None,
                     step: None,
                     since: Instant::now(),
+                    current: None,
                 });
             }
         }
@@ -144,6 +149,7 @@ impl Progress {
                         workers_total: s.workers,
                         done: 0,
                         total: 0,
+                        errors: 0,
                         meter: RateMeter::new(8.0),
                     })
                     .collect(),
@@ -175,6 +181,46 @@ impl Progress {
     /// One more item through `stage`.
     pub fn advance(&self, stage: &'static str, by: u64) {
         self.with_node(stage, |node| node.done = node.done.saturating_add(by));
+    }
+
+    /// `items` more frames are in front of `stage`.
+    pub fn plan(&self, stage: &'static str, items: u64) {
+        self.with_node(stage, |node| node.total = node.total.saturating_add(items));
+    }
+
+    /// `items` frames went through `stage` in an earlier run of this album: they
+    /// are in its total and its done count, so a resume reads `500 / 1000`, not
+    /// `0 / 500`.
+    pub fn carry(&self, stage: &'static str, items: u64) {
+        self.with_node(stage, |node| {
+            node.total = node.total.saturating_add(items);
+            node.done = node.done.saturating_add(items);
+        });
+    }
+
+    /// A pass over the whole album (grouping, picking) finished `items` frames.
+    pub fn settle(&self, stage: &'static str, items: u64) {
+        self.with_node(stage, |node| {
+            node.total = items;
+            node.done = items;
+        });
+    }
+
+    /// A frame that will not pass `stages[from]` or anything after it. With
+    /// `failed` it came to nothing inside `stages[from]` (counted in that stage's
+    /// `errors`); without, it was never going to be read (a hand reject). Either
+    /// way it leaves those stages' totals, so a stage's `done` still reaches its
+    /// `total`.
+    pub fn abandon(&self, stages: &[&'static str], from: usize, failed: bool) {
+        let mut nodes = crate::lock(&self.stages);
+        for (n, id) in stages.iter().enumerate().skip(from) {
+            if let Some(node) = nodes.iter_mut().find(|node| node.id == *id) {
+                node.total = node.total.saturating_sub(1);
+                if failed && n == from {
+                    node.errors += 1;
+                }
+            }
+        }
     }
 
     /// Fill in what a stage runs on, once its session is loaded.
@@ -237,6 +283,41 @@ impl Progress {
         self.lane(pool, index, pool, IDLE, None, None, None);
     }
 
+    /// `pool`'s worker `index` picked up `file` (database id `image_id`): it is
+    /// at the first step, with nothing found on it yet.
+    pub fn pickup(&self, pool: &'static str, index: usize, image_id: i64, file: &str) {
+        self.lane(pool, index, pool, BUSY, None, Some("read"), Some(file));
+        self.publish(pool, index, |_| {}, Some((image_id, file)));
+    }
+
+    /// Record what the worker has learned about the frame it holds. Does
+    /// nothing when the lane holds no frame.
+    pub fn live(&self, pool: &'static str, index: usize, f: impl FnOnce(&mut LiveFrame)) {
+        self.publish(pool, index, f, None);
+    }
+
+    fn publish(
+        &self,
+        pool: &'static str,
+        index: usize,
+        f: impl FnOnce(&mut LiveFrame),
+        start: Option<(i64, &str)>,
+    ) {
+        let mut lanes = crate::lock(&self.lanes);
+        let Some(lane) = lanes
+            .iter_mut()
+            .find(|lane| lane.pool == pool && lane.index as usize == index)
+        else {
+            return;
+        };
+        if let Some((image_id, file)) = start {
+            lane.current = Some(LiveFrame::new(image_id, file));
+        }
+        if let Some(current) = lane.current.as_mut() {
+            f(current);
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn lane(
         &self,
@@ -260,10 +341,18 @@ impl Progress {
         if lane.file.as_deref() != file || lane.state == IDLE {
             lane.since = Instant::now();
         }
+        // The slot belongs to one file: another file, or none, clears it.
+        if file.is_none() || lane.file.as_deref() != file {
+            lane.current = None;
+        }
         lane.stage = stage;
         lane.state = state;
         lane.waiting_for = waiting_for;
         lane.step = step;
+        if let (Some(current), Some(step)) = (lane.current.as_mut(), step) {
+            // `detect:wait` is still the detect step to the step ladder.
+            current.step = step.split(':').next().unwrap_or(step).to_string();
+        }
         if let Some(file) = file {
             if lane.file.as_deref() != Some(file) {
                 lane.file = Some(file.to_owned());
@@ -350,6 +439,7 @@ impl Progress {
                 queue_len: upstream.saturating_sub(node.done),
                 done: node.done,
                 total: node.total,
+                errors: node.errors,
                 rate_per_s: rate,
                 eta_s: eta,
             });
@@ -369,7 +459,10 @@ impl Progress {
         );
         let lane_out: Vec<WorkerLane> = lanes
             .iter()
-            .map(|lane| WorkerLane {
+            .enumerate()
+            .map(|(position, lane)| WorkerLane {
+                lane: position as u32,
+                current: lane.current.clone(),
                 stage: if lane.state == IDLE {
                     lane.pool.to_string()
                 } else {
@@ -439,6 +532,10 @@ impl Progress {
                 // its own work at the configured cost, which is 1 unit/s.
                 rate += if node.rate_per_s > 0.0 {
                     node.rate_per_s * weight
+                } else if matches!(node.id.as_str(), "group" | "pick") {
+                    // A short pass at the end: its work is counted in `left`
+                    // but it does not add a stream of its own while it waits.
+                    0.0
                 } else {
                     1.0
                 };
@@ -451,9 +548,12 @@ impl Progress {
             0.0
         };
         let eta = (rate > 0.0 && left > 0.0).then(|| left / rate);
+        // Grouping and picking are one pass at the end with no rate of their
+        // own, so they cannot be "warm" while the frames are still being read.
         let eta_confident = eta.is_some()
             && nodes
                 .iter()
+                .filter(|node| !matches!(node.id.as_str(), "group" | "pick"))
                 .filter(|node| node.total >= ETA_CONFIDENT_AFTER)
                 .all(|node| node.done >= ETA_CONFIDENT_AFTER);
         Overall {
@@ -464,6 +564,14 @@ impl Progress {
             eta_s: eta.map(round1),
             eta_confident,
         }
+    }
+}
+
+/// The wire name of a camera's autofocus area kind.
+pub(crate) fn af_kind(kind: conrod_io::af::AreaKind) -> conrod_core::progress::AfKind {
+    match kind {
+        conrod_io::af::AreaKind::Point => conrod_core::progress::AfKind::Point,
+        conrod_io::af::AreaKind::Grid => conrod_core::progress::AfKind::Grid,
     }
 }
 
@@ -588,6 +696,11 @@ mod tests {
             verdict: "sharp".into(),
             panning: true,
             label: None,
+            file: None,
+            stars: None,
+            boxes: Vec::new(),
+            af: None,
+            af_kind: None,
         });
         let snap = progress.snapshot();
         assert_eq!(snap.stage, "detect");
@@ -690,10 +803,167 @@ mod tests {
                 verdict: "sharp".into(),
                 panning: false,
                 label: None,
+                file: None,
+                stars: None,
+                boxes: Vec::new(),
+                af: None,
+                af_kind: None,
             });
         }
         let snap = progress.snapshot();
         assert_eq!(snap.recent.len(), RECENT_LIMIT);
         assert_eq!(snap.recent[0].image_id, RECENT_LIMIT as i64 + 4);
+    }
+
+    #[test]
+    fn a_lane_publishes_the_frame_it_holds_and_clears_it_when_it_finishes() {
+        let progress = fake(5);
+        let idle = progress.snapshot();
+        assert!(idle.pipeline.workers.iter().all(|w| w.current.is_none()));
+        let lanes: Vec<u32> = idle.pipeline.workers.iter().map(|w| w.lane).collect();
+        assert_eq!(lanes, [0, 1, 2], "dense ids over every lane");
+
+        progress.pickup("read", 1, 42, "IMG_1.CR3");
+        let at_pickup = progress.snapshot().pipeline.workers[1].clone();
+        let current = at_pickup.current.expect("the lane holds a frame");
+        assert_eq!((current.image_id, current.file.as_str()), (42, "IMG_1.CR3"));
+        assert_eq!(current.step, "read");
+        assert!(current.boxes.is_none() && current.stars.is_none());
+        assert!(progress.snapshot().pipeline.workers[0].current.is_none());
+
+        progress.busy("read", 1, "read", "decode", "IMG_1.CR3");
+        progress.live("read", 1, |f| f.thumb_url = Some("thumb-42.jpg".into()));
+        progress.waiting("read", 1, "detect", "detector", "detect:wait", "IMG_1.CR3");
+        let waiting = progress.snapshot().pipeline.workers[1].clone();
+        assert_eq!(waiting.state, "waiting");
+        assert_eq!(waiting.waiting_for.as_deref(), Some("detector"));
+        let current = waiting.current.unwrap();
+        assert_eq!(current.step, "detect", "the wait is still the detect step");
+        assert_eq!(current.thumb_url.as_deref(), Some("thumb-42.jpg"));
+
+        progress.busy("read", 1, "detect", "detect", "IMG_1.CR3");
+        progress.live("read", 1, |f| {
+            f.boxes = Some(vec![conrod_core::progress::LiveBox::from_pixels(
+                "car",
+                0.9,
+                [10.0, 10.0, 50.0, 30.0],
+                100,
+                100,
+            )]);
+            f.af = Some([0.2, 0.2, 0.3, 0.3]);
+            f.af_kind = Some(conrod_core::progress::AfKind::Grid);
+        });
+        progress.busy("read", 1, "sharpness", "sharpness", "IMG_1.CR3");
+        progress.live("read", 1, |f| {
+            f.stars = Some(4);
+            f.verdict = Some("sharp".into());
+            f.panning = Some(true);
+        });
+        let json = serde_json::to_value(progress.snapshot()).unwrap();
+        let live = &json["pipeline"]["workers"][1]["current"];
+        assert_eq!(live["step"], "sharpness");
+        assert_eq!(live["boxes"][0]["cls"], "car");
+        assert_eq!(live["boxes"][0]["box"][2], 0.5);
+        assert_eq!(live["af_kind"], "grid");
+        assert_eq!(live["stars"], 4);
+        assert_eq!(live["verdict"], "sharp");
+        assert_eq!(live["panning"], true);
+
+        // The next frame starts empty: nothing of the last one is left.
+        progress.pickup("read", 1, 43, "IMG_2.CR3");
+        let next = progress.snapshot().pipeline.workers[1].current.clone();
+        let next = next.unwrap();
+        assert_eq!(next.image_id, 43);
+        assert!(next.boxes.is_none() && next.af.is_none() && next.stars.is_none());
+
+        // Finishing clears the slot, and a stray update after that is ignored.
+        progress.idle("read", 1);
+        progress.live("read", 1, |f| f.stars = Some(5));
+        let done = progress.snapshot();
+        assert!(done.pipeline.workers[1].current.is_none());
+        let json = serde_json::to_value(done).unwrap();
+        assert!(json["pipeline"]["workers"][1]["current"].is_null());
+    }
+
+    #[test]
+    fn counters_follow_the_frames_and_add_up_to_the_album() {
+        let progress = fake(6);
+        // An album of 10 frames, 4 of them read in an earlier run.
+        for stage in ["read", "detect", "sharpness"] {
+            progress.carry(stage, 4);
+            progress.plan(stage, 6);
+        }
+        for stage in ["group", "pick"] {
+            progress.plan(stage, 10);
+        }
+        let stage = |p: &Arc<Progress>, id: &str| {
+            let snap = p.snapshot();
+            let node = snap.pipeline.stages.iter().find(|s| s.id == id).unwrap();
+            (node.done, node.total, node.errors)
+        };
+        assert_eq!(stage(&progress, "read"), (4, 10, 0), "a resume starts at 4");
+        assert_eq!(
+            stage(&progress, "faces"),
+            (0, 0, 0),
+            "an off stage stays empty"
+        );
+
+        // Frame 1 gets all the way through; frame 2 is read but the detector fails it.
+        let stages = ["read", "detect", "sharpness"];
+        for id in stages {
+            progress.advance(id, 1);
+        }
+        progress.advance("read", 1);
+        progress.abandon(&stages, 1, true);
+        // Frame 3 is a hand reject: never read, it leaves every total.
+        progress.abandon(&stages, 0, false);
+
+        assert_eq!(
+            stage(&progress, "read"),
+            (6, 9, 0),
+            "read took 2 of 6 new frames"
+        );
+        assert_eq!(
+            stage(&progress, "detect"),
+            (5, 8, 1),
+            "the failed frame is the detect stage's error"
+        );
+        assert_eq!(stage(&progress, "sharpness"), (5, 8, 0));
+
+        // The rest of the album finishes.
+        progress.advance("read", 3);
+        for id in ["detect", "sharpness"] {
+            progress.advance(id, 3);
+        }
+        for id in stages {
+            let (done, total, _) = stage(&progress, id);
+            assert_eq!(done, total, "{id} ends with every frame through it");
+        }
+        // album = frames in the stage + frames that failed in it or before it + hand rejects
+        let (_, read_total, _) = stage(&progress, "read");
+        assert_eq!(read_total + 1, 10, "10 frames less the one hand reject");
+
+        progress.settle("group", 8);
+        progress.settle("pick", 8);
+        assert_eq!(stage(&progress, "group"), (8, 8, 0));
+        assert_eq!(stage(&progress, "pick"), (8, 8, 0));
+    }
+
+    #[test]
+    fn a_pass_with_no_rate_of_its_own_does_not_hold_the_eta_back() {
+        let progress = fake(7);
+        for stage in ["read", "detect", "sharpness"] {
+            progress.plan(stage, 100);
+            progress.advance(stage, 30);
+        }
+        // Grouping waits at the end with the whole album in front of it.
+        progress.plan("group", 100);
+        progress.plan("pick", 100);
+        let snap = progress.snapshot();
+        assert!(snap.overall.eta_s.is_some());
+        assert!(
+            snap.overall.eta_confident,
+            "an unstarted group pass is not a cold stage"
+        );
     }
 }

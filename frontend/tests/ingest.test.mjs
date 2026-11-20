@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   boxLabel, boxStyle, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneBadge, laneFrame, laneKey,
   laneNumber, laneState, laneText, leftLabel, phaseRunning, phaseTone, phaseWord, selectLanes, stageOfStep, starsText, stepIndex, stripItems,
-  verdictText, visionExpected, tagFits, tagWidth,
+  verdictText, visionExpected, tagFits, tagWidth, afLabel, afTagSpot, failedWords, TAG_HEIGHT,
 } from '../src/lib/ingest.mjs';
 
 const stage = (id, done, total, busy = 0, workers = 2, extra = {}) => ({ id, label: id[0].toUpperCase() + id.slice(1), model: `${id}-model`, device: 'CPU', workers_total: workers, workers_busy: busy, queue_len: 0, done, total, rate_per_s: 0, eta_s: null, ...extra });
@@ -226,4 +226,96 @@ test('a label is drawn only when its box is wide enough for it', () => {
   assert.equal(tagFits([0.3, 0.47, 0.42, 0.58], 300, 'AF'), true);
   assert.equal(tagFits([0.3, 0.47, 0.32, 0.58], 300, 'AF'), false);
   assert.equal(tagFits(null, 300, 'AF'), false);
+});
+
+
+test('a lane takes the real fields of the engine payload: boxes, autofocus kind, rating', () => {
+  const current = {
+    image_id: 42, file: 'IMG_1.CR3', step: 'sharpness', thumb_url: 'cache/native/thumb-42.jpg',
+    boxes: [{ cls: 'car', conf: 0.92, box: [0.2, 0.4, 0.7, 0.8] }], af: [0.4, 0.5, 0.5, 0.6], af_kind: 'grid', stars: 4, verdict: 'soft', panning: true,
+  };
+  const frame = laneFrame(worker('sharpness', 0, 'busy', { lane: 3, file: 'IMG_1.CR3', current }), []);
+  assert.deepEqual(frame.boxes, current.boxes);
+  assert.equal(frame.af_kind, 'grid');
+  assert.equal(frame.stars, 4);
+  assert.equal(frame.verdict, 'soft');
+  assert.equal(frame.panning, true);
+  assert.equal(frame.step, 'sharpness');
+  const point = laneFrame(worker('read', 0, 'busy', { current: { image_id: 1, file: 'a', step: 'detect', af: [0.1, 0.1, 0.2, 0.2] } }), []);
+  assert.equal(point.af_kind, 'point', 'an area with no kind is a point');
+  const none = laneFrame(worker('read', 0, 'busy', { current: { image_id: 1, file: 'a', step: 'read' } }), []);
+  assert.equal(none.af_kind, null);
+  const finished = laneFrame(worker('read', 0, 'idle', { file: 'IMG_9.CR3', current: null }), [{ file: 'IMG_9.CR3', af: [0.1, 0.1, 0.3, 0.3], af_kind: 'grid', thumb_url: 't.jpg', verdict: 'sharp' }]);
+  assert.equal(finished.af_kind, 'grid', 'the last finished frame fills the lane that has none');
+  assert.equal(laneText(worker('read', 0, 'waiting', { waiting_for: 'faces', current })), 'waiting for faces');
+  assert.equal(laneText(worker('read', 0, 'waiting', { waiting_for: 'detector', current })), 'waiting for detector');
+});
+
+test('a stage that lost frames says how many failed', () => {
+  assert.equal(failedWords(0), '');
+  assert.equal(failedWords(undefined), '');
+  assert.equal(failedWords(2), '2 failed');
+  assert.equal(failedWords(1200), '1,200 failed');
+  const [read, detect] = ingestNodes({ stages: [stage('read', 497, 497, 0, 2, { errors: 3 }), stage('detect', 100, 497, 2)] });
+  assert.equal(read.sub, '497 / 497', 'the counters reach the total: failed frames are out of it');
+  assert.match(read.meta, /^3 failed · /);
+  assert.match(read.title, /3 failed/);
+  assert.doesNotMatch(detect.meta, /failed/);
+});
+
+test('the autofocus label reads AF, or AF grid for a grid union', () => {
+  assert.equal(afLabel('point'), 'AF');
+  assert.equal(afLabel(undefined), 'AF');
+  assert.equal(afLabel('grid'), 'AF grid');
+});
+
+test('the autofocus tag keeps to the bottom-left unless a detection label is there', () => {
+  const frame = { width: 400, height: 300 };
+  const af = [0.4, 0.4, 0.6, 0.6];
+  assert.equal(afTagSpot(af, [], frame), 'bl', 'nothing in the way');
+  assert.equal(afTagSpot(af, [{ cls: 'car', conf: 0.9, box: [0.1, 0.1, 0.9, 0.9] }], frame), 'bl', 'a car label at the car box top-left is far away');
+  // A detection whose top-left corner lands on the AF box bottom-left: its label sits where the AF tag would.
+  const onTag = [{ cls: 'car', conf: 0.92, box: [0.4, 0.55, 0.9, 0.95] }];
+  assert.equal(afTagSpot(af, onTag, frame), 'br', 'moves to the bottom-right');
+  const both = [...onTag, { cls: 'car', conf: 0.88, box: [0.5, 0.55, 0.95, 0.95] }];
+  assert.equal(afTagSpot(af, both, frame), 'tr', 'both bottom corners taken');
+});
+
+test('a detection label too narrow to be drawn does not push the autofocus tag away', () => {
+  const frame = { width: 400, height: 300 };
+  const af = [0.4, 0.4, 0.6, 0.6];
+  const thin = [{ cls: 'person', conf: 0.5, box: [0.4, 0.55, 0.42, 0.9] }];
+  assert.equal(tagFits(thin[0].box, frame.width, boxLabel(thin[0])), false);
+  assert.equal(afTagSpot(af, thin, frame), 'bl');
+});
+
+test('the autofocus tag never overlaps a drawn label, and is dropped rather than collide', () => {
+  const frame = { width: 400, height: 300 };
+  const af = [0.3, 0.45, 0.55, 0.62];
+  const w = tagWidth('AF');
+  const hit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  const spots = (x1, y1, x2, y2) => ({
+    bl: { x: x1, y: y2 - TAG_HEIGHT }, br: { x: x2 - w, y: y2 - TAG_HEIGHT }, tr: { x: x2 - w, y: y1 }, tl: { x: x1, y: y1 },
+    below: { x: x1, y: y2 }, above: { x: x1, y: y1 - TAG_HEIGHT },
+  });
+  const [x1, y1, x2, y2] = [af[0] * 400, af[1] * 300, af[2] * 400, af[3] * 300];
+  const where = spots(x1, y1, x2, y2);
+  // Labels over every spot but 'above': the tag lands there.
+  const over = ['bl', 'br', 'tr', 'tl', 'below'].map((s, i) => ({ cls: 'car', conf: 0.9 - i / 100, box: [where[s].x / 400, where[s].y / 300, where[s].x / 400 + 0.3, where[s].y / 300 + 0.2] }));
+  const spot = afTagSpot(af, over, frame);
+  assert.equal(spot, 'above');
+  const tag = { ...where[spot], w, h: TAG_HEIGHT };
+  for (const b of over) assert.equal(hit(tag, { x: b.box[0] * 400, y: b.box[1] * 300, w: tagWidth(boxLabel(b)), h: TAG_HEIGHT }), false);
+  // Now the spot above is taken too.
+  const all = [...over, { cls: 'car', conf: 0.5, box: [where.above.x / 400, where.above.y / 300, where.above.x / 400 + 0.3, where.above.y / 300 + 0.1] }];
+  assert.equal(afTagSpot(af, all, frame), null, 'every spot taken: the dashed box alone says where the camera focused');
+  assert.equal(afTagSpot([0.3, 0.45, 0.34, 0.62], [], frame), null, 'a box too narrow for its tag has none');
+  assert.equal(afTagSpot(null, [], frame), null);
+  assert.equal(afTagSpot(af, [], { width: 0, height: 0 }), null);
+});
+
+test('the autofocus tag goes outside a box too short for it, and never off the picture', () => {
+  const frame = { width: 400, height: 300 };
+  assert.equal(afTagSpot([0.3, 0.5, 0.6, 0.52], [], frame), 'below', 'a 6 px tall box cannot hold a 15 px tag');
+  assert.equal(afTagSpot([0.3, 0.97, 0.6, 0.99], [], frame), 'above', 'below would fall off the picture');
 });
