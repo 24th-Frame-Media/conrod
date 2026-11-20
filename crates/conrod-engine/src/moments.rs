@@ -16,8 +16,9 @@ use conrod_io::{settings::Settings as IoSettings, vlm};
 use conrod_vision::imageops::Rgb;
 use rusqlite::params;
 use serde_json::Value;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -29,11 +30,52 @@ const PEAK_FRAMES: usize = 8;
 /// A peak must be at least this likely, and beat the runner-up, to count.
 const PEAK_FLOOR: f64 = 0.5;
 
-/// The in-process model's seat. The decider crate swaps this for a loaded
-/// model; until then the in-process transport fails plainly and the OpenRouter
-/// transport is used by choice only.
+thread_local! {
+    /// What the DECIDER node shows for the call this thread is making: the frame's
+    /// name and its picture. Set around each judge call by [`shown_as`].
+    static SHOWN: RefCell<Option<(String, Option<PathBuf>)>> = const { RefCell::new(None) };
+}
+
+/// Run `f` with the decision model's calls labelled for the DECIDER node.
+fn shown_as<T>(label: &str, thumb: Option<PathBuf>, f: impl FnOnce() -> T) -> T {
+    SHOWN.with(|s| *s.borrow_mut() = Some((label.to_string(), thumb)));
+    let out = f();
+    SHOWN.with(|s| *s.borrow_mut() = None);
+    out
+}
+
+/// The in-process model's seat: the decider service when it is turned on and ready
+/// (installed, with room on the card), else an unavailable seat, so the judge
+/// falls back to OpenRouter by its transport setting or to no judgement at all.
+/// Every call goes through [`crate::decider::Service::decide`], so it is queued on the
+/// single GPU slot, shown on the DECIDER node (`decider-progress`), and gated against the
+/// scan's GPU stages on a small card.
 pub(crate) fn in_process_seat() -> InProcess {
-    InProcess::unavailable()
+    seat(crate::decider::service())
+}
+
+fn seat(service: &'static crate::decider::Service) -> InProcess {
+    if !service.available() {
+        return InProcess::unavailable();
+    }
+    InProcess::with(move |request| {
+        let (label, thumb) = SHOWN
+            .with(|s| s.borrow().clone())
+            .unwrap_or_else(|| ("Moments".to_string(), None));
+        service.decide(&label, thumb.as_deref(), request)
+    })
+}
+
+/// The frame's file name, for the DECIDER node.
+fn frame_label(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// The cached preview of a frame, when there is one on disk.
+fn thumb_of(preview: Option<&str>) -> Option<PathBuf> {
+    preview.map(PathBuf::from).filter(|p| p.is_file())
 }
 
 fn data_url(image: &Rgb, edge: u32) -> String {
@@ -127,6 +169,8 @@ pub(crate) fn run(
                     break;
                 };
                 let id = frame["id"].as_i64().unwrap_or_default();
+                let label = frame_label(frame["path"].as_str().unwrap_or_default());
+                let thumb = thumb_of(frame["preview_path"].as_str());
                 let Ok(image) = picture(
                     frame["preview_path"].as_str(),
                     frame["path"].as_str().unwrap_or_default(),
@@ -134,7 +178,9 @@ pub(crate) fn run(
                     continue;
                 };
                 // A failed answer leaves the frame unjudged; a retry judges it later.
-                if let Ok(verdict) = judge.judge(context, vocab, &data_url(&image, FRAME_EDGE)) {
+                let url = data_url(&image, FRAME_EDGE);
+                let verdict = shown_as(&label, thumb, || judge.judge(context, vocab, &url));
+                if let Ok(verdict) = verdict {
                     if store(d, id, &verdict).is_ok() {
                         judged.fetch_add(1, Ordering::Relaxed);
                     }
@@ -201,7 +247,9 @@ fn peaks(
             continue;
         }
         // A broken answer is no opinion: the burst keeps its order.
-        let Ok(Some(ps)) = judge.peak(context, &images) else {
+        let label = format!("Burst of {} frames", chosen.len());
+        let thumb = thumb_of(chosen[0]["preview_path"].as_str());
+        let Ok(Some(ps)) = shown_as(&label, thumb, || judge.peak(context, &images)) else {
             continue;
         };
         let winner = peak_frame(&ps, PEAK_FLOOR);
@@ -226,4 +274,48 @@ fn peaks(
         ));
     }
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use conrod_core::decision::{DecisionTransport, Request};
+    use conrod_core::moments::vocabulary;
+    use conrod_core::profile::ShootPreset;
+
+    fn leaked_service() -> &'static crate::decider::Service {
+        Box::leak(Box::default())
+    }
+
+    #[test]
+    fn the_seat_is_empty_unless_the_decision_model_is_on_and_ready() {
+        // A fresh service is switched off: the judge falls back (OpenRouter, or nothing).
+        let seat = seat(leaked_service());
+        assert!(!seat.is_available());
+        let request = Request::new("x");
+        assert!(seat.decide(&request).unwrap_err().contains("not installed"));
+    }
+
+    #[test]
+    fn a_frame_names_the_calls_made_for_it_and_only_for_it() {
+        assert_eq!(frame_label("D:\\shoot\\IMG_0042.CR3"), "IMG_0042.CR3");
+        assert!(thumb_of(None).is_none());
+        assert!(thumb_of(Some("Z:\\nowhere\\p.jpg")).is_none());
+        let seen = shown_as("IMG_1.CR3", None, || SHOWN.with(|s| s.borrow().clone()));
+        assert_eq!(seen.unwrap().0, "IMG_1.CR3");
+        assert!(SHOWN.with(|s| s.borrow().is_none()), "cleared afterwards");
+    }
+
+    #[test]
+    fn a_moment_request_reaches_the_service_with_its_questions_in_order() {
+        // A turned-off service refuses without touching the GPU, but only after the
+        // request is built exactly as the judge builds it: tags in vocabulary order.
+        let vocab = vocabulary(ShootPreset::Wedding);
+        let request = conrod_core::decision::moment_request("Weddings.", vocab, vec![]);
+        let first = request.questions.keys().next().unwrap();
+        assert_eq!(first, &conrod_core::decision::moment_id(vocab[0].key));
+        let err = leaked_service()
+            .decide("IMG_1", None, &request)
+            .unwrap_err();
+        assert!(err.contains("turned off"), "{err}");
+    }
 }

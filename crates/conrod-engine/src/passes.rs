@@ -1037,6 +1037,8 @@ pub fn redetect(d: &Arc<Desktop>, job: i64) -> Result<Value> {
             .unwrap_or(1)
             .clamp(1, 16)
             .min(frames.len());
+        // The detector and face sessions below share the card with the decision model.
+        let _gpu = crate::gpu::stage();
         let mut detectors = Vec::with_capacity(lanes);
         for _ in 0..lanes {
             let detector = conrod_vision::detect::Detector::load(
@@ -1575,6 +1577,7 @@ pub(crate) fn embed_faces_missing(
     }
     // Optional: `ensure` reports a failed SFace install and carries on.
     crate::setup::ensure(&d.hub, stop, &[models::FACE_ID])?;
+    let _gpu = crate::gpu::stage();
     let mut identity = models::find(models::FACE_ID)
         .and_then(|model| FaceEmbedder::load(&model).ok())
         .zip(crate::load_faces().ok());
