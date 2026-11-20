@@ -38,6 +38,24 @@ export function PresetPolicy({ preset, overrides, onChange, disabled, onSummary 
       <p className="policy-title">For {summary.label.toLowerCase()}, Conrod will</p>
       {list('Look for', summary.detects)}
       {list('Read', summary.reads)}
+      {summary.moments.vocabulary.length > 0 && (
+        <>
+          <h4>Moments</h4>
+          <ul className="policy-list">
+            {[summary.moments.detect, summary.moments.rank].map((row) => (
+              <li key={row.key} className={`policy-row${row.on ? ' on' : ''}`}>
+                <label>
+                  <input type="checkbox" checked={row.on} disabled={disabled || row.blocked} onChange={(e) => onChange(nextOverrides(overrides, row, e.target.checked))} />
+                  <span>{row.label}</span>
+                </label>
+                {row.blocked && <small className="muted">{needsLabel(summary, row)}</small>}
+                {row.overridden && !row.blocked && <small className="policy-tag">{row.default ? 'off for this album' : 'on for this album'}</small>}
+              </li>
+            ))}
+          </ul>
+          <p className="policy-moments muted">{summary.moments.vocabulary.map((m) => m.label).join(' \u00b7 ')}</p>
+        </>
+      )}
       <p className="policy-notes muted">{noteList(summary).join(' \u00b7 ')}</p>
     </section>
   );

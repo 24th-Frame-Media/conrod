@@ -4,6 +4,7 @@ import { type Scope, type Settings } from '../lib/types';
 import { ShootTypeSelect } from './ShootTypeSelect';
 import { PresetPolicy } from './PresetPolicy';
 import { overridesOf, type Overrides } from '../lib/presetPolicy.mjs';
+import { thresholdOf } from '../lib/moments.mjs';
 import { GroupingFields, groupingOf, type GroupingValues } from './GroupingFields';
 import { IDENTIFY_SCOPE_OPTIONS, identifyScopeOf } from '../lib/identify.mjs';
 
@@ -21,6 +22,8 @@ type Props = {
     group_vehicles: boolean;
     /** Which subjects identification reads; does not need a regroup. */
     identify_scope: Scope;
+    /** How likely a moment must be before it counts (0.5 to 1). */
+    moments_threshold: number;
   } & GroupingValues) => Promise<void>;
 };
 
@@ -37,6 +40,7 @@ export function ShootSettingsModal({
   const [readAction, setReadAction] = useState(initialSettings.read_action !== false);
   const [groupVehicles, setGroupVehicles] = useState(initialSettings.group_vehicles !== false);
   const [identifyScope, setIdentifyScope] = useState<Scope>(() => identifyScopeOf(initialSettings.identify_scope));
+  const [momentsThreshold, setMomentsThreshold] = useState(() => String(thresholdOf(initialSettings.moments_threshold)));
   const [grouping, setGrouping] = useState<GroupingValues>(() => groupingOf(initialSettings));
   const [saving, setSaving] = useState(false);
   const backdrop = useBackdropClose(onClose);
@@ -48,6 +52,7 @@ export function ShootSettingsModal({
       setReadAction(initialSettings.read_action !== false);
       setGroupVehicles(initialSettings.group_vehicles !== false);
       setIdentifyScope(identifyScopeOf(initialSettings.identify_scope));
+      setMomentsThreshold(String(thresholdOf(initialSettings.moments_threshold)));
       setGrouping(groupingOf(initialSettings));
       setSaving(false);
     }
@@ -64,6 +69,7 @@ export function ShootSettingsModal({
         read_action: readAction,
         group_vehicles: groupVehicles,
         identify_scope: identifyScope,
+        moments_threshold: thresholdOf(momentsThreshold),
         ...grouping,
       });
       onClose();
@@ -102,6 +108,12 @@ export function ShootSettingsModal({
             <small className="muted">
               {(IDENTIFY_SCOPE_OPTIONS.find((option) => option.id === identifyScope) ?? IDENTIFY_SCOPE_OPTIONS[0]).hint}
             </small>
+          </div>
+
+          <div className="field-group">
+            <label className="field-label" htmlFor="shoot-moments-threshold">Moment confidence</label>
+            <input id="shoot-moments-threshold" type="number" min={0.5} max={1} step={0.05} value={momentsThreshold} disabled={saving} onChange={(e) => setMomentsThreshold(e.target.value)} />
+            <small className="muted">A moment must be this likely before it is shown as sure or can lift a frame. Below it, it shows as maybe and never changes ranking.</small>
           </div>
 
           <div className="field-group toggles-group">

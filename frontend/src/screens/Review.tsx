@@ -26,6 +26,7 @@ import { profileLabel, profileParent } from '../lib/types';
 import { facetsFor } from '../lib/facets.mjs';
 import { usePresetPolicy } from '../state/usePresetPolicy';
 import { isOn, overridesOf } from '../lib/presetPolicy.mjs';
+import { thresholdOf } from '../lib/moments.mjs';
 import type { ReviewModel } from '../state/useReview';
 import { Viewer } from './Viewer';
 import { Compare } from './Compare';
@@ -461,7 +462,8 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const busy = scanning || status.operations.some((key) => key.endsWith(`:${jobId}`));
   const currentParent = profileParent(currentProfile);
   const kind = currentParent === 'portrait' ? 'portrait'
-    : currentParent === 'motorsport' ? (currentJob?.include_people ? 'motorsport+people' : 'motorsport')
+    : currentParent === 'motorsport' && !isOn(policy, 'vehicles') ? 'mixed'
+    : currentParent === 'motorsport' ? (currentJob?.include_people || isOn(policy, 'faces') ? 'motorsport+people' : 'motorsport')
     : 'mixed';
   const albumSettings: Settings = {
     ...settings,
@@ -979,6 +981,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           : <PhotoGrid frames={frames} facts={facts} ranks={ranks} keepers={keepers} singletons={singletons} suggestions={suggestions} selected={selected} onSelect={rv.setSelected} onOpen={openViewer} onCols={setCols}
               onReject={(id, rejected) => void rv.mark({ rejected }, id)} onPick={acceptSuggestion} onDecide={(id, values) => void rv.mark(values, id)} empty={emptyState} />}
         <Inspector frame={frame} detections={frame ? facts.get(frame.id)?.dets ?? [] : []} allDetections={review.detections} allFrames={review.frames} known={known} scanning={scanning} kind={kind}
+          moments={{ vocabulary: policy.moments.vocabulary, threshold: thresholdOf(albumSetting(currentJob, 'moments_threshold', settings)), rankOn: isOn(policy, 'moments_rank'), detectOn: isOn(policy, 'moments_detect') }}
           onMark={(values) => void rv.mark(values)} onOpen={openViewer} onEdit={onEdit} />
       </div>
       {view === 'loupe' && frame && (

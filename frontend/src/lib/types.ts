@@ -34,6 +34,8 @@ export type Frame = {
   taste?: number | null;
   /** Rodeo/equestrian only: how much the animal is rearing under its rider. */
   buck_score?: number | null;
+  /** What the moment judge saw in the frame (JSON: tags with probabilities); null until judged. */
+  moments?: string | null;
   /** Composition, measured on demand: where the subject sits and what the frame reads as. Null until `composition` runs. */
   comp_placement?: number | null;
   comp_mode?: 'centre' | 'thirds' | 'phi' | null;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import policies from '../src/lib/presetPolicies.mjs';
 import {
-  DETECT_KEYS, READ_KEYS, applyOverrides, defaultSummary, facetsFromSummary, isOn, needsLabel, nextOverrides, noteList, overridesOf,
+  DETECT_KEYS, READ_KEYS, MOMENT_KEYS, applyOverrides, defaultSummary, facetsFromSummary, isOn, needsLabel, nextOverrides, noteList, overridesOf,
 } from '../src/lib/presetPolicy.mjs';
 
 const rust = readFileSync(new URL('../../crates/conrod-core/src/profile.rs', import.meta.url), 'utf8');
@@ -103,8 +103,31 @@ test('the notes say what is not a switch, in plain words', () => {
 });
 
 test('the sidebar tabs follow what the shoot reads', () => {
-  assert.deepEqual(facetsFromSummary(policies.landscape), []);
-  assert.deepEqual(facetsFromSummary(applyOverrides(policies.portrait, { vehicles: true, numbers: true })), ['number', 'person', 'subject']);
+  assert.deepEqual(facetsFromSummary(policies.landscape), ['moment']);
+  assert.deepEqual(facetsFromSummary(policies['property-listing']), []);
+  assert.deepEqual(facetsFromSummary(applyOverrides(policies.portrait, { vehicles: true, numbers: true })), ['number', 'person', 'subject', 'moment']);
   assert.equal(defaultSummary('nonsense').preset, 'mix');
   assert.equal(defaultSummary('Motorsport ').preset, 'motorsport');
+});
+
+test('the moment switches are on where the type has moments, and ranking needs detecting', () => {
+  for (const [id, s] of Object.entries(policies)) {
+    assert.deepEqual([s.moments.detect.key, s.moments.rank.key], MOMENT_KEYS, id);
+    const has = s.moments.vocabulary.length > 0;
+    assert.equal(s.moments.detect.default, has, id);
+    assert.equal(s.moments.rank.default, has, id);
+    for (const m of s.moments.vocabulary) assert.ok(m.label && m.weight > 0 && m.weight <= 1, `${id} ${m.key}`);
+  }
+  const off = applyOverrides(policies.wedding, { moments_detect: false });
+  assert.equal(isOn(off, 'moments_detect'), false);
+  assert.equal(isOn(off, 'moments_rank'), false);
+  assert.equal(off.moments.rank.blocked, true);
+  assert.equal(needsLabel(off, off.moments.rank), 'needs Spot moments');
+  const rankOff = applyOverrides(policies.wedding, { moments_rank: false });
+  assert.equal(isOn(rankOff, 'moments_detect'), true);
+  assert.equal(isOn(rankOff, 'moments_rank'), false);
+  // Wedding moments are the wedding's, a track day's are the track's.
+  const keys = (id) => policies[id].moments.vocabulary.map((m) => m.key);
+  assert.ok(keys('wedding').includes('first_kiss') && !keys('wedding').includes('tyre_smoke'));
+  assert.ok(keys('motorsport-track').includes('tyre_smoke') && !keys('motorsport-track').includes('first_kiss'));
 });

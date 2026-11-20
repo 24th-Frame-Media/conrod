@@ -6,10 +6,10 @@ import type { Facet } from '../lib/types';
 
 type Props = { preset: string; overrides?: Record<string, boolean>; facets: Record<FacetKind, FacetItem[]>; facet: Facet | null; onPick: (facet: Facet | null) => void };
 
-const TABS: Record<FacetKind, string> = { number: 'Numbers', plate: 'Plates', make: 'Makes', team: 'Teams', person: 'People', subject: 'Subjects' };
+const TABS: Record<FacetKind, string> = { number: 'Numbers', plate: 'Plates', make: 'Makes', team: 'Teams', person: 'People', subject: 'Subjects', moment: 'Moments' };
 const EMPTY: Record<FacetKind, string> = {
   number: 'No race numbers read yet', plate: 'No plates read yet', make: 'No makes read yet', team: 'No teams read yet',
-  person: 'No people found yet. Turn on people for this album', subject: 'No subjects found yet',
+  person: 'No people found yet. Turn on people for this album', subject: 'No subjects found yet', moment: 'No moments spotted yet',
 };
 const sentence = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
@@ -30,7 +30,7 @@ export function Facets({ preset, overrides = {}, facets, facet, onPick }: Props)
     const at = facets.person.findIndex((p) => p.value === value);
     return facets.person[at]?.who || `Person ${at + 1}`;
   };
-  const label = (f: Facet) => (f.kind === 'person' ? personLabel(f.value) : f.kind === 'number' ? `#${f.value}` : f.kind === 'subject' ? sentence(f.value) : f.value);
+  const label = (f: Facet) => (f.kind === 'person' ? personLabel(f.value) : f.kind === 'number' ? `#${f.value}` : f.kind === 'subject' || f.kind === 'moment' ? sentence(f.value.replace(/_/g, ' ')) : f.value);
   return (
     <aside className="facets" aria-label={allowed.map((k) => TABS[k]).join(', ')}>
       {tabs.length > 1 && (
@@ -57,7 +57,7 @@ export function Facets({ preset, overrides = {}, facets, facet, onPick }: Props)
                   </>
                 ) : (
                   <>
-                    <span className="n">{kind === 'number' ? '#' : ''}{kind === 'subject' ? sentence(item.value) : item.value}</span>
+                    <span className="n">{kind === 'number' ? '#' : ''}{kind === 'subject' ? sentence(item.value) : kind === 'moment' ? sentence(item.value.replace(/_/g, ' ')) : item.value}</span>
                     <span className="who">{item.who}</span>
                   </>
                 )}

@@ -6,11 +6,13 @@ export type PolicyRow = {
 };
 export type PolicySummary = {
   preset: string; label: string; profile: string; detects: PolicyRow[]; reads: PolicyRow[];
+  moments: { detect: PolicyRow; rank: PolicyRow; vocabulary: { key: string; label: string; weight: number }[] };
   panForgiven: boolean; blur: string; levelCheck: boolean; darkOk: boolean; deliverMost: boolean;
 };
 export type Overrides = Record<string, boolean>;
 export const DETECT_KEYS: readonly string[];
 export const READ_KEYS: readonly string[];
+export const MOMENT_KEYS: readonly string[];
 export const FACET_ORDER: readonly FacetKind[];
 export function defaultSummary(preset: string | null | undefined): PolicySummary;
 export function overridesOf(stored: unknown): Overrides;
