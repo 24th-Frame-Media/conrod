@@ -245,6 +245,7 @@ fn racing_hints_drop_the_plate_from_prompt_and_schema() {
     let racing = VlmHints {
         racing: true,
         candidates: vec!["Ford Mustang S650".into(), "Toyota GR Supra".into()],
+        ..VlmHints::default()
     };
     let prompt = vehicle_prompt(&settings, false, &racing);
     assert!(!prompt.contains("- plate:"));

@@ -34,6 +34,8 @@ export type Frame = {
   taste?: number | null;
   /** Rodeo/equestrian only: how much the animal is rearing under its rider. */
   buck_score?: number | null;
+  /** What the moment judge saw in the frame (JSON: tags with probabilities); null until judged. */
+  moments?: string | null;
   /** Composition, measured on demand: where the subject sits and what the frame reads as. Null until `composition` runs. */
   comp_placement?: number | null;
   comp_mode?: 'centre' | 'thirds' | 'phi' | null;
@@ -152,7 +154,7 @@ export type Sort = 'review' | 'best' | 'worst' | 'frame' | 'pick' | 'taste';
 /** Which subjects identification reads: the suggested keeper of each burst, or every subject. */
 export type Scope = 'keepers' | 'everything';
 export type Facet = { kind: import('./facets.mjs').FacetKind; value: string };
-export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean; scanProfile?: string; blurStrictness?: string; burstGap?: number; groupingStacks?: boolean; groupingSensitivity?: string; groupingPause?: number; groupingKeepPans?: boolean; groupingFocusAnchor?: boolean; groupingMerge?: boolean; workflowMode?: string; identifyScope?: Scope } | { jobId: number };
+export type ScanArgs = { root: string; label: string; profile: string; recursive?: boolean; stage?: 'index' | 'cull' | 'all'; readPlates?: boolean; readNumbers?: boolean; includePeople?: boolean; overrides?: Record<string, boolean>; scanProfile?: string; blurStrictness?: string; burstGap?: number; groupingStacks?: boolean; groupingSensitivity?: string; groupingPause?: number; groupingKeepPans?: boolean; groupingFocusAnchor?: boolean; groupingMerge?: boolean; workflowMode?: string; identifyScope?: Scope } | { jobId: number };
 export type MarkValues = { stars?: number | null; rejected?: boolean; picked?: boolean };
 export type Toaster = (message: string, options?: { tone?: 'error' | 'ok'; ms?: number }) => void;
 

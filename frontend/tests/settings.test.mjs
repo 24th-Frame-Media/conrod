@@ -26,7 +26,7 @@ test('every setting keeps its engine key and appears in exactly one section', ()
     if (key === 'vlm_services') continue; // a whole list, rendered by the providers section
     assert.ok(seen.has(key), `${key} is still on the page`);
   }
-  assert.equal(SECTIONS.length, 12);
+  assert.equal(SECTIONS.length, 13);
   assert.deepEqual(TABS.map((t) => t.label), ['Culling', 'Identification', 'Metadata', 'System']);
 });
 
@@ -52,7 +52,7 @@ test('sections expose their fields in section order, and every tab has a section
 
 test('the per-album settings are exactly the ones the engine overrides', () => {
   const album = Object.entries(FIELDS).filter(([, f]) => f.album).map(([key]) => key);
-  assert.deepEqual(album, ['blur_strictness', 'burst_gap', 'scan_profile', 'read_plates', 'read_numbers', 'read_action']);
+  assert.deepEqual(album, ['blur_strictness', 'burst_gap', 'scan_profile', 'moments_threshold', 'read_plates', 'read_numbers', 'read_action']);
   assert.deepEqual(OVERRIDABLE.map((o) => o.key).sort(), album.slice().sort());
 });
 
@@ -96,5 +96,5 @@ test('album override counts only count explicit values that differ from the defa
   assert.equal(counts.burst_gap, 1);
   assert.equal(counts.read_plates, 1);
   assert.equal(counts.read_numbers, 0);
-  assert.deepEqual(albumOverrideCounts(undefined, settings).map((o) => o.count), [0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(albumOverrideCounts(undefined, settings).map((o) => o.count), [0, 0, 0, 0, 0, 0, 0]);
 });

@@ -1193,6 +1193,16 @@ fn settings_match_snapshot() {
         m.remove("workers");
         m.remove("scan_profile"); // Rust-only
         m.remove("include_people"); // Rust-only
+        m.remove("overrides"); // Rust-only: per-album detector/reader switches
+        for key in [
+            "moments_backend",
+            "moments_threshold",
+            "moments_transport",
+            "moments_openrouter_model",
+            "moments_openrouter_key",
+        ] {
+            m.remove(key); // Rust-only: moment judge
+        }
         m.remove("use_quality_score"); // Rust-only
         m.remove("blur_strictness"); // Rust-only
         m.remove("entry_list"); // Rust-only

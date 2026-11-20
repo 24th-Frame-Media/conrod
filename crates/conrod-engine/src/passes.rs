@@ -126,6 +126,20 @@ fn bucket(value: Option<f64>, width: f64) -> i64 {
 /// It is the same measurement for every frame (the padded crop, resized to the
 /// album's crop limits), which is why it can rank one frame of a burst against
 /// another when the native-pixel edge census cannot.
+/// A frame's moment as ranking sees it: the lift bucket of its strongest
+/// confident moment, and whether it won its burst's peak pick.
+fn moment_signal(stored: Option<&str>, lanes: &conrod_core::profile::Lanes) -> (i64, bool) {
+    let Some(text) = stored else {
+        return (0, false);
+    };
+    let verdict = conrod_core::moments::MomentVerdict::from_json(text);
+    let lift = conrod_core::moments::lift(&verdict, lanes.moments(), lanes.moments_threshold);
+    (
+        lift.map_or(0, |l| conrod_core::moments::bucket(l.amount)),
+        verdict.peak.is_some(),
+    )
+}
+
 fn tile_of(r: &Value) -> Option<f64> {
     r["features"]
         .as_str()
@@ -155,6 +169,10 @@ struct Candidate {
     band: f64,
     /// Exposure is a flag, not a cull: a clipped frame loses only to a clean one.
     bright: bool,
+    /// Lift bucket of the frame's moment: 0 when none, not judged, or not confident.
+    moment: i64,
+    /// The one frame of its burst a peak judgement picked.
+    peak: bool,
     /// The preset's framing score for this subject, 0..1.
     framing: Option<f64>,
     /// The lowest eye-open among the frame's faces, 0..1.
@@ -181,6 +199,8 @@ struct Ranking {
     eyes: bool,
     smile: bool,
     buck: bool,
+    /// Confident moments (and a burst-peak pick) break ties among equally sharp frames.
+    moments: bool,
 }
 
 /// The keeper order as one lexicographic tuple: every field to the left
@@ -201,6 +221,12 @@ struct Key {
     rating_band: i64,
     /// A clean exposure beats a clipped one; never a cull.
     bright: i64,
+    /// A visible moment, among frames the sharpness gate accepted: it only
+    /// ever breaks ties inside the same rating band, never lifts a frame over
+    /// a sharper one, and never counts on a culled or unsharp frame.
+    moment: i64,
+    /// The one frame of its burst a peak judgement picked clearly.
+    peak: i64,
     /// A frame whose crop-tile score is not far below its unit's best. This is
     /// the check a sharp background in the detection box cannot pass: a car
     /// smeared along its motion keeps the edge census sharp, but its own crop
@@ -252,6 +278,16 @@ impl Candidate {
     ///
     /// The preset decides which soft keys apply ([`Ranking`]); where one does
     /// not, its bucket is the constant 0 and it cannot reorder anything.
+    /// A moment counts only with ranking on, on a frame that clears the
+    /// sharpness bar and that no rule culled.
+    fn counts_moment(&self, r: &Ranking) -> bool {
+        conrod_core::moments::counts_for_rank(
+            r.moments,
+            self.score >= conrod_vision::sharpness::KEEPER_MIN_RATING,
+            self.culled,
+        )
+    }
+
     fn key(&self, r: &Ranking) -> Key {
         let band_width = self.band;
         Key {
@@ -262,6 +298,16 @@ impl Candidate {
             ),
             rating_band: bucket(Some(self.score), band_width),
             bright: i64::from(self.bright),
+            moment: if self.counts_moment(r) {
+                self.moment
+            } else {
+                0
+            },
+            peak: if self.counts_moment(r) {
+                i64::from(self.peak)
+            } else {
+                0
+            },
             soft: self.soft,
             buck: if r.buck {
                 bucket(self.buck, BUCK_BUCKET)
@@ -332,12 +378,11 @@ impl Candidate {
 pub fn pick_of_pass(
     conn: &Connection,
     job: i64,
-    profile: ScanProfile,
-    include_people: bool,
+    lanes: &conrod_core::profile::Lanes,
     use_quality_score: bool,
 ) -> Result<Value> {
     let rank = |main: Option<Subject>, region: &str| {
-        let priority = profile.frame_priority(include_people, main);
+        let priority = lanes.frame_priority(main);
         priority
             .iter()
             .position(|k| region_name(*k) == region)
@@ -345,7 +390,7 @@ pub fn pick_of_pass(
     };
     let found = rows(
         conn,
-        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, d.features, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.set_id, i.dark_frame, i.exposure_verdict, i.eye_open_min, i.smile_max, i.buck_score, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL AND COALESCE(i.copy_of,0)=0 ORDER BY i.id, d.id",
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, d.features, COALESCE(d.stars, i.rating_in_file, 0) AS by_hand, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.set_id, i.dark_frame, i.exposure_verdict, i.eye_open_min, i.smile_max, i.buck_score, i.moments, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL AND COALESCE(i.copy_of,0)=0 ORDER BY i.id, d.id",
         params![job, crate::EYES_CLOSED],
     )?;
     // Which optional keys rank is the preset's decision; read it from the album
@@ -394,6 +439,7 @@ pub fn pick_of_pass(
             preset,
             ShootPreset::SportRodeo | ShootPreset::SportEquestrian
         ),
+        moments: lanes.moments_rank,
     };
     let keeps_dark = preset.policy().dark_ok;
     // Each frame's main subject: its largest person or vehicle.
@@ -494,6 +540,8 @@ pub fn pick_of_pass(
                 // shadow is a flag, not a ranking fault. The readiness motorsport
                 // case proved a clipped sky must not outrank sharpness.
                 bright: set_member || keeps_dark || r["exposure_verdict"].as_str() != Some("dark"),
+                moment: moment_signal(r["moments"].as_str(), lanes).0,
+                peak: moment_signal(r["moments"].as_str(), lanes).1,
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: r["quality"].as_f64(),
@@ -518,7 +566,7 @@ pub fn pick_of_pass(
     // burst's ungrouped unit, rated by the frame.
     let spare = rows(
         conn,
-        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness,set_id,dark_frame,exposure_verdict,eye_open_min,smile_max,buck_score FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 ORDER BY id",
+        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness,set_id,dark_frame,exposure_verdict,eye_open_min,smile_max,buck_score,moments FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 ORDER BY id",
         [job],
     )?;
     for r in &spare {
@@ -540,6 +588,8 @@ pub fn pick_of_pass(
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
                 culled: !set_member && !keeps_dark && dark,
                 bright: set_member || keeps_dark || r["exposure_verdict"].as_str() != Some("dark"),
+                moment: moment_signal(r["moments"].as_str(), lanes).0,
+                peak: moment_signal(r["moments"].as_str(), lanes).1,
                 score,
                 sharpness: r["sharpness"].as_f64().unwrap_or(score),
                 quality: None,
@@ -732,15 +782,8 @@ pub(crate) fn rate_missed_frames(conn: &Connection, job: i64) -> Result<usize> {
 pub fn pick_keepers(d: &Desktop, job: i64) -> Result<Value> {
     require_job(d, job)?;
     let cfg = settings(d, job)?;
-    let profile = ScanProfile::parse(&cfg.scan_profile);
     let task = d.hub.start("Picking keepers", 0);
-    match pick_of_pass(
-        &lock(&d.db),
-        job,
-        profile,
-        cfg.include_people,
-        cfg.use_quality_score,
-    ) {
+    match pick_of_pass(&lock(&d.db), job, &cfg.lanes(), cfg.use_quality_score) {
         Ok(stats) => {
             task.detail(format!(
                 "{} keepers from {} frames across {} passes",
@@ -1004,8 +1047,9 @@ pub fn redetect(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         }
         // Faces and expression are extras: a frame with no detection has no
         // person box to put them in, so a failure here never fails the pass.
-        let faces = ShootPreset::parse(&low.scan_profile)
-            .wants_faces(low.include_people)
+        let faces = low
+            .lanes()
+            .faces
             .then(|| crate::load_faces_pool(lanes).ok())
             .flatten();
         let expression = faces
@@ -1180,10 +1224,14 @@ pub fn restore_copies(d: &Arc<Desktop>, job: i64) -> Result<Value> {
 /// by the window).
 pub fn set_include_people(d: &Arc<Desktop>, job: i64, value: bool) -> Result<Value> {
     let mut cfg = settings(d, job)?;
+    let faces_before = {
+        let mut off = cfg.clone();
+        off.include_people = false;
+        off.lanes().faces
+    };
     cfg.include_people = value;
-    let preset = ShootPreset::parse(&cfg.scan_profile);
     // Faces are already found at scan time wherever the flag is not needed.
-    let operation = if value && !preset.wants_faces(false) {
+    let operation = if value && !faces_before {
         let cfg = cfg.clone();
         launch(d, job, "Finding people", move |d, stop, task| {
             if crate::operations::wait_for_cull(d, stop, task) {
@@ -1202,6 +1250,56 @@ pub fn set_include_people(d: &Arc<Desktop>, job: i64, value: bool) -> Result<Val
         &crate::commands::UpdateJobSettingsArgs { job_id: job, patch },
     )?;
     saved["operation"] = operation;
+    Ok(saved)
+}
+
+/// action: switch one detector or reader on or off for an album, or (with
+/// `None`) back to the shoot type's default. Turning faces on after the scan
+/// finds them in the background; turning a detector off hides its boxes from
+/// the rating window and re-rates at once. Turning vehicles, people or
+/// animals on needs the frames looked at again (`needsRescan`), because the
+/// detector never asked for them.
+pub fn set_feature(d: &Arc<Desktop>, job: i64, key: &str, value: Option<bool>) -> Result<Value> {
+    let feature = conrod_core::profile::Feature::parse(key)
+        .ok_or_else(|| format!("Unknown detector or reader: {key}"))?;
+    let before = settings(d, job)?;
+    let mut overrides = conrod_core::profile::Overrides::from_map(&before.overrides);
+    overrides.set(feature, value);
+    let mut after = before.clone();
+    after.overrides = overrides.to_map();
+    let (was, now) = (before.lanes(), after.lanes());
+    let needs_rescan = [
+        conrod_core::profile::Feature::Vehicles,
+        conrod_core::profile::Feature::People,
+        conrod_core::profile::Feature::Animals,
+    ]
+    .into_iter()
+    .any(|f| now.on(f) && !was.on(f));
+    let operation = if now.faces && !was.faces {
+        let cfg = after.clone();
+        launch(d, job, "Finding people", move |d, stop, task| {
+            if crate::operations::wait_for_cull(d, stop, task) {
+                find_people(d, job, &cfg, stop, task)?;
+            }
+            Ok(())
+        })?["operation"]
+            .clone()
+    } else {
+        Value::Null
+    };
+    let mut patch = Map::new();
+    patch.insert("overrides".into(), Value::Object(after.overrides.clone()));
+    let mut saved = crate::library::update_job_settings(
+        d,
+        &crate::commands::UpdateJobSettingsArgs { job_id: job, patch },
+    )?;
+    // The frame ratings were made under the old lanes: re-rate and re-pick.
+    if operation.is_null() {
+        rerate(d, job, &after)?;
+    }
+    saved["operation"] = operation;
+    saved["needsRescan"] = json!(needs_rescan);
+    saved["lanes"] = now.summary();
     Ok(saved)
 }
 
@@ -1283,7 +1381,7 @@ fn find_people(
 
 /// Every frame's rating again from its stored subjects, and the keepers.
 fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
-    let profile = ScanProfile::parse(&cfg.scan_profile);
+    let lanes = cfg.lanes();
     let found = rows(
         &lock(&d.reader),
         "SELECT d.image_id, COALESCE(d.region_type,'vehicle') AS region, d.x1, d.y1, d.x2, d.y2, d.rating, i.sharpness AS whole FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.bystander,0)=0 ORDER BY d.image_id",
@@ -1305,7 +1403,7 @@ fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
     let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     for (image, (whole, subjects)) in &frames {
-        let rating = crate::frame_rating(profile, cfg.include_people, subjects, *whole);
+        let rating = crate::frame_rating(&lanes, subjects, *whole);
         tx.execute(
             "UPDATE images SET rating=? WHERE id=?",
             params![rating, image],
@@ -1313,7 +1411,7 @@ fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
         .map_err(err)?;
     }
     tx.commit().map_err(err)?;
-    pick_of_pass(&db, job, profile, cfg.include_people, cfg.use_quality_score)?;
+    pick_of_pass(&db, job, &lanes, cfg.use_quality_score)?;
     Ok(())
 }
 
@@ -1758,7 +1856,6 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         }
     }
     let cfg = settings(d, job)?;
-    let profile = ScanProfile::parse(&cfg.scan_profile);
     let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     for (id, attrs, key, size, agreement, hex) in &writes {
@@ -1771,7 +1868,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         .map_err(err)?;
     }
     tx.commit().map_err(err)?;
-    pick_of_pass(&db, job, profile, cfg.include_people, cfg.use_quality_score)?;
+    pick_of_pass(&db, job, &cfg.lanes(), cfg.use_quality_score)?;
     Ok((members.len(), looks.len()))
 }
 
@@ -1973,6 +2070,8 @@ mod tests {
             area: 0.20,
             band: RATING_BAND,
             bright: true,
+            moment: 0,
+            peak: false,
             framing: None,
             eyes: None,
             smile: None,
@@ -1989,7 +2088,224 @@ mod tests {
             eyes: true,
             smile: true,
             buck: true,
+            moments: false,
         }
+    }
+
+    fn with_moments() -> Ranking {
+        Ranking {
+            moments: true,
+            ..everything()
+        }
+    }
+
+    #[test]
+    fn a_visible_moment_wins_a_tie_between_equally_sharp_frames() {
+        let r = with_moments();
+        let ordinary = plain(1);
+        let kiss = Candidate {
+            moment: 4,
+            ..plain(2)
+        };
+        assert!(
+            kiss.beats(&ordinary, &r),
+            "the later frame wins on its moment"
+        );
+        assert!(!ordinary.beats(&kiss, &r));
+        // A burst-peak pick breaks the tie the same way ...
+        let peak = Candidate {
+            peak: true,
+            ..plain(3)
+        };
+        assert!(peak.beats(&ordinary, &r));
+        // ... and a stronger moment beats a weaker one.
+        let weak = Candidate {
+            moment: 1,
+            ..plain(4)
+        };
+        assert!(kiss.beats(&weak, &r));
+        // With ranking off a moment counts for nothing: the earlier frame holds.
+        let off = Ranking {
+            moments: false,
+            ..everything()
+        };
+        assert!(!kiss.beats(&ordinary, &off));
+        assert!(!peak.beats(&ordinary, &off));
+        assert_eq!(
+            kiss.key(&off),
+            Candidate {
+                moment: 0,
+                ..plain(2)
+            }
+            .key(&off)
+        );
+    }
+
+    #[test]
+    fn the_moment_lane_leaves_frames_alone_when_the_judge_cannot_answer() {
+        let lib = Lib::new("moments");
+        lib.run(
+            "update_job_settings",
+            json!({"jobId": lib.job, "patch": {
+                "scan_profile": "wedding",
+                "moments_backend": "decider",
+                "moments_transport": "in_process",
+            }}),
+        )
+        .unwrap();
+        let frame = lib.frame("1.jpg", Some(1));
+        lib.sql("UPDATE images SET burst_pick=1 WHERE id=?", [frame]);
+        let cfg = settings(lib.d(), lib.job).unwrap();
+        assert!(cfg.lanes().moments_detect && cfg.lanes().moments_rank);
+        let task = lib.d().hub.start("moments", 0);
+        let stop = AtomicBool::new(false);
+        let judged = crate::moments::run(
+            lib.d(),
+            lib.job,
+            &stop,
+            &task,
+            &cfg,
+            &cfg.lanes(),
+            "keepers",
+        )
+        .unwrap();
+        assert_eq!(
+            judged, 0,
+            "the in-process model is not installed: no moment, no error"
+        );
+        let stored: Option<String> = lib.one("SELECT moments FROM images WHERE id=?", [frame]);
+        assert!(stored.is_none());
+        // Switched off, the lane does not even try.
+        lib.run(
+            "set_feature",
+            json!({"jobId": lib.job, "feature": "moments_detect", "value": false}),
+        )
+        .unwrap();
+        let cfg = settings(lib.d(), lib.job).unwrap();
+        assert!(!cfg.lanes().moments_detect && !cfg.lanes().moments_rank);
+        assert_eq!(
+            crate::moments::run(
+                lib.d(),
+                lib.job,
+                &stop,
+                &task,
+                &cfg,
+                &cfg.lanes(),
+                "keepers"
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn a_moment_never_lifts_a_frame_over_a_sharper_one_and_never_demotes_a_sharp_one() {
+        let r = with_moments();
+        let sharp = Candidate {
+            score: 0.95,
+            sharpness: 0.95,
+            ..plain(1)
+        };
+        let softer_moment = Candidate {
+            moment: 4,
+            peak: true,
+            score: 0.80,
+            ..plain(2)
+        };
+        assert!(
+            sharp.beats(&softer_moment, &r),
+            "sharper wins despite the moment"
+        );
+        assert!(!softer_moment.beats(&sharp, &r));
+        // The same order with moments off: a moment elsewhere changed nothing.
+        let off = Ranking {
+            moments: false,
+            ..everything()
+        };
+        assert!(sharp.beats(&softer_moment, &off));
+        // A sharp frame is not demoted by *having* no moment while its neighbour in the
+        // same band does: it only loses that tie, not its band.
+        let same_band = Candidate {
+            score: 0.955,
+            sharpness: 0.955,
+            moment: 3,
+            ..plain(2)
+        };
+        assert_eq!(sharp.key(&r).rating_band, same_band.key(&r).rating_band);
+        assert!(same_band.beats(&sharp, &r));
+    }
+
+    #[test]
+    fn a_moment_never_rescues_an_unsharp_or_culled_frame() {
+        let r = with_moments();
+        let early = Candidate {
+            score: 0.30,
+            sharpness: 0.30,
+            ..plain(1)
+        };
+        let blurred = Candidate {
+            score: 0.30,
+            sharpness: 0.30,
+            moment: 4,
+            peak: true,
+            ..plain(2)
+        };
+        assert_eq!(blurred.key(&r).moment, 0);
+        assert_eq!(blurred.key(&r).peak, 0);
+        assert!(
+            !blurred.beats(&early, &r),
+            "no rescue past the sharpness gate"
+        );
+        let culled_early = Candidate {
+            culled: true,
+            ..plain(1)
+        };
+        let culled = Candidate {
+            culled: true,
+            moment: 4,
+            ..plain(2)
+        };
+        assert_eq!(culled.key(&r).moment, 0);
+        assert!(
+            !culled.beats(&culled_early, &r),
+            "no rescue of a culled frame"
+        );
+        // A culled frame with a moment still loses to an unculled one without.
+        assert!(plain(3).beats(&culled, &r));
+    }
+
+    #[test]
+    fn the_moment_signal_follows_the_album_lanes_and_threshold() {
+        use conrod_core::profile::{Feature, Lanes, Overrides, ShootPreset};
+        let sure = r#"{"backend":"decider","readings":[{"tag":"first_kiss","p":0.95,"calibrated":true}],"strength":1.0}"#;
+        let maybe =
+            r#"{"backend":"decider","readings":[{"tag":"first_kiss","p":0.7,"calibrated":true}]}"#;
+        let wedding = Lanes::defaults(ShootPreset::Wedding);
+        assert_eq!(moment_signal(Some(sure), &wedding), (4, false));
+        assert_eq!(
+            moment_signal(Some(maybe), &wedding),
+            (0, false),
+            "a maybe never ranks"
+        );
+        assert_eq!(moment_signal(None, &wedding), (0, false));
+        assert_eq!(moment_signal(Some("junk"), &wedding), (0, false));
+        let mut lower = wedding.clone();
+        lower.moments_threshold = 0.6;
+        assert_eq!(
+            moment_signal(Some(maybe), &lower).0,
+            conrod_core::moments::bucket(1.0)
+        );
+        // Detecting off: nothing to rank on; another preset's tag lifts nothing.
+        let mut o = Overrides::default();
+        o.set(Feature::MomentsDetect, Some(false));
+        let off = Lanes::resolve(ShootPreset::Wedding, false, &o);
+        assert_eq!(moment_signal(Some(sure), &off), (0, false));
+        assert_eq!(
+            moment_signal(Some(sure), &Lanes::defaults(ShootPreset::MotorsportTrack)),
+            (0, false)
+        );
+        let peak = r#"{"backend":"decider","readings":[],"peak":0.8}"#;
+        assert_eq!(moment_signal(Some(peak), &wedding), (0, true));
     }
 
     #[test]
@@ -2338,6 +2654,79 @@ mod tests {
         assert_eq!(kept, 1, "people are hidden, not deleted");
         assert!(lib
             .run("set_include_people", json!({"jobId": 4242, "value": true}))
+            .is_err());
+    }
+
+    #[test]
+    fn a_feature_switch_is_saved_and_the_frame_is_rated_without_the_switched_off_kind() {
+        let lib = Lib::new("feature");
+        lib.run(
+            "update_job_settings",
+            json!({"jobId": lib.job, "patch": {"scan_profile": "portrait"}}),
+        )
+        .unwrap();
+        let frame = lib.frame("1.jpg", Some(1));
+        let person = lib.detection(frame, "person", 0.7);
+        let face = lib.detection(frame, "face", 0.95);
+        lib.sql("UPDATE detections SET embedding='x' WHERE id=?", [face]);
+        let rate = || -> f64 { lib.one("SELECT rating FROM images WHERE id=?", [frame]) };
+        let set = |feature: &str, value: Value| {
+            let out = lib
+                .run(
+                    "set_feature",
+                    json!({"jobId": lib.job, "feature": feature, "value": value}),
+                )
+                .unwrap();
+            lib.wait_idle();
+            out
+        };
+
+        // Portrait defaults: the face decides.
+        let same = set("faces", json!(true));
+        assert!(same["operation"].is_null(), "faces were already on");
+        assert_eq!(rate(), 0.95);
+        assert_eq!(same["settings"]["overrides"]["faces"], true);
+
+        // Faces off: no face pass, no stale face score; the person decides.
+        let off = set("faces", json!(false));
+        assert_eq!(off["lanes"]["detects"][2]["on"], false);
+        assert_eq!(off["lanes"]["detects"][2]["overridden"], true);
+        assert!(!settings(lib.d(), lib.job).unwrap().lanes().faces);
+        assert_eq!(
+            rate(),
+            0.7,
+            "the face is hidden, the person rates the frame"
+        );
+        let kept: i64 = lib.one("SELECT count(*) FROM detections WHERE id=?", [face]);
+        assert_eq!(kept, 1, "hidden, not deleted");
+
+        // Everything off falls back to the whole frame, without a crash.
+        set("people", json!(false));
+        set("animals", json!(false));
+        let _ = rate();
+
+        // Back to the preset's default.
+        let back = set("faces", Value::Null);
+        assert!(back["settings"]["overrides"].get("faces").is_none());
+        assert!(settings(lib.d(), lib.job).unwrap().lanes().faces);
+        assert_eq!(back["needsRescan"], false);
+        let _ = person;
+
+        // Turning a detector the scan never asked for on needs a rescan.
+        let on = set("vehicles", json!(true));
+        assert_eq!(on["needsRescan"], true);
+
+        assert!(lib
+            .run(
+                "set_feature",
+                json!({"jobId": lib.job, "feature": "bogus", "value": true})
+            )
+            .is_err());
+        assert!(lib
+            .run(
+                "set_feature",
+                json!({"jobId": 4242, "feature": "faces", "value": true})
+            )
             .is_err());
     }
 
