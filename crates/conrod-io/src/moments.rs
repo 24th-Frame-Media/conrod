@@ -1,0 +1,556 @@
+//! Who judges a frame's moments. A [`MomentJudge`] takes one photograph (and,
+//! for a burst, several) and the shoot's vocabulary, and answers with what is
+//! clearly visible and how sure it is.
+//!
+//! Two backends: `vlm`, the vision model already in the identify lane (it names
+//! tags but has no calibrated probability), and `decider`, Perplexity's
+//! decision model, which answers calibrated probabilities through a
+//! [`DecisionTransport`] (OpenRouter's Decisions API, or an in-process model).
+//! A failure is an `Err`; callers treat it as "no moment" and never block a
+//! scan or demote a frame because of it.
+
+use crate::settings::Settings as IoSettings;
+use crate::vlm::VlmClient;
+use conrod_core::decision::{self, DecisionTransport, InProcess, Request, Response};
+use conrod_core::moments::{Moment, MomentReading, MomentVerdict};
+use conrod_core::settings::Settings;
+use serde_json::{json, Value};
+use std::sync::Arc;
+use std::time::Duration;
+
+/// What the vision model's "I am confident" stands for. It is a stand-in, not
+/// a probability: the readings are marked uncalibrated.
+pub const VLM_CONFIDENT_P: f64 = 0.9;
+/// What its tags are worth when it says it is unsure: a "maybe", never a lift.
+pub const VLM_UNSURE_P: f64 = 0.6;
+/// The vision model must claim at least this confidence for its tags to be
+/// treated as sure.
+pub const VLM_CONFIDENT_AT: f64 = 0.7;
+
+pub trait MomentJudge: Send + Sync {
+    fn name(&self) -> &'static str;
+
+    /// One photograph, as a `data:image/jpeg;base64,...` URL.
+    fn judge(&self, context: &str, vocab: &[Moment], image: &str) -> Result<MomentVerdict, String>;
+
+    /// Which frame of a burst shows the peak: P per frame, in order. A backend
+    /// that cannot say answers `Ok(None)`.
+    fn peak(&self, _context: &str, _images: &[String]) -> Result<Option<Vec<f64>>, String> {
+        Ok(None)
+    }
+}
+
+/// The base64 body of a data URL (what the vision model providers want).
+pub fn strip_data_url(url: &str) -> &str {
+    url.split_once(";base64,").map_or(url, |(_, body)| body)
+}
+
+/// The prompt the vision model gets: the preset's vocabulary as data, and
+/// the same discipline as the vehicle prompt (only what is clearly visible).
+pub fn vlm_prompt(context: &str, vocab: &[Moment]) -> String {
+    let list: Vec<String> = vocab
+        .iter()
+        .map(|m| format!("- {}: {}", m.key, m.ask))
+        .collect();
+    format!(
+        "You are judging one photograph for a photographer. {context}\n\
+         Report only moments that are clearly visible in the photograph. Never guess.\n\
+         moments: the tags from this list that clearly apply; [] when none does.\n{}\n\
+         confidence: how sure you are, from 0 to 1, that the tags you listed are really visible.\n\
+         Reply with one JSON object only.",
+        list.join("\n")
+    )
+}
+
+/// The reply's shape: tags restricted to the vocabulary.
+pub fn vlm_schema(vocab: &[Moment]) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "moments": {"type": "array", "items": {"type": "string", "enum": vocab.iter().map(|m| m.key).collect::<Vec<_>>()}},
+            "confidence": {"type": "number"},
+        },
+        "required": ["moments", "confidence"],
+    })
+}
+
+/// A vision-model reply as readings. Tags outside the vocabulary are dropped;
+/// a model that says it is unsure produces maybes, never sure moments.
+pub fn read_vlm_reply(reply: &Value, vocab: &[Moment]) -> MomentVerdict {
+    let confidence = reply
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let p = if confidence >= VLM_CONFIDENT_AT {
+        VLM_CONFIDENT_P
+    } else {
+        VLM_UNSURE_P
+    };
+    let mut readings: Vec<MomentReading> = Vec::new();
+    for tag in reply
+        .get("moments")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(tag) = tag.as_str().map(str::trim) else {
+            continue;
+        };
+        if vocab.iter().any(|m| m.key == tag) && !readings.iter().any(|r| r.tag == tag) {
+            readings.push(MomentReading {
+                tag: tag.to_string(),
+                p,
+                calibrated: false,
+            });
+        }
+    }
+    MomentVerdict {
+        backend: "vlm".into(),
+        readings,
+        strength: None,
+        peak: None,
+    }
+}
+
+/// The vision model as a judge.
+pub struct VlmJudge {
+    pub client: VlmClient,
+    pub settings: IoSettings,
+}
+
+impl MomentJudge for VlmJudge {
+    fn name(&self) -> &'static str {
+        "vlm"
+    }
+
+    fn judge(&self, context: &str, vocab: &[Moment], image: &str) -> Result<MomentVerdict, String> {
+        let reply = self
+            .client
+            .call(
+                &self.settings,
+                &vlm_prompt(context, vocab),
+                &[strip_data_url(image).to_string()],
+                &vlm_schema(vocab),
+                200,
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(read_vlm_reply(&reply, vocab))
+    }
+}
+
+/// The decider as a judge, over any transport.
+pub struct DeciderJudge {
+    pub transport: Arc<dyn DecisionTransport>,
+}
+
+impl MomentJudge for DeciderJudge {
+    fn name(&self) -> &'static str {
+        "decider"
+    }
+
+    fn judge(&self, context: &str, vocab: &[Moment], image: &str) -> Result<MomentVerdict, String> {
+        let request = decision::moment_request(context, vocab, vec![image.to_string()]);
+        let response = self.transport.decide(&request)?;
+        Ok(decision::read_moments(&response, vocab))
+    }
+
+    fn peak(&self, context: &str, images: &[String]) -> Result<Option<Vec<f64>>, String> {
+        if images.len() < 2 {
+            return Ok(None);
+        }
+        let request = decision::peak_request(context, images.to_vec());
+        let response = self.transport.decide(&request)?;
+        Ok(decision::read_peak(&response, images.len()))
+    }
+}
+
+pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/alpha/decisions";
+
+/// OpenRouter's Decisions API: the same request, with the images moved into
+/// `state` as `image_url` parts (a top-level `images` field is rejected 400).
+pub fn openrouter_body(model: &str, request: &Request) -> Value {
+    let state = if request.images.is_empty() {
+        request.state.clone()
+    } else {
+        let mut parts = vec![request.state.clone()];
+        parts.extend(
+            request
+                .images
+                .iter()
+                .map(|url| json!({"type": "image_url", "image_url": {"url": url}})),
+        );
+        Value::Array(parts)
+    };
+    json!({"model": model, "state": state, "questions": request.questions})
+}
+
+/// An OpenRouter reply as a [`Response`]; a non-2xx says why, never the key.
+pub fn parse_openrouter(status: u16, body: &[u8]) -> Result<Response, String> {
+    let value: Value = serde_json::from_slice(body)
+        .map_err(|_| format!("OpenRouter answered {status} with no JSON"))?;
+    if !(200..300).contains(&status) {
+        let said = value
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or("no message");
+        return Err(format!("OpenRouter answered {status}: {said}"));
+    }
+    // Answers sit at the top level, or under `data` on some gateways.
+    let answers = if value.get("answers").is_some() {
+        value
+    } else {
+        value.get("data").cloned().unwrap_or(value)
+    };
+    serde_json::from_value(answers).map_err(|e| format!("OpenRouter reply was not a decision: {e}"))
+}
+
+pub struct OpenRouterTransport {
+    pub key: String,
+    pub model: String,
+    pub timeout: Duration,
+}
+
+impl DecisionTransport for OpenRouterTransport {
+    fn name(&self) -> &'static str {
+        "openrouter"
+    }
+
+    fn decide(&self, request: &Request) -> Result<Response, String> {
+        if self.key.trim().is_empty() {
+            return Err("No OpenRouter key is set for the decision model".into());
+        }
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .timeout_global(Some(self.timeout))
+                .build(),
+        );
+        let mut reply = agent
+            .post(OPENROUTER_URL)
+            .header("Authorization", &format!("Bearer {}", self.key.trim()))
+            .send_json(openrouter_body(&self.model, request))
+            .map_err(|e| {
+                format!(
+                    "OpenRouter could not be reached: {}",
+                    e.to_string().replace(self.key.trim(), "***")
+                )
+            })?;
+        let status = reply.status().as_u16();
+        let body = reply.body_mut().read_to_vec().map_err(|e| e.to_string())?;
+        parse_openrouter(status, &body)
+    }
+}
+
+/// The judge this album's settings ask for. `in_process` is the in-process
+/// model's seat (the decider crate fills it).
+pub fn judge_for(
+    settings: &Settings,
+    vlm: Option<(VlmClient, IoSettings)>,
+    in_process: InProcess,
+) -> Result<Box<dyn MomentJudge>, String> {
+    match settings.moments_backend.as_str() {
+        "decider" => {
+            let transport: Arc<dyn DecisionTransport> = match settings.moments_transport.as_str() {
+                "in_process" => Arc::new(in_process),
+                _ => {
+                    if settings.moments_openrouter_key.trim().is_empty() {
+                        return Err(
+                            "Add an OpenRouter key to judge moments with the decision model".into(),
+                        );
+                    }
+                    Arc::new(OpenRouterTransport {
+                        key: settings.moments_openrouter_key.clone(),
+                        model: settings.moments_openrouter_model.clone(),
+                        timeout: Duration::from_secs(60),
+                    })
+                }
+            };
+            Ok(Box::new(DeciderJudge { transport }))
+        }
+        _ => match vlm {
+            Some((client, settings)) => Ok(Box::new(VlmJudge { client, settings })),
+            None => Err("The vision model is off, so moments cannot be judged".into()),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use conrod_core::decision::Answer;
+    use conrod_core::moments::vocabulary;
+    use conrod_core::profile::ShootPreset;
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    /// Records requests, answers from a closure: no network.
+    struct Mock {
+        seen: Mutex<Vec<Request>>,
+        reply: Box<conrod_core::decision::DecideFn>,
+    }
+
+    impl DecisionTransport for Mock {
+        fn name(&self) -> &'static str {
+            "mock"
+        }
+        fn decide(&self, request: &Request) -> Result<Response, String> {
+            self.seen.lock().unwrap().push(request.clone());
+            (self.reply)(request)
+        }
+    }
+
+    fn decider(
+        reply: impl Fn(&Request) -> Result<Response, String> + Send + Sync + 'static,
+    ) -> (DeciderJudge, Arc<Mock>) {
+        let mock = Arc::new(Mock {
+            seen: Mutex::new(Vec::new()),
+            reply: Box::new(reply),
+        });
+        (
+            DeciderJudge {
+                transport: mock.clone(),
+            },
+            mock,
+        )
+    }
+
+    fn noul(p: f64) -> Answer {
+        Answer {
+            noul: Some(p),
+            ..Answer::default()
+        }
+    }
+
+    #[test]
+    fn the_vlm_prompt_and_schema_come_from_the_presets_vocabulary() {
+        for preset in ShootPreset::ALL {
+            let vocab = vocabulary(preset);
+            if vocab.is_empty() {
+                continue;
+            }
+            let prompt = vlm_prompt(preset.prompt_context(), vocab);
+            let schema = vlm_schema(vocab);
+            let allowed = schema["properties"]["moments"]["items"]["enum"]
+                .as_array()
+                .unwrap();
+            assert_eq!(allowed.len(), vocab.len(), "{preset:?}");
+            for moment in vocab {
+                assert!(
+                    prompt.contains(&format!("- {}: {}", moment.key, moment.ask)),
+                    "{preset:?}"
+                );
+            }
+            assert!(prompt.contains("clearly visible") && prompt.contains("Never guess"));
+        }
+        // A wedding prompt never asks about tyre smoke, a track one never about kisses.
+        let wedding = vlm_prompt("w", vocabulary(ShootPreset::Wedding));
+        assert!(!wedding.contains("tyre_smoke") && wedding.contains("first_kiss"));
+        let track = vlm_prompt("t", vocabulary(ShootPreset::MotorsportTrack));
+        assert!(!track.contains("first_kiss") && track.contains("tyre_smoke"));
+    }
+
+    #[test]
+    fn a_confident_vlm_names_tags_at_p_point_nine_uncalibrated_and_an_unsure_one_only_maybes() {
+        let vocab = vocabulary(ShootPreset::Wedding);
+        let sure = read_vlm_reply(
+            &json!({"moments": ["first_kiss", "bogus", "first_kiss", "vows"], "confidence": 0.9}),
+            vocab,
+        );
+        assert_eq!(sure.backend, "vlm");
+        assert_eq!(sure.readings.len(), 2, "unknown and repeated tags dropped");
+        assert!(sure
+            .readings
+            .iter()
+            .all(|r| r.p == VLM_CONFIDENT_P && !r.calibrated));
+        let unsure = read_vlm_reply(
+            &json!({"moments": ["first_kiss"], "confidence": 0.4}),
+            vocab,
+        );
+        assert_eq!(unsure.readings[0].p, VLM_UNSURE_P);
+        assert!(
+            unsure.confident(0.85).is_empty(),
+            "an unsure model never ranks"
+        );
+        assert_eq!(unsure.maybe(0.85).len(), 1);
+        assert!(
+            read_vlm_reply(&json!({"moments": [], "confidence": 0.99}), vocab)
+                .readings
+                .is_empty()
+        );
+        assert!(read_vlm_reply(&json!("nonsense"), vocab)
+            .readings
+            .is_empty());
+    }
+
+    #[test]
+    fn the_decider_judge_asks_one_request_with_the_vocabulary_and_reads_probabilities() {
+        let vocab = vocabulary(ShootPreset::Wedding);
+        let (judge, mock) = decider(|req| {
+            let mut answers = BTreeMap::new();
+            for id in req.questions.keys() {
+                if id == "m_first_kiss" {
+                    answers.insert(id.clone(), noul(0.96));
+                } else if id == "strength" {
+                    answers.insert(
+                        id.clone(),
+                        Answer {
+                            score: Some(3.0),
+                            ..Answer::default()
+                        },
+                    );
+                } else {
+                    answers.insert(id.clone(), noul(0.05));
+                }
+            }
+            Ok(Response {
+                answers,
+                usage: None,
+            })
+        });
+        let verdict = judge
+            .judge("Weddings.", vocab, "data:image/jpeg;base64,AA")
+            .unwrap();
+        let seen = mock.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "one request per frame");
+        assert_eq!(seen[0].questions.len(), vocab.len() + 1);
+        assert_eq!(seen[0].images, ["data:image/jpeg;base64,AA"]);
+        assert_eq!(verdict.backend, "decider");
+        assert_eq!(verdict.strength, Some(1.0));
+        let sure = verdict.confident(0.85);
+        assert_eq!(sure.len(), 1);
+        assert_eq!(sure[0].tag, "first_kiss");
+        assert!(sure[0].calibrated);
+    }
+
+    #[test]
+    fn a_backend_failure_is_an_error_and_never_a_moment() {
+        let (judge, _) = decider(|_| Err("503 busy".into()));
+        assert!(judge
+            .judge(
+                "x",
+                vocabulary(ShootPreset::Wedding),
+                "data:image/jpeg;base64,AA"
+            )
+            .is_err());
+        assert!(judge.peak("x", &["a".into(), "b".into()]).is_err());
+        let (judge, _) = decider(|_| Ok(Response::default()));
+        let verdict = judge
+            .judge(
+                "x",
+                vocabulary(ShootPreset::Wedding),
+                "data:image/jpeg;base64,AA",
+            )
+            .unwrap();
+        assert!(verdict.readings.is_empty() && verdict.strength.is_none());
+    }
+
+    #[test]
+    fn the_peak_pick_is_one_choice_request_and_a_flat_reply_is_no_opinion() {
+        let (judge, mock) = decider(|req| {
+            assert!(req.questions.contains_key("peak"));
+            let mut answers = BTreeMap::new();
+            answers.insert(
+                "peak".to_string(),
+                Answer {
+                    probabilities: Some(json!({"f01": 0.1, "f02": 0.7, "f03": 0.2})),
+                    ..Answer::default()
+                },
+            );
+            Ok(Response {
+                answers,
+                usage: None,
+            })
+        });
+        let frames: Vec<String> = (0..3)
+            .map(|i| format!("data:image/jpeg;base64,{i}"))
+            .collect();
+        let ps = judge.peak("Rodeo.", &frames).unwrap().unwrap();
+        assert_eq!(decision::peak_frame(&ps, 0.5), Some(1));
+        assert_eq!(mock.seen.lock().unwrap()[0].images.len(), 3);
+        // One frame has no burst to choose in: no request at all.
+        assert_eq!(judge.peak("Rodeo.", &frames[..1]).unwrap(), None);
+        assert_eq!(mock.seen.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn openrouter_gets_images_inside_state_never_as_a_top_level_field() {
+        let vocab = vocabulary(ShootPreset::Wedding);
+        let req =
+            decision::moment_request("Weddings.", vocab, vec!["data:image/jpeg;base64,AA".into()]);
+        let body = openrouter_body("perplexity/pplx-decider-flash-v1.3:free", &req);
+        assert!(body.get("images").is_none());
+        assert_eq!(body["model"], "perplexity/pplx-decider-flash-v1.3:free");
+        let state = body["state"].as_array().unwrap();
+        assert!(state[0].as_str().unwrap().contains("clearly visible"));
+        assert_eq!(state[1]["type"], "image_url");
+        assert_eq!(state[1]["image_url"]["url"], "data:image/jpeg;base64,AA");
+        assert_eq!(body["questions"]["m_first_kiss"]["type"], "noul");
+        // Text only: the state stays a string.
+        let bare = openrouter_body("m", &decision::moment_request("x", vocab, vec![]));
+        assert!(bare["state"].is_string());
+    }
+
+    #[test]
+    fn openrouter_replies_parse_and_errors_never_echo_a_key() {
+        let ok = br#"{"answers":{"m_first_kiss":{"noul":0.9}},"usage":{"input_tokens":10}}"#;
+        assert_eq!(
+            parse_openrouter(200, ok).unwrap().answers["m_first_kiss"].noul,
+            Some(0.9)
+        );
+        let wrapped = br#"{"data":{"answers":{"m_vows":{"noul":0.4}}}}"#;
+        assert_eq!(
+            parse_openrouter(200, wrapped).unwrap().answers["m_vows"].noul,
+            Some(0.4)
+        );
+        let denied = parse_openrouter(401, br#"{"error":{"message":"No auth credentials found"}}"#)
+            .unwrap_err();
+        assert!(denied.contains("401") && denied.contains("No auth"));
+        assert!(parse_openrouter(502, b"<html>")
+            .unwrap_err()
+            .contains("502"));
+        let transport = OpenRouterTransport {
+            key: " ".into(),
+            model: "m".into(),
+            timeout: Duration::from_secs(1),
+        };
+        let req = decision::moment_request("x", vocabulary(ShootPreset::Wedding), vec![]);
+        assert!(transport
+            .decide(&req)
+            .unwrap_err()
+            .contains("No OpenRouter key"));
+    }
+
+    #[test]
+    fn the_judge_follows_the_albums_backend_and_transport() {
+        let mut s = Settings::default();
+        assert!(
+            judge_for(&s, None, InProcess::unavailable()).is_err(),
+            "vlm backend needs the vision model"
+        );
+        s.moments_backend = "decider".into();
+        assert!(
+            judge_for(&s, None, InProcess::unavailable()).is_err(),
+            "openrouter needs a key"
+        );
+        s.moments_openrouter_key = "k".into();
+        assert_eq!(
+            judge_for(&s, None, InProcess::unavailable())
+                .unwrap()
+                .name(),
+            "decider"
+        );
+        s.moments_transport = "in_process".into();
+        s.moments_openrouter_key.clear();
+        let judge = judge_for(&s, None, InProcess::unavailable()).unwrap();
+        let err = judge
+            .judge(
+                "x",
+                vocabulary(ShootPreset::Wedding),
+                "data:image/jpeg;base64,AA",
+            )
+            .unwrap_err();
+        assert!(err.contains("not installed"));
+        assert_eq!(strip_data_url("data:image/jpeg;base64,AAAA"), "AAAA");
+        assert_eq!(strip_data_url("AAAA"), "AAAA");
+    }
+}

@@ -306,6 +306,18 @@ pub struct Settings {
     pub blur_explicit: bool,
     /// Path to a race entry list (CSV or JSON). Empty means none.
     pub entry_list: String,
+    /// Who judges a frame's moments: "vlm" (the vision model, no real
+    /// probabilities) or "decider" (calibrated probabilities).
+    pub moments_backend: String,
+    /// A moment must reach this probability before it is shown as sure or
+    /// can lift a frame's rank; below it (down to 0.5) it is a "maybe".
+    pub moments_threshold: f64,
+    /// The decider's transport: "openrouter" or "in_process".
+    pub moments_transport: String,
+    /// OpenRouter model id for the decider.
+    pub moments_openrouter_model: String,
+    /// OpenRouter API key for the decider. Never logged.
+    pub moments_openrouter_key: String,
 }
 
 impl Default for Settings {
@@ -413,6 +425,11 @@ impl Default for Settings {
             blur_strictness: "moderate".into(),
             blur_explicit: false,
             entry_list: String::new(),
+            moments_backend: "vlm".into(),
+            moments_threshold: crate::moments::DEFAULT_THRESHOLD,
+            moments_transport: "openrouter".into(),
+            moments_openrouter_model: "perplexity/pplx-decider-flash-v1.3:free".into(),
+            moments_openrouter_key: String::new(),
         }
     }
 }
@@ -551,11 +568,15 @@ impl Settings {
     /// What this album looks for and reads: the preset's policy with the
     /// album's overrides applied. The one answer every lane asks.
     pub fn lanes(&self) -> crate::profile::Lanes {
-        crate::profile::Lanes::resolve(
+        let mut lanes = crate::profile::Lanes::resolve(
             crate::profile::ShootPreset::parse(&self.scan_profile),
             self.include_people,
             &crate::profile::Overrides::from_map(&self.overrides),
-        )
+        );
+        if self.moments_threshold.is_finite() {
+            lanes.moments_threshold = self.moments_threshold.clamp(0.5, 1.0);
+        }
+        lanes
     }
 
     /// These settings with the lane switches folded in: a reader the album

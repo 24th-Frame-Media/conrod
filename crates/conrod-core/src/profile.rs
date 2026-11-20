@@ -722,10 +722,14 @@ pub enum Feature {
     MakeModel,
     Sponsors,
     Names,
+    /// Ask a judge for the shoot's moments and show them as tags.
+    MomentsDetect,
+    /// Let confident moments lift a frame's rank among its burst.
+    MomentsRank,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 9] = [
+    pub const ALL: [Feature; 11] = [
         Feature::Vehicles,
         Feature::People,
         Feature::Faces,
@@ -735,6 +739,8 @@ impl Feature {
         Feature::MakeModel,
         Feature::Sponsors,
         Feature::Names,
+        Feature::MomentsDetect,
+        Feature::MomentsRank,
     ];
     /// What the detector looks for.
     pub const DETECTS: [Feature; 4] = [
@@ -752,6 +758,9 @@ impl Feature {
         Feature::Names,
     ];
 
+    /// The moment judge's two switches.
+    pub const MOMENTS: [Feature; 2] = [Feature::MomentsDetect, Feature::MomentsRank];
+
     /// The key stored in the album's `overrides` and sent over the wire.
     pub fn key(self) -> &'static str {
         match self {
@@ -764,6 +773,8 @@ impl Feature {
             Feature::MakeModel => "make_model",
             Feature::Sponsors => "sponsors",
             Feature::Names => "names",
+            Feature::MomentsDetect => "moments_detect",
+            Feature::MomentsRank => "moments_rank",
         }
     }
 
@@ -790,6 +801,8 @@ impl Feature {
             (Feature::Sponsors, Aviation) => "Operator & livery",
             (Feature::Sponsors, _) => "Sponsors & livery",
             (Feature::Names, _) => "Names (from faces)",
+            (Feature::MomentsDetect, _) => "Spot moments",
+            (Feature::MomentsRank, _) => "Let moments lift ranking",
         }
     }
 
@@ -801,6 +814,7 @@ impl Feature {
                 Some(Feature::Vehicles)
             }
             Feature::Names => Some(Feature::Faces),
+            Feature::MomentsRank => Some(Feature::MomentsDetect),
             _ => None,
         }
     }
@@ -850,7 +864,12 @@ impl Overrides {
 }
 
 /// What a preset's policy says about a feature before any override.
-fn policy_default(p: &PresetPolicy, include_people: bool, feature: Feature) -> bool {
+fn policy_default(
+    preset: ShootPreset,
+    p: &PresetPolicy,
+    include_people: bool,
+    feature: Feature,
+) -> bool {
     match feature {
         Feature::Vehicles => p.vehicles,
         Feature::People => p.people,
@@ -861,6 +880,10 @@ fn policy_default(p: &PresetPolicy, include_people: bool, feature: Feature) -> b
         Feature::MakeModel => p.vlm.make_model,
         Feature::Sponsors => p.vlm.sponsors,
         Feature::Names => p.vlm.names,
+        // On wherever the type has moments worth judging.
+        Feature::MomentsDetect | Feature::MomentsRank => {
+            !crate::moments::vocabulary(preset).is_empty()
+        }
     }
 }
 
@@ -881,6 +904,12 @@ pub struct Lanes {
     pub sponsors: bool,
     /// Name suggestions from faces; needs `faces`.
     pub names: bool,
+    /// A judge is asked for the preset's moments (needs a vocabulary).
+    pub moments_detect: bool,
+    /// Confident moments break ties among equally sharp frames.
+    pub moments_rank: bool,
+    /// The probability a moment must reach to count (the album's setting).
+    pub moments_threshold: f64,
     /// Frames whose main subject is a person are judged like portraits
     /// (eye, face, person) even on a vehicle-first shoot.
     pub people_judged: bool,
@@ -898,10 +927,12 @@ impl Lanes {
         let raw = |f: Feature| {
             overrides
                 .get(f)
-                .unwrap_or_else(|| policy_default(&p, include_people, f))
+                .unwrap_or_else(|| policy_default(preset, &p, include_people, f))
         };
         let vehicles = raw(Feature::Vehicles);
         let faces = raw(Feature::Faces);
+        let moments_detect =
+            raw(Feature::MomentsDetect) && !crate::moments::vocabulary(preset).is_empty();
         let explicit_people = overrides.get(Feature::Faces) == Some(true)
             || overrides.get(Feature::People) == Some(true);
         Lanes {
@@ -915,6 +946,9 @@ impl Lanes {
             make_model: raw(Feature::MakeModel) && vehicles,
             sponsors: raw(Feature::Sponsors) && vehicles,
             names: raw(Feature::Names) && faces,
+            moments_detect,
+            moments_rank: raw(Feature::MomentsRank) && moments_detect,
+            moments_threshold: crate::moments::DEFAULT_THRESHOLD,
             people_judged: faces
                 && (include_people
                     || explicit_people
@@ -940,6 +974,8 @@ impl Lanes {
             Feature::MakeModel => self.make_model,
             Feature::Sponsors => self.sponsors,
             Feature::Names => self.names,
+            Feature::MomentsDetect => self.moments_detect,
+            Feature::MomentsRank => self.moments_rank,
         }
     }
 
@@ -952,6 +988,11 @@ impl Lanes {
     /// The vision model has something to ask about a vehicle.
     pub fn asks_model(&self) -> bool {
         self.identifies_vehicles()
+    }
+
+    /// The moments this album asks a judge for.
+    pub fn moments(&self) -> &'static [crate::moments::Moment] {
+        crate::moments::active(self.preset, self.moments_detect)
     }
 
     /// First present wins. A switched-off detector's subject kinds leave
@@ -996,7 +1037,7 @@ impl Lanes {
                 "key": f.key(),
                 "label": f.label(self.preset),
                 "on": self.on(f),
-                "default": policy_default(&policy, false, f),
+                "default": policy_default(self.preset, &policy, false, f),
                 "overridden": self.overridden(f),
                 "requires": requires.map(Feature::key),
                 "blocked": blocked,
@@ -1008,6 +1049,14 @@ impl Lanes {
             "profile": policy.profile.name(),
             "detects": Feature::DETECTS.map(row),
             "reads": Feature::READS.map(row),
+            "moments": {
+                "detect": row(Feature::MomentsDetect),
+                "rank": row(Feature::MomentsRank),
+                "vocabulary": crate::moments::vocabulary(self.preset)
+                    .iter()
+                    .map(|m| json!({"key": m.key, "label": m.label, "weight": m.weight}))
+                    .collect::<Vec<_>>(),
+            },
             "panForgiven": policy.pan_allowed,
             "blur": policy.default_blur,
             "levelCheck": policy.level,
@@ -1272,6 +1321,12 @@ mod tests {
     fn every_detector_and_reader_overrides_both_ways_on_every_preset() {
         for preset in ShootPreset::ALL {
             for feature in Feature::ALL {
+                // A type with no moments has nothing to switch on.
+                if Feature::MOMENTS.contains(&feature)
+                    && crate::moments::vocabulary(preset).is_empty()
+                {
+                    continue;
+                }
                 for on in [true, false] {
                     let mut o = Overrides::default();
                     o.set(feature, Some(on));

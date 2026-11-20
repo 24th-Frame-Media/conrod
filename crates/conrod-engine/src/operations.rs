@@ -453,7 +453,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
     let settings = settings(d, job)?;
     let lanes = settings.lanes();
     let finds_faces = lanes.names;
-    if !lanes.identifies_vehicles() && !finds_faces {
+    if !lanes.identifies_vehicles() && !finds_faces && !lanes.moments_detect {
         return Err("There are no identifiable subjects in this shoot preset".into());
     }
     // The command's scope overrides the album's setting for this run only;
@@ -465,8 +465,14 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             return Ok(());
         }
         if !lanes.identifies_vehicles() {
-            let faces = crate::passes::embed_faces_missing(d, job, stop, task)?;
-            task.detail(format!("Prepared {faces} faces for name suggestions"));
+            if lanes.names {
+                let faces = crate::passes::embed_faces_missing(d, job, stop, task)?;
+                task.detail(format!("Prepared {faces} faces for name suggestions"));
+            }
+            // No vehicles to read, but the shoot may still have moments to judge.
+            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope)? > 0 {
+                crate::passes::pick_keepers(d, job)?;
+            }
             return Ok(());
         }
         let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
@@ -498,6 +504,9 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             } else {
                 "No keepers need identification"
             });
+            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope)? > 0 {
+                crate::passes::pick_keepers(d, job)?;
+            }
             end.finish("done");
             return Ok(());
         }
@@ -650,6 +659,8 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             if let Some(p) = &progress {
                 p.phase("pick");
             }
+            // Moments are read last, so the pick below can rank on them.
+            crate::moments::run(d, job, stop, task, &settings, &lanes, scope)?;
             task.detail("Picking keepers");
             crate::passes::pick_keepers(d, job)?;
             end.finish("done");

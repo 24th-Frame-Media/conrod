@@ -126,6 +126,7 @@ pub mod identify_live;
 pub mod library;
 pub mod lightroom;
 mod looks;
+pub mod moments;
 pub mod operations;
 #[cfg(test)]
 mod pantest;
