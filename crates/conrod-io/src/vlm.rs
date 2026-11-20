@@ -697,6 +697,94 @@ pub fn openai_request_at(
     }
 }
 
+const OPENAI_MODELS_URL: &str = "https://api.openai.com/v1/models";
+
+/// Model lists are a short UI call; fail fast instead of leaving the Settings
+/// screen hanging on an unreachable proxy.
+const MODELS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const MODELS_TOTAL_TIMEOUT: Duration = Duration::from_secs(20);
+
+fn models_agent() -> ureq::Agent {
+    ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_connect(Some(MODELS_CONNECT_TIMEOUT))
+            .timeout_global(Some(MODELS_TOTAL_TIMEOUT))
+            .build(),
+    )
+}
+
+/// `provider_models` is a webview command that carries an API key, so it may
+/// only talk to hosts this app already trusts: the known providers' fixed
+/// endpoints, and OpenCode's documented custom base URL (a proxy or a
+/// self-hosted gateway) over http(s) only. Anything else is refused before the
+/// key is ever attached to a request.
+fn models_url(provider: &str, host: &str) -> Result<(String, bool), String> {
+    match provider {
+        "openai" => Ok((OPENAI_MODELS_URL.to_string(), true)),
+        "opencode" | "opencode-go" => {
+            let default = if provider == "opencode-go" {
+                OPENCODE_GO_MODELS_URL
+            } else {
+                OPENCODE_MODELS_URL
+            };
+            let host = host.trim().trim_end_matches('/');
+            if host.is_empty() {
+                return Ok((default.to_string(), true));
+            }
+            if !is_http_url(host) {
+                return Err(format!(
+                    "'{provider}' needs an http(s) model-list URL, not {host:?}"
+                ));
+            }
+            if !host.to_ascii_lowercase().starts_with("https://") && !is_local_host(host) {
+                return Err(format!(
+                    "'{provider}' sends the API key, so a plain http URL must be localhost or a private-network address; use https for {host:?}"
+                ));
+            }
+            let url = if host.ends_with("/models") {
+                host.to_string()
+            } else {
+                format!("{host}/models")
+            };
+            Ok((url, true))
+        }
+        other => Err(format!(
+            "'{other}' does not list models; type the model name"
+        )),
+    }
+}
+
+/// An `http`/`https` URL with a host: not `file:`, not a UNC path, not a bare
+/// host name that ureq would otherwise have to guess a scheme for.
+fn is_http_url(url: &str) -> bool {
+    url.parse::<ureq::http::Uri>()
+        .map(|uri| matches!(uri.scheme_str(), Some("http" | "https")) && uri.authority().is_some())
+        .unwrap_or(false)
+}
+
+/// `localhost`, a loopback address, or a private-network address (RFC 1918,
+/// unique-local IPv6): where an unencrypted request stays on the user's own
+/// network, e.g. Ollama or a gateway on the LAN. Link-local addresses (cloud
+/// metadata services) are not included.
+fn is_local_host(url: &str) -> bool {
+    let Some(host) = url
+        .parse::<ureq::http::Uri>()
+        .ok()
+        .and_then(|u| u.host().map(str::to_lowercase))
+    else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+        Err(_) => false,
+    }
+}
+
 /// The models a provider key can call, as `(id, name)` pairs. Uses the
 /// provider's own list endpoint; anything that is not an OpenAI-shaped
 /// `{"data":[{"id":…}]}` (or `{"models":[…]}`) is reported as an error rather
@@ -707,30 +795,8 @@ pub fn list_models(
     api_key: &str,
 ) -> Result<Vec<(String, String)>, String> {
     let provider = provider.to_lowercase();
-    let (url, auth) = match provider.as_str() {
-        "opencode" | "opencode-go" => {
-            let default = if provider == "opencode-go" {
-                OPENCODE_GO_MODELS_URL
-            } else {
-                OPENCODE_MODELS_URL
-            };
-            let host = host.trim().trim_end_matches('/');
-            if host.is_empty() {
-                (default.to_string(), true)
-            } else if host.ends_with("/models") {
-                (host.to_string(), true)
-            } else {
-                (format!("{host}/models"), true)
-            }
-        }
-        "openai" => ("https://api.openai.com/v1/models".to_string(), true),
-        other => {
-            return Err(format!(
-                "'{other}' does not list models; type the model name"
-            ))
-        }
-    };
-    let agent = ureq::Agent::new_with_defaults();
+    let (url, auth) = models_url(&provider, host)?;
+    let agent = models_agent();
     let mut request = agent.get(&url);
     if auth {
         request = request.header("Authorization", &format!("Bearer {api_key}"));
@@ -888,8 +954,11 @@ pub fn gemini_request(
     }
     ProviderRequest {
         url: GEMINI_URL.replace("{model}", model),
-        headers: vec![],
-        query: vec![("key".into(), api_key.to_string())],
+        // The key travels in the header, never the query string: URLs land in
+        // proxy and server logs, headers do not (same contract as OpenAI and
+        // Anthropic above).
+        headers: vec![("x-goog-api-key".into(), api_key.to_string())],
+        query: vec![],
         json: json!({
             "contents": [{"role": "user", "parts": parts}],
             // Gemini's schema dialect is not the one Ollama/OpenAI use --
@@ -2087,6 +2156,44 @@ mod tests {
             .expect("a text part");
         assert!(text.contains("read the number"));
         assert!(text.contains("\"number\""));
+    }
+
+    #[test]
+    fn model_lists_stay_on_allowlisted_hosts_and_time_out() {
+        // A fixed provider ignores a webview-supplied host entirely.
+        assert_eq!(
+            models_url("openai", "http://attacker.example/v1").unwrap(),
+            (OPENAI_MODELS_URL.to_string(), true)
+        );
+        // Providers with no list endpoint are refused, whatever host is sent.
+        assert!(models_url("gemini", "").is_err());
+        assert!(models_url("ollama", "http://127.0.0.1:11434").is_err());
+        // OpenCode's documented custom base URL survives, http(s) only.
+        assert!(models_url("opencode", "file:///etc/passwd").is_err());
+        assert!(models_url("opencode", "ftp://proxy.example/v1").is_err());
+        assert!(models_url("opencode", "proxy.example/v1").is_err());
+        assert!(models_url("opencode", r"\\server\share\models").is_err());
+        // An unencrypted URL must stay on this machine or the private network.
+        assert!(models_url("opencode", "http://attacker.example/v1").is_err());
+        assert!(models_url("opencode", "http://169.254.169.254/v1").is_err());
+        for local in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:8080/v1",
+            "http://192.168.1.20/v1",
+            "http://[::1]:8080/v1",
+        ] {
+            assert!(models_url("opencode", local).is_ok(), "{local}");
+        }
+        assert_eq!(
+            models_url("opencode", "https://proxy.example/v1")
+                .unwrap()
+                .0,
+            "https://proxy.example/v1/models"
+        );
+        // The request cannot hang the Settings screen.
+        let timeouts = models_agent().config().timeouts();
+        assert_eq!(timeouts.connect, Some(Duration::from_secs(10)));
+        assert_eq!(timeouts.global, Some(Duration::from_secs(20)));
     }
 
     #[test]

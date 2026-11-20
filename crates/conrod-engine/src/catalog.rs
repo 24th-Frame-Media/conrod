@@ -216,14 +216,38 @@ pub fn entries(d: &Desktop, text: &str) -> Result<Value> {
     settings.save(&d.root.join("settings.json")).map_err(err)?;
     Ok(json!({"path": path, "count": map.len()}))
 }
-pub fn mapping(settings: &conrod_core::settings::Settings) -> Result<Option<NumberMap>> {
-    settings
+/// The entry list the settings point at, read only from this library's own
+/// `entries` folder. `map_path` lives in `settings.extra`, which a webview
+/// settings save can write, so the stored string is canonicalised and must
+/// stay under `root/entries`: `..`, another drive and a UNC path all resolve
+/// outside it and are refused rather than read.
+fn entry_map_path(root: &std::path::Path, path: &str) -> Result<std::path::PathBuf> {
+    let dir = std::fs::canonicalize(root.join("entries"))
+        .map_err(|e| format!("the entries folder is missing: {e}"))?;
+    let file =
+        std::fs::canonicalize(path).map_err(|e| format!("cannot open the entry list: {e}"))?;
+    if !file.starts_with(&dir) {
+        return Err("the entry list must be inside this library's entries folder".into());
+    }
+    Ok(file)
+}
+
+pub fn mapping(
+    root: &std::path::Path,
+    settings: &conrod_core::settings::Settings,
+) -> Result<Option<NumberMap>> {
+    let Some(path) = settings
         .extra
         .get("map_path")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .map(|path| NumberMap::parse(&std::fs::read_to_string(path).map_err(err)?))
-        .transpose()
+    else {
+        return Ok(None);
+    };
+    let file = entry_map_path(root, path)?;
+    Ok(Some(NumberMap::parse(
+        &std::fs::read_to_string(file).map_err(err)?,
+    )?))
 }
 #[cfg(test)]
 mod tests {
@@ -238,9 +262,38 @@ mod tests {
         assert!(text.as_str().unwrap().contains("Ford,Falcon"));
         let out = entries(lib.d(), "number,driver\n07,Alex\n").unwrap();
         assert_eq!(out["count"], 1);
-        let map = mapping(&lock(&lib.d().settings)).unwrap().unwrap();
+        let map = mapping(&lib.root, &lock(&lib.d().settings))
+            .unwrap()
+            .unwrap();
         assert!(map.keywords_for("7", "").contains(&"Alex".into()));
         assert!(entries(lib.d(), "driver\nAlex\n").is_err());
+    }
+
+    #[test]
+    fn the_entry_list_is_read_only_from_the_entries_folder() {
+        let lib = Lib::new("map-path");
+        entries(lib.d(), "number,driver\n07,Alex\n").unwrap();
+        assert!(
+            mapping(&lib.root, &lock(&lib.d().settings))
+                .unwrap()
+                .is_some(),
+            "the album's own list is read"
+        );
+
+        let outside = lib.root.join("outside.csv");
+        std::fs::write(&outside, "number,driver\n07,Alex\n").unwrap();
+        let mut settings = lock(&lib.d().settings).clone();
+        settings.extra.insert("map_path".into(), json!(outside));
+        let err = mapping(&lib.root, &settings).expect_err("outside the folder");
+        assert!(err.contains("inside this library"), "{err}");
+
+        // `..` resolves back out of the folder even when it starts inside it.
+        let escaped = lib.root.join("entries").join("..").join("outside.csv");
+        settings.extra.insert("map_path".into(), json!(escaped));
+        assert!(
+            mapping(&lib.root, &settings).is_err(),
+            "a .. walk is refused"
+        );
     }
 }
 

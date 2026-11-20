@@ -120,6 +120,37 @@ fn provider_requests_match_recorded_fixture() {
 }
 
 #[test]
+fn gemini_key_travels_in_a_header_never_in_the_url() {
+    let request = build_request(
+        &settings_for("gemini"),
+        "describe it",
+        &["b64img".to_string()],
+        &json!({"type": "object"}),
+        500,
+    )
+    .unwrap();
+    // A query string is written to every proxy and server log it passes; the
+    // key must never be there.
+    assert!(
+        !request.url.contains("AIzaTest"),
+        "the key is in the URL: {}",
+        request.url
+    );
+    assert!(
+        request.query.iter().all(|(k, _)| k != "key"),
+        "the key is still a query parameter"
+    );
+    assert!(
+        request
+            .headers
+            .iter()
+            .any(|(k, v)| k == "x-goog-api-key" && v == "AIzaTest"),
+        "the key must ride in x-goog-api-key: {:?}",
+        request.headers
+    );
+}
+
+#[test]
 fn provider_responses_match_recorded_fixture() {
     let payload = fixture();
     for case in payload["responses"].as_array().unwrap() {
