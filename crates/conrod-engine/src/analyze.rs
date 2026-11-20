@@ -90,13 +90,16 @@ pub fn analyze_with(
     // let a live feed show it) as soon as the car arrives. The model is still
     // asked after the readers, but the panel fills when the car reaches VISION.
     let (entries, entry_warning) = entry_list(&s.entry_list);
-    let policy = conrod_core::profile::ShootPreset::parse(&s.scan_profile).policy();
-    let racing =
-        policy.profile == conrod_core::profile::ScanProfile::Motorsport && policy.vlm.numbers;
+    // What this album reads: the preset's policy with its overrides. A
+    // competition shoot reads numbers and does not ask the model for plates.
+    let lanes = s.lanes();
+    let racing = lanes.numbers && !lanes.plates;
+    let subject = vlm::SubjectKind::from_class(kind);
     let mut vlm_prompt = None;
-    if s.use_vlm {
+    if s.use_vlm && lanes.asks_model() {
         if let Some((_, io)) = describer.as_ref() {
             let hints = vlm::VlmHints {
+                subject,
                 racing,
                 candidates: entries
                     .as_deref()
@@ -164,8 +167,9 @@ pub fn analyze_with(
     let mut vlm_reply = serde_json::Value::Null;
     let mut vlm_attempts = 0;
     let mut vlm_ran = false;
-    if let (true, Some((client, io))) = (s.use_vlm, describer.as_ref()) {
+    if let (true, Some((client, io))) = (s.use_vlm && lanes.asks_model(), describer.as_ref()) {
         let hints = vlm::VlmHints {
+            subject,
             racing,
             candidates: entries
                 .as_deref()

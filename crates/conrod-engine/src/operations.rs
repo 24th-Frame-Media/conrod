@@ -95,7 +95,8 @@ pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
     s.vlm_extra_hosts = current.vlm_extra_hosts;
     s.vlm_services = current.vlm_services;
     s.vlm_strategy = current.vlm_strategy;
-    Ok(s)
+    // The lanes the album (or its preset) leaves off are off for every reader.
+    Ok(s.resolved())
 }
 pub(crate) fn launch(
     d: &Arc<Desktop>,
@@ -450,10 +451,9 @@ fn load_readers(settings: &Settings, ocr: &Option<Arc<ocr::Ocr>>) -> Result<Read
 
 pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value> {
     let settings = settings(d, job)?;
-    let profile = conrod_core::profile::ScanProfile::parse(&settings.scan_profile);
-    let finds_faces = conrod_core::profile::ShootPreset::parse(&settings.scan_profile)
-        .wants_faces(settings.include_people);
-    if !profile.identifies_vehicles() && !finds_faces {
+    let lanes = settings.lanes();
+    let finds_faces = lanes.names;
+    if !lanes.identifies_vehicles() && !finds_faces {
         return Err("There are no identifiable subjects in this shoot preset".into());
     }
     // The command's scope overrides the album's setting for this run only;
@@ -464,7 +464,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
         if !wait_for_cull(d, stop, task) {
             return Ok(());
         }
-        if !profile.identifies_vehicles() {
+        if !lanes.identifies_vehicles() {
             let faces = crate::passes::embed_faces_missing(d, job, stop, task)?;
             task.detail(format!("Prepared {faces} faces for name suggestions"));
             return Ok(());
@@ -490,7 +490,9 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
         *lock(&d.identify) = Some(live.clone());
         let mut end = LiveRun(live.clone());
         if pending.is_empty() {
-            crate::passes::embed_faces_missing(d, job, stop, task)?;
+            if lanes.names {
+                crate::passes::embed_faces_missing(d, job, stop, task)?;
+            }
             task.detail(if scope == conrod_core::settings::IDENTIFY_EVERYTHING {
                 "No subjects need identification"
             } else {
@@ -635,7 +637,9 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             return Err(e);
         }
         if !stop.load(Ordering::Relaxed) {
-            crate::passes::embed_faces_missing(d, job, stop, task)?;
+            if lanes.names {
+                crate::passes::embed_faces_missing(d, job, stop, task)?;
+            }
             task.detail("Grouping similar vehicles");
             crate::passes::consolidate(d, job, task)?;
             task.detail("Finding re-shot frames");

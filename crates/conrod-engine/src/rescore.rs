@@ -19,7 +19,7 @@ use crate::operations::{launch, settings};
 use crate::passes::{pick_of_pass, region_name};
 use conrod_core::{
     framing,
-    profile::{ScanProfile, ShootPreset, Subject},
+    profile::{ShootPreset, Subject},
     ridge::SharpModel,
     settings::Settings,
     tasks::Task,
@@ -714,7 +714,6 @@ pub(crate) fn run(
     task: &Task,
 ) -> Result<(usize, usize, usize, usize)> {
     let models = load_models(d);
-    let profile = ScanProfile::parse(&cfg.scan_profile);
     let found = rows(
         &lock(&d.reader),
         "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.features, d.heuristic, d.panning, d.rating, COALESCE(d.bystander,0) AS bystander, i.width, i.height, i.sharpness AS whole, i.pan_share, i.af_sharpness FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.id",
@@ -815,8 +814,9 @@ pub(crate) fn run(
         let tx = db.unchecked_transaction().map_err(err)?;
         for (image, frame) in &frames {
             let main = conrod_core::profile::main_subject(frame.boxes.iter().copied());
-            let rating = profile
-                .frame_priority(cfg.include_people, main)
+            let rating = cfg
+                .lanes()
+                .frame_priority(main)
                 .iter()
                 .find_map(|kind| match kind {
                     Subject::WholeFrame => frame.whole,
@@ -847,13 +847,7 @@ pub(crate) fn run(
         crate::passes::rate_missed_frames(&db, job)?;
     }
     // The stars have moved, so the keeper of a pass may have moved with them.
-    let picked = pick_of_pass(
-        &lock(&d.db),
-        job,
-        profile,
-        cfg.include_people,
-        cfg.use_quality_score,
-    )?;
+    let picked = pick_of_pass(&lock(&d.db), job, &cfg.lanes(), cfg.use_quality_score)?;
     task.detail(format!(
         "Re-measured {} subjects: {changed} changed, {skipped} kept as stored",
         found.len() - skipped

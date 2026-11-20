@@ -332,12 +332,11 @@ impl Candidate {
 pub fn pick_of_pass(
     conn: &Connection,
     job: i64,
-    profile: ScanProfile,
-    include_people: bool,
+    lanes: &conrod_core::profile::Lanes,
     use_quality_score: bool,
 ) -> Result<Value> {
     let rank = |main: Option<Subject>, region: &str| {
-        let priority = profile.frame_priority(include_people, main);
+        let priority = lanes.frame_priority(main);
         priority
             .iter()
             .position(|k| region_name(*k) == region)
@@ -732,15 +731,8 @@ pub(crate) fn rate_missed_frames(conn: &Connection, job: i64) -> Result<usize> {
 pub fn pick_keepers(d: &Desktop, job: i64) -> Result<Value> {
     require_job(d, job)?;
     let cfg = settings(d, job)?;
-    let profile = ScanProfile::parse(&cfg.scan_profile);
     let task = d.hub.start("Picking keepers", 0);
-    match pick_of_pass(
-        &lock(&d.db),
-        job,
-        profile,
-        cfg.include_people,
-        cfg.use_quality_score,
-    ) {
+    match pick_of_pass(&lock(&d.db), job, &cfg.lanes(), cfg.use_quality_score) {
         Ok(stats) => {
             task.detail(format!(
                 "{} keepers from {} frames across {} passes",
@@ -1004,8 +996,9 @@ pub fn redetect(d: &Arc<Desktop>, job: i64) -> Result<Value> {
         }
         // Faces and expression are extras: a frame with no detection has no
         // person box to put them in, so a failure here never fails the pass.
-        let faces = ShootPreset::parse(&low.scan_profile)
-            .wants_faces(low.include_people)
+        let faces = low
+            .lanes()
+            .faces
             .then(|| crate::load_faces_pool(lanes).ok())
             .flatten();
         let expression = faces
@@ -1180,10 +1173,14 @@ pub fn restore_copies(d: &Arc<Desktop>, job: i64) -> Result<Value> {
 /// by the window).
 pub fn set_include_people(d: &Arc<Desktop>, job: i64, value: bool) -> Result<Value> {
     let mut cfg = settings(d, job)?;
+    let faces_before = {
+        let mut off = cfg.clone();
+        off.include_people = false;
+        off.lanes().faces
+    };
     cfg.include_people = value;
-    let preset = ShootPreset::parse(&cfg.scan_profile);
     // Faces are already found at scan time wherever the flag is not needed.
-    let operation = if value && !preset.wants_faces(false) {
+    let operation = if value && !faces_before {
         let cfg = cfg.clone();
         launch(d, job, "Finding people", move |d, stop, task| {
             if crate::operations::wait_for_cull(d, stop, task) {
@@ -1202,6 +1199,56 @@ pub fn set_include_people(d: &Arc<Desktop>, job: i64, value: bool) -> Result<Val
         &crate::commands::UpdateJobSettingsArgs { job_id: job, patch },
     )?;
     saved["operation"] = operation;
+    Ok(saved)
+}
+
+/// action: switch one detector or reader on or off for an album, or (with
+/// `None`) back to the shoot type's default. Turning faces on after the scan
+/// finds them in the background; turning a detector off hides its boxes from
+/// the rating window and re-rates at once. Turning vehicles, people or
+/// animals on needs the frames looked at again (`needsRescan`), because the
+/// detector never asked for them.
+pub fn set_feature(d: &Arc<Desktop>, job: i64, key: &str, value: Option<bool>) -> Result<Value> {
+    let feature = conrod_core::profile::Feature::parse(key)
+        .ok_or_else(|| format!("Unknown detector or reader: {key}"))?;
+    let before = settings(d, job)?;
+    let mut overrides = conrod_core::profile::Overrides::from_map(&before.overrides);
+    overrides.set(feature, value);
+    let mut after = before.clone();
+    after.overrides = overrides.to_map();
+    let (was, now) = (before.lanes(), after.lanes());
+    let needs_rescan = [
+        conrod_core::profile::Feature::Vehicles,
+        conrod_core::profile::Feature::People,
+        conrod_core::profile::Feature::Animals,
+    ]
+    .into_iter()
+    .any(|f| now.on(f) && !was.on(f));
+    let operation = if now.faces && !was.faces {
+        let cfg = after.clone();
+        launch(d, job, "Finding people", move |d, stop, task| {
+            if crate::operations::wait_for_cull(d, stop, task) {
+                find_people(d, job, &cfg, stop, task)?;
+            }
+            Ok(())
+        })?["operation"]
+            .clone()
+    } else {
+        Value::Null
+    };
+    let mut patch = Map::new();
+    patch.insert("overrides".into(), Value::Object(after.overrides.clone()));
+    let mut saved = crate::library::update_job_settings(
+        d,
+        &crate::commands::UpdateJobSettingsArgs { job_id: job, patch },
+    )?;
+    // The frame ratings were made under the old lanes: re-rate and re-pick.
+    if operation.is_null() {
+        rerate(d, job, &after)?;
+    }
+    saved["operation"] = operation;
+    saved["needsRescan"] = json!(needs_rescan);
+    saved["lanes"] = now.summary();
     Ok(saved)
 }
 
@@ -1283,7 +1330,7 @@ fn find_people(
 
 /// Every frame's rating again from its stored subjects, and the keepers.
 fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
-    let profile = ScanProfile::parse(&cfg.scan_profile);
+    let lanes = cfg.lanes();
     let found = rows(
         &lock(&d.reader),
         "SELECT d.image_id, COALESCE(d.region_type,'vehicle') AS region, d.x1, d.y1, d.x2, d.y2, d.rating, i.sharpness AS whole FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.bystander,0)=0 ORDER BY d.image_id",
@@ -1305,7 +1352,7 @@ fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
     let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     for (image, (whole, subjects)) in &frames {
-        let rating = crate::frame_rating(profile, cfg.include_people, subjects, *whole);
+        let rating = crate::frame_rating(&lanes, subjects, *whole);
         tx.execute(
             "UPDATE images SET rating=? WHERE id=?",
             params![rating, image],
@@ -1313,7 +1360,7 @@ fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
         .map_err(err)?;
     }
     tx.commit().map_err(err)?;
-    pick_of_pass(&db, job, profile, cfg.include_people, cfg.use_quality_score)?;
+    pick_of_pass(&db, job, &lanes, cfg.use_quality_score)?;
     Ok(())
 }
 
@@ -1758,7 +1805,6 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         }
     }
     let cfg = settings(d, job)?;
-    let profile = ScanProfile::parse(&cfg.scan_profile);
     let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
     for (id, attrs, key, size, agreement, hex) in &writes {
@@ -1771,7 +1817,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         .map_err(err)?;
     }
     tx.commit().map_err(err)?;
-    pick_of_pass(&db, job, profile, cfg.include_people, cfg.use_quality_score)?;
+    pick_of_pass(&db, job, &cfg.lanes(), cfg.use_quality_score)?;
     Ok((members.len(), looks.len()))
 }
 
@@ -2338,6 +2384,79 @@ mod tests {
         assert_eq!(kept, 1, "people are hidden, not deleted");
         assert!(lib
             .run("set_include_people", json!({"jobId": 4242, "value": true}))
+            .is_err());
+    }
+
+    #[test]
+    fn a_feature_switch_is_saved_and_the_frame_is_rated_without_the_switched_off_kind() {
+        let lib = Lib::new("feature");
+        lib.run(
+            "update_job_settings",
+            json!({"jobId": lib.job, "patch": {"scan_profile": "portrait"}}),
+        )
+        .unwrap();
+        let frame = lib.frame("1.jpg", Some(1));
+        let person = lib.detection(frame, "person", 0.7);
+        let face = lib.detection(frame, "face", 0.95);
+        lib.sql("UPDATE detections SET embedding='x' WHERE id=?", [face]);
+        let rate = || -> f64 { lib.one("SELECT rating FROM images WHERE id=?", [frame]) };
+        let set = |feature: &str, value: Value| {
+            let out = lib
+                .run(
+                    "set_feature",
+                    json!({"jobId": lib.job, "feature": feature, "value": value}),
+                )
+                .unwrap();
+            lib.wait_idle();
+            out
+        };
+
+        // Portrait defaults: the face decides.
+        let same = set("faces", json!(true));
+        assert!(same["operation"].is_null(), "faces were already on");
+        assert_eq!(rate(), 0.95);
+        assert_eq!(same["settings"]["overrides"]["faces"], true);
+
+        // Faces off: no face pass, no stale face score; the person decides.
+        let off = set("faces", json!(false));
+        assert_eq!(off["lanes"]["detects"][2]["on"], false);
+        assert_eq!(off["lanes"]["detects"][2]["overridden"], true);
+        assert!(!settings(lib.d(), lib.job).unwrap().lanes().faces);
+        assert_eq!(
+            rate(),
+            0.7,
+            "the face is hidden, the person rates the frame"
+        );
+        let kept: i64 = lib.one("SELECT count(*) FROM detections WHERE id=?", [face]);
+        assert_eq!(kept, 1, "hidden, not deleted");
+
+        // Everything off falls back to the whole frame, without a crash.
+        set("people", json!(false));
+        set("animals", json!(false));
+        let _ = rate();
+
+        // Back to the preset's default.
+        let back = set("faces", Value::Null);
+        assert!(back["settings"]["overrides"].get("faces").is_none());
+        assert!(settings(lib.d(), lib.job).unwrap().lanes().faces);
+        assert_eq!(back["needsRescan"], false);
+        let _ = person;
+
+        // Turning a detector the scan never asked for on needs a rescan.
+        let on = set("vehicles", json!(true));
+        assert_eq!(on["needsRescan"], true);
+
+        assert!(lib
+            .run(
+                "set_feature",
+                json!({"jobId": lib.job, "feature": "bogus", "value": true})
+            )
+            .is_err());
+        assert!(lib
+            .run(
+                "set_feature",
+                json!({"jobId": 4242, "feature": "faces", "value": true})
+            )
             .is_err());
     }
 
