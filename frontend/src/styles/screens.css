@@ -1811,6 +1811,7 @@ dialog.viewer {
   gap: 8px;
   margin-top: 4px;
 }
+.sidebar-link-group { display: flex; align-items: center; gap: 14px; }
 .sidebar-ext-link {
   color: var(--text-dim);
   text-decoration: none;
@@ -2611,3 +2612,26 @@ dialog.viewer {
 @media (min-width: 1561px) {
   .settings-savebar { padding-inline: calc((100% - 1560px) / 2 + 32px); }
 }
+
+/* ── what's new ── */
+.whatsnew-sheet { max-width: 560px; max-height: 84vh; display: flex; flex-direction: column; }
+.whatsnew-list { display: flex; flex-direction: column; gap: 22px; overflow-y: auto; }
+.whatsnew-entry + .whatsnew-entry { padding-top: 18px; border-top: 1px solid var(--line-soft); }
+.whatsnew-entry-head { display: flex; align-items: baseline; gap: 10px; }
+.whatsnew-entry-head h3 { margin: 0; font-size: 15px; font-weight: 500; color: var(--text); }
+.whatsnew-highlights { margin: 4px 0 14px; }
+.whatsnew-section { margin-bottom: 12px; }
+.whatsnew-section:last-child { margin-bottom: 0; }
+.whatsnew-section h4 {
+  display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 11px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--text-mute);
+}
+.whatsnew-new h4 { color: var(--good); }
+.whatsnew-improved h4 { color: var(--accent); }
+.whatsnew-fixed h4 { color: var(--text-dim); }
+.whatsnew-section ul { margin: 0; padding-left: 20px; display: grid; gap: 5px; }
+.whatsnew-section li { font-size: 13px; line-height: 1.5; color: var(--text-dim); }
+.whatsnew-earlier { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.whatsnew-earlier > summary { cursor: pointer; color: var(--text-dim); font-size: 13px; padding: 2px 0; width: fit-content; }
+.whatsnew-earlier[open] > summary { margin-bottom: 14px; }
+.whatsnew-earlier .whatsnew-list { gap: 18px; }
