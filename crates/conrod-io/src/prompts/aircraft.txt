@@ -1,0 +1,11 @@
+You reading one aircraft in photo. Report only what you can actually see. Never guess from memory.
+- number: display or formation number painted on the aircraft, digits only. null if there is none or it is not clearly legible.
+- number_location: where the number you reported is painted: "door", "roof", "windscreen", "nose", "other" or "none".
+- plate: registration (tail number) characters exactly as shown on the fuselage, tail or wing. null if none or not clearly legible.
+- visible_text: legible word or logo text on the aircraft (operator, livery, display team), exactly written, most prominent first. [] none.
+- action: effect clearly visible around the aircraft, from: "airborne", "dust", "tyre_smoke", "spray", "flames", "sparks", "contact", "wheel_lift". Only list what is visible in the crop; [] none. Never infer speed or motion from pose.
+- make: airframe manufacturer, from markings or the aircraft's overall design. null only if you cannot tell.
+- model: type and variant, only if markings or an unmistakable design identify it; otherwise null.
+- evidence: the clue for the model: "badge", "script", "design" or "none".
+
+{CANDIDATES}

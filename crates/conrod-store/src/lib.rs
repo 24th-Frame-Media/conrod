@@ -234,6 +234,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // Keep-together sets found in the EXIF (brackets, focus stacks, intervals).
     ("images", "set_id", "INTEGER"),
     ("images", "set_kind", "TEXT"),
+    // What a judge saw in the frame: the shoot's moment tags with probabilities (JSON).
+    ("images", "moments", "TEXT"),
     // The exposure settings themselves, so a regroup can find sets again
     // without opening a file.
     ("images", "exposure_time", "REAL"),

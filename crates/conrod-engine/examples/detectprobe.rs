@@ -71,17 +71,7 @@ fn main() -> Result<(), String> {
     let preset = ShootPreset::parse(&settings.scan_profile);
 
     // The same DetectOptions the scan builds, with the two arguments on top.
-    let mut classes = Vec::new();
-    if preset.wants_vehicles() {
-        classes.extend(settings.vehicle_classes());
-    }
-    if preset.wants_people() {
-        classes.push(detect::PERSON);
-    }
-    if preset.wants_animals() {
-        classes.extend(detect::ANIMALS);
-    }
-    classes.extend(preset.extra_vehicle_classes().iter().copied());
+    let classes = conrod_engine::detect_options(&settings).classes;
     let options = DetectOptions {
         conf: conf as f32,
         classes: classes.clone(),

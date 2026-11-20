@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useRun } from '../state/hooks';
 import { FilePick, Icon, Portal, useBackdropClose } from '../components/basics';
 import { ShootTypeSelect } from '../components/ShootTypeSelect';
+import { PresetPolicy } from '../components/PresetPolicy';
+import { isOn, type Overrides, type PolicySummary } from '../lib/presetPolicy.mjs';
 import { StrictnessSlider } from '../components/StrictnessSlider';
 import { GroupingFields, groupingOf, type GroupingValues } from '../components/GroupingFields';
 import { call, chooseFolder } from '../lib/api';
@@ -41,9 +43,8 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const [grouping, setGrouping] = useState<GroupingValues>(groupingOf(settings));
   const [workflow, setWorkflow] = useState(() => workflowModeOf(settings.workflow_mode));
   const [identifyScope, setIdentifyScope] = useState<Scope>(() => identifyScopeOf(settings.identify_scope));
-  const [readPlates, setReadPlates] = useState(true);
-  const [readNumbers, setReadNumbers] = useState(true);
-  const [includePeople, setIncludePeople] = useState(false);
+  const [overrides, setOverrides] = useState<Overrides>({});
+  const [policy, setPolicy] = useState<PolicySummary | null>(null);
   const [entries, setEntries] = useState('');
   useEffect(() => {
     if (!visible) return;
@@ -53,13 +54,12 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
     setGrouping(groupingOf(settings));
     setWorkflow(workflowModeOf(settings.workflow_mode));
     setIdentifyScope(identifyScopeOf(settings.identify_scope));
-    setReadPlates(settings.read_plates !== false);
-    setReadNumbers(settings.read_numbers !== false);
+    setOverrides({});
     setEntries('');
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps -- seed from the saved defaults each time the sheet opens
 
-  const parent = profileParent(profile);
-  const vehicles = parent === 'motorsport' || parent === 'mix';
+  const readsNumbers = policy ? isOn(policy, 'numbers') : false;
+  const changeProfile = (next: string) => { setProfile(next); setOverrides({}); };
   const scanning = status.activeJob !== null;
   const gap = Number(burstGap);
   const gapOk = Number.isFinite(gap) && gap > 0 && gap <= 60;
@@ -72,7 +72,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const browse = async () => { const path = await chooseFolder(); if (path) setRoot(path); };
   const start = () => {
     onStart(
-      { root: draft.root.trim(), label: draft.label.trim() || filename(draft.root), profile, recursive, stage: 'all', readPlates: vehicles && readPlates, readNumbers: vehicles && readNumbers, includePeople: parent === 'motorsport' && includePeople },
+      { root: draft.root.trim(), label: draft.label.trim() || filename(draft.root), profile, recursive, stage: 'all', overrides },
       { scan_profile: profile, blur_strictness: strictnessTouched ? strictness : undefined, burst_gap: gapOk ? gap : DEFAULT_GAP, ...grouping, workflow_mode: workflow, identify_scope: identifyScope },
     );
     onClose();
@@ -100,7 +100,8 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
         </div>
         <div className="import-field">
           <label htmlFor="import-shoot">Shoot type</label>
-          <ShootTypeSelect id="import-shoot" value={profile} onChange={setProfile} />
+          <ShootTypeSelect id="import-shoot" value={profile} onChange={changeProfile} />
+          <PresetPolicy preset={profile} overrides={overrides} onChange={setOverrides} onSummary={setPolicy} />
         </div>
         <div className="import-field">
           <label htmlFor="import-workflow">Workflow</label>
@@ -125,20 +126,12 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
           <summary>Advanced</summary>
           <div className="import-advanced-body">
             <label className="import-check"><input type="checkbox" checked={recursive} onChange={(e) => setRecursive(e.target.checked)} /><span><b>Include subfolders</b></span></label>
-            {vehicles && <>
-              <label className="import-check"><input type="checkbox" checked={readPlates} onChange={(e) => setReadPlates(e.target.checked)} /><span><b>Read registration plates</b><small>Plate detector and OCR, then the vision model.</small></span></label>
-              <label className="import-check"><input type="checkbox" checked={readNumbers} onChange={(e) => setReadNumbers(e.target.checked)} /><span><b>Read race numbers</b><small>Door, roundel and fairing numbers. Turn off when there are none.</small></span></label>
-            </>}
-            {parent === 'motorsport' && (
-              <label className="import-check"><input type="checkbox" checked={includePeople} onChange={(e) => setIncludePeople(e.target.checked)} /><span><b>Also detect people and faces</b><small>The main subject still decides focus.</small></span></label>
-            )}
-            {!vehicles && <p className="muted import-note">This shoot type has no detection toggles. Subjects, sharpness and faces are always checked.</p>}
             <div className="import-gap">
               <label htmlFor="import-gap"><b>Burst gap</b><small>Frames closer together than this share a burst. Changing it later regroups instantly.</small></label>
               <span className="import-gap-input"><input id="import-gap" type="number" min={0.1} max={60} step={0.1} value={burstGap} aria-invalid={!gapOk} onChange={(e) => setBurstGap(e.target.value)} /><span className="muted">s</span></span>
             </div>
             <GroupingFields value={grouping} onChange={(patch) => setGrouping((current) => ({ ...current, ...patch }))} idPrefix="import" />
-            {vehicles && (
+            {readsNumbers && (
               <div className="field-row import-entries"><FilePick label="Entry list CSV…" accept=".csv,text/csv" onFile={(file) => void run(async () => { const result = await call<{ count: number }>('import_entries', { csv: await file.text() }); setEntries(`${result.count} entries loaded`); })} /><span className="muted">{entries}</span></div>
             )}
           </div>

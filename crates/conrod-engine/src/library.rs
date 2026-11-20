@@ -35,7 +35,7 @@ pub fn rename_job(d: &Desktop, a: &RenameArgs) -> Result<Value> {
 
 pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Value> {
     require_job(d, a.job_id)?;
-    let regroup_keys = ["burst_gap", "scan_profile"];
+    let regroup_keys = ["burst_gap", "scan_profile", "overrides"];
     let wants_regroup = a.patch.keys().any(|k| regroup_keys.contains(&k.as_str()));
     let updated_json = {
         let db = lock(&d.db);
@@ -168,8 +168,7 @@ pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
 pub fn cover(d: &Desktop, job: i64) -> Result<Value> {
     require_job(d, job)?;
     let settings = crate::operations::settings(d, job)?;
-    let is_motorsport = conrod_core::profile::ScanProfile::parse(&settings.scan_profile)
-        == conrod_core::profile::ScanProfile::Motorsport;
+    let vehicle_cover = settings.lanes().vehicles;
     let db = lock(&d.reader);
     let candidates = |sql: &str, column: &str| -> Result<Option<String>> {
         Ok(rows(&db, sql, [job])?
@@ -178,7 +177,7 @@ pub fn cover(d: &Desktop, job: i64) -> Result<Value> {
             .find(|p| Path::new(p).is_file())
             .map(str::to_owned))
     };
-    if is_motorsport {
+    if vehicle_cover {
         if let Some(path) = candidates(
             &format!(
                 "SELECT d.crop_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND d.crop_path IS NOT NULL AND d.rejected=0 AND COALESCE(i.copy_of,0)=0 AND {VEHICLE} ORDER BY d.conf * (d.x2-d.x1) * (d.y2-d.y1) * (1 + COALESCE(d.sharpness,0)) DESC LIMIT 20"

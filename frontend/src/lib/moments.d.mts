@@ -1,0 +1,13 @@
+export type VerdictReading = { tag: string; p: number; calibrated: boolean };
+export type Verdict = { backend: string; readings: VerdictReading[]; strength: number | null; peak: number | null };
+export type VocabularyEntry = { key: string; label: string; weight: number };
+export type Moment = { tag: string; label: string; p: number; calibrated: boolean };
+export const DEFAULT_THRESHOLD: number;
+export const MAYBE_FLOOR: number;
+export function parseVerdict(stored: unknown): Verdict;
+export function thresholdOf(value: unknown): number;
+export function labelOf(tag: string, vocabulary?: readonly { key: string; label: string }[]): string;
+export function momentsOf(stored: unknown, vocabulary?: readonly { key: string; label: string }[], threshold?: number): { sure: Moment[]; maybe: Moment[]; peak: boolean; backend: string };
+export function liftNote(stored: unknown, vocabulary: readonly VocabularyEntry[], threshold: number, rankOn: boolean): string;
+export function sureTags(stored: unknown, threshold?: number): string[];
+export function describe(moment: Moment): string;
