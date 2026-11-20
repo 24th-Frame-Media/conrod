@@ -73,23 +73,28 @@ export function FilePick({ label, accept, onFile }: { label: string; accept: str
 }
 
 /**
- * The connecting rod curled into a C: a big end and a small end with their
- * bores punched through, so the mark reads as both the name and the engine
- * part at 16 px. The mask keeps the bores transparent on light and dark.
+ * The app mark (crates/conrod-app/icons/conrod-mark.svg): one forged con-rod
+ * at 35 degrees, unequal eyes, a split big end, and an I-beam slot with the
+ * single low kink of The Chase. The mask keeps the bores and slot transparent
+ * on light and dark.
  */
 export function Mark() {
   const mask = useId().replace(/:/g, '');
   return (
-    <svg className="mark" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+    <svg className="mark" viewBox="0 0 256 256" aria-hidden="true">
       <mask id={mask}>
-        <rect width="64" height="64" fill="#fff" />
-        <circle cx="46.2" cy="43.1" r="3.4" fill="#000" />
-        <circle cx="46.2" cy="20.9" r="2.1" fill="#000" />
+        <rect width="256" height="256" fill="#fff" />
+        <circle cx="128" cy="56" r="11" fill="#000" />
+        <circle cx="128" cy="200" r="18" fill="#000" />
+        <path d="M128 88 L128 124 L135 131 L135 157" stroke="#000" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        <path d="M86 200 H110 M146 200 H170" stroke="#000" strokeWidth="1.6" />
       </mask>
-      <g mask={`url(#${mask})`} fill="none">
-        <path d="M46.2 20.9 A18 18 0 1 0 46.2 43.1" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
-        <circle cx="46.2" cy="43.1" r="8.5" fill="currentColor" />
-        <circle cx="46.2" cy="20.9" r="5.8" fill="currentColor" />
+      <g transform="translate(128 128) rotate(35) scale(0.98) translate(-128 -136)">
+        <path
+          mask={`url(#${mask})`}
+          fill="currentColor"
+          d="M150.5 69 A26 26 0 1 0 105.5 69 C109 77 112 84 112 94 C112 122 110 148 104 162 C102 167 100.5 170.5 98.3 173.2 A40 40 0 1 0 157.7 173.2 C155.5 170.5 154 167 152 162 C146 148 144 122 144 94 C144 84 147 77 150.5 69 Z"
+        />
       </g>
     </svg>
   );
