@@ -90,6 +90,94 @@ pub struct Found {
     pub keepers: u64,
 }
 
+/// One kept detection on a frame: the class as the detector names it, its
+/// confidence, and the box as fractions (0..1) of the upright frame,
+/// `[x1, y1, x2, y2]`, so it maps straight onto the thumbnail.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LiveBox {
+    pub cls: String,
+    pub conf: f32,
+    #[serde(rename = "box")]
+    pub bbox: [f32; 4],
+}
+
+impl LiveBox {
+    /// A detection's pixel box as fractions of a `width` x `height` frame,
+    /// clamped into it. Display only: the pixel box is what the rating used.
+    pub fn from_pixels(cls: &str, conf: f32, bbox: [f64; 4], width: usize, height: usize) -> Self {
+        let (w, h) = (width.max(1) as f64, height.max(1) as f64);
+        let unit = |v: f64, edge: f64| (v / edge).clamp(0.0, 1.0) as f32;
+        LiveBox {
+            cls: cls.to_string(),
+            conf,
+            bbox: [
+                unit(bbox[0], w),
+                unit(bbox[1], h),
+                unit(bbox[2], w),
+                unit(bbox[3], h),
+            ],
+        }
+    }
+}
+
+/// Whether a camera's autofocus area is one point or a grid's union.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AfKind {
+    Point,
+    Grid,
+}
+
+/// The frame a worker lane holds right now, with whatever has been found on it
+/// so far. Every field after `step` fills in as the steps finish and is left out
+/// of the payload until then.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LiveFrame {
+    pub image_id: i64,
+    /// The file name only.
+    pub file: String,
+    /// `read`, `decode`, `detect`, `sharpness`, `faces` or `persist`.
+    pub step: String,
+    /// The thumbnail path the review grid uses (`cache/native/thumb-N.jpg`), as
+    /// soon as it has been written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumb_url: Option<String>,
+    /// The kept detections, once the detector has run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boxes: Option<Vec<LiveBox>>,
+    /// The camera's autofocus area as fractions of the upright frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub af: Option<[f64; 4]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub af_kind: Option<AfKind>,
+    /// 1..5, once the frame is rated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stars: Option<u8>,
+    /// `sharp`, `soft` or `blurred`, once the frame is rated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panning: Option<bool>,
+}
+
+impl LiveFrame {
+    /// A frame a lane has just picked up: only its identity and first step.
+    pub fn new(image_id: i64, file: &str) -> Self {
+        LiveFrame {
+            image_id,
+            file: file.to_string(),
+            step: "read".to_string(),
+            thumb_url: None,
+            boxes: None,
+            af: None,
+            af_kind: None,
+            stars: None,
+            verdict: None,
+            panning: None,
+        }
+    }
+}
+
 /// One frame that just finished, for the live strip on the scan screen.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecentFrame {
@@ -99,8 +187,8 @@ pub struct RecentFrame {
     pub thumb_url: String,
     /// The frame's main subject class, `"vehicle"`, `"person"` or `"frame"`.
     pub subject: String,
-    /// How sharp the subject is: `sharp` or `soft`. A pan is a separate flag, so a
-    /// panned subject still says whether it came out sharp.
+    /// How sharp the subject is: `sharp`, `soft` or `blurred`. A pan is a separate
+    /// flag, so a panned subject still says whether it came out sharp.
     pub verdict: String,
     /// True when the frame was taken as a pan: the subject is sharp and the
     /// background is streaked.
@@ -109,6 +197,19 @@ pub struct RecentFrame {
     /// What the frame reads as once known: a race number or plate. `null` until
     /// identification has looked at it.
     pub label: Option<String>,
+    /// The file name only: lets a lane find its last finished thumbnail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// 1..5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stars: Option<u8>,
+    /// The kept detections; left out when there were none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boxes: Vec<LiveBox>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub af: Option<[f64; 4]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub af_kind: Option<AfKind>,
 }
 
 /// One stage of the flowchart.
@@ -129,8 +230,15 @@ pub struct StageNode {
     /// yet (upstream.done - done); 0 for the first stage and 0 when the lanes
     /// run in lockstep, as read/detect/sharpness/faces do in the cull pool.
     pub queue_len: u64,
+    /// Frames that finished this stage. A frame that came to nothing inside it
+    /// is in `errors` instead, and no longer in `total` here or downstream, so
+    /// `done == total` at the end of a run whatever failed. The carried frames
+    /// of a resumed album are in both.
     pub done: u64,
     pub total: u64,
+    /// Frames that failed inside this stage in this run.
+    #[serde(default)]
+    pub errors: u64,
     pub rate_per_s: f64,
     pub eta_s: Option<f64>,
 }
@@ -140,16 +248,23 @@ pub struct StageNode {
 pub struct WorkerLane {
     pub stage: String,
     pub worker_index: u32,
+    /// A stable 0-based id that survives the lane changing `stage`, dense over
+    /// every lane the snapshot lists.
+    #[serde(default)]
+    pub lane: u32,
     /// `idle`, `busy` or `waiting`.
     pub state: String,
-    /// Why it is waiting: `gpu`, `lock`, `ollama` or `paused`. `null` unless
-    /// `state` is `waiting`.
+    /// Why it is waiting: `detector` (a detector session), `faces` (the face
+    /// pool), `lock`, `ollama` or `paused`. `null` unless `state` is `waiting`.
     pub waiting_for: Option<String>,
     /// The file, as a name the UI can show next to a thumbnail.
     pub file: Option<String>,
     pub step: Option<String>,
     /// How long the worker has been in this step.
     pub ms_in_step: f64,
+    /// The frame the lane holds, `null` while it is idle.
+    #[serde(default)]
+    pub current: Option<LiveFrame>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -207,6 +322,7 @@ impl ScanProgress {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn the_rate_is_a_moving_average_over_the_window_not_a_lifetime_mean() {
@@ -271,6 +387,17 @@ mod tests {
                 verdict: "sharp".into(),
                 panning: false,
                 label: None,
+                file: Some("IMG_4212.CR3".into()),
+                stars: Some(4),
+                boxes: vec![LiveBox::from_pixels(
+                    "car",
+                    0.92,
+                    [100.0, 50.0, 300.0, 150.0],
+                    400,
+                    200,
+                )],
+                af: Some([0.4, 0.4, 0.5, 0.5]),
+                af_kind: Some(AfKind::Point),
             }],
             found: Found {
                 subjects: 61,
@@ -292,17 +419,20 @@ mod tests {
                     queue_len: 100,
                     done: 40,
                     total: 140,
+                    errors: 0,
                     rate_per_s: 20.0,
                     eta_s: Some(5.0),
                 }],
                 workers: vec![WorkerLane {
                     stage: "detect".into(),
                     worker_index: 1,
+                    lane: 1,
                     state: "waiting".into(),
                     waiting_for: Some("lock".into()),
                     file: Some("IMG_4231.CR3".into()),
                     step: Some("detect:wait".into()),
                     ms_in_step: 12.5,
+                    current: Some(LiveFrame::new(31, "IMG_4231.CR3")),
                 }],
             },
             overall: Overall {
@@ -358,6 +488,7 @@ mod tests {
             "queue_len",
             "done",
             "total",
+            "errors",
             "rate_per_s",
         ] {
             assert!(stage.get(key).is_some(), "missing stage.{key}: {stage}");
@@ -366,16 +497,52 @@ mod tests {
         for key in [
             "stage",
             "worker_index",
+            "lane",
             "state",
             "waiting_for",
             "file",
             "step",
             "ms_in_step",
+            "current",
         ] {
             assert!(worker.get(key).is_some(), "missing worker.{key}: {worker}");
         }
         assert_eq!(value["pipeline"]["workers"][0]["waiting_for"], "lock");
         assert_eq!(ScanProgress::stage_index("faces"), Some(3));
         assert_eq!(ScanProgress::stage_index("nope"), None);
+        let recent = &value["recent"][0];
+        assert_eq!(recent["file"], "IMG_4212.CR3");
+        assert_eq!(recent["stars"], 4);
+        assert_eq!(recent["boxes"][0]["cls"], "car");
+        assert_eq!(recent["boxes"][0]["box"], json!([0.25, 0.25, 0.75, 0.75]));
+        assert_eq!(recent["af_kind"], "point");
+    }
+
+    #[test]
+    fn a_live_frame_leaves_out_what_is_not_known_yet() {
+        let fresh = serde_json::to_value(LiveFrame::new(7, "IMG_1.CR3")).unwrap();
+        assert_eq!(
+            fresh,
+            json!({"image_id": 7, "file": "IMG_1.CR3", "step": "read"})
+        );
+        let mut rated = LiveFrame::new(7, "IMG_1.CR3");
+        rated.af = Some([0.1, 0.2, 0.3, 0.4]);
+        rated.af_kind = Some(AfKind::Grid);
+        rated.stars = Some(3);
+        rated.verdict = Some("soft".into());
+        rated.panning = Some(false);
+        let value = serde_json::to_value(&rated).unwrap();
+        assert_eq!(value["af_kind"], "grid");
+        assert_eq!(value["verdict"], "soft");
+        assert_eq!(value["panning"], false);
+        assert!(value.get("boxes").is_none(), "no detect step yet");
+    }
+
+    #[test]
+    fn a_pixel_box_becomes_clamped_fractions_of_the_frame() {
+        let b = LiveBox::from_pixels("person", 0.5, [-10.0, 0.0, 6100.0, 2000.0], 6000, 4000);
+        assert_eq!(b.bbox, [0.0, 0.0, 1.0, 0.5]);
+        let json = serde_json::to_value(&b).unwrap();
+        assert!(json.get("box").is_some() && json.get("bbox").is_none());
     }
 }

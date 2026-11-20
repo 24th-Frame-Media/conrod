@@ -3,7 +3,7 @@
    and three vision workers, then done. The same code plays an identify-only run. It fills the optional fields of
    docs/plans/ingest-live-contract.md, so it is also the living example of that contract. */
 import { SCAN_STEPS, stageOfStep } from './ingest.mjs';
-import type { IdentifyItem, IdentifyLive, IdentifyStage, LaneBox, LaneFrame, LaneStep, PipelineStage, PipelineWorker, ScanProgress, ScanRecentFrame } from './types';
+import type { AfKind, IdentifyItem, IdentifyLive, IdentifyStage, LaneBox, LaneFrame, LaneStep, PipelineStage, PipelineWorker, ScanProgress, ScanRecentFrame } from './types';
 
 export type IngestDeps = {
   thumb: (k: number) => string;
@@ -61,6 +61,7 @@ const frameAf = (k: number): [number, number, number, number] | undefined => {
   const [x1, , x2] = carBox(k), cx = x1 + (x2 - x1) * 0.32;
   return [cx - 0.06, 0.47, cx + 0.06, 0.58];
 };
+const frameAfKind = (k: number): AfKind => (k % 9 === 4 ? 'grid' : 'point');
 const verdictOf = (k: number): 'sharp' | 'soft' | 'blurred' => (k % 11 === 7 ? 'blurred' : k % 5 === 3 ? 'soft' : 'sharp');
 const starsOf = (k: number) => { const v = verdictOf(k); return v === 'blurred' ? 1 : v === 'soft' ? 2 : 3 + (k % 3); };
 const panOf = (k: number) => verdictOf(k) !== 'blurred' && k % 7 === 2;
@@ -69,8 +70,11 @@ const panOf = (k: number) => verdictOf(k) !== 'blurred' && k % 7 === 2;
 function degrade(p: ScanProgress): ScanProgress {
   return {
     ...p,
-    recent: p.recent.map(({ file, stars, boxes, af, ...rest }) => { void file; void stars; void boxes; void af; return rest; }),
-    pipeline: { ...p.pipeline, workers: p.pipeline.workers.map(({ lane, current, ...w }) => { void lane; void current; return { ...w, state: w.state === 'paused' ? 'busy' as const : w.state }; }) },
+    recent: p.recent.map(({ file, stars, boxes, af, af_kind, ...rest }) => { void file; void stars; void boxes; void af; void af_kind; return rest; }),
+    pipeline: {
+      stages: p.pipeline.stages.map(({ errors, ...s }) => { void errors; return s; }),
+      workers: p.pipeline.workers.map(({ lane, current, ...w }) => { void lane; void current; return { ...w, state: w.state === 'paused' ? 'busy' as const : w.state }; }),
+    },
   };
 }
 
@@ -94,7 +98,7 @@ export function startIngestSim(deps: IngestDeps, opts: IngestOptions): IngestSim
     const k = lane.k!;
     recent.unshift({
       image_id: 1000 + k, file: name(k), thumb_url: deps.thumb(k), subject: 'car', verdict: verdictOf(k), panning: panOf(k),
-      stars: starsOf(k), boxes: frameBoxes(k), af: frameAf(k), label: null,
+      stars: starsOf(k), boxes: frameBoxes(k), af: frameAf(k), af_kind: frameAf(k) ? frameAfKind(k) : undefined, label: null,
     });
     recent.length = Math.min(recent.length, 24);
     finished += 1; lane.k = null;
@@ -141,7 +145,7 @@ export function startIngestSim(deps: IngestDeps, opts: IngestOptions): IngestSim
     if (at > 2) lf.boxes = boxes;
     else if (at === 2 && !lane.waiting) lf.boxes = boxes.filter((_, i) => f > 0.3 + i * 0.35);
     const af = frameAf(k);
-    if (af && (at > 3 || (at === 3 && f > 0.2))) lf.af = af;
+    if (af && (at > 3 || (at === 3 && f > 0.2))) { lf.af = af; lf.af_kind = frameAfKind(k); }
     if (at > 3 || (at === 3 && f > 0.6)) { lf.stars = starsOf(k); lf.verdict = verdictOf(k); lf.panning = panOf(k); }
     return lf;
   };
@@ -157,12 +161,12 @@ export function startIngestSim(deps: IngestDeps, opts: IngestOptions): IngestSim
     const stages: PipelineStage[] = (['read', 'detect', 'sharpness', 'faces'] as const).map((id) => {
       const m = STAGE_META[id], done = passed[id];
       const busy = lanes.filter((l) => l.k != null && !l.waiting && stageOfStep(l.step) === id).length;
-      return { id, label: m.label, model: m.model, device: m.device, workers_total: m.workers, workers_busy: Math.min(busy, m.workers), queue_len: 0, done, total, rate_per_s: Math.round(rate * 10) / 10, eta_s: rate > 0.05 && done < total ? (total - done) / rate : null };
+      return { id, label: m.label, model: m.model, device: m.device, workers_total: m.workers, workers_busy: Math.min(busy, m.workers), queue_len: 0, done, total, errors: 0, rate_per_s: Math.round(rate * 10) / 10, eta_s: rate > 0.05 && done < total ? (total - done) / rate : null };
     });
     stages.push(
-      { id: 'group', label: 'Group', model: 'EXIF time + similarity', device: 'CPU', workers_total: 1, workers_busy: phase === 'group' ? 1 : 0, queue_len: 0, done: Math.floor(group), total, rate_per_s: phase === 'group' ? total / GROUP_S : 0, eta_s: phase === 'group' ? GROUP_S - groupT : null },
-      { id: 'pick', label: 'Pick', model: 'keeper ranker', device: 'CPU', workers_total: 1, workers_busy: phase === 'pick' ? 1 : 0, queue_len: 0, done: Math.floor(pick), total, rate_per_s: phase === 'pick' ? total / PICK_S : 0, eta_s: phase === 'pick' ? PICK_S - pickT : null },
-      { id: 'identify', label: 'Identify', model: vision ? `${VISION_MODEL} via Ollama` : '', device: vision ? 'ollama' : '', workers_total: vision ? VISION_WORKERS : 0, workers_busy: phase === 'vision' ? Math.min(VISION_WORKERS, cars - idDone) : 0, queue_len: 0, done: idDone, total: cars, rate_per_s: 0, eta_s: null },
+      { id: 'group', label: 'Group', model: 'EXIF time + similarity', device: 'CPU', workers_total: 1, workers_busy: phase === 'group' ? 1 : 0, queue_len: 0, done: Math.floor(group), total, errors: 0, rate_per_s: phase === 'group' ? total / GROUP_S : 0, eta_s: phase === 'group' ? GROUP_S - groupT : null },
+      { id: 'pick', label: 'Pick', model: 'keeper ranker', device: 'CPU', workers_total: 1, workers_busy: phase === 'pick' ? 1 : 0, queue_len: 0, done: Math.floor(pick), total, errors: 0, rate_per_s: phase === 'pick' ? total / PICK_S : 0, eta_s: phase === 'pick' ? PICK_S - pickT : null },
+      { id: 'identify', label: 'Identify', model: vision ? `${VISION_MODEL} via Ollama` : '', device: vision ? 'ollama' : '', workers_total: vision ? VISION_WORKERS : 0, workers_busy: phase === 'vision' ? Math.min(VISION_WORKERS, cars - idDone) : 0, queue_len: 0, done: idDone, total: cars, errors: 0, rate_per_s: 0, eta_s: null },
     );
     const open = stages.findIndex((s) => s.done < s.total);
     const headAt = open < 0 ? stages.length - 1 : open, head = stages[headAt];

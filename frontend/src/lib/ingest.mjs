@@ -33,6 +33,12 @@ export function visionExpected(stages, identify) {
   return (Array.isArray(stages) ? stages : []).some((s) => s.id === 'identify' && stageStatus(s) !== 'off');
 }
 
+/** "2 failed" for the frames that came to nothing inside a stage; '' for none (and for engines that do not count them). */
+export function failedWords(errors) {
+  const count = Math.max(0, Math.round(Number(errors) || 0));
+  return count > 0 ? `${count.toLocaleString('en-US')} failed` : '';
+}
+
 function scanNode(id, stage, finished) {
   const status = stage ? stageStatus(stage) : 'pending';
   const off = status === 'off';
@@ -46,10 +52,11 @@ function scanNode(id, stage, finished) {
   else if (!stage || !(stage.total > 0)) sub = state === 'done' ? 'done' : 'waiting';
   else sub = `${n(stage.done)} / ${n(stage.total)}`;
   const crew = workers > 0 ? (state === 'done' ? `${workers} ${workers === 1 ? 'worker' : 'workers'}` : `${busy}/${workers} busy`) : '';
-  const meta = off ? '' : [crew, model].filter(Boolean).join(' · ');
+  const failed = off ? '' : failedWords(stage?.errors);
+  const meta = off ? '' : [failed, crew, model].filter(Boolean).join(' · ');
   return {
     id, number: '', label: stage?.label ? String(stage.label).toUpperCase() : NODE_LABELS[id] ?? String(id).toUpperCase(),
-    sub, meta, title: [sub, crew, model, stage?.device].filter(Boolean).join(' · '), state, off,
+    sub, meta, title: [sub, failed, crew, model, stage?.device].filter(Boolean).join(' · '), state, off,
     filter: off || PHASES.has(id) ? null : id,
   };
 }
@@ -238,6 +245,7 @@ export function laneFrame(worker, recent) {
     thumb_url: cur?.thumb_url ?? done?.thumb_url ?? '',
     boxes: cur?.boxes ?? done?.boxes ?? [],
     af: cur?.af ?? done?.af ?? null,
+    af_kind: cur?.af ? cur.af_kind ?? 'point' : done?.af ? done.af_kind ?? 'point' : null,
     stars: cur?.stars ?? done?.stars ?? null,
     verdict: cur?.verdict ?? done?.verdict ?? null,
     panning: cur?.panning ?? done?.panning ?? false,
@@ -283,6 +291,52 @@ export function tagFits(box, frameWidth, text) {
   if (!Array.isArray(box) || box.length < 4) return false;
   const w = Math.abs(Number(box[2]) - Number(box[0])) * Number(frameWidth);
   return Number.isFinite(w) && w >= tagWidth(text);
+}
+
+/** Height in pixels of a 9.5 px mono tag (line-height 1.5). */
+export const TAG_HEIGHT = 15;
+
+/** The autofocus tag's words: a grid's union is not a point, so it says so. */
+export function afLabel(kind) {
+  return kind === 'grid' ? 'AF grid' : 'AF';
+}
+
+const rectsMeet = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/**
+ * Where the autofocus tag goes so it does not sit on a detection label. Detection labels hang at their box's top-left, and the AF
+ * box usually sits on the subject, so its tag is tried inside the box at bottom-left, bottom-right, top-right, top-left, then just
+ * below and just above the box; the first spot that fits the frame and meets no drawn detection label wins. `null` when the box
+ * is too narrow for the tag or every spot collides (the dashed box alone still says where the camera focused).
+ * `box` and detection boxes are fraction boxes; `frame` is the drawn picture's `{ width, height }` in pixels.
+ */
+export function afTagSpot(af, boxes, frame, text = 'AF') {
+  if (!Array.isArray(af) || af.length < 4 || af.some((v) => !Number.isFinite(Number(v)))) return null;
+  const W = Number(frame?.width), H = Number(frame?.height);
+  if (!(W > 0) || !(H > 0)) return null;
+  const x1 = Math.min(af[0], af[2]) * W, x2 = Math.max(af[0], af[2]) * W;
+  const y1 = Math.min(af[1], af[3]) * H, y2 = Math.max(af[1], af[3]) * H;
+  const w = tagWidth(text), h = TAG_HEIGHT;
+  if (x2 - x1 < w) return null;
+  const taken = (Array.isArray(boxes) ? boxes : []).flatMap((b) => {
+    const label = boxLabel(b);
+    if (!label || !tagFits(b.box, W, label)) return [];
+    return [{ x: Math.min(b.box[0], b.box[2]) * W, y: Math.min(b.box[1], b.box[3]) * H, w: tagWidth(label), h }];
+  });
+  const spots = [
+    { spot: 'bl', x: x1, y: y2 - h, inside: true },
+    { spot: 'br', x: x2 - w, y: y2 - h, inside: true },
+    { spot: 'tr', x: x2 - w, y: y1, inside: true },
+    { spot: 'tl', x: x1, y: y1, inside: true },
+    { spot: 'below', x: x1, y: y2, inside: false },
+    { spot: 'above', x: x1, y: y1 - h, inside: false },
+  ];
+  for (const s of spots) {
+    if (s.inside && y2 - y1 < h) continue;
+    if (s.x < 0 || s.y < 0 || s.x + w > W + 0.5 || s.y + h > H + 0.5) continue;
+    if (!taken.some((r) => rectsMeet(r, { x: s.x, y: s.y, w, h }))) return s.spot;
+  }
+  return null;
 }
 
 /** "car 92%" for a box label. */

@@ -25,6 +25,7 @@ export type LaneFrameView = {
   thumb_url: string;
   boxes: LaneBox[];
   af: [number, number, number, number] | null;
+  af_kind: 'point' | 'grid' | null;
   stars: number | null;
   verdict: 'sharp' | 'soft' | 'blurred' | null;
   panning: boolean;
@@ -69,5 +70,15 @@ export function verdictText(verdict: string | null | undefined, panning?: boolea
 export function tagWidth(text: string | null | undefined): number;
 export function tagFits(box: readonly number[] | null | undefined, frameWidth: number, text: string | null | undefined): boolean;
 export function boxLabel(box: { cls?: string; conf?: number } | null | undefined): string;
+export const TAG_HEIGHT: number;
+export type AfTagSpot = 'bl' | 'br' | 'tr' | 'tl' | 'below' | 'above';
+export function afLabel(kind: 'point' | 'grid' | null | undefined): string;
+export function afTagSpot(
+  af: readonly number[] | null | undefined,
+  boxes: readonly { cls?: string; conf?: number; box: readonly number[] }[] | null | undefined,
+  frame: { width: number; height: number },
+  text?: string,
+): AfTagSpot | null;
+export function failedWords(errors: number | null | undefined): string;
 export function ingestIdentify(identify: IdentifyLive | null | undefined, options?: { planned?: boolean; identifying?: boolean }): IdentifyLive | undefined;
 export function stripItems(input?: { cars?: IdentifyItem[]; frames?: ScanRecentFrame[]; limit?: number }): StripItem[];
