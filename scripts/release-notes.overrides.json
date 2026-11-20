@@ -203,6 +203,7 @@
     ],
     "f70f502": { "section": "Improved", "text": "Safer by design: the app only reads files you chose, a cloud key is no longer put in a web address, and stricter rules for what the app window may load." },
     "8d37e10": { "section": "New", "text": "The ingest screen shows what each worker is doing right now, with live frames and counters that match what is actually done." },
-    "36d835f": "The autofocus label no longer lands on top of a detection label."
+    "36d835f": "The autofocus label no longer lands on top of a detection label.",
+    "5e0d842": { "section": "New", "text": "Conrod tells you what's new: a short summary of each update opens by itself the first time, and Settings can reopen it any time." }
   }
 }
