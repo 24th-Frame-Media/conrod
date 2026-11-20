@@ -47,6 +47,31 @@ pub struct VlmTargets {
 }
 
 impl VlmTargets {
+    pub const fn with_numbers(mut self) -> VlmTargets {
+        self.numbers = true;
+        self
+    }
+
+    pub const fn with_plates(mut self) -> VlmTargets {
+        self.plates = true;
+        self
+    }
+
+    pub const fn with_make_model(mut self) -> VlmTargets {
+        self.make_model = true;
+        self
+    }
+
+    pub const fn with_sponsors(mut self) -> VlmTargets {
+        self.sponsors = true;
+        self
+    }
+
+    pub const fn with_names(mut self) -> VlmTargets {
+        self.names = true;
+        self
+    }
+
     pub const NONE: VlmTargets = VlmTargets {
         numbers: false,
         plates: false,
@@ -86,14 +111,6 @@ impl VlmTargets {
         sponsors: false,
         names: true,
     };
-    /// Bib or jersey numbers and the people wearing them.
-    pub const BIB: VlmTargets = VlmTargets {
-        numbers: true,
-        plates: false,
-        make_model: false,
-        sponsors: false,
-        names: true,
-    };
 }
 
 /// Everything a shoot preset changes, decided in one place.
@@ -123,8 +140,10 @@ pub struct PresetPolicy {
     /// Dark frames are the subject here (night sky, a stage in blackout): a
     /// low mean luma is neither a cull nor a ranking fault.
     pub dark_ok: bool,
-    /// Extra COCO classes asked of the detector, e.g. 4 (airplane).
-    pub extra_vehicles: &'static [usize],
+    /// COCO classes the vehicles lane asks the detector for, when the
+    /// subject is not cars, bikes and trucks (4 airplane, 1 bicycle). Empty
+    /// keeps the album's own car / bike / truck switches.
+    pub vehicle_classes: &'static [usize],
 }
 
 impl PresetPolicy {
@@ -133,7 +152,7 @@ impl PresetPolicy {
             profile,
             vehicles: false,
             people: true,
-            animals: true,
+            animals: false,
             ball: false,
             faces_default: true,
             pan_allowed: false,
@@ -145,7 +164,7 @@ impl PresetPolicy {
             deliver_most: false,
             level: false,
             dark_ok: false,
-            extra_vehicles: &[],
+            vehicle_classes: &[],
         }
     }
 
@@ -159,8 +178,8 @@ impl PresetPolicy {
         self
     }
 
-    const fn no_animals(mut self) -> Self {
-        self.animals = false;
+    const fn animals(mut self) -> Self {
+        self.animals = true;
         self
     }
 
@@ -219,8 +238,8 @@ impl PresetPolicy {
         self
     }
 
-    const fn extra_vehicles(mut self, classes: &'static [usize]) -> Self {
-        self.extra_vehicles = classes;
+    const fn classes(mut self, classes: &'static [usize]) -> Self {
+        self.vehicle_classes = classes;
         self
     }
 }
@@ -485,53 +504,63 @@ impl ShootPreset {
         }
     }
 
-    /// The one table: everything a preset changes about a scan.
+    /// The one table: everything a preset changes about a scan. Each row
+    /// is what the shoot's subjects need and nothing else; the photographer
+    /// can override any detector or reader per album (`Lanes`).
     pub fn policy(self) -> PresetPolicy {
         use ScanProfile::{Event, Mix, Motorsport, Portrait};
+        let none = VlmTargets::NONE;
         match self {
-            ShootPreset::Portrait => PresetPolicy::new(Portrait).blur("strict"),
+            ShootPreset::Portrait => PresetPolicy::new(Portrait).animals().blur("strict"),
             ShootPreset::PortraitGroup => PresetPolicy::new(Portrait)
+                .animals()
                 .blur("strict")
                 .min_box(0.5)
                 .floor(24),
-            ShootPreset::PortraitCouple => PresetPolicy::new(Portrait).blur("strict"),
-            ShootPreset::PortraitPets => PresetPolicy::new(Portrait).blur("strict"),
+            ShootPreset::PortraitCouple => PresetPolicy::new(Portrait).animals().blur("strict"),
+            ShootPreset::PortraitPets => PresetPolicy::new(Portrait).animals().blur("strict"),
+            // Circuit racing: the car decides; numbers and livery identify it;
+            // cars race without plates and drivers sit behind helmets.
             ShootPreset::Motorsport => PresetPolicy::new(Motorsport)
                 .vehicles()
                 .no_faces()
                 .pan()
                 .blur("critical")
                 .vlm(VlmTargets::RACE),
+            // Burnout comps: numbered entries on street-registered cars; the
+            // driver and the crowd are part of the picture.
             ShootPreset::MotorsportBurnouts => PresetPolicy::new(Motorsport)
                 .vehicles()
-                .no_faces()
                 .pan()
                 .blur("lenient")
-                .vlm(VlmTargets::RACE),
+                .vlm(none.with_numbers().with_plates().with_make_model()),
+            // Track days: road cars (plates) with taped numbers, plus pit lane,
+            // paddock, drivers and crew.
             ShootPreset::MotorsportTrack => PresetPolicy::new(Motorsport)
                 .vehicles()
-                .no_faces()
                 .pan()
                 .blur("critical")
                 .min_box(0.7)
-                .vlm(VlmTargets::CREW),
+                .vlm(VlmTargets::CREW.with_plates()),
+            // Rally: door numbers, plated cars, crews, service park, spectators.
             ShootPreset::MotorsportRally => PresetPolicy::new(Motorsport)
                 .vehicles()
-                .no_faces()
                 .pan()
                 .blur("lenient")
                 .min_box(0.7)
-                .vlm(VlmTargets::CREW),
+                .vlm(VlmTargets::CREW.with_plates()),
+            // Meets and shows: plates and make/model; no race numbers; owners.
             ShootPreset::MotorsportMeet => PresetPolicy::new(Motorsport)
                 .vehicles()
                 .floor(16)
                 .vlm(VlmTargets::PLATES),
             ShootPreset::Event => PresetPolicy::new(Event)
-                .vehicles()
+                .animals()
                 .pan()
                 .vlm(VlmTargets::NAMES),
+            // Agricultural and stage shows: animals, riders, performers, crowd.
             ShootPreset::EventShows => PresetPolicy::new(Event)
-                .vehicles()
+                .animals()
                 .pan()
                 .blur("lenient")
                 .min_box(0.5)
@@ -542,45 +571,53 @@ impl ShootPreset {
                 .min_box(0.5)
                 .floor(24)
                 .vlm(VlmTargets::NAMES),
-            ShootPreset::Mix => PresetPolicy::new(Mix).vehicles().pan(),
+            // Unknown mix: look for everything, read everything.
+            ShootPreset::Mix => PresetPolicy::new(Mix)
+                .vehicles()
+                .animals()
+                .pan()
+                .vlm(VlmTargets::CREW.with_plates()),
             ShootPreset::SportField => PresetPolicy::new(Event)
                 .ball()
                 .no_faces()
-                .no_animals()
                 .min_box(0.7)
-                .floor(24)
-                .vlm(VlmTargets::BIB),
+                .floor(24),
             ShootPreset::SportCourt => PresetPolicy::new(Event)
                 .ball()
-                .no_animals()
                 .pan()
                 .blur("strict")
-                .vlm(VlmTargets::BIB),
-            ShootPreset::SportRodeo => PresetPolicy::new(Event).min_box(0.7).vlm(VlmTargets::NAMES),
+                .vlm(VlmTargets::NAMES),
+            ShootPreset::SportRodeo => PresetPolicy::new(Event)
+                .animals()
+                .min_box(0.7)
+                .vlm(VlmTargets::NAMES),
             ShootPreset::SportEquestrian => PresetPolicy::new(Event)
+                .animals()
                 .pan()
                 .min_box(0.7)
                 .vlm(VlmTargets::NAMES),
+            // The bicycle is the vehicle here; riders hide behind helmets.
             ShootPreset::SportCycling => PresetPolicy::new(Motorsport)
+                .vehicles()
+                .classes(&[1])
                 .no_faces()
                 .pan()
                 .min_box(0.7)
-                .vlm(VlmTargets::BIB),
+                .vlm(none.with_numbers()),
             ShootPreset::SportAction => PresetPolicy::new(Motorsport)
                 .vehicles()
+                .classes(&[1, 3])
                 .no_faces()
                 .pan()
-                .vlm(VlmTargets::NAMES),
+                .vlm(none.with_numbers()),
             ShootPreset::PropertyListing => PresetPolicy::new(Mix)
                 .no_people()
-                .no_animals()
                 .no_faces()
                 .blur("strict")
                 .group(GroupUnit::KeepSet)
                 .level(),
             ShootPreset::PropertyReport => PresetPolicy::new(Mix)
                 .no_people()
-                .no_animals()
                 .no_faces()
                 .blur("strict")
                 .group(GroupUnit::KeepSet)
@@ -589,7 +626,6 @@ impl ShootPreset {
             ShootPreset::AutoDealer => PresetPolicy::new(Motorsport)
                 .vehicles()
                 .no_people()
-                .no_animals()
                 .no_faces()
                 .group(GroupUnit::PerAngle)
                 .vlm(VlmTargets::PLATES),
@@ -605,13 +641,13 @@ impl ShootPreset {
                 .dark_ok()
                 .vlm(VlmTargets::NAMES),
             ShootPreset::WildlifeBirds => PresetPolicy::new(Mix)
+                .animals()
                 .no_people()
                 .no_faces()
                 .pan()
                 .min_box(0.5),
             ShootPreset::Landscape => PresetPolicy::new(Mix)
                 .no_people()
-                .no_animals()
                 .no_faces()
                 .blur("strict")
                 .group(GroupUnit::KeepSet)
@@ -619,46 +655,21 @@ impl ShootPreset {
                 .level(),
             ShootPreset::Astro => PresetPolicy::new(Mix)
                 .no_people()
-                .no_animals()
                 .no_faces()
                 .blur("lenient")
                 .dark_ok()
                 .group(GroupUnit::KeepSet),
+            // Aircraft only; registrations ride the plate lane, type the
+            // make/model lane, the operator the livery lane.
             ShootPreset::Aviation => PresetPolicy::new(Motorsport)
                 .vehicles()
+                .classes(&[4])
                 .no_people()
-                .no_animals()
                 .no_faces()
                 .pan()
                 .min_box(0.5)
-                .vlm(VlmTargets::PLATES)
-                .extra_vehicles(&[4]),
+                .vlm(none.with_plates().with_make_model().with_sponsors()),
         }
-    }
-
-    pub fn wants_vehicles(self) -> bool {
-        self.policy().vehicles
-    }
-
-    pub fn wants_people(self) -> bool {
-        self.policy().people
-    }
-
-    /// `include_people` is the album's choice to look at people too; only the
-    /// presets whose policy skips faces change with it.
-    pub fn wants_faces(self, include_people: bool) -> bool {
-        include_people || self.policy().faces_default
-    }
-
-    /// Animals are looked for wherever the policy says a wildlife frame can
-    /// turn up; frame priority still lets a vehicle or a person decide.
-    pub fn wants_animals(self) -> bool {
-        self.policy().animals
-    }
-
-    /// Whether the sports ball belongs in the context classes.
-    pub fn wants_ball(self) -> bool {
-        self.policy().ball
     }
 
     pub fn priority(self) -> &'static [Subject] {
@@ -696,10 +707,313 @@ impl ShootPreset {
     pub fn deliver_most(self) -> bool {
         self.policy().deliver_most
     }
+}
 
-    /// Extra COCO vehicle classes, e.g. 4 (airplane) for aviation.
-    pub fn extra_vehicle_classes(self) -> &'static [usize] {
-        self.policy().extra_vehicles
+/// One thing Conrod can look for or read, switchable per album in both
+/// directions. A preset sets each one's default; an album override wins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Feature {
+    Vehicles,
+    People,
+    Faces,
+    Animals,
+    Numbers,
+    Plates,
+    MakeModel,
+    Sponsors,
+    Names,
+}
+
+impl Feature {
+    pub const ALL: [Feature; 9] = [
+        Feature::Vehicles,
+        Feature::People,
+        Feature::Faces,
+        Feature::Animals,
+        Feature::Numbers,
+        Feature::Plates,
+        Feature::MakeModel,
+        Feature::Sponsors,
+        Feature::Names,
+    ];
+    /// What the detector looks for.
+    pub const DETECTS: [Feature; 4] = [
+        Feature::Vehicles,
+        Feature::People,
+        Feature::Faces,
+        Feature::Animals,
+    ];
+    /// What the identification lane reads.
+    pub const READS: [Feature; 5] = [
+        Feature::Numbers,
+        Feature::Plates,
+        Feature::MakeModel,
+        Feature::Sponsors,
+        Feature::Names,
+    ];
+
+    /// The key stored in the album's `overrides` and sent over the wire.
+    pub fn key(self) -> &'static str {
+        match self {
+            Feature::Vehicles => "vehicles",
+            Feature::People => "people",
+            Feature::Faces => "faces",
+            Feature::Animals => "animals",
+            Feature::Numbers => "numbers",
+            Feature::Plates => "plates",
+            Feature::MakeModel => "make_model",
+            Feature::Sponsors => "sponsors",
+            Feature::Names => "names",
+        }
+    }
+
+    pub fn parse(key: &str) -> Option<Feature> {
+        Feature::ALL.into_iter().find(|f| f.key() == key.trim())
+    }
+
+    /// Plain photographer wording, in the shoot's own terms.
+    pub fn label(self, preset: ShootPreset) -> &'static str {
+        use ShootPreset::{Aviation, SportAction, SportCycling};
+        match (self, preset) {
+            (Feature::Vehicles, Aviation) => "Aircraft",
+            (Feature::Vehicles, SportCycling) => "Bicycles",
+            (Feature::Vehicles, SportAction) => "Bikes",
+            (Feature::Vehicles, _) => "Cars & bikes",
+            (Feature::People, _) => "People",
+            (Feature::Faces, _) => "Faces & eyes",
+            (Feature::Animals, _) => "Animals",
+            (Feature::Numbers, _) => "Race numbers",
+            (Feature::Plates, Aviation) => "Registrations",
+            (Feature::Plates, _) => "Number plates",
+            (Feature::MakeModel, Aviation) => "Aircraft type",
+            (Feature::MakeModel, _) => "Make & model",
+            (Feature::Sponsors, Aviation) => "Operator & livery",
+            (Feature::Sponsors, _) => "Sponsors & livery",
+            (Feature::Names, _) => "Names (from faces)",
+        }
+    }
+
+    /// The feature this one cannot work without: readers work on vehicle
+    /// crops, names work on faces.
+    pub fn requires(self) -> Option<Feature> {
+        match self {
+            Feature::Numbers | Feature::Plates | Feature::MakeModel | Feature::Sponsors => {
+                Some(Feature::Vehicles)
+            }
+            Feature::Names => Some(Feature::Faces),
+            _ => None,
+        }
+    }
+}
+
+/// An album's own on/off choices; a missing feature follows the preset.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Overrides(std::collections::BTreeMap<Feature, bool>);
+
+impl Overrides {
+    /// Read the stored `overrides` object; unknown keys and non-boolean
+    /// values are ignored rather than failing the album.
+    pub fn from_map(map: &serde_json::Map<String, serde_json::Value>) -> Overrides {
+        Overrides(
+            map.iter()
+                .filter_map(|(k, v)| Some((Feature::parse(k)?, v.as_bool()?)))
+                .collect(),
+        )
+    }
+
+    pub fn to_map(&self) -> serde_json::Map<String, serde_json::Value> {
+        self.0
+            .iter()
+            .map(|(f, on)| (f.key().to_string(), serde_json::Value::Bool(*on)))
+            .collect()
+    }
+
+    pub fn get(&self, feature: Feature) -> Option<bool> {
+        self.0.get(&feature).copied()
+    }
+
+    /// `None` clears the override, back to the preset's default.
+    pub fn set(&mut self, feature: Feature, on: Option<bool>) {
+        match on {
+            Some(on) => {
+                self.0.insert(feature, on);
+            }
+            None => {
+                self.0.remove(&feature);
+            }
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// What a preset's policy says about a feature before any override.
+fn policy_default(p: &PresetPolicy, include_people: bool, feature: Feature) -> bool {
+    match feature {
+        Feature::Vehicles => p.vehicles,
+        Feature::People => p.people,
+        Feature::Faces => include_people || p.faces_default,
+        Feature::Animals => p.animals,
+        Feature::Numbers => p.vlm.numbers,
+        Feature::Plates => p.vlm.plates,
+        Feature::MakeModel => p.vlm.make_model,
+        Feature::Sponsors => p.vlm.sponsors,
+        Feature::Names => p.vlm.names,
+    }
+}
+
+/// What an album actually looks for and reads: the preset's policy with
+/// the album's overrides applied. Every lane in the engine asks this, never
+/// the preset table directly.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lanes {
+    pub preset: ShootPreset,
+    pub vehicles: bool,
+    pub people: bool,
+    pub faces: bool,
+    pub animals: bool,
+    /// Race numbers; needs `vehicles`.
+    pub numbers: bool,
+    pub plates: bool,
+    pub make_model: bool,
+    pub sponsors: bool,
+    /// Name suggestions from faces; needs `faces`.
+    pub names: bool,
+    /// Frames whose main subject is a person are judged like portraits
+    /// (eye, face, person) even on a vehicle-first shoot.
+    pub people_judged: bool,
+    /// COCO classes the vehicles lane asks for; empty = the album's own
+    /// car / bike / truck switches.
+    pub vehicle_classes: &'static [usize],
+    overrides: Overrides,
+}
+
+impl Lanes {
+    /// `include_people` is the older motorsport-only "also look at people"
+    /// switch; it only changes the default for faces.
+    pub fn resolve(preset: ShootPreset, include_people: bool, overrides: &Overrides) -> Lanes {
+        let p = preset.policy();
+        let raw = |f: Feature| {
+            overrides
+                .get(f)
+                .unwrap_or_else(|| policy_default(&p, include_people, f))
+        };
+        let vehicles = raw(Feature::Vehicles);
+        let faces = raw(Feature::Faces);
+        let explicit_people = overrides.get(Feature::Faces) == Some(true)
+            || overrides.get(Feature::People) == Some(true);
+        Lanes {
+            preset,
+            vehicles,
+            people: raw(Feature::People),
+            faces,
+            animals: raw(Feature::Animals),
+            numbers: raw(Feature::Numbers) && vehicles,
+            plates: raw(Feature::Plates) && vehicles,
+            make_model: raw(Feature::MakeModel) && vehicles,
+            sponsors: raw(Feature::Sponsors) && vehicles,
+            names: raw(Feature::Names) && faces,
+            people_judged: faces
+                && (include_people
+                    || explicit_people
+                    || (p.profile == ScanProfile::Motorsport && p.faces_default)),
+            vehicle_classes: p.vehicle_classes,
+            overrides: overrides.clone(),
+        }
+    }
+
+    /// The preset's own defaults.
+    pub fn defaults(preset: ShootPreset) -> Lanes {
+        Lanes::resolve(preset, false, &Overrides::default())
+    }
+
+    pub fn on(&self, feature: Feature) -> bool {
+        match feature {
+            Feature::Vehicles => self.vehicles,
+            Feature::People => self.people,
+            Feature::Faces => self.faces,
+            Feature::Animals => self.animals,
+            Feature::Numbers => self.numbers,
+            Feature::Plates => self.plates,
+            Feature::MakeModel => self.make_model,
+            Feature::Sponsors => self.sponsors,
+            Feature::Names => self.names,
+        }
+    }
+
+    /// The identification lane has a vehicle to work on and something to
+    /// read from it.
+    pub fn identifies_vehicles(&self) -> bool {
+        self.vehicles && (self.numbers || self.plates || self.make_model || self.sponsors)
+    }
+
+    /// The vision model has something to ask about a vehicle.
+    pub fn asks_model(&self) -> bool {
+        self.identifies_vehicles()
+    }
+
+    /// First present wins. A switched-off detector's subject kinds leave
+    /// the list, so a frame falls back to the next kind -- animals are
+    /// stored as "person" boxes and keep that kind alive.
+    pub fn frame_priority(&self, main: Option<Subject>) -> Vec<Subject> {
+        let profile = self.preset.profile();
+        let base = if profile == ScanProfile::Motorsport
+            && self.people_judged
+            && main == Some(Subject::Person)
+        {
+            ScanProfile::Portrait.priority()
+        } else {
+            profile.priority()
+        };
+        base.iter()
+            .copied()
+            .filter(|kind| match kind {
+                Subject::Eye | Subject::Face => self.faces,
+                Subject::Person => self.people || self.animals,
+                Subject::Vehicle => self.vehicles,
+                Subject::WholeFrame => true,
+            })
+            .collect()
+    }
+
+    /// Whether a feature's value comes from the album rather than the preset.
+    pub fn overridden(&self, feature: Feature) -> bool {
+        self.overrides.get(feature).is_some()
+    }
+
+    /// The compact "what Conrod will do" summary the UI shows when a shoot
+    /// type is picked: one row per detector and reader, plus the knobs that
+    /// are not switchable.
+    pub fn summary(&self) -> serde_json::Value {
+        use serde_json::json;
+        let policy = self.preset.policy();
+        let row = |f: Feature| {
+            let requires = f.requires();
+            let blocked = requires.is_some_and(|r| !self.on(r));
+            json!({
+                "key": f.key(),
+                "label": f.label(self.preset),
+                "on": self.on(f),
+                "default": policy_default(&policy, false, f),
+                "overridden": self.overridden(f),
+                "requires": requires.map(Feature::key),
+                "blocked": blocked,
+            })
+        };
+        json!({
+            "preset": self.preset.name(),
+            "label": self.preset.label(),
+            "profile": policy.profile.name(),
+            "detects": Feature::DETECTS.map(row),
+            "reads": Feature::READS.map(row),
+            "panForgiven": policy.pan_allowed,
+            "blur": policy.default_blur,
+            "levelCheck": policy.level,
+            "darkOk": policy.dark_ok,
+            "deliverMost": policy.deliver_most,
+        })
     }
 }
 
@@ -775,11 +1089,6 @@ impl ScanProfile {
     pub fn pan_compatible(self) -> bool {
         !matches!(self, ScanProfile::Portrait)
     }
-
-    /// Plates, numbers and the vision model -- the slow lane.
-    pub fn identifies_vehicles(self) -> bool {
-        matches!(self, ScanProfile::Motorsport | ScanProfile::Mix)
-    }
 }
 
 /// A frame's main subject: the kind of its largest box, person or vehicle.
@@ -795,23 +1104,6 @@ pub fn main_subject(boxes: impl IntoIterator<Item = (Subject, f64)>) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The thirteen presets from before the policy table.
-    const ORIGINAL: [ShootPreset; 13] = [
-        ShootPreset::Portrait,
-        ShootPreset::PortraitGroup,
-        ShootPreset::PortraitCouple,
-        ShootPreset::PortraitPets,
-        ShootPreset::Motorsport,
-        ShootPreset::MotorsportBurnouts,
-        ShootPreset::MotorsportTrack,
-        ShootPreset::MotorsportRally,
-        ShootPreset::MotorsportMeet,
-        ShootPreset::Event,
-        ShootPreset::EventShows,
-        ShootPreset::EventParties,
-        ShootPreset::Mix,
-    ];
 
     #[test]
     fn names_round_trip_and_unknowns_fall_back() {
@@ -831,293 +1123,6 @@ mod tests {
     fn every_profile_can_fall_back_to_the_whole_frame() {
         for p in ScanProfile::ALL {
             assert_eq!(p.priority().last(), Some(&Subject::WholeFrame));
-        }
-    }
-
-    #[test]
-    fn include_people_turns_faces_on_only_where_they_were_off() {
-        use ScanProfile::*;
-        for (p, off, on) in [
-            (Motorsport, false, true),
-            (Portrait, true, true),
-            (Event, true, true),
-            (Mix, true, true),
-        ] {
-            assert_eq!(p.wants_faces(false), off, "{p:?}");
-            assert_eq!(p.wants_faces(true), on, "{p:?}");
-            assert!(p.wants_people(), "{p:?}");
-        }
-        assert!(!ShootPreset::MotorsportTrack.wants_faces(false));
-        assert!(ShootPreset::MotorsportTrack.wants_faces(true));
-        assert!(ShootPreset::MotorsportMeet.wants_faces(false));
-        for preset in ORIGINAL {
-            if preset.profile() != Motorsport {
-                assert_eq!(preset.wants_faces(false), preset.wants_faces(true));
-            }
-        }
-    }
-
-    /// The values the thirteen original presets had before the policy table.
-    /// (preset, profile, vehicles, people, faces off, animals, pan,
-    ///  min_box factor, max_subjects with a baseline of 8)
-    #[test]
-    fn the_original_presets_keep_their_old_values() {
-        use ShootPreset::*;
-        type OldValues = (
-            ShootPreset,
-            ScanProfile,
-            bool,
-            bool,
-            bool,
-            bool,
-            bool,
-            f64,
-            usize,
-        );
-        let old: [OldValues; 13] = [
-            (
-                Portrait,
-                ScanProfile::Portrait,
-                false,
-                true,
-                false,
-                true,
-                false,
-                1.0,
-                8,
-            ),
-            (
-                PortraitGroup,
-                ScanProfile::Portrait,
-                false,
-                true,
-                false,
-                true,
-                false,
-                0.5,
-                24,
-            ),
-            (
-                PortraitCouple,
-                ScanProfile::Portrait,
-                false,
-                true,
-                false,
-                true,
-                false,
-                1.0,
-                8,
-            ),
-            (
-                PortraitPets,
-                ScanProfile::Portrait,
-                false,
-                true,
-                false,
-                true,
-                false,
-                1.0,
-                8,
-            ),
-            (
-                Motorsport,
-                ScanProfile::Motorsport,
-                true,
-                true,
-                true,
-                true,
-                true,
-                1.0,
-                8,
-            ),
-            (
-                MotorsportBurnouts,
-                ScanProfile::Motorsport,
-                true,
-                true,
-                true,
-                true,
-                true,
-                1.0,
-                8,
-            ),
-            (
-                MotorsportTrack,
-                ScanProfile::Motorsport,
-                true,
-                true,
-                true,
-                true,
-                true,
-                0.7,
-                8,
-            ),
-            (
-                MotorsportRally,
-                ScanProfile::Motorsport,
-                true,
-                true,
-                true,
-                true,
-                true,
-                0.7,
-                8,
-            ),
-            (
-                MotorsportMeet,
-                ScanProfile::Motorsport,
-                true,
-                true,
-                false,
-                true,
-                false,
-                1.0,
-                16,
-            ),
-            (
-                Event,
-                ScanProfile::Event,
-                true,
-                true,
-                false,
-                true,
-                true,
-                1.0,
-                8,
-            ),
-            (
-                EventShows,
-                ScanProfile::Event,
-                true,
-                true,
-                false,
-                true,
-                true,
-                0.5,
-                24,
-            ),
-            (
-                EventParties,
-                ScanProfile::Event,
-                false,
-                true,
-                false,
-                true,
-                false,
-                0.5,
-                24,
-            ),
-            (Mix, ScanProfile::Mix, true, true, false, true, true, 1.0, 8),
-        ];
-        for (preset, profile, vehicles, people, faces_off, animals, pan, factor, max) in old {
-            assert_eq!(preset.profile(), profile, "{preset:?}");
-            assert_eq!(preset.wants_vehicles(), vehicles, "{preset:?}");
-            assert_eq!(preset.wants_people(), people, "{preset:?}");
-            assert_eq!(!preset.wants_faces(false), faces_off, "{preset:?}");
-            assert!(preset.wants_faces(true), "{preset:?}");
-            assert_eq!(preset.wants_animals(), animals, "{preset:?}");
-            assert_eq!(preset.pan_compatible(), pan, "{preset:?}");
-            assert!(
-                (preset.min_box_fraction(1.0) - factor).abs() < 1e-9,
-                "{preset:?}"
-            );
-            assert_eq!(preset.max_subjects(8), max, "{preset:?}");
-        }
-    }
-
-    #[test]
-    fn every_preset_with_a_subject_looks_for_animals_where_it_matters() {
-        for preset in ORIGINAL {
-            assert!(preset.wants_animals(), "{preset:?}");
-        }
-        for preset in [
-            ShootPreset::PortraitPets,
-            ShootPreset::SportRodeo,
-            ShootPreset::SportEquestrian,
-            ShootPreset::WildlifeBirds,
-        ] {
-            assert!(preset.wants_animals(), "{preset:?}");
-        }
-        for preset in [
-            ShootPreset::PropertyListing,
-            ShootPreset::PropertyReport,
-            ShootPreset::Landscape,
-            ShootPreset::Astro,
-            ShootPreset::Aviation,
-        ] {
-            assert!(!preset.wants_animals(), "{preset:?}");
-        }
-    }
-
-    #[test]
-    fn the_policy_table_matches_the_matrix_for_the_new_presets() {
-        use GroupUnit::{KeepSet, Moment, PerAngle};
-        // sport-field: people and ball, faces off by default, moderate, moments,
-        // numbers and names.
-        let field = ShootPreset::SportField.policy();
-        assert!(field.people && field.ball && !field.vehicles);
-        assert!(!field.faces_default);
-        assert_eq!(field.default_blur, "moderate");
-        assert_eq!(field.group, Moment);
-        assert_eq!(field.profile, ScanProfile::Event);
-        assert!(field.vlm.numbers && field.vlm.names && !field.vlm.plates);
-        assert!(!field.pan_allowed);
-        // sport-court rides the same parent with faces left on.
-        assert!(ShootPreset::SportCourt.wants_faces(false));
-        assert_eq!(ShootPreset::SportCourt.default_blur_strictness(), "strict");
-        // Rodeo: riders decide, pans are not excused, numbers are not read.
-        let rodeo = ShootPreset::SportRodeo.policy();
-        assert!(rodeo.people && rodeo.animals && !rodeo.pan_allowed);
-        assert!(!rodeo.vlm.numbers);
-        assert!(ShootPreset::SportEquestrian.pan_compatible());
-        // Cycling and action sports allow pans; cyclists wear bib numbers.
-        assert!(ShootPreset::SportCycling.pan_compatible());
-        assert!(ShootPreset::SportCycling.policy().vlm.numbers);
-        assert!(ShootPreset::SportAction.pan_compatible());
-        // Property: no subjects, brackets kept, and the report delivers most.
-        for preset in [ShootPreset::PropertyListing, ShootPreset::PropertyReport] {
-            let p = preset.policy();
-            assert!(
-                !p.people && !p.vehicles && !p.animals && !p.faces_default,
-                "{preset:?}"
-            );
-            assert_eq!(p.group, KeepSet, "{preset:?}");
-            assert_eq!(p.default_blur, "strict", "{preset:?}");
-            assert!(!p.pan_allowed, "{preset:?}");
-        }
-        assert!(!ShootPreset::PropertyListing.deliver_most());
-        assert!(ShootPreset::PropertyReport.deliver_most());
-        assert_eq!(ShootPreset::AutoDealer.group_unit(), PerAngle);
-        assert!(ShootPreset::AutoDealer.policy().vlm.plates);
-        assert!(ShootPreset::AutoDealer.policy().vlm.make_model);
-        assert!(!ShootPreset::AutoDealer.policy().vlm.numbers);
-        assert_eq!(ShootPreset::Wedding.profile(), ScanProfile::Event);
-        assert!(!ShootPreset::Wedding.pan_compatible());
-        assert_eq!(ShootPreset::Concert.default_blur_strictness(), "lenient");
-        assert!(ShootPreset::WildlifeBirds.pan_compatible());
-        assert!(ShootPreset::WildlifeBirds.wants_animals());
-        assert_eq!(ShootPreset::Landscape.group_unit(), KeepSet);
-        assert_eq!(ShootPreset::Astro.default_blur_strictness(), "lenient");
-        for dark in [
-            ShootPreset::Astro,
-            ShootPreset::Concert,
-            ShootPreset::EventShows,
-        ] {
-            assert!(dark.policy().dark_ok, "{dark:?}");
-        }
-        assert!(!ShootPreset::Landscape.policy().dark_ok);
-        assert_eq!(ShootPreset::Landscape.default_blur_strictness(), "strict");
-        assert_eq!(ShootPreset::Landscape.min_box_fraction(0.08), 0.08);
-        // Aviation asks for the airplane class and reads tail numbers as plates.
-        assert_eq!(ShootPreset::Aviation.extra_vehicle_classes(), &[4]);
-        assert!(ShootPreset::Aviation.policy().vlm.plates);
-        assert!(ShootPreset::Aviation.pan_compatible());
-        assert!(ShootPreset::Aviation.wants_vehicles());
-        // Only aviation extends the detector's class list.
-        for preset in ShootPreset::ALL {
-            if preset != ShootPreset::Aviation {
-                assert!(preset.extra_vehicle_classes().is_empty(), "{preset:?}");
-            }
         }
     }
 
@@ -1145,6 +1150,325 @@ mod tests {
             ShootPreset::MotorsportMeet.default_blur_strictness(),
             "moderate"
         );
+    }
+
+    use ShootPreset::*;
+
+    fn lanes(preset: ShootPreset) -> Lanes {
+        Lanes::defaults(preset)
+    }
+
+    fn with(preset: ShootPreset, feature: Feature, on: bool) -> Lanes {
+        let mut o = Overrides::default();
+        o.set(feature, Some(on));
+        Lanes::resolve(preset, false, &o)
+    }
+
+    /// Every preset is in exactly one of `on` / `off`.
+    fn partition(on: &[ShootPreset], pick: impl Fn(&Lanes) -> bool) {
+        for preset in ShootPreset::ALL {
+            let want = on.contains(&preset);
+            assert_eq!(pick(&lanes(preset)), want, "{preset:?}");
+        }
+    }
+
+    #[test]
+    fn race_numbers_are_read_where_competitors_wear_them() {
+        // Competition shoots, plus a mix that assumes nothing. Meets,
+        // dealers, aircraft, portraits, weddings, shows... get none.
+        partition(
+            &[
+                Motorsport,
+                MotorsportBurnouts,
+                MotorsportTrack,
+                MotorsportRally,
+                SportCycling,
+                SportAction,
+                Mix,
+            ],
+            |l| l.numbers,
+        );
+    }
+
+    #[test]
+    fn plates_are_read_where_cars_are_registered() {
+        partition(
+            &[
+                MotorsportBurnouts,
+                MotorsportTrack,
+                MotorsportRally,
+                MotorsportMeet,
+                AutoDealer,
+                Aviation,
+                Mix,
+            ],
+            |l| l.plates,
+        );
+    }
+
+    #[test]
+    fn make_and_model_are_read_where_the_car_is_the_story() {
+        partition(
+            &[
+                Motorsport,
+                MotorsportBurnouts,
+                MotorsportTrack,
+                MotorsportRally,
+                MotorsportMeet,
+                AutoDealer,
+                Aviation,
+                Mix,
+            ],
+            |l| l.make_model,
+        );
+        // Not livery text at a meet or a dealership.
+        assert!(!lanes(MotorsportMeet).sponsors && !lanes(AutoDealer).sponsors);
+        assert!(lanes(Motorsport).sponsors && lanes(Aviation).sponsors);
+    }
+
+    #[test]
+    fn vehicles_are_on_by_default_only_where_they_are_the_subject() {
+        partition(
+            &[
+                Motorsport,
+                MotorsportBurnouts,
+                MotorsportTrack,
+                MotorsportRally,
+                MotorsportMeet,
+                Mix,
+                SportCycling,
+                SportAction,
+                AutoDealer,
+                Aviation,
+            ],
+            |l| l.vehicles,
+        );
+        // Shows, portraits, weddings, concerts: off by default.
+        for off in [EventShows, Portrait, Wedding, Concert, Event, EventParties] {
+            assert!(!lanes(off).vehicles, "{off:?}");
+        }
+    }
+
+    #[test]
+    fn animals_are_looked_for_where_animals_are_in_the_picture() {
+        partition(
+            &[
+                Portrait,
+                PortraitGroup,
+                PortraitCouple,
+                PortraitPets,
+                Event,
+                EventShows,
+                Mix,
+                SportRodeo,
+                SportEquestrian,
+                WildlifeBirds,
+            ],
+            |l| l.animals,
+        );
+    }
+
+    #[test]
+    fn every_detector_and_reader_overrides_both_ways_on_every_preset() {
+        for preset in ShootPreset::ALL {
+            for feature in Feature::ALL {
+                for on in [true, false] {
+                    let mut o = Overrides::default();
+                    o.set(feature, Some(on));
+                    // A reader needs its detector; give it one.
+                    if let Some(needed) = feature.requires() {
+                        o.set(needed, Some(true));
+                    }
+                    let l = Lanes::resolve(preset, false, &o);
+                    assert_eq!(l.on(feature), on, "{preset:?} {feature:?}");
+                    assert!(l.overridden(feature));
+                    // Clearing goes back to the preset's own default.
+                    o.set(feature, None);
+                    if let Some(needed) = feature.requires() {
+                        o.set(needed, None);
+                    }
+                    assert_eq!(Lanes::resolve(preset, false, &o), lanes(preset));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn readers_need_vehicles_and_names_need_faces() {
+        let l = with(MotorsportTrack, Feature::Vehicles, false);
+        assert!(!l.numbers && !l.plates && !l.make_model && !l.sponsors);
+        assert!(!l.identifies_vehicles());
+        // Names ride the face pass.
+        let l = with(Wedding, Feature::Faces, false);
+        assert!(!l.names && l.people);
+        // A reader switched on where it was off needs a vehicle to read.
+        let l = with(Portrait, Feature::Numbers, true);
+        assert!(!l.numbers);
+        let mut o = Overrides::default();
+        o.set(Feature::Vehicles, Some(true));
+        o.set(Feature::Numbers, Some(true));
+        assert!(Lanes::resolve(Portrait, false, &o).identifies_vehicles());
+    }
+
+    #[test]
+    fn the_identification_lane_runs_for_a_preset_only_when_it_reads_vehicles() {
+        for preset in ShootPreset::ALL {
+            let l = lanes(preset);
+            assert_eq!(
+                l.identifies_vehicles(),
+                l.vehicles && (l.numbers || l.plates || l.make_model || l.sponsors),
+                "{preset:?}"
+            );
+        }
+        assert!(!lanes(Wedding).identifies_vehicles());
+        assert!(!lanes(Landscape).identifies_vehicles());
+        assert!(lanes(MotorsportMeet).identifies_vehicles());
+    }
+
+    #[test]
+    fn include_people_only_moves_the_faces_default() {
+        let none = Overrides::default();
+        assert!(!Lanes::resolve(Motorsport, false, &none).faces);
+        assert!(Lanes::resolve(Motorsport, true, &none).faces);
+        assert!(Lanes::resolve(Motorsport, true, &none).people_judged);
+        assert!(!Lanes::resolve(Motorsport, false, &none).people_judged);
+        // An explicit faces-off wins over the old switch.
+        let mut o = Overrides::default();
+        o.set(Feature::Faces, Some(false));
+        assert!(!Lanes::resolve(Motorsport, true, &o).faces);
+        assert!(!Lanes::resolve(Motorsport, true, &o).people_judged);
+        // Places that never had faces off are unchanged.
+        assert!(lanes(Portrait).faces && lanes(MotorsportMeet).faces);
+    }
+
+    #[test]
+    fn track_days_look_at_people_and_judge_person_frames_as_portraits() {
+        let l = lanes(MotorsportTrack);
+        assert!(l.vehicles && l.people && l.faces && l.people_judged);
+        // The car still decides when it is the biggest thing in the frame.
+        assert_eq!(
+            l.frame_priority(Some(Subject::Vehicle)),
+            vec![Subject::Vehicle, Subject::Person, Subject::WholeFrame]
+        );
+        assert_eq!(
+            l.frame_priority(Some(Subject::Person)),
+            vec![
+                Subject::Eye,
+                Subject::Face,
+                Subject::Person,
+                Subject::WholeFrame
+            ]
+        );
+    }
+
+    #[test]
+    fn a_switched_off_detector_leaves_the_frame_priority() {
+        // Faces off on a portrait shoot: person, then the whole frame.
+        let l = with(Portrait, Feature::Faces, false);
+        assert_eq!(
+            l.frame_priority(None),
+            vec![Subject::Person, Subject::WholeFrame]
+        );
+        // No people and no animals: only vehicles (or the whole frame).
+        let mut o = Overrides::default();
+        o.set(Feature::People, Some(false));
+        o.set(Feature::Animals, Some(false));
+        o.set(Feature::Faces, Some(false));
+        let l = Lanes::resolve(Event, false, &o);
+        assert_eq!(l.frame_priority(None), vec![Subject::WholeFrame]);
+        // Vehicles off on a car shoot: people decide.
+        let l = with(Motorsport, Feature::Vehicles, false);
+        assert_eq!(
+            l.frame_priority(None),
+            vec![Subject::Person, Subject::WholeFrame]
+        );
+        // Animals are stored as person boxes and keep that kind alive.
+        let l = lanes(WildlifeBirds);
+        assert!(!l.people && l.animals);
+        assert!(l.frame_priority(None).contains(&Subject::Person));
+        // The whole frame is always the last resort.
+        for preset in ShootPreset::ALL {
+            for feature in Feature::DETECTS {
+                let l = with(preset, feature, false);
+                assert_eq!(
+                    l.frame_priority(None).last(),
+                    Some(&Subject::WholeFrame),
+                    "{preset:?} {feature:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_vehicles_lane_asks_only_for_its_own_classes() {
+        assert_eq!(lanes(Aviation).vehicle_classes, &[4]);
+        assert_eq!(lanes(SportCycling).vehicle_classes, &[1]);
+        assert_eq!(lanes(SportAction).vehicle_classes, &[1, 3]);
+        for preset in ShootPreset::ALL {
+            if !matches!(preset, Aviation | SportCycling | SportAction) {
+                assert!(lanes(preset).vehicle_classes.is_empty(), "{preset:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn stored_overrides_ignore_junk() {
+        let map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            r#"{"vehicles": true, "faces": "yes", "nonsense": false, "numbers": false}"#,
+        )
+        .unwrap();
+        let o = Overrides::from_map(&map);
+        assert_eq!(o.get(Feature::Vehicles), Some(true));
+        assert_eq!(o.get(Feature::Faces), None);
+        assert_eq!(o.get(Feature::Numbers), Some(false));
+        assert_eq!(Overrides::from_map(&o.to_map()), o);
+        for feature in Feature::ALL {
+            assert_eq!(Feature::parse(feature.key()), Some(feature));
+        }
+    }
+
+    #[test]
+    fn the_summary_lists_every_detector_and_reader() {
+        let s = with(EventShows, Feature::Vehicles, true).summary();
+        let keys = |k: &str| -> Vec<String> {
+            s[k].as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["key"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(keys("detects"), ["vehicles", "people", "faces", "animals"]);
+        assert_eq!(
+            keys("reads"),
+            ["numbers", "plates", "make_model", "sponsors", "names"]
+        );
+        let vehicles = &s["detects"][0];
+        assert_eq!(vehicles["on"], true);
+        assert_eq!(vehicles["default"], false);
+        assert_eq!(vehicles["overridden"], true);
+        assert_eq!(s["label"], "Shows");
+        assert_eq!(s["blur"], "lenient");
+        assert_eq!(s["darkOk"], true);
+        // Aviation talks about aircraft, not cars.
+        let a = lanes(Aviation).summary();
+        assert_eq!(a["detects"][0]["label"], "Aircraft");
+        assert_eq!(a["reads"][1]["label"], "Registrations");
+    }
+
+    #[test]
+    fn defaults_never_read_without_something_to_read_from() {
+        for preset in ShootPreset::ALL {
+            let p = preset.policy();
+            if !p.vehicles {
+                assert!(
+                    !(p.vlm.numbers || p.vlm.plates || p.vlm.make_model || p.vlm.sponsors),
+                    "{preset:?} reads vehicles it does not look for"
+                );
+            }
+            if !p.faces_default {
+                assert!(!p.vlm.names, "{preset:?} names people it cannot see");
+            }
+        }
     }
 
     #[test]
