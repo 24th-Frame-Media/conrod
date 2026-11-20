@@ -12,6 +12,7 @@ import {
 } from '../lib/settings.mjs';
 import { SettingsSection, SettingRow } from '../components/SettingsFields';
 import { Maintenance } from '../components/Maintenance';
+import { DeciderCard } from '../components/DeciderCard';
 import { Benchmark } from './Benchmark';
 import { Known } from './Known';
 import type {
@@ -735,7 +736,12 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
               {activeTab === 'identification' && (
                 <>
                   {SECTIONS.filter((section) => section.tab === 'identification').map((section) => (
-                    section.id === 'vision-providers' ? (
+                    section.id === 'decision-model' ? (
+              <div key={section.id} className="decider-section">
+                <SettingsSection section={section} draft={draft} saved={settings} onChange={setValue} />
+                <DeciderCard toast={toast} onChanged={onModelsChanged} />
+              </div>
+            ) : section.id === 'vision-providers' ? (
                       <section key={section.id} className="settings-section" aria-labelledby="settings-section-vision-providers">
                         <header className="settings-section-head">
                           <h3 id="settings-section-vision-providers">Vision providers</h3>
@@ -871,7 +877,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                         <span className={`dot ${model.ready ? 'ok' : 'no'}`} aria-hidden="true" />
                         {model.name}
                       </span>
-                      <span className="meta-val small">{model.ready ? 'Ready' : 'Unavailable'}</span>
+                      <span className="meta-val small">{model.ready ? 'Ready' : model.optional ? 'Optional' : 'Unavailable'}</span>
                     </div>
                   ))}
                 </div>
