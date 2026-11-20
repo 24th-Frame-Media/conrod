@@ -4,7 +4,7 @@ import { facetsFor, tabsWithData, validTab, type FacetKind } from '../lib/facets
 import type { FacetItem } from '../lib/review';
 import type { Facet } from '../lib/types';
 
-type Props = { preset: string; facets: Record<FacetKind, FacetItem[]>; facet: Facet | null; onPick: (facet: Facet | null) => void };
+type Props = { preset: string; overrides?: Record<string, boolean>; facets: Record<FacetKind, FacetItem[]>; facet: Facet | null; onPick: (facet: Facet | null) => void };
 
 const TABS: Record<FacetKind, string> = { number: 'Numbers', plate: 'Plates', make: 'Makes', team: 'Teams', person: 'People', subject: 'Subjects' };
 const EMPTY: Record<FacetKind, string> = {
@@ -14,10 +14,10 @@ const EMPTY: Record<FacetKind, string> = {
 const sentence = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 /** The review sidebar: what this kind of shoot can be browsed by, narrowed to what the album has. Pick one to narrow the grid to it. */
-export function Facets({ preset, facets, facet, onPick }: Props) {
+export function Facets({ preset, overrides = {}, facets, facet, onPick }: Props) {
   const [wanted, setWanted] = useState<FacetKind | null>(null);
-  const allowed = facetsFor(preset);
-  const tabs = tabsWithData(preset, facets);
+  const allowed = facetsFor(preset, overrides);
+  const tabs = tabsWithData(preset, facets, overrides);
   const kind = validTab(wanted, tabs);
   const active = facet && allowed.includes(facet.kind) ? facet : null;
   // A filter that this preset no longer offers would hide frames with no way to clear it.

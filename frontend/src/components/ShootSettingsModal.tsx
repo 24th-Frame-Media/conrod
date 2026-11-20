@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Icon, Portal, useBackdropClose } from './basics';
 import { type Scope, type Settings } from '../lib/types';
 import { ShootTypeSelect } from './ShootTypeSelect';
+import { PresetPolicy } from './PresetPolicy';
+import { overridesOf, type Overrides } from '../lib/presetPolicy.mjs';
 import { GroupingFields, groupingOf, type GroupingValues } from './GroupingFields';
 import { IDENTIFY_SCOPE_OPTIONS, identifyScopeOf } from '../lib/identify.mjs';
 
@@ -13,8 +15,8 @@ type Props = {
   onClose: () => void;
   onSave: (patch: {
     scan_profile: string;
-    read_numbers: boolean;
-    read_plates: boolean;
+    /** Detector and reader switches; a missing key follows the shoot type. Saved through `set_feature`, not the settings patch. */
+    overrides: Overrides;
     read_action: boolean;
     group_vehicles: boolean;
     /** Which subjects identification reads; does not need a regroup. */
@@ -31,8 +33,7 @@ export function ShootSettingsModal({
   onSave,
 }: Props) {
   const [profile, setProfile] = useState(initialProfile || 'motorsport');
-  const [readNumbers, setReadNumbers] = useState(initialSettings.read_numbers !== false);
-  const [readPlates, setReadPlates] = useState(initialSettings.read_plates !== false);
+  const [overrides, setOverrides] = useState<Overrides>(() => overridesOf(initialSettings.overrides));
   const [readAction, setReadAction] = useState(initialSettings.read_action !== false);
   const [groupVehicles, setGroupVehicles] = useState(initialSettings.group_vehicles !== false);
   const [identifyScope, setIdentifyScope] = useState<Scope>(() => identifyScopeOf(initialSettings.identify_scope));
@@ -43,8 +44,7 @@ export function ShootSettingsModal({
   useEffect(() => {
     if (visible) {
       setProfile(initialProfile || 'motorsport');
-      setReadNumbers(initialSettings.read_numbers !== false);
-      setReadPlates(initialSettings.read_plates !== false);
+      setOverrides(overridesOf(initialSettings.overrides));
       setReadAction(initialSettings.read_action !== false);
       setGroupVehicles(initialSettings.group_vehicles !== false);
       setIdentifyScope(identifyScopeOf(initialSettings.identify_scope));
@@ -60,8 +60,7 @@ export function ShootSettingsModal({
     try {
       await onSave({
         scan_profile: profile,
-        read_numbers: readNumbers,
-        read_plates: readPlates,
+        overrides,
         read_action: readAction,
         group_vehicles: groupVehicles,
         identify_scope: identifyScope,
@@ -86,7 +85,8 @@ export function ShootSettingsModal({
         <div className="shoot-settings-body">
           <div className="field-group">
             <label className="field-label" htmlFor="shoot-type">Type of shoot</label>
-            <ShootTypeSelect id="shoot-type" value={profile} onChange={setProfile} />
+            <ShootTypeSelect id="shoot-type" value={profile} onChange={(next) => { setProfile(next); if (next !== profile) setOverrides({}); }} />
+            <PresetPolicy preset={profile} overrides={overrides} onChange={setOverrides} disabled={saving} />
           </div>
 
           <div className="field-group">
@@ -105,33 +105,7 @@ export function ShootSettingsModal({
           </div>
 
           <div className="field-group toggles-group">
-            <label className="field-label">Vehicle Detection & Identification</label>
-            <label className="shoot-toggle-row">
-              <input
-                type="checkbox"
-                checked={readNumbers}
-                onChange={(e) => setReadNumbers(e.target.checked)}
-              />
-              <div className="toggle-text">
-                <b>Read race & competition numbers</b>
-                <span>
-                  OCR vehicle competition numbers (#0–999). Turn off if vehicles have no numbers to prevent misread or hallucinated numbers.
-                </span>
-              </div>
-            </label>
-
-            <label className="shoot-toggle-row">
-              <input
-                type="checkbox"
-                checked={readPlates}
-                onChange={(e) => setReadPlates(e.target.checked)}
-              />
-              <div className="toggle-text">
-                <b>Read licence plates</b>
-                <span>OCR vehicle registration and licence plates.</span>
-              </div>
-            </label>
-
+            <label className="field-label">Action and grouping</label>
             <label className="shoot-toggle-row">
               <input
                 type="checkbox"
