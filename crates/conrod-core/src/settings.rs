@@ -318,7 +318,8 @@ pub struct Settings {
     /// A moment must reach this probability before it is shown as sure or
     /// can lift a frame's rank; below it (down to 0.5) it is a "maybe".
     pub moments_threshold: f64,
-    /// The decider's transport: "openrouter" or "in_process".
+    /// The decider's transport: "auto" (the in-process model when it is ready,
+    /// else OpenRouter when a key is set), "in_process" or "openrouter".
     pub moments_transport: String,
     /// OpenRouter model id for the decider.
     pub moments_openrouter_model: String,
@@ -435,7 +436,7 @@ impl Default for Settings {
             entry_list: String::new(),
             moments_backend: "vlm".into(),
             moments_threshold: crate::moments::DEFAULT_THRESHOLD,
-            moments_transport: "openrouter".into(),
+            moments_transport: "auto".into(),
             moments_openrouter_model: "perplexity/pplx-decider-flash-v1.3:free".into(),
             moments_openrouter_key: String::new(),
         }

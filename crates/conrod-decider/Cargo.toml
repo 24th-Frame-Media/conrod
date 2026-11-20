@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# The request/response schema lives in conrod-core (one set of types for every
+# transport); this crate only turns a request into a prompt and logits into answers.
+conrod-core = { path = "../conrod-core" }
 base64 = "0.22"
 # The llama.cpp runtime (llama, mtmd, ggml DLLs) is loaded at run time from a
 # pinned, hash-verified download; nothing links against it, so a machine

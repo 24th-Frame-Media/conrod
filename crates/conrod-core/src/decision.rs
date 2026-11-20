@@ -11,68 +11,298 @@
 //! first) with its probabilities. Images are data URLs, at most 1.6 MP each.
 
 use crate::moments::{Moment, MomentReading, MomentVerdict};
-use serde::{Deserialize, Serialize};
+use serde::de::{MapAccess, Visitor};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::fmt;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
-/// One question. `criteria` differs by kind, as the model card lists.
+/// A JSON object that keeps its keys in the order they were written.
+///
+/// Question order is part of the protocol: the in-process model sees the
+/// questions (and each question's options) in the order given, so the
+/// request's maps must not sort their keys.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ordered<T>(pub Vec<(String, T)>);
+
+impl<T> Default for Ordered<T> {
+    fn default() -> Self {
+        Ordered(Vec::new())
+    }
+}
+
+impl<T> Ordered<T> {
+    pub fn new() -> Self {
+        Ordered(Vec::new())
+    }
+
+    /// Append without checking for an existing key.
+    pub fn push(&mut self, key: impl Into<String>, value: T) {
+        self.0.push((key.into(), value));
+    }
+
+    /// Set a key: replaces in place when it exists, else appends.
+    pub fn insert(&mut self, key: impl Into<String>, value: T) {
+        let key = key.into();
+        match self.0.iter_mut().find(|(k, _)| *k == key) {
+            Some(slot) => slot.1 = value,
+            None => self.0.push((key, value)),
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<&T> {
+        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &T)> {
+        self.0.iter().map(|(k, v)| (k, v))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.0.iter().map(|(k, _)| k)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<T> std::ops::Index<&str> for Ordered<T> {
+    type Output = T;
+    fn index(&self, key: &str) -> &T {
+        self.get(key)
+            .unwrap_or_else(|| panic!("no entry named {key:?}"))
+    }
+}
+
+impl<T> FromIterator<(String, T)> for Ordered<T> {
+    fn from_iter<I: IntoIterator<Item = (String, T)>>(iter: I) -> Self {
+        Ordered(iter.into_iter().collect())
+    }
+}
+
+impl<T: Serialize> Serialize for Ordered<T> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut map = s.serialize_map(Some(self.0.len()))?;
+        for (k, v) in &self.0 {
+            map.serialize_entry(k, v)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Ordered<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V<T>(PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for V<T> {
+            type Value = Ordered<T>;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut out = Vec::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some((k, v)) = map.next_entry::<String, T>()? {
+                    out.push((k, v));
+                }
+                Ok(Ordered(out))
+            }
+        }
+        d.deserialize_map(V(PhantomData))
+    }
+}
+
+/// One question. `instructions` and every description is plain text or any
+/// JSON value (a non-string is written into the prompt as Python-style
+/// `json.dumps`). `criteria` differs by kind, as the model card lists.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Question {
-    /// P(true) for a yes/no question.
-    Noul {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        instructions: Option<String>,
-    },
-    /// A probability per option (`option -> description`).
+    /// Pick one of 1..=255 named options; `criteria` maps name to description.
     Choice {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        instructions: Option<String>,
-        criteria: BTreeMap<String, Option<String>>,
+        instructions: Option<Value>,
+        criteria: Ordered<Option<Value>>,
     },
-    /// An ordered rubric, lowest level first.
+    /// Yes/no; the answer is P(true). `criteria` may describe `"true"` / `"false"`.
+    Noul {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        instructions: Option<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        criteria: Option<NoulCriteria>,
+    },
+    /// An ordered scale of 2..=255 levels, lowest first.
     Score {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        instructions: Option<String>,
-        criteria: Vec<String>,
+        instructions: Option<Value>,
+        criteria: Vec<Value>,
     },
 }
 
-/// A request: the context, the questions about it, optional images (data URLs).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct NoulCriteria {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#true: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#false: Option<Value>,
+}
+
+impl Question {
+    /// A pick-one question over `(option, description)` pairs, in the order given.
+    pub fn choice<I, K>(instructions: &str, options: I) -> Question
+    where
+        I: IntoIterator<Item = (K, Option<String>)>,
+        K: Into<String>,
+    {
+        Question::Choice {
+            instructions: Some(Value::String(instructions.to_string())),
+            criteria: options
+                .into_iter()
+                .map(|(k, d)| (k.into(), d.map(Value::String)))
+                .collect(),
+        }
+    }
+
+    /// A yes/no question with the default option wording.
+    pub fn noul(instructions: &str) -> Question {
+        Question::Noul {
+            instructions: Some(Value::String(instructions.to_string())),
+            criteria: None,
+        }
+    }
+
+    /// An ordered rubric, lowest level first.
+    pub fn score(instructions: &str, levels: &[&str]) -> Question {
+        Question::Score {
+            instructions: Some(Value::String(instructions.to_string())),
+            criteria: levels.iter().map(|l| Value::String((*l).into())).collect(),
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Question::Choice { .. } => "choice",
+            Question::Noul { .. } => "noul",
+            Question::Score { .. } => "score",
+        }
+    }
+
+    pub fn instructions(&self) -> Option<&Value> {
+        match self {
+            Question::Choice { instructions, .. }
+            | Question::Noul { instructions, .. }
+            | Question::Score { instructions, .. } => instructions.as_ref(),
+        }
+    }
+}
+
+/// A request: the context, the questions about it (in order), optional
+/// images. An image is a `data:image/..;base64,..` URL, or a file path for
+/// the in-process model.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Request {
     pub state: Value,
-    pub questions: BTreeMap<String, Question>,
+    pub questions: Ordered<Question>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
 }
 
-/// One answer. Which fields are filled depends on the question's kind.
+impl Request {
+    pub fn new(state: impl Into<Value>) -> Request {
+        Request {
+            state: state.into(),
+            ..Request::default()
+        }
+    }
+
+    pub fn ask(mut self, id: impl Into<String>, question: Question) -> Request {
+        self.questions.push(id, question);
+        self
+    }
+}
+
+/// One answer. Which fields are filled depends on the question's kind; a
+/// reply that leaves any out still parses, so a gateway's quirks never break a
+/// scan. `kind` is the model card's `type` tag when the transport sends it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Answer {
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     /// `noul`: P(true).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub noul: Option<f64>,
     /// `choice`: the likeliest option.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub choice: Option<String>,
     /// `score`: the expected level index.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
     /// `choice`: option -> p; `score`: p per level (an object or a list).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probabilities: Option<Value>,
-    #[serde(default)]
+    /// `score`: the level descriptions, by index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legend: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f64>,
+}
+
+impl Answer {
+    /// The probabilities as `(option, p)` in the order sent; a list reads as
+    /// level indices `"0"`, `"1"`, ...
+    pub fn bars(&self) -> Vec<(String, f64)> {
+        match &self.probabilities {
+            Some(Value::Object(map)) => map
+                .iter()
+                .filter_map(|(k, v)| Some((k.clone(), v.as_f64()?)))
+                .collect(),
+            Some(Value::Array(list)) => list
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| Some((i.to_string(), v.as_f64()?)))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// What a request cost.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct Usage {
+    #[serde(default)]
+    pub input_tokens: u32,
+    #[serde(default)]
+    pub output_tokens: u32,
+    #[serde(default)]
+    pub sequences: u32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Response {
     #[serde(default)]
-    pub answers: BTreeMap<String, Answer>,
+    pub answers: Ordered<Answer>,
     #[serde(default)]
-    pub usage: Option<Value>,
+    pub usage: Option<Usage>,
+}
+
+impl Response {
+    pub fn answer(&self, id: &str) -> Option<&Answer> {
+        self.answers.get(id)
+    }
+
+    /// P(true) of a `noul` answer.
+    pub fn noul(&self, id: &str) -> Option<f64> {
+        self.answers.get(id)?.noul
+    }
 }
 
 /// Something that can answer a [`Request`]. `Err` is a transport or model
@@ -99,6 +329,11 @@ impl InProcess {
         decide: impl Fn(&Request) -> Result<Response, String> + Send + Sync + 'static,
     ) -> InProcess {
         InProcess(Some(Arc::new(decide)))
+    }
+
+    /// Whether a model is seated (and so may answer).
+    pub fn is_available(&self) -> bool {
+        self.0.is_some()
     }
 }
 
@@ -135,24 +370,16 @@ pub const STRENGTH_LEVELS: [&str; 4] = [
 /// and one `score` question for the frame's overall moment strength.
 /// `context` is the shoot's one-line guidance.
 pub fn moment_request(context: &str, vocab: &[Moment], images: Vec<String>) -> Request {
-    let mut questions = BTreeMap::new();
+    let mut questions = Ordered::new();
     for moment in vocab {
-        questions.insert(
-            moment_id(moment.key),
-            Question::Noul {
-                instructions: Some(moment.ask.to_string()),
-            },
-        );
+        questions.push(moment_id(moment.key), Question::noul(moment.ask));
     }
-    questions.insert(
-        STRENGTH_ID.to_string(),
-        Question::Score {
-            instructions: Some(
-                "How strong is the best moment in this photograph, for a keeper at this kind of shoot?"
-                    .into(),
-            ),
-            criteria: STRENGTH_LEVELS.iter().map(|s| (*s).to_string()).collect(),
-        },
+    questions.push(
+        STRENGTH_ID,
+        Question::score(
+            "How strong is the best moment in this photograph, for a keeper at this kind of shoot?",
+            &STRENGTH_LEVELS,
+        ),
     );
     Request {
         state: json!(format!(
@@ -202,18 +429,13 @@ pub const PEAK_ID: &str = "peak";
 /// the action? `images` are the burst's frames in order, downscaled by the
 /// caller (about 8 at most).
 pub fn peak_request(context: &str, images: Vec<String>) -> Request {
-    let criteria = (0..images.len())
-        .map(|i| (frame_option(i), Some(format!("image {}", i + 1))))
-        .collect();
-    let mut questions = BTreeMap::new();
-    questions.insert(
-        PEAK_ID.to_string(),
-        Question::Choice {
-            instructions: Some(
-                "Which of these frames shows the peak of the action or moment?".into(),
-            ),
-            criteria,
-        },
+    let mut questions = Ordered::new();
+    questions.push(
+        PEAK_ID,
+        Question::choice(
+            "Which of these frames shows the peak of the action or moment?",
+            (0..images.len()).map(|i| (frame_option(i), Some(format!("image {}", i + 1)))),
+        ),
     );
     Request {
         state: json!(format!(
@@ -288,8 +510,12 @@ mod tests {
             assert_eq!(req.questions.len(), vocab.len() + 1, "{preset:?}");
             for moment in vocab {
                 match &req.questions[&moment_id(moment.key)] {
-                    Question::Noul { instructions } => {
-                        assert_eq!(instructions.as_deref(), Some(moment.ask), "{preset:?}")
+                    Question::Noul { instructions, .. } => {
+                        assert_eq!(
+                            instructions.as_ref().and_then(Value::as_str),
+                            Some(moment.ask),
+                            "{preset:?}"
+                        )
                     }
                     other => panic!("{preset:?} {}: {other:?}", moment.key),
                 }
@@ -337,7 +563,7 @@ mod tests {
     #[test]
     fn a_response_reads_into_calibrated_readings_and_a_strength() {
         let vocab = vocabulary(ShootPreset::Wedding);
-        let mut answers = BTreeMap::new();
+        let mut answers = Ordered::new();
         answers.insert("m_first_kiss".to_string(), answer(0.97));
         answers.insert("m_confetti".to_string(), answer(0.2));
         answers.insert(
@@ -422,5 +648,60 @@ mod tests {
         });
         assert_eq!(filled.name(), "in_process");
         assert!(filled.decide(&req).unwrap().answers.is_empty());
+    }
+
+    #[test]
+    fn questions_keep_the_order_they_were_written_in() {
+        // The card's own example: not alphabetical, and the prompt depends on it.
+        let wire = r#"{"state":"s","questions":{"urgent":{"type":"noul"},"team":{"type":"choice","criteria":{"sales":"Buying","billing":null,"support":"Errors"}},"frustration":{"type":"score","criteria":["calm","angry"]}}}"#;
+        let req: Request = serde_json::from_str(wire).unwrap();
+        let ids: Vec<&String> = req.questions.keys().collect();
+        assert_eq!(ids, ["urgent", "team", "frustration"]);
+        match &req.questions["team"] {
+            Question::Choice { criteria, .. } => {
+                let options: Vec<&String> = criteria.keys().collect();
+                assert_eq!(options, ["sales", "billing", "support"]);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(serde_json::to_string(&req).unwrap(), wire);
+
+        // A moment request lists the tags in the vocabulary's order, then the strength.
+        let vocab = vocabulary(ShootPreset::Wedding);
+        let built = moment_request("x", vocab, vec![]);
+        let keys: Vec<String> = built.questions.keys().cloned().collect();
+        let mut expected: Vec<String> = vocab.iter().map(|m| moment_id(m.key)).collect();
+        expected.push(STRENGTH_ID.to_string());
+        assert_eq!(keys, expected);
+        // And a burst's frames stay in frame order.
+        let peak = peak_request("x", (0..11).map(|i| i.to_string()).collect());
+        match &peak.questions["peak"] {
+            Question::Choice { criteria, .. } => {
+                assert_eq!(criteria.0[10].0, "f11");
+                assert_eq!(criteria.0[0].0, "f01");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_model_card_answer_parses_and_keeps_its_probabilities_in_order() {
+        let wire = r#"{"answers":{"frustration":{"type":"score","probabilities":{"0":0.1,"1":0.45,"2":0.4,"3":0.05},"legend":{"0":"calm","1":"mild","2":"high","3":"angry"},"score":1.4,"confidence":0.43},"team":{"type":"choice","probabilities":{"billing":0.001,"support":0.998},"choice":"support","confidence":0.99}},"usage":{"input_tokens":181,"output_tokens":0,"sequences":1}}"#;
+        let r: Response = serde_json::from_str(wire).unwrap();
+        let ids: Vec<&String> = r.answers.keys().collect();
+        assert_eq!(ids, ["frustration", "team"]);
+        let bars = r.answers["frustration"].bars();
+        assert_eq!(bars.len(), 4);
+        assert_eq!(bars[1], ("1".to_string(), 0.45));
+        assert_eq!(r.answers["team"].bars()[0].0, "billing");
+        assert_eq!(r.usage.unwrap().input_tokens, 181);
+        assert_eq!(r.answers["team"].choice.as_deref(), Some("support"));
+        // A list of probabilities (the gateway's shape) reads as level indices.
+        let list = Answer {
+            probabilities: Some(json!([0.2, 0.8])),
+            ..Answer::default()
+        };
+        assert_eq!(list.bars()[1], ("1".to_string(), 0.8));
+        assert!(Answer::default().bars().is_empty());
     }
 }
