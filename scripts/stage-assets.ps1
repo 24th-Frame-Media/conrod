@@ -68,6 +68,14 @@ foreach ($a in $assets) {
   $a['sha256'] = (Get-FileHash $p -Algorithm SHA256).Hash.ToLower()
   $a['size'] = (Get-Item $p).Length
 }
+# Opt-in assets (the decision model) are pinned by hand against their upstream URLs, not
+# staged here: carry them over unchanged so regenerating the manifest does not drop them.
+$existing = Join-Path $PSScriptRoot 'assets.json'
+if (Test-Path $existing) {
+  foreach ($kept in ((Get-Content $existing -Raw | ConvertFrom-Json).assets | Where-Object { $_.optional })) {
+    $assets += [ordered]@{ name = $kept.name; dest = $kept.dest; extract = [bool]$kept.extract; optional = $true; licence = $kept.licence; sha256 = $kept.sha256; size = $kept.size; sources = @($kept.sources) }
+  }
+}
 $manifest = [ordered]@{ release = $releaseUrl; assets = $assets }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $PSScriptRoot 'assets.json') -Encoding UTF8
 "staged $($assets.Count) assets -> $out ; manifest scripts/assets.json ; resources populated"
