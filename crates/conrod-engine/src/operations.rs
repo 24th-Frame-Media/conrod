@@ -762,7 +762,7 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
         )?;
         let mut writer = MetadataWriter::new(exiftool());
         let io = IoSettings::from_core(&settings);
-        let mapping = crate::catalog::mapping(&settings)?;
+        let mapping = crate::catalog::mapping(&d.root, &settings)?;
         let options = keywords::KeywordOptions {
             prefix: settings.keyword_prefix.clone(),
             write_plate: settings.write_plate_keyword,

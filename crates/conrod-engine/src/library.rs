@@ -94,7 +94,7 @@ const VEHICLE: &str = "COALESCE(d.region_type,'vehicle')='vehicle'";
 pub fn summary(d: &Desktop, job: i64) -> Result<Value> {
     require_job(d, job)?;
     let settings = crate::operations::settings(d, job)?;
-    let mapping = crate::catalog::mapping(&settings)?;
+    let mapping = crate::catalog::mapping(&d.root, &settings)?;
     let threshold = settings.ocr_accept_confidence;
     let db = lock(&d.reader);
     let album = rows(&db, "SELECT * FROM jobs WHERE id=?", [job])?
