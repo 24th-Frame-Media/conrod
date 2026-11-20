@@ -199,7 +199,7 @@
       { "section": "Fixed", "text": "If Conrod crashes or is closed mid-scan, the next start tidies up and the album shows what really happened." },
       { "section": "Fixed", "text": "A scan that finishes with problem frames says done with errors and lists them, instead of looking clean." },
       { "section": "Fixed", "text": "Resuming a scan carries on from the stage it reached." },
-      { "section": "Fixed", "text": "Importing a folder you have already imported asks first instead of duplicating it." }
+      { "section": "Fixed", "text": "Importing a folder you have already imported adds only the new photos and tells you how many were already there, instead of making a second album." }
     ],
     "f70f502": { "section": "Improved", "text": "Safer by design: the app only reads files you chose, a cloud key is no longer put in a web address, and stricter rules for what the app window may load." },
     "8d37e10": { "section": "New", "text": "The ingest screen shows what each worker is doing right now, with live frames and counters that match what is actually done." },
