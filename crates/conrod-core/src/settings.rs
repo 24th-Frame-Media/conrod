@@ -290,6 +290,10 @@ pub struct Settings {
     /// Motorsport only: also look at people (faces, eyes, naming) and judge
     /// a frame by its main subject. Other profiles ignore it.
     pub include_people: bool,
+    /// The album's own on/off choice for each detector and reader, by
+    /// `profile::Feature` key ("vehicles", "faces", "numbers", ...). A
+    /// missing key follows the shoot preset; see `Settings::lanes`.
+    pub overrides: Map<String, Value>,
     /// Score the subject crop with NIMA technical quality and use it only as
     /// a burst tiebreak after sharpness. Opt-in: off until the model is
     /// installed and a photographer turns it on.
@@ -404,6 +408,7 @@ impl Default for Settings {
             extra: Map::new(),
             scan_profile: "motorsport".into(),
             include_people: false,
+            overrides: Map::new(),
             use_quality_score: false,
             blur_strictness: "moderate".into(),
             blur_explicit: false,
@@ -541,6 +546,29 @@ impl Settings {
                 .default_blur
                 .to_string()
         }
+    }
+
+    /// What this album looks for and reads: the preset's policy with the
+    /// album's overrides applied. The one answer every lane asks.
+    pub fn lanes(&self) -> crate::profile::Lanes {
+        crate::profile::Lanes::resolve(
+            crate::profile::ShootPreset::parse(&self.scan_profile),
+            self.include_people,
+            &crate::profile::Overrides::from_map(&self.overrides),
+        )
+    }
+
+    /// These settings with the lane switches folded in: a reader the album
+    /// turned off (or its preset does not need) is off here, so the reading
+    /// code only has to look at its usual flags.
+    pub fn resolved(mut self) -> Settings {
+        let lanes = self.lanes();
+        self.read_plates &= lanes.plates;
+        self.read_numbers &= lanes.numbers;
+        self.read_text &= lanes.numbers || lanes.plates || lanes.sponsors;
+        self.identify_make_model &= lanes.make_model;
+        self.identify_team &= lanes.sponsors;
+        self
     }
 
     /// Overlay known keys whose values have the right type.
