@@ -1,0 +1,299 @@
+# Changelog
+
+What changed in Conrod, release by release, in plain language. Generated from the git history by
+`node scripts/release-notes.mjs --all --write`; wording is steered by `scripts/release-notes.overrides.json`.
+
+Installers and checksums are on the [releases page](https://github.com/kapsikkum/conrod/releases).
+
+## Unreleased
+
+Culling works with the camera's own focus point, Conrod talks to Lightroom, ingest is one live screen, and a crash no longer loses your place.
+
+### New
+
+- Canon autofocus areas are read directly from the file.
+- Ingest is one live screen that follows an import through scanning and vision, with every worker on show.
+- When the detector misses the subject, the camera's own focus area decides what the subject is.
+- Bursts that look alike but were shot a few seconds apart can be joined into one.
+- Conrod Bridge, a Lightroom Classic plug-in: Conrod's verdicts go into Lightroom, and Lightroom's flags come back.
+- Send your verdicts to Lightroom from the export sheet, and import its flags into Conrod.
+- Reset an album back to how it was just after import, discarding your decisions and results.
+- A new logo: a connecting rod with a low kink.
+- The camera's focus grid is read when the detector only finds something small, such as a distant car.
+- The ingest screen shows what each worker is doing right now, with live frames and counters that match what is actually done.
+
+### Improved
+
+- The Train tab is gone. Sharpness is measured, not trained, so there was nothing left for it to do.
+- Scanning and re-scoring are faster: sharpness is measured with less work, faces and expressions share their models across workers, and each RAW's focus data is read in parallel.
+- Big libraries open and save faster.
+- Security updates to the networking components.
+- Regrouping no longer makes the rest of the app wait.
+- Culling uses less memory on big shoots.
+- The app framework and its plug-ins are updated to their latest patch releases.
+- Safer by design: the app only reads files you chose, a cloud key is no longer put in a web address, and stricter rules for what the app window may load.
+
+### Fixed
+
+- Scrolling the grid is smoother, and dragging the inspector no longer leaves stray handlers behind.
+- More robust CR3 reading, correct handling of rate-limited vision servers, and no silently lost database writes.
+- A stack of one frame shows and opens like a normal frame.
+- The join-look-alike-bursts choice made at import is now applied.
+- The camera's in-focus point is used when the file names one.
+- A reset album shows as indexed, not as scanning.
+- The camera's focus area can rescue a frame but never demotes one.
+- If Conrod crashes or is closed mid-scan, the next start tidies up and the album shows what really happened.
+- A scan that finishes with problem frames says done with errors and lists them, instead of looking clean.
+- Resuming a scan carries on from the stage it reached.
+- Importing a folder you have already imported asks first instead of duplicating it.
+- The autofocus label no longer lands on top of a detection label.
+
+## 1.0.0-beta.8 - 2026-11-19
+
+A much smarter cull: sharpness measured on the subject itself, better pans and bursts, top-three picks, undo, a light theme and live identification.
+
+### New
+
+- Press P to pick a frame you love; it is written as a Pick keyword, and a frame cannot be both picked and rejected.
+- Grid, loupe and compare views (G, E, C), a filmstrip for each burst, and keyboard movement within and between bursts. F zooms to the car, plate or face.
+- Near-duplicate shots are stacked across the whole shoot.
+- A closed eye is flagged as a reason to cull, and a People tab groups the faces in a shoot.
+- Hover a flagged frame to see why, and filter to Needs a look.
+- An optional aesthetic score can break ties inside a burst (off by default).
+- Sharpness is judged on the subject itself, by measuring how crisp its edges are at full resolution, and shown on the familiar star scale.
+- A burst is split into separate moments by how the subject is framed, and among equally sharp frames the keeper favours the prominent, uncropped subject.
+- Blur strictness per album: strict, moderate or lenient.
+- Give an album its race entry list (CSV or JSON) and Conrod looks up each number it reads.
+- The entry list fills in team, drivers, car and sponsor spellings from the number it reads.
+- Pans are recognised by a sharp subject against a streaked background.
+- Review marks the top three candidates in every burst and can filter to them.
+- Sport shoots recognise the ball in play and the rider on the animal.
+- Regrouping a shoot is instant and tells you how many bursts it made.
+- Expressions are read: eyes open, smile and head turn.
+- Import is one sheet, and the scan screen shows the whole pipeline: a flowchart, a lane for each worker, live thumbnails and a summary.
+- An export sheet shows counts, offers a dry run and gives Lightroom instructions. Review shows a loading state instead of an empty album.
+- Ctrl+Z and Ctrl+Shift+Z undo and redo your last culling decision and take you back to that frame.
+- Settings is rebuilt: culling first, a chip on each setting an album overrides, search, a footer that shows unsaved changes, and Known vehicles as a catalogue.
+- A learned taste order for sorting a burst by what you tend to like. It never overrides the keeper.
+- A light theme, with a toggle in the header.
+- An identifications sheet shows what was read and lets you accept results one by one. Sheets only close when you click the backdrop.
+- OpenCode is available as a vision provider, with a list of its models.
+- Pans are rated on the picture, capped by how much of the frame is sharp, so most pans land at three stars.
+- Suggested keepers are green and take one click to accept.
+- A burst with nothing above two stars has no keeper, and the grid says so instead of proposing the least bad frame.
+- Duplicate copies of a shot can be hidden.
+- A Critical blur setting for track work.
+- Bursts are grouped by what the pictures look like, and a frame the detector missed is rated where the camera focused.
+- Composition labels: placement, balance, symmetry, leading lines and background clutter.
+- Stacking can be tuned, the camera's focus area is shown, and a blurred subject the background cannot vouch for is caught.
+- Keep and cull pills, decisions for a whole stack, composition labels, the autofocus box and arrows between stacks.
+- A re-score measures the subject inside the camera's focus box.
+- An album can cull, identify, or do both, and the pipeline view follows your choice.
+- Shoot statistics: lens, ISO and file size are stored for every frame.
+- A shoot statistics card, and shot details in the viewer.
+- Identification reads each burst's keeper by default, and shoot statistics open in their own dialog.
+- Library-wide statistics, and a freeze when opening an album with many keepers is gone.
+- Identification is live: watch each frame being read as it happens. Opencode Go is supported as a provider.
+- Each identification worker has its own live page, action shots are read, and the viewer shows more.
+- A new connecting-rod C for the mark and the app icon.
+
+### Improved
+
+- Finding near-duplicates is much faster on large shoots, and burst spacing has one default.
+- Vehicles are read from visible text only, with racing hints and checks on plates.
+- A calmer graphite look with an amber keeper mark, line icons and a filter tab for each type of shoot.
+- How a subject is framed (size and position) now counts when ranking a burst.
+- Blown highlights and crushed shadows are measured and count when ranking a burst.
+- Burst spacing is set per album, and existing albums are converted once.
+- Import choices belong to the album, and progress shows real queues with an overall percentage that adds up.
+- Eyes, smiles, exposure and framing now feed the scan, the sets of related frames and the ranking.
+- Review opens faster on big albums.
+
+### Fixed
+
+- Installing every model no longer switches on the optional aesthetic score.
+- Birds and other animals are found as subjects in every shoot type.
+- Detail shots with no clear subject are rated on their in-focus area instead of being called blurry.
+- Star ratings change smoothly at the top end, and when two frames tie the sharper subject wins.
+- A frame whose framing changed stands on its own instead of joining the previous moment.
+- Vehicle reading in the app now matches what the benchmark measured, and numbers from an entry list are trusted.
+- Top-three ranks skip rejected frames, share one badge on the grid and filmstrip, and blur strictness can be changed from the keyboard.
+- Portraits pick the softer eye and never a shut face, and frames with no subject are judged on their edges.
+- Review filters work inside burst stacks, the selection no longer jumps, P sets the keeper, view choices are remembered per album, and large stacks scroll smoothly.
+- A closed eye is only ever confirmed, never invented, by the face model.
+- The shoot type's default blur setting reaches the app, so every preset culls as intended.
+- The time-left estimate is steadier, and the slowest step shows as an hourglass on its card.
+- Animals are named (cow, horse, bird and so on) instead of all being called vehicles.
+- Lead room follows the direction of the pan, and the keeper order is consistent.
+- Six-letter personalised plates are read correctly.
+- Identifications with a number or plate come first, and a livery with no number shows its words.
+- A pan stays one moment however far the car travels, even through frames the detector missed, and no longer swallows a static shot framed elsewhere.
+- Frames with no subject but pan streaks are judged as pans.
+- Re-scoring re-reads the pixels, so a stale pan rating really is replaced.
+- A pan is rated by its cap rather than its sharpest detail, and a re-score agrees with the scan.
+- The Close button in the viewer sits at the top right of the side panel.
+- A frame whose own crop looks soft no longer wins the burst.
+- The Review toolbar is one row of controls at one height.
+- A patch with no detail is reported as unmeasured, not as perfectly sharp.
+- Race numbers keep the model's confidence, and the number in the car's side window is read.
+- A driver name on the car can correct a misread number.
+
+## 1.0.0-beta.7 - 2026-09-25
+
+Use several vision servers at once, compare vision models on your own photos, and cull shoots with people in them.
+
+### New
+
+- Use several vision servers at once, local or cloud. Conrod sends each crop to whichever is least busy, round-robin or at random, and moves on if one fails.
+- A model benchmark in Settings lets you compare vision models on your own sharp photos.
+- Identify one frame from Review without storing the result.
+- An Includes people option for motorsport shoots, with a face and eye pass for existing albums. Review adapts to portrait, motorsport and mixed albums.
+
+### Improved
+
+- Album covers follow the shoot type, with vehicle crops for motorsport.
+
+## 1.0.0-beta.6 - 2026-09-25
+
+Safer update and metadata handling, and one version number across the app.
+
+### Improved
+
+- One version number across the app and its installer.
+
+### Fixed
+
+- Text read from photos can no longer be used to tamper with the metadata tool, and the update check fails safe.
+
+## 1.0.0-beta.5 - 2026-09-24
+
+Lightroom-style zoom and pan, and a redesigned Settings screen with update status.
+
+### New
+
+- Zoom and pan work like Lightroom's inspection controls.
+- Conrod finds the models installed on your Ollama server for you.
+- Settings has a side panel with your version, library numbers and update status.
+
+### Improved
+
+- The zoom view uses the full-resolution preview and jumps straight to the subject.
+- Checking for updates no longer fails when one source is unavailable.
+
+### Fixed
+
+- Settings is split into category tabs, and dropdown text is no longer cut off.
+
+## 1.0.0-beta.4 - 2026-09-24
+
+A main button that always offers the next step, shoot settings, and a rebuilt Review table.
+
+### New
+
+- Several vehicles can be edited at once.
+- Review and Known vehicles are rebuilt: a compact table of what was found, with crop thumbnails, plates you can edit in place, and a way to merge two entries for the same car.
+- One main button always offers the next step in the flow, with the other steps in a menu beside it.
+- Settings for a single shoot, including a switch for reading race numbers.
+- A Manage shoot menu clears ratings, identifications or detections, asking first.
+- The inspector panel can be resized and remembers its width.
+
+### Improved
+
+- Capture times include fractions of a second, so frames from fast bursts keep their true order.
+- The status light simply says Ready or Error, and the Cars filter is now called Vehicles.
+
+### Fixed
+
+- Star ratings and colour labels in the XMP files use the spelling Lightroom expects.
+- Panned shots stay together as one burst when the camera angle changes during the pan.
+- Race numbers are no longer invented from licence plates, calendar years or a vision model's guess.
+
+## 1.0.0-beta.3 - 2026-09-21
+
+A shorter path from import to a finished cull.
+
+### Improved
+
+- Reviewing an album takes fewer steps from import to a finished cull.
+
+## 1.0.0-beta.2 - 2026-09-20
+
+A clearer view of a scan while it runs.
+
+### Improved
+
+- A clearer view of what a scan is doing while it runs, and a tidier review screen.
+
+## 1.0.0-beta.1 - 2026-09-20
+
+Conrod is now a native Windows app. The Python version is retired; your library and settings carry over.
+
+### New
+
+- A native app with an installer and a portable zip: no Python to install, and it starts much faster.
+- Everything is rebuilt natively: reading RAW files, finding cars, rating sharpness, grouping bursts, reading plates and race numbers, and writing XMP files for Lightroom.
+- Updates arrive through the app itself.
+
+### Fixed
+
+- Bulk actions in Review work again.
+
+## 0.8.0 - 2026-09-06
+
+Faster capture-time reading, and vision work can spread over several machines.
+
+### New
+
+- Vision work can be spread across more than one computer running Ollama, so a spare GPU on your network helps.
+
+### Improved
+
+- Capture times are read much faster, especially from external drives and cards.
+
+## 0.7.0 - 2026-09-05
+
+Big shoots open in seconds; thumbnails and details fill in behind.
+
+### Improved
+
+- A new album opens in about a second, with thumbnails and details filling in behind it, instead of making you wait while everything is read first.
+
+## 0.6.4 - 2026-09-05
+
+Updates install even when last time's folder will not go away.
+
+### Fixed
+
+- Updates install even when a leftover folder from the last update is still in the way.
+
+## 0.6.3 - 2026-09-05
+
+A watched folder no longer keeps scanning after you delete its album.
+
+### Fixed
+
+- A watched folder stops scanning when its album is deleted, instead of rescanning forever.
+
+## 0.6.2 - 2026-09-05
+
+Frames with no vehicle in them are measured again too.
+
+### Fixed
+
+- Close-ups and frames with no vehicle in them are measured for sharpness again.
+
+## 0.6.1 - 2026-09-05
+
+Each car is learned once, not once per frame.
+
+### Fixed
+
+- A car is learned once, not once per frame, so one car no longer ends up with several different model names.
+
+## 0.6.0 - 2026-09-05
+
+Conrod remembers the plates it has already read.
+
+### New
+
+- Conrod remembers what each plate turned out to be, so a car it has seen before is not read again (and not read differently).
