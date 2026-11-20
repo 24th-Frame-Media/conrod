@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window';
 import { Icon, KeysDialog, Splash } from './components/basics';
 import { TitleBar, type StatusActions } from './components/TitleBar';
+import { WhatsNewSheet } from './components/WhatsNewSheet';
 import { call, engine, inTauri, mocked } from './lib/api';
 import { filename } from './lib/review';
 import { subjectExcluded } from './review.mjs';
@@ -20,6 +21,7 @@ import { useHotkeys } from './state/useHotkeys';
 import { useIdentifyProgress } from './state/useIdentifyProgress';
 import { useReview } from './state/useReview';
 import { useScanProgress } from './state/useScanProgress';
+import { useWhatsNew } from './state/useWhatsNew';
 
 /** Wires the engine hooks to the screens; every screen is a plain component that gets what it shows as props. */
 export function App() {
@@ -38,6 +40,7 @@ export function App() {
   const [showBoxes, setShowBoxes] = useLocalFlag('conrod.boxes', true);
   const [dev, setDev] = useState<DevStart | null>(null);
   const reviewVerbs = useRef<ReviewVerbs>(noReviewVerbs);
+  const whatsNew = useWhatsNew();
 
   const rv = useReview(jobId, run);
   const eng = useEngine(jobId, rv.refresh, run);
@@ -220,12 +223,16 @@ export function App() {
               lightroomDev={dev?.lightroom}
               onEdit={(id, updates) => run(async () => { await engine.editDetection(id, updates); await rv.refresh(); })} />
         )}
-        {view === 'Settings' && <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status} />}
+        {view === 'Settings' && (
+          <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status}
+            onOpenWhatsNew={whatsNew.openManually} />
+        )}
       </main>
       <ImportDialog draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} settings={eng.settings} status={status} busy={starting}
         onStart={(args, defaults) => void startScan(args, defaults)} visible={showImport} onClose={() => setShowImport(false)} />
       {help && <KeysDialog onClose={() => setHelp(false)} />}
       {dropping && <div className="drop-overlay"><Icon name="drop" size={34} /><b>Drop a folder to scan it</b><span>Photos, or a folder of them</span></div>}
+      <WhatsNewSheet visible={whatsNew.open} fresh={whatsNew.fresh} earlier={whatsNew.earlier} onClose={whatsNew.close} />
       <Splash gone={eng.ready} />
     </div>
   );
