@@ -47,14 +47,13 @@ fn reference() -> Reference {
     serde_json::from_str(REFERENCE).unwrap()
 }
 
-fn request_of(case: &Case) -> Request {
-    let mut request = case.request.clone();
-    for name in &case.images {
-        request
-            .pixels
-            .push(image::open(fixtures().join(name)).unwrap().to_rgb8());
-    }
-    request
+fn request_of(case: &Case) -> (Request, Vec<image::RgbImage>) {
+    let pixels = case
+        .images
+        .iter()
+        .map(|name| image::open(fixtures().join(name)).unwrap().to_rgb8())
+        .collect();
+    (case.request.clone(), pixels)
 }
 
 #[test]
@@ -62,9 +61,8 @@ fn prompts_match_the_reference() {
     let reference = reference();
     assert!(reference.cases.len() >= 5);
     for case in &reference.cases {
-        let request = request_of(case);
-        let n = request.pixels.len();
-        let ours = protocol::prompt(&request, &reference.codes, IMAGE_TOKENS, n);
+        let (request, pixels) = request_of(case);
+        let ours = protocol::prompt(&request, &reference.codes, IMAGE_TOKENS, pixels.len());
         assert_eq!(ours, case.prompt, "prompt of {}", case.id);
     }
 }
@@ -103,22 +101,23 @@ fn probabilities_match_the_reference() {
     let temperature = reference.temperature;
     let (mut worst, mut sum, mut count, mut flips) = (0f64, 0f64, 0usize, 0usize);
     for case in &reference.cases {
-        let request = request_of(case);
-        let (response, timing) = decider.decide_timed(&request).unwrap();
+        let (request, pixels) = request_of(case);
+        let (response, timing) = decider.decide_timed_with(&request, &pixels).unwrap();
+        let usage = response.usage.unwrap_or_default();
         println!(
             "{}: {} tokens (reference {}), {:?}",
             case.id,
-            response.usage.input_tokens,
+            usage.input_tokens,
             case.input_tokens,
             timing.encode + timing.decode
         );
         // Images are resized by different code (Pillow vs ours): allow a few positions.
         assert!(
-            (response.usage.input_tokens as i64 - case.input_tokens as i64).abs() <= 8,
+            (usage.input_tokens as i64 - case.input_tokens as i64).abs() <= 8,
             "token count of {}",
             case.id
         );
-        let ours = decider.logits(&request).unwrap();
+        let ours = decider.logits_with(&request, &pixels).unwrap();
         for (id, question) in request.questions.iter() {
             let theirs = case.logits.get(id).unwrap();
             let mine = ours.get(id).unwrap();

@@ -241,8 +241,39 @@ impl DecisionTransport for OpenRouterTransport {
     }
 }
 
+/// Which transport carries the decision model's questions, from the album's
+/// `moments_transport`: `auto` (the default) prefers the in-process model when
+/// one is seated, else OpenRouter when a key is set; `in_process` and
+/// `openrouter` are strict. `Err` says what is missing.
+fn transport_for(
+    settings: &Settings,
+    in_process: InProcess,
+) -> Result<Arc<dyn DecisionTransport>, String> {
+    let has_key = !settings.moments_openrouter_key.trim().is_empty();
+    let openrouter = || -> Arc<dyn DecisionTransport> {
+        Arc::new(OpenRouterTransport {
+            key: settings.moments_openrouter_key.clone(),
+            model: settings.moments_openrouter_model.clone(),
+            timeout: Duration::from_secs(60),
+        })
+    };
+    match settings.moments_transport.as_str() {
+        "in_process" => Ok(Arc::new(in_process)),
+        "openrouter" if has_key => Ok(openrouter()),
+        "openrouter" => {
+            Err("Add an OpenRouter key to judge moments with the decision model".into())
+        }
+        _ if in_process.is_available() => Ok(Arc::new(in_process)),
+        _ if has_key => Ok(openrouter()),
+        _ => Err(
+            "Turn on the decision model in Settings (or add an OpenRouter key) to judge moments with it"
+                .into(),
+        ),
+    }
+}
+
 /// The judge this album's settings ask for. `in_process` is the in-process
-/// model's seat (the decider crate fills it).
+/// model's seat (the engine fills it from the decider service).
 pub fn judge_for(
     settings: &Settings,
     vlm: Option<(VlmClient, IoSettings)>,
@@ -250,21 +281,7 @@ pub fn judge_for(
 ) -> Result<Box<dyn MomentJudge>, String> {
     match settings.moments_backend.as_str() {
         "decider" => {
-            let transport: Arc<dyn DecisionTransport> = match settings.moments_transport.as_str() {
-                "in_process" => Arc::new(in_process),
-                _ => {
-                    if settings.moments_openrouter_key.trim().is_empty() {
-                        return Err(
-                            "Add an OpenRouter key to judge moments with the decision model".into(),
-                        );
-                    }
-                    Arc::new(OpenRouterTransport {
-                        key: settings.moments_openrouter_key.clone(),
-                        model: settings.moments_openrouter_model.clone(),
-                        timeout: Duration::from_secs(60),
-                    })
-                }
-            };
+            let transport = transport_for(settings, in_process)?;
             Ok(Box::new(DeciderJudge { transport }))
         }
         _ => match vlm {
@@ -277,10 +294,9 @@ pub fn judge_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use conrod_core::decision::Answer;
+    use conrod_core::decision::{Answer, Ordered};
     use conrod_core::moments::vocabulary;
     use conrod_core::profile::ShootPreset;
-    use std::collections::BTreeMap;
     use std::sync::Mutex;
 
     /// Records requests, answers from a closure: no network.
@@ -386,7 +402,7 @@ mod tests {
     fn the_decider_judge_asks_one_request_with_the_vocabulary_and_reads_probabilities() {
         let vocab = vocabulary(ShootPreset::Wedding);
         let (judge, mock) = decider(|req| {
-            let mut answers = BTreeMap::new();
+            let mut answers = Ordered::new();
             for id in req.questions.keys() {
                 if id == "m_first_kiss" {
                     answers.insert(id.clone(), noul(0.96));
@@ -448,7 +464,7 @@ mod tests {
     fn the_peak_pick_is_one_choice_request_and_a_flat_reply_is_no_opinion() {
         let (judge, mock) = decider(|req| {
             assert!(req.questions.contains_key("peak"));
-            let mut answers = BTreeMap::new();
+            let mut answers = Ordered::new();
             answers.insert(
                 "peak".to_string(),
                 Answer {
@@ -528,9 +544,13 @@ mod tests {
             "vlm backend needs the vision model"
         );
         s.moments_backend = "decider".into();
+        assert_eq!(
+            s.moments_transport, "auto",
+            "in-process is preferred by default"
+        );
         assert!(
             judge_for(&s, None, InProcess::unavailable()).is_err(),
-            "openrouter needs a key"
+            "no in-process model and no key: no judge"
         );
         s.moments_openrouter_key = "k".into();
         assert_eq!(
@@ -539,6 +559,21 @@ mod tests {
                 .name(),
             "decider"
         );
+        // Auto prefers the seated in-process model over OpenRouter.
+        let seated = InProcess::with(|_| Ok(Response::default()));
+        assert_eq!(
+            transport_for(&s, seated.clone()).unwrap().name(),
+            "in_process"
+        );
+        assert_eq!(
+            transport_for(&s, InProcess::unavailable()).unwrap().name(),
+            "openrouter"
+        );
+        // Without a key it still works in-process; explicit openrouter needs the key.
+        s.moments_openrouter_key.clear();
+        assert_eq!(transport_for(&s, seated).unwrap().name(), "in_process");
+        s.moments_transport = "openrouter".into();
+        assert!(transport_for(&s, InProcess::unavailable()).is_err());
         s.moments_transport = "in_process".into();
         s.moments_openrouter_key.clear();
         let judge = judge_for(&s, None, InProcess::unavailable()).unwrap();

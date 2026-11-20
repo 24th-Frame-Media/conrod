@@ -2,7 +2,7 @@
 //! answer formatting. A port of `pplx_decider/protocol.py`, token for token, with no
 //! dependency on the runtime so it is testable without weights.
 
-use crate::types::{Answer, Ordered, Question, Request};
+use crate::{Answer, Ordered, Question, Request};
 use serde_json::Value;
 
 pub const MAX_OPTIONS: usize = 255;
@@ -219,10 +219,17 @@ pub fn answer(question: &Question, probabilities: &[f64]) -> Answer {
         .iter()
         .enumerate()
         .fold(0, |b, (i, v)| if *v > values[b] { i } else { b });
-    let distribution =
-        || -> Ordered<f64> { keys.iter().cloned().zip(values.iter().cloned()).collect() };
+    // Serialized in option order: `Value` keeps it (`preserve_order`).
+    let distribution = || -> Value {
+        let ordered: Ordered<f64> = keys.iter().cloned().zip(values.iter().cloned()).collect();
+        serde_json::to_value(ordered).unwrap_or(Value::Null)
+    };
     match question {
-        Question::Noul { .. } => Answer::Noul { noul: values[1] },
+        Question::Noul { .. } => Answer {
+            kind: Some("noul".into()),
+            noul: Some(values[1]),
+            ..Answer::default()
+        },
         Question::Choice { .. } => {
             let n = values.len() as f64;
             let confidence = if values.len() == 1 {
@@ -230,10 +237,12 @@ pub fn answer(question: &Question, probabilities: &[f64]) -> Answer {
             } else {
                 (values[best] - 1.0 / n) / (1.0 - 1.0 / n)
             };
-            Answer::Choice {
-                choice: keys[best].clone(),
-                probabilities: distribution(),
-                confidence: confidence.clamp(0.0, 1.0),
+            Answer {
+                kind: Some("choice".into()),
+                choice: Some(keys[best].clone()),
+                probabilities: Some(distribution()),
+                confidence: Some(confidence.clamp(0.0, 1.0)),
+                ..Answer::default()
             }
         }
         Question::Score { .. } => {
@@ -247,15 +256,18 @@ pub fn answer(question: &Question, probabilities: &[f64]) -> Answer {
                 .map(|i| (i as f64 - midpoint).abs())
                 .sum::<f64>()
                 / values.len() as f64;
-            Answer::Score {
-                score: values.iter().enumerate().map(|(i, p)| i as f64 * p).sum(),
-                legend: keys
-                    .iter()
-                    .cloned()
-                    .zip(descriptions.iter().map(|d| Value::String(d.clone())))
-                    .collect(),
-                probabilities: distribution(),
-                confidence: (1.0 - distance / baseline).clamp(0.0, 1.0),
+            let legend: Ordered<Value> = keys
+                .iter()
+                .cloned()
+                .zip(descriptions.iter().map(|d| Value::String(d.clone())))
+                .collect();
+            Answer {
+                kind: Some("score".into()),
+                score: Some(values.iter().enumerate().map(|(i, p)| i as f64 * p).sum()),
+                legend: serde_json::to_value(legend).ok(),
+                probabilities: Some(distribution()),
+                confidence: Some((1.0 - distance / baseline).clamp(0.0, 1.0)),
+                ..Answer::default()
             }
         }
     }
@@ -283,7 +295,6 @@ pub fn smart_resize(height: u32, width: u32, min_pixels: u64, max_pixels: u64) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Question;
 
     fn codes() -> Vec<String> {
         ["A", "B", "C", "D"].iter().map(|s| s.to_string()).collect()
@@ -323,29 +334,25 @@ mod tests {
     #[test]
     fn answers_follow_the_reference_formulas() {
         let a = answer(&Question::noul("x"), &[0.25, 0.75]);
-        assert_eq!(a, Answer::Noul { noul: 0.75 });
+        assert_eq!(a.noul, Some(0.75));
+        assert_eq!(a.kind.as_deref(), Some("noul"));
         let q = Question::choice("x", [("a", None), ("b", None), ("c", None), ("d", None)]);
-        match answer(&q, &[0.1, 0.7, 0.1, 0.1]) {
-            Answer::Choice {
-                choice, confidence, ..
-            } => {
-                assert_eq!(choice, "b");
-                assert!((confidence - (0.7 - 0.25) / 0.75).abs() < 1e-12);
-            }
-            _ => panic!(),
-        }
-        match answer(
+        let choice = answer(&q, &[0.1, 0.7, 0.1, 0.1]);
+        assert_eq!(choice.choice.as_deref(), Some("b"));
+        assert!((choice.confidence.unwrap() - (0.7 - 0.25) / 0.75).abs() < 1e-12);
+        let order: Vec<String> = choice.bars().into_iter().map(|(k, _)| k).collect();
+        assert_eq!(
+            order,
+            ["a", "b", "c", "d"],
+            "options stay in the order asked"
+        );
+        let score = answer(
             &Question::score("x", &["lo", "mid", "hi"]),
             &[0.0, 0.0, 1.0],
-        ) {
-            Answer::Score {
-                score, confidence, ..
-            } => {
-                assert_eq!(score, 2.0);
-                assert_eq!(confidence, 1.0);
-            }
-            _ => panic!(),
-        }
+        );
+        assert_eq!(score.score, Some(2.0));
+        assert_eq!(score.confidence, Some(1.0));
+        assert_eq!(score.legend.unwrap()["2"], "hi");
     }
 
     #[test]

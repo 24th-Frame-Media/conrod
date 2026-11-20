@@ -20,11 +20,13 @@
 mod ffi;
 pub mod gating;
 pub mod protocol;
-pub mod types;
 pub mod vram;
 
+/// The schema is conrod-core's, shared with every other transport.
+pub use conrod_core::decision::{
+    Answer, NoulCriteria, Ordered, Question, Request, Response, Usage,
+};
 pub use protocol::RequestError;
-pub use types::{Answer, NoulCriteria, Ordered, Question, Request, Response, Usage};
 
 use ffi::*;
 use std::ffi::{c_char, c_void, CString};
@@ -332,16 +334,21 @@ impl Decider {
             .ask(
                 "b",
                 Question::choice("Pick one.", [("x", None), ("y", None)]),
-            )
-            .with_image(blank);
-        let _ = self.decide(&request);
+            );
+        let _ = self.decide_with(&request, &[blank]);
         let text_only = Request::new("warm-up").ask("a", Question::noul("Is this text?"));
         let _ = self.decide(&text_only);
     }
 
     /// Answer one request.
     pub fn decide(&self, request: &Request) -> Result<Response> {
-        self.decide_timed(request).map(|(r, _)| r)
+        self.decide_with(request, &[])
+    }
+
+    /// Answer one request that also carries already decoded images (placed after the
+    /// request's own `images`).
+    pub fn decide_with(&self, request: &Request, pixels: &[image::RgbImage]) -> Result<Response> {
+        self.decide_timed_with(request, pixels).map(|(r, _)| r)
     }
 
     /// Free and total memory of the device the model runs on, bytes.
@@ -358,8 +365,17 @@ impl Decider {
 
     /// Answer one request and report what it cost.
     pub fn decide_timed(&self, request: &Request) -> Result<(Response, Timing)> {
+        self.decide_timed_with(request, &[])
+    }
+
+    /// [`Decider::decide_timed`] with already decoded images.
+    pub fn decide_timed_with(
+        &self,
+        request: &Request,
+        pixels: &[image::RgbImage],
+    ) -> Result<(Response, Timing)> {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let (logits, tokens, timing) = inner.run(request)?;
+        let (logits, tokens, timing) = inner.run(request, pixels)?;
         let t = inner.temperature;
         let mut answers = Ordered::new();
         for ((id, question), values) in request.questions.iter().zip(&logits) {
@@ -369,11 +385,11 @@ impl Decider {
         Ok((
             Response {
                 answers,
-                usage: Usage {
+                usage: Some(Usage {
                     input_tokens: tokens as u32,
                     output_tokens: 0,
                     sequences: 1,
-                },
+                }),
             },
             timing,
         ))
@@ -382,8 +398,17 @@ impl Decider {
     /// Raw readout logits of every question's valid options, before temperature. The
     /// margin `true - false` of a `noul` question ranks without saturating into ties.
     pub fn logits(&self, request: &Request) -> Result<Ordered<Vec<f32>>> {
+        self.logits_with(request, &[])
+    }
+
+    /// [`Decider::logits`] with already decoded images.
+    pub fn logits_with(
+        &self,
+        request: &Request,
+        pixels: &[image::RgbImage],
+    ) -> Result<Ordered<Vec<f32>>> {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let (logits, _, _) = inner.run(request)?;
+        let (logits, _, _) = inner.run(request, pixels)?;
         Ok(request
             .questions
             .iter()
@@ -528,7 +553,7 @@ impl Inner {
     }
 
     /// Decoded, resized pixels of every image of the request.
-    fn images(&self, request: &Request) -> Result<Vec<image::RgbImage>> {
+    fn images(&self, request: &Request, extra: &[image::RgbImage]) -> Result<Vec<image::RgbImage>> {
         let mut out = Vec::new();
         for source in &request.images {
             let img = if let Some(rest) = source.strip_prefix("data:image/") {
@@ -547,7 +572,7 @@ impl Inner {
             };
             out.push(img.to_rgb8());
         }
-        out.extend(request.pixels.iter().cloned());
+        out.extend(extra.iter().cloned());
         Ok(out
             .into_iter()
             .map(|img| {
@@ -563,14 +588,18 @@ impl Inner {
     }
 
     /// One joint forward pass; the logits of each question's options, in question order.
-    fn run(&self, request: &Request) -> Result<(Vec<Vec<f32>>, usize, Timing)> {
+    fn run(
+        &self,
+        request: &Request,
+        extra: &[image::RgbImage],
+    ) -> Result<(Vec<Vec<f32>>, usize, Timing)> {
         protocol::validate(request, self.codes.len())?;
         if request.questions.len() > MAX_QUESTIONS {
             return Err(
                 RequestError(format!("at most {MAX_QUESTIONS} questions per request")).into(),
             );
         }
-        let images = self.images(request)?;
+        let images = self.images(request, extra)?;
         let text = protocol::prompt(request, &self.codes, &self.image_marker, images.len());
         let api = &self.api;
         unsafe {

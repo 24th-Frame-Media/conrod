@@ -279,41 +279,34 @@ fn forced_quant(word: &str) -> Option<Quant> {
 }
 
 fn summarize(question: &Question, answer: &Answer) -> (String, f64, Vec<(String, f64)>) {
-    let top = |p: &conrod_decider::Ordered<f64>| {
-        let mut all: Vec<(String, f64)> = p.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    let top = || {
+        let mut all = answer.bars();
         all.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         all.truncate(4);
         all
     };
-    match answer {
-        Answer::Noul { noul } => (
-            if *noul >= 0.5 { "yes" } else { "no" }.to_string(),
+    if let Some(noul) = answer.noul {
+        return (
+            if noul >= 0.5 { "yes" } else { "no" }.to_string(),
             noul.max(1.0 - noul),
-            vec![("yes".into(), *noul), ("no".into(), 1.0 - noul)],
-        ),
-        Answer::Choice {
-            choice,
-            probabilities,
-            ..
-        } => {
-            let bars = top(probabilities);
-            let p = bars.first().map_or(0.0, |b| b.1);
-            (choice.clone(), p, bars)
-        }
-        Answer::Score {
-            score,
-            probabilities,
-            ..
-        } => {
-            let levels = match question {
-                Question::Score { criteria, .. } => criteria.len().saturating_sub(1),
-                _ => 0,
-            };
-            let bars = top(probabilities);
-            let p = bars.first().map_or(0.0, |b| b.1);
-            (format!("{score:.1} / {levels}"), p, bars)
-        }
+            vec![("yes".into(), noul), ("no".into(), 1.0 - noul)],
+        );
     }
+    if let Some(choice) = &answer.choice {
+        let bars = top();
+        let p = bars.first().map_or(0.0, |b| b.1);
+        return (choice.clone(), p, bars);
+    }
+    if let Some(score) = answer.score {
+        let levels = match question {
+            Question::Score { criteria, .. } => criteria.len().saturating_sub(1),
+            _ => 0,
+        };
+        let bars = top();
+        let p = bars.first().map_or(0.0, |b| b.1);
+        return (format!("{score:.1} / {levels}"), p, bars);
+    }
+    ("no answer".into(), 0.0, Vec::new())
 }
 
 fn question_text(question: &Question) -> String {
@@ -345,6 +338,23 @@ impl Service {
 
     pub fn enabled(&self) -> bool {
         lock(&self.cfg).enabled
+    }
+
+    /// Whether a request would reach the model: turned on, installed, and the card has the
+    /// room (or the model is already loaded). The moment judge uses it to choose the
+    /// in-process transport.
+    pub fn available(&self) -> bool {
+        self.enabled() && self.plan_now().state == State::Ready
+    }
+
+    /// Whether the model and the detector would crowd the card: the 8-bit model on a card of
+    /// 8 GB or less. Then a model call waits for any running scan's GPU stages
+    /// ([`crate::gpu`]) instead of loading beside them.
+    fn crowds_the_card(&self) -> bool {
+        let loaded = lock(&self.model).as_ref().map(|l| l.quant);
+        let quant = loaded.or_else(|| self.plan_now().quant);
+        quant == Some(Quant::Int8)
+            && vram::query().is_some_and(|g| g.total <= crate::gpu::SMALL_CARD)
     }
 
     fn plan_now(&self) -> Plan {
@@ -553,6 +563,8 @@ impl Service {
         });
         self.bump();
         self.slot.acquire();
+        // On a small card, wait here (still shown as queued) for the scan's GPU stages.
+        let gate = self.crowds_the_card().then(crate::gpu::exclusive);
         self.queued.fetch_sub(1, Ordering::AcqRel);
         self.active.fetch_add(1, Ordering::AcqRel);
         if let Some(c) = lock(&self.live).current.as_mut() {
@@ -565,6 +577,7 @@ impl Service {
             .load()
             .and_then(|d| d.decide_timed(request).map_err(|e| e.to_string()));
         self.active.fetch_sub(1, Ordering::AcqRel);
+        drop(gate);
         self.slot.release();
         let ms = started.elapsed().as_millis() as u64;
         {
@@ -596,7 +609,7 @@ impl Service {
                         thumb,
                         said,
                         ms,
-                        tokens: response.usage.input_tokens,
+                        tokens: response.usage.map_or(0, |u| u.input_tokens),
                         ok: true,
                     }
                 }
@@ -914,25 +927,47 @@ mod tests {
     }
 
     #[test]
+    fn a_call_shows_on_the_node_even_when_the_model_cannot_answer() {
+        // Turned on but not installed here (or no card): the call is refused, and the node
+        // still records what was asked, under the frame's name, and pushes an update.
+        let service = Service::default();
+        service.configure(&Settings {
+            use_decider: true,
+            ..Settings::default()
+        });
+        let request = Request::new("x")
+            .ask("m_kiss", Question::noul("Is the couple kissing?"))
+            .ask("strength", Question::score("How strong?", &["low", "high"]));
+        let before = service.snapshot();
+        assert!(before.is_some(), "a settings change is worth one update");
+        let _ = service.decide("IMG_0001.CR3", None, &request);
+        let live = service.live_json();
+        assert_eq!(live["recent"][0]["label"], "IMG_0001.CR3");
+        assert!(live["current"].is_null(), "nothing in flight afterwards");
+        assert!(service.snapshot().is_some(), "the finished call is pushed");
+        assert_eq!(live["busy"], 0);
+    }
+
+    #[test]
     fn answers_are_summarised_for_the_node() {
         let q = Question::choice("Which?", [("a", None), ("b", None), ("c", None)]);
-        let probabilities: conrod_decider::Ordered<f64> = [
-            ("a".to_string(), 0.1),
-            ("b".to_string(), 0.7),
-            ("c".to_string(), 0.2),
-        ]
-        .into_iter()
-        .collect();
-        let answer = Answer::Choice {
-            choice: "b".into(),
-            probabilities,
-            confidence: 0.5,
+        let answer = Answer {
+            choice: Some("b".into()),
+            probabilities: Some(json!({"a": 0.1, "b": 0.7, "c": 0.2})),
+            confidence: Some(0.5),
+            ..Answer::default()
         };
         let (label, p, bars) = summarize(&q, &answer);
         assert_eq!(label, "b");
         assert!((p - 0.7).abs() < 1e-9);
         assert_eq!(bars[0].0, "b");
-        let (label, p, _) = summarize(&Question::noul("?"), &Answer::Noul { noul: 0.2 });
+        let (label, p, _) = summarize(
+            &Question::noul("?"),
+            &Answer {
+                noul: Some(0.2),
+                ..Answer::default()
+            },
+        );
         assert_eq!(label, "no");
         assert!((p - 0.8).abs() < 1e-9);
     }
@@ -962,9 +997,10 @@ mod tests {
         };
         service.configure(&settings);
         let image = image::RgbImage::from_pixel(256, 256, image::Rgb([200, 30, 30]));
-        let request = Request::new("")
-            .ask("red", Question::noul("Is the picture mostly red?"))
-            .with_image(image);
+        let file = std::env::temp_dir().join("conrod-decider-red.png");
+        image.save(&file).unwrap();
+        let mut request = Request::new("").ask("red", Question::noul("Is the picture mostly red?"));
+        request.images.push(file.to_string_lossy().into_owned());
         let response = service.decide("test frame", None, &request).unwrap();
         assert!(response.noul("red").unwrap() > 0.5);
         let live = service.live_json();
