@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { engine, inTauri } from '../lib/api';
 import { useToast } from './toast';
 
 export type Runner = <T>(work: () => Promise<T>) => Promise<T | undefined>;
+
+/** The running app's version, or null until Tauri answers (and always null outside Tauri). */
+export function useAppVersion(): string | null {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    if (inTauri) void getVersion().then(setVersion);
+  }, []);
+  return version;
+}
 
 /** Runs engine work; a failure becomes an error toast instead of an unhandled rejection. */
 export function useRun(): Runner {
