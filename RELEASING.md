@@ -43,12 +43,47 @@ Licences are recorded per asset in `assets.json`; ExifTool's own licence files s
    `--patch`/`--minor`/`--major`/`--set X.Y.Z`, add `--tag` to commit and tag) rather than editing it by hand.
    `node scripts/check-version.mjs` must pass; CI runs it too. The native line continues above the Python
    app's 0.8.x, so the betas are `1.0.0-beta.N` and the first stable release is `1.0.0`.
+   With `--tag`, it also regenerates `CHANGELOG.md` and `frontend/src/lib/whatsNew.json` for the version
+   just set (see below) and includes them in the release commit.
 2. On `main`, `git tag v1.0.0-beta.1 && git push origin v1.0.0-beta.1`.
-3. `.github/workflows/release.yml` fetches the pinned assets, builds the frontend, runs fmt, clippy and
-   every test, builds the installer, assembles the portable folder, **self-tests the shipped `Conrod.exe`**
-   (`Conrod.exe --selftest report.txt`: models found and loaded, a frame through detector + sharpness + OCR,
-   ExifTool, database), checksums, and publishes the release (a pre-release when the version has a suffix). A failing self-test fails the release.
+3. `.github/workflows/release.yml` fetches the pinned assets, generates the release notes (below), builds
+   the frontend, runs fmt, clippy and every test, builds the installer, assembles the portable folder,
+   **self-tests the shipped `Conrod.exe`** (`Conrod.exe --selftest report.txt`: models found and loaded, a
+   frame through detector + sharpness + OCR, ExifTool, database), checksums, and publishes the release (a
+   pre-release when the version has a suffix). A failing self-test fails the release.
 4. Check by hand on a clean profile: install, scan a folder, review, identify, write XMP on a copy.
+
+## Release notes and "What's new"
+
+One generator, `scripts/release-notes.mjs`, drives three things from the same git history: the GitHub
+release body, `CHANGELOG.md`, and the in-app "What's new" sheet (Settings → **What's new**, and once by
+itself the first time a new version is opened). Only user-facing commits count: `feat` → New, `perf` and
+`security` → Improved, `fix` → Fixed; `chore`, `ci`, `test`, `docs`, `refactor`, dev-only scopes
+(`scripts`, `ci`, `deps`, ...) and merge commits are dropped automatically, as is wording that reads as
+developer-only ("refactored", "lint", "CI", ...).
+
+A commit steers its own line with a `Release-note:` trailer in the body (`Release-note: Cull with the
+camera's focus point.`, or `Release-note: skip` to leave it out). A commit already made is steered instead
+from `scripts/release-notes.overrides.json`, keyed by a commit hash (7+ hex characters): a string replaces
+the wording, `"skip"` drops it, `{ "section": "New", "text": "..." }` can also move it between New,
+Improved and Fixed, and an array gives several notes for one commit. The same file's `"versions"` map
+gives each release its one-line `highlights` (and can `add` notes with no commit of their own, or override
+a tag's date). **Write for the photographer using Conrod, not the code**: say what changed in their
+workflow, never how it was implemented.
+
+```
+node scripts/release-notes.mjs --audit [--from <ref>]   # commits that still need wording in overrides.json
+node scripts/release-notes.mjs --unreleased             # last tag -> HEAD, as Markdown
+node scripts/release-notes.mjs --version 1.0.0-beta.9   # one release's notes (range ends at its tag, or HEAD)
+node scripts/release-notes.mjs --all --write            # CHANGELOG.md + frontend/src/lib/whatsNew.json
+```
+
+Before tagging, run `--audit` and add any new commits to the overrides file. `scripts/release.mjs --tag`
+runs `--all --write --release <version>` for you and includes the regenerated files in the release commit,
+so CHANGELOG.md and the in-app sheet are correct as soon as the tag is pushed. `release.yml` runs
+`--version <tag>` itself (the checkout fetches full history so it can walk the tag range) and uses the
+Markdown as the GitHub release body, with the install instructions appended after it; the same text goes
+into `latest.json`'s `notes` field for the updater's "Release highlights".
 
 Locally: `stage-assets.ps1`, `cargo build --release -p conrod-app --features tauri/custom-protocol`, copy
 `target/release/Conrod.exe` next to `crates/conrod-app/resources`, run `Conrod.exe --selftest out.txt`.
