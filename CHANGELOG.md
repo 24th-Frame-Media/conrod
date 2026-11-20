@@ -21,6 +21,7 @@ Culling works with the camera's own focus point, Conrod talks to Lightroom, inge
 - A new logo: a connecting rod with a low kink.
 - The camera's focus grid is read when the detector only finds something small, such as a distant car.
 - The ingest screen shows what each worker is doing right now, with live frames and counters that match what is actually done.
+- Conrod tells you what's new: a short summary of each update opens by itself the first time, and Settings can reopen it any time.
 
 ### Improved
 
