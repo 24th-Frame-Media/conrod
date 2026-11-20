@@ -594,6 +594,7 @@ impl Desktop {
             read_plates: None,
             read_numbers: None,
             include_people: None,
+            overrides: None,
             scan_profile: None,
             blur_strictness: None,
             burst_gap: None,
@@ -738,6 +739,15 @@ impl Desktop {
             }
             Command::SetIncludePeople(a) => {
                 crate::passes::set_include_people(self, a.job_id, a.value)
+            }
+            Command::PresetPolicy(a) => Ok(conrod_core::profile::Lanes::resolve(
+                ShootPreset::parse(&a.preset),
+                a.include_people,
+                &conrod_core::profile::Overrides::from_map(&a.overrides),
+            )
+            .summary()),
+            Command::SetFeature(a) => {
+                crate::passes::set_feature(self, a.job_id, &a.feature, a.value)
             }
             Command::Summary(a) => crate::library::summary(self, a.job_id),
             Command::ShootStats(a) => self.shoot_stats(a.job_id),
@@ -1175,6 +1185,10 @@ impl Desktop {
                 if let Some(people) = a.include_people {
                     settings.include_people = people;
                 }
+                if let Some(map) = &a.overrides {
+                    // Only known features, only booleans.
+                    settings.overrides = conrod_core::profile::Overrides::from_map(map).to_map();
+                }
                 if let Some(strictness) = a.blur_strictness.as_deref() {
                     if !["critical", "strict", "moderate", "lenient"].contains(&strictness) {
                         return Err(
@@ -1271,8 +1285,7 @@ impl Desktop {
         let eligibility = self.clone();
         // One progress object per scan: the pools write to it and the app
         // emits its snapshot as `scan-progress`.
-        let faces_on =
-            ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people);
+        let faces_on = settings.lanes().faces;
         let progress = crate::progress::for_scan(job, &settings, faces_on);
         // Frames an earlier run of this album already read count as done, so a
         // resume reads `500 / 1000` and the counters add up to the album.
@@ -1397,8 +1410,8 @@ impl Desktop {
                         && crate::operations::settings(&desktop, job).is_ok_and(|cfg| {
                             wants_identify(
                                 cfg.workflow(),
-                                ScanProfile::parse(&cfg.scan_profile).identifies_vehicles(),
-                                cfg.read_plates || cfg.read_numbers,
+                                cfg.lanes().identifies_vehicles() || cfg.lanes().names,
+                                cfg.read_plates || cfg.read_numbers || cfg.lanes().names,
                             )
                         });
                     if wants_identify {
@@ -2296,7 +2309,6 @@ impl Desktop {
         let task = self.hub.start("Grouping bursts", 0);
         // Settings before the write lock: reading them takes it too.
         let cfg = crate::operations::settings(self, job)?;
-        let profile = ScanProfile::parse(&cfg.scan_profile);
         let gap = burst_gap(cfg.burst_gap);
         // What this album's stacking rules are: the sensitivity ladder plus its
         // own pause and pan choices.
@@ -2537,13 +2549,7 @@ impl Desktop {
         let keepers = if cfg.grouping_stacks {
             // The same rule the identify stage uses, so the keeper regroup
             // leaves is the one a later pick would choose anyway.
-            let picks = crate::passes::pick_of_pass(
-                &db,
-                job,
-                profile,
-                cfg.include_people,
-                cfg.use_quality_score,
-            )?;
+            let picks = crate::passes::pick_of_pass(&db, job, &cfg.lanes(), cfg.use_quality_score)?;
             picks["picks"].as_u64().unwrap_or_default()
         } else {
             // Stacking is off: every frame is its own stack, so "best of the
@@ -3407,8 +3413,8 @@ mod tests {
             None
         );
         // A later pick by the identify rule keeps exactly that frame.
-        let profile = ScanProfile::parse(&Settings::default().scan_profile);
-        crate::passes::pick_of_pass(&lock(&lib.d().db), lib.job, profile, false, false).unwrap();
+        let lanes = Settings::default().lanes();
+        crate::passes::pick_of_pass(&lock(&lib.d().db), lib.job, &lanes, false).unwrap();
         assert_eq!(
             lib.one::<i64>("SELECT id FROM detections WHERE burst_pick=1", []),
             strong

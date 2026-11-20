@@ -1370,6 +1370,7 @@ impl VlmClient {
 
 pub const CAR_PROMPT: &str = include_str!("prompts/car.txt");
 pub const BIKE_PROMPT: &str = include_str!("prompts/bike.txt");
+pub const AIRCRAFT_PROMPT: &str = include_str!("prompts/aircraft.txt");
 pub const BURST_PROMPT: &str = include_str!("prompts/burst.txt");
 
 /// What the caller already knows about the vehicle before asking.
@@ -1381,6 +1382,30 @@ pub struct VlmHints {
     /// Entry-list "Make Model" strings the answer must be one of; empty when
     /// the shoot has no list.
     pub candidates: Vec<String>,
+    /// What the crop shows, when it is not a car or motorcycle.
+    pub subject: SubjectKind,
+}
+
+/// The kind of machine in the crop, so the model is never asked about a car
+/// when the crop is an aircraft or a bicycle.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SubjectKind {
+    /// A car or truck, or a motorcycle (`is_bike`).
+    #[default]
+    Road,
+    Aircraft,
+    Bicycle,
+}
+
+impl SubjectKind {
+    /// From the detector's class name (`airplane`, `bicycle`, ...).
+    pub fn from_class(class: &str) -> SubjectKind {
+        match class {
+            "airplane" => SubjectKind::Aircraft,
+            "bicycle" => SubjectKind::Bicycle,
+            _ => SubjectKind::Road,
+        }
+    }
 }
 
 fn candidate_line(hints: &VlmHints) -> String {
@@ -1402,7 +1427,16 @@ fn wants_plate(settings: &Settings, hints: &VlmHints) -> bool {
 /// Add the shoot's known visual context instead of asking a local model to
 /// decide whether incidental digits are a plate or a competition number.
 pub fn vehicle_prompt(settings: &Settings, is_bike: bool, hints: &VlmHints) -> String {
-    let base = if is_bike { BIKE_PROMPT } else { CAR_PROMPT };
+    let swapped;
+    let base = match hints.subject {
+        SubjectKind::Aircraft => AIRCRAFT_PROMPT,
+        SubjectKind::Bicycle => {
+            swapped = BIKE_PROMPT.replace("motorcycle", "bicycle");
+            swapped.as_str()
+        }
+        SubjectKind::Road if is_bike => BIKE_PROMPT,
+        SubjectKind::Road => CAR_PROMPT,
+    };
     let with_plate = wants_plate(settings, hints);
     let body = base
         .lines()
@@ -2117,12 +2151,43 @@ mod tests {
     }
 
     #[test]
+    fn the_prompt_never_asks_about_a_car_when_the_crop_is_not_one() {
+        let settings = Settings::default();
+        let ask = |subject, is_bike| {
+            vehicle_prompt(
+                &settings,
+                is_bike,
+                &VlmHints {
+                    subject,
+                    ..VlmHints::default()
+                },
+            )
+        };
+        let plane = ask(SubjectKind::Aircraft, false);
+        assert!(plane.contains("aircraft"), "{plane}");
+        assert!(!plane.contains("car"), "{plane}");
+        assert!(
+            plane.contains("- plate:"),
+            "registrations ride the plate line"
+        );
+        let cycle = ask(SubjectKind::Bicycle, false);
+        assert!(cycle.contains("bicycle"), "{cycle}");
+        assert!(!cycle.contains("motorcycle"), "{cycle}");
+        assert!(ask(SubjectKind::Road, true).contains("motorcycle"));
+        assert!(ask(SubjectKind::Road, false).contains("competition car"));
+        assert_eq!(SubjectKind::from_class("airplane"), SubjectKind::Aircraft);
+        assert_eq!(SubjectKind::from_class("bicycle"), SubjectKind::Bicycle);
+        assert_eq!(SubjectKind::from_class("truck"), SubjectKind::Road);
+    }
+
+    #[test]
     fn candidate_line_lists_the_entry_list_or_nothing() {
         let none = VlmHints::default();
         assert_eq!(candidate_line(&none), "");
         let some = VlmHints {
             racing: false,
             candidates: vec!["Ford Mustang S650".into(), "Toyota GR Supra".into()],
+            ..VlmHints::default()
         };
         assert_eq!(
             candidate_line(&some),

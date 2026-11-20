@@ -74,7 +74,11 @@ fn debug_request(s: &Settings, crop: &Rgb, racing: bool) -> Value {
     let candidates = entrylist::load(&PathBuf::from(ENTRY_LIST))
         .map(|l| l.candidates())
         .unwrap_or_default();
-    let hints = vlm::VlmHints { racing, candidates };
+    let hints = vlm::VlmHints {
+        racing,
+        candidates,
+        ..vlm::VlmHints::default()
+    };
     let prompt = vlm::vehicle_prompt(&io, false, &hints);
     let schema = vlm::schema(s.read_plates && !racing);
     let image = vlm::encode_for_model(crop, s.vlm_input_edge as u32);
