@@ -106,6 +106,15 @@ export const FIELDS = {
     label: 'Use a vision model', kind: 'toggle',
     hint: 'Ask a vision model for make, model, colour and team.',
   },
+  use_decider: {
+    label: 'Use the decision model', kind: 'toggle',
+    hint: "Runs the Perplexity decision model on this PC's graphics card to answer yes/no questions about a frame. Off, or not enough video memory: every scan behaves exactly as without it.",
+  },
+  decider_quant: {
+    label: 'Precision', kind: 'segmented',
+    hint: 'Auto picks the largest that fits your free video memory: int8 is closest to the reference, int4 needs about 2 GB less.',
+    options: [{ id: 'auto', name: 'Auto' }, { id: 'int8', name: 'int8' }, { id: 'int4', name: 'int4' }],
+  },
   vlm_timeout: { label: 'Timeout', kind: 'number', unit: 's', hint: 'Give up on one request after this long.' },
   vlm_max_retries: { label: 'Retries', kind: 'number', hint: 'How many times to retry a failed request.' },
   vlm_input_edge: {
@@ -174,6 +183,12 @@ for (const [key, field] of Object.entries(FIELDS)) field.key = key;
     id: 'vision-model', tab: 'identification', title: 'Vision model',
     keys: ['use_vlm'],
   },
+  {
+    id: 'decision-model', tab: 'identification', title: 'Decision model',
+    hint: 'An optional on-device model that answers many yes/no questions about a frame at once.',
+    keys: ['use_decider', 'decider_quant'],
+  },
+
   {
     id: 'vision-limits', tab: 'identification', title: 'Vision limits', advanced: true,
     hint: 'Only worth changing when a host is slow or rejects large images.',

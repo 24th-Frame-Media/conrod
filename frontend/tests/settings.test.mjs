@@ -26,7 +26,7 @@ test('every setting keeps its engine key and appears in exactly one section', ()
     if (key === 'vlm_services') continue; // a whole list, rendered by the providers section
     assert.ok(seen.has(key), `${key} is still on the page`);
   }
-  assert.equal(SECTIONS.length, 13);
+  assert.equal(SECTIONS.length, 14); // incl. the opt-in decision model
   assert.deepEqual(TABS.map((t) => t.label), ['Culling', 'Identification', 'Metadata', 'System']);
 });
 

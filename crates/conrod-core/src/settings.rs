@@ -298,6 +298,12 @@ pub struct Settings {
     /// a burst tiebreak after sharpness. Opt-in: off until the model is
     /// installed and a photographer turns it on.
     pub use_quality_score: bool,
+    /// Run Perplexity's decision model (in-process, on the GPU) where a scan asks it
+    /// questions. Opt-in: the model is a multi-GB download. Off means every scan
+    /// behaves as without it.
+    pub use_decider: bool,
+    /// uto (by free video memory), int8 or int4.
+    pub decider_quant: String,
     /// How hard blur culls: "strict", "moderate" or "lenient". Unknown text
     /// reads as "moderate".
     pub blur_strictness: String,
@@ -422,6 +428,8 @@ impl Default for Settings {
             include_people: false,
             overrides: Map::new(),
             use_quality_score: false,
+            use_decider: false,
+            decider_quant: "auto".into(),
             blur_strictness: "moderate".into(),
             blur_explicit: false,
             entry_list: String::new(),

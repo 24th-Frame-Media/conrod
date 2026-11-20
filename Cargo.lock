@@ -842,10 +842,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "conrod-decider"
+version = "1.0.0-beta.8"
+dependencies = [
+ "base64 0.22.1",
+ "image",
+ "libloading 0.8.9",
+ "serde",
+ "serde_json",
+ "windows",
+]
+
+[[package]]
 name = "conrod-engine"
 version = "1.0.0-beta.8"
 dependencies = [
  "conrod-core",
+ "conrod-decider",
  "conrod-io",
  "conrod-store",
  "conrod-vision",

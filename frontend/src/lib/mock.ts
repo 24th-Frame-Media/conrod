@@ -1,9 +1,10 @@
 /* Dev-only engine stand-in: `vite dev` + `?mock=1`. Imported dynamically behind import.meta.env.DEV, so it is not in `dist`.
    Extra params: page=library|scan|ingest|identify|review|known|settings, viewer, popover, scan (a scan is running), profile=<shoot preset id>. */
 import { startIngestSim, type IngestSim } from './mockIngest';
+import { mockDeciderStatus, startDeciderSim } from './mockDecider';
 import type { ShootStats } from './shot.mjs';
 import { applyOverrides, defaultSummary, overridesOf } from './presetPolicy.mjs';
-import type { Bootstrap, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, Settings, Status, WorkerLimits } from './types';
+import type { Bootstrap, DeciderLive, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, Settings, Status, WorkerLimits } from './types';
 
 export type DevStart = {
   page?: Page; jobId?: number; viewer?: boolean; popover?: boolean;
@@ -93,7 +94,7 @@ function makeDb(): Db {
     use_vlm: true, vlm_provider: 'ollama', vlm_model: 'qwen2.5vl:7b', vlm_host: 'http://localhost:11434', vlm_extra_hosts: '', vlm_api_key: '', vlm_timeout: 120,
     workflow_mode: 'both', identify_scope: 'keepers',
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
-    overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', close_to_tray: false,
+    overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', use_decider: true, decider_quant: 'auto', close_to_tray: false,
   };
   return { jobs, frames, dets, known, settings, ticks: 0, identifySkipped: false };
 }
@@ -112,6 +113,16 @@ export function subscribeIdentifyProgress(cb: (p: IdentifyLive) => void): () => 
   identifyListeners.add(cb);
   if (lastIdentify) cb(lastIdentify);
   return () => { identifyListeners.delete(cb); };
+}
+const deciderListeners = new Set<(p: DeciderLive) => void>();
+let lastDecider: DeciderLive | null = null;
+let stopDecider: (() => void) | null = null;
+/** The decision model's feed: starts the simulator with the first listener (see mockDecider.ts). */
+export function subscribeDeciderProgress(cb: (p: DeciderLive) => void): () => void {
+  deciderListeners.add(cb);
+  if (lastDecider) cb(lastDecider);
+  stopDecider ??= startDeciderSim((p) => { lastDecider = p; for (const fn of deciderListeners) fn(p); }, (k) => mockThumb(k));
+  return () => { deciderListeners.delete(cb); };
 }
 const emitScan = (p: ScanProgress) => { lastProgress = p; for (const cb of listeners) cb(p); };
 const emitIdentify = (p: IdentifyLive) => { lastIdentify = p; for (const cb of identifyListeners) cb(p); };
@@ -195,7 +206,9 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'watch_status': return out({active: false, jobId: null});
     case 'set_watch': return out(a);
     case 'cover': return out({path: db.frames[0]?.thumb_path});
-    case 'health': return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}]);
+    case 'health': return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}, {name: 'Decision model', ready: mockDeciderStatus().state === 'ready', optional: true, detail: mockDeciderStatus().message}]);
+    case 'decider_status': return out(mockDeciderStatus());
+    case 'install_decider': return out({operation: 'Installing decision model'});
     case 'cache_info': return out({total: {files: 64, bytes: 3200000}});
     case 'check_update': return out({ok: true, current: '0.0.0-mock', latest: '0.0.1-mock', newer: true, installable: true});
     case 'ollama_models': return out({
