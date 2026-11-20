@@ -7,6 +7,7 @@
 pub mod analysis;
 pub mod bursts;
 pub mod culling;
+pub mod decision;
 pub mod entrylist;
 pub mod framing;
 pub mod grouping;
@@ -14,6 +15,7 @@ pub mod keywords;
 pub mod mapping;
 pub mod marques;
 pub mod models;
+pub mod moments;
 pub mod normalise;
 pub mod profile;
 pub mod progress;
