@@ -294,6 +294,16 @@ pub struct Settings {
     /// `profile::Feature` key ("vehicles", "faces", "numbers", ...). A
     /// missing key follows the shoot preset; see `Settings::lanes`.
     pub overrides: Map<String, Value>,
+    /// What the photographer told the setup wizard (see
+    /// `user_profile::UserProfile`): the shoot types they work in and their
+    /// own defaults per type. Global; an album never reads it, it only takes
+    /// a copy of its type's defaults when it is created (`user_defaults`).
+    pub user_profile: Map<String, Value>,
+    /// The photographer's defaults for this album's shoot type, copied from
+    /// `user_profile` when the album was created. Between the album's own
+    /// `overrides` and the preset policy; see `Settings::lanes`. Always empty
+    /// in the global settings, so an album saved before this existed has none.
+    pub user_defaults: Map<String, Value>,
     /// Score the subject crop with NIMA technical quality and use it only as
     /// a burst tiebreak after sharpness. Opt-in: off until the model is
     /// installed and a photographer turns it on.
@@ -428,6 +438,8 @@ impl Default for Settings {
             scan_profile: "motorsport".into(),
             include_people: false,
             overrides: Map::new(),
+            user_profile: Map::new(),
+            user_defaults: Map::new(),
             use_quality_score: false,
             use_decider: false,
             decider_quant: "auto".into(),
@@ -505,6 +517,8 @@ impl Settings {
         // One spelling of the scope word too: a missing or nonsense value is
         // the default, keepers.
         settings.identify_scope = settings.identify_scope().to_string();
+        // The wizard's answers, with anything this build does not know gone.
+        settings.user_profile = crate::user_profile::UserProfile::sanitize(&settings.user_profile);
         // A threshold is a number about a scale; one set against an older
         // scale now means something nobody asked for, so it is retired.
         if stored.get("focus_scale").and_then(Value::as_i64) != Some(FOCUS_SCALE) {
@@ -577,15 +591,35 @@ impl Settings {
     /// What this album looks for and reads: the preset's policy with the
     /// album's overrides applied. The one answer every lane asks.
     pub fn lanes(&self) -> crate::profile::Lanes {
-        let mut lanes = crate::profile::Lanes::resolve(
+        let mut lanes = crate::profile::Lanes::resolve_with(
             crate::profile::ShootPreset::parse(&self.scan_profile),
             self.include_people,
             &crate::profile::Overrides::from_map(&self.overrides),
+            &crate::profile::Overrides::from_map(&self.user_defaults),
         );
         if self.moments_threshold.is_finite() {
             lanes.moments_threshold = self.moments_threshold.clamp(0.5, 1.0);
         }
         lanes
+    }
+
+    /// The wizard's answers, read tolerantly.
+    pub fn profile(&self) -> crate::user_profile::UserProfile {
+        crate::user_profile::UserProfile::from_map(&self.user_profile)
+    }
+
+    /// Give a new album the photographer's defaults for its shoot type, as a
+    /// copy: later changes to the profile never reach an album that exists.
+    /// Call it once `scan_profile` is chosen. Blur follows the profile only
+    /// where the album did not choose its own level (`chose_blur`).
+    pub fn take_profile_defaults(&mut self, chose_blur: bool) {
+        let profile = self.profile();
+        let preset = crate::profile::ShootPreset::parse(&self.scan_profile);
+        self.user_defaults = profile.defaults_for(preset).to_map();
+        if let (false, Some(blur)) = (chose_blur, profile.blur) {
+            self.blur_strictness = blur.to_string();
+            self.blur_explicit = true;
+        }
     }
 
     /// These settings with the lane switches folded in: a reader the album

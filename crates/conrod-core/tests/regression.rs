@@ -1194,6 +1194,8 @@ fn settings_match_snapshot() {
         m.remove("scan_profile"); // Rust-only
         m.remove("include_people"); // Rust-only
         m.remove("overrides"); // Rust-only: per-album detector/reader switches
+        m.remove("user_profile"); // Rust-only: the setup wizard's answers
+        m.remove("user_defaults"); // Rust-only: an album's copy of them
         for key in [
             "moments_backend",
             "moments_threshold",

@@ -26,3 +26,4 @@ pub mod settings;
 pub mod sport;
 pub mod tasks;
 pub mod text;
+pub mod user_profile;
