@@ -2,8 +2,8 @@
 // which lanes the grid shows, and the single progress bar. The contract the engine fills is in docs/plans/ingest-live-contract.md.
 import { deciderNode } from './decider.mjs';
 import { deciderStepNode, flowNodes } from './identifyFlow.mjs';
-import { STAGE_ORDER, orderStages, stageStatus } from './scan.mjs';
-import { visionNodeSub, visionOffReason } from './vision.mjs';
+import { STAGE_ORDER, etaLabel, orderStages, stageStatus } from './scan.mjs';
+import { visionModelWords, visionNodeSub, visionOffReason } from './vision.mjs';
 
 /** The steps a scan lane carries a frame through, in order. */
 export const SCAN_STEPS = ['read', 'decode', 'detect', 'sharpness', 'faces', 'persist'];
@@ -23,6 +23,15 @@ export function stepIndex(step) {
 
 const SCAN_NODE_IDS = ['read', 'detect', 'sharpness', 'faces', 'group', 'pick'];
 const NODE_LABELS = { read: 'READ', detect: 'DETECT', sharpness: 'SHARPNESS', faces: 'FACES', group: 'GROUP', pick: 'PICK' };
+/** What each stage is for, in a photographer's words; the model's own file name lives in the title. */
+const NODE_PURPOSE = {
+  read: 'Opens each RAW',
+  detect: 'Car and person detector',
+  sharpness: 'Checks the main car is in focus',
+  faces: 'Finds faces and closed eyes',
+  group: 'Groups frames of one moment',
+  pick: 'Suggests one keeper per burst',
+};
 /** Stages that have no per-item progress: they run once over the whole album. */
 const PHASES = new Set(['group', 'pick']);
 
@@ -48,17 +57,16 @@ function scanNode(id, stage, finished) {
   const workers = stage?.workers_total ?? 0;
   const busy = stage?.workers_busy ?? 0;
   const model = stage?.model ?? '';
-  let sub;
-  if (off) sub = 'not used';
-  else if (PHASES.has(id)) sub = state === 'done' ? 'done' : state === 'active' ? 'working' : 'queued';
-  else if (!stage || !(stage.total > 0)) sub = state === 'done' ? 'done' : 'waiting';
-  else sub = `${n(stage.done)} / ${n(stage.total)}`;
+  const purpose = NODE_PURPOSE[id] ?? stage?.label ?? id;
+  const sub = off ? 'not used' : purpose;
+  const count = !off && stage && stage.total > 0 ? `${n(stage.done)} / ${n(stage.total)}` : '';
+  const progress = !off && PHASES.has(id) ? (state === 'done' ? 'done' : state === 'active' ? 'working' : 'queued') : '';
   const crew = workers > 0 ? (state === 'done' ? `${workers} ${workers === 1 ? 'worker' : 'workers'}` : `${busy}/${workers} busy`) : '';
   const failed = off ? '' : failedWords(stage?.errors);
-  const meta = off ? '' : [failed, crew, model].filter(Boolean).join(' · ');
+  const meta = off ? '' : [count, progress, failed, crew, model].filter(Boolean).join(' · ');
   return {
     id, number: '', label: stage?.label ? String(stage.label).toUpperCase() : NODE_LABELS[id] ?? String(id).toUpperCase(),
-    sub, meta, title: [sub, failed, crew, model, stage?.device].filter(Boolean).join(' · '), state, off,
+    sub, meta, title: [sub, count, progress, failed, crew, model, stage?.device].filter(Boolean).join(' · '), state, off,
     filter: off || PHASES.has(id) ? null : id,
   };
 }
@@ -74,9 +82,11 @@ function visionNode(identify, identifyStage, model, finished) {
   const total = identify ? identify.total : identifyStage?.total ?? 0;
   const done = identify ? identify.done : identifyStage?.done ?? 0;
   const workers = identify?.workers ?? identifyStage?.workers_total ?? 0;
-  const sub = reason ? visionNodeSub(reason) : total > 0 ? `${n(done)} / ${n(total)} cars` : state === 'pending' ? 'waiting' : 'reading';
-  const meta = [workers > 0 ? `${workers} ${workers === 1 ? 'worker' : 'workers'}` : '', shownModel].filter(Boolean).join(' · ');
-  return { id: 'vision', number: '', label: 'VISION', sub, meta, title: [sub, meta].filter(Boolean).join(' · '), state, off: Boolean(reason), filter: 'vision' };
+  const service = visionModelWords(shownModel);
+  const sub = reason ? visionNodeSub(reason) : service ? `Reading cars — ${service}` : 'Reading cars';
+  const count = !reason && total > 0 ? `${n(done)} / ${n(total)} cars` : '';
+  const meta = [count, !reason && state === 'pending' && total === 0 ? 'waiting' : '', workers > 0 ? `${workers} ${workers === 1 ? 'worker' : 'workers'}` : ''].filter(Boolean).join(' · ');
+  return { id: 'vision', number: '', label: 'VISION', sub, meta, title: [sub, shownModel, meta].filter(Boolean).join(' · '), state, off: Boolean(reason), filter: 'vision' };
 }
 
 /**
@@ -357,6 +367,60 @@ export function afTagSpot(af, boxes, frame, text = 'AF') {
 export function boxLabel(box) {
   const pct = Number.isFinite(Number(box?.conf)) ? ` ${Math.round(Math.max(0, Math.min(1, Number(box.conf))) * 100)}%` : '';
   return `${box?.cls ?? ''}${pct}`.trim();
+}
+
+const VEHICLE_BOX = /^(car|truck|bus|motorcycle|motorbike|bike|van|vehicle)$/i;
+const areaOf = (box) => Math.abs(Number(box?.[2]) - Number(box?.[0])) * Math.abs(Number(box?.[3]) - Number(box?.[1]));
+
+/**
+ * The one car the frame is judged on: the vehicle the camera's focus area landed on, else the biggest vehicle.
+ * `byAf` tells the tag which rule chose it. Returns `{ index: -1, byAf: false }` when there is no vehicle.
+ */
+export function mainVehicle(boxes, af) {
+  const list = Array.isArray(boxes) ? boxes : [];
+  const vehicles = list.map((b, i) => (VEHICLE_BOX.test(String(b?.cls ?? '')) ? i : -1)).filter((i) => i >= 0);
+  if (!vehicles.length) return { index: -1, byAf: false };
+  if (Array.isArray(af) && af.length >= 4 && af.every((v) => Number.isFinite(Number(v)))) {
+    const cx = (Number(af[0]) + Number(af[2])) / 2, cy = (Number(af[1]) + Number(af[3])) / 2;
+    const hit = vehicles.find((i) => {
+      const b = list[i].box;
+      return cx >= Math.min(b[0], b[2]) && cx <= Math.max(b[0], b[2]) && cy >= Math.min(b[1], b[3]) && cy <= Math.max(b[1], b[3]);
+    });
+    if (hit != null) return { index: hit, byAf: true };
+  }
+  return { index: vehicles.reduce((best, i) => (areaOf(list[i].box) > areaOf(list[best].box) ? i : best), vehicles[0]), byAf: false };
+}
+
+/** `main`, `background`, or null for a box that is not a vehicle: people are never the judged car. */
+export function boxRole(box, index, boxes, af) {
+  if (!VEHICLE_BOX.test(String(box?.cls ?? ''))) return null;
+  const main = mainVehicle(boxes, af);
+  if (main.index < 0) return null;
+  return index === main.index ? 'main' : 'background';
+}
+
+/** The box's tag with its role: `MAIN · AF`, `MAIN · biggest`, `background`, or the class and confidence. */
+export function roleLabel(box, role, byAf = false) {
+  if (role === 'main') return byAf ? 'MAIN · AF' : 'MAIN · biggest';
+  if (role === 'background') return 'background';
+  return boxLabel(box);
+}
+
+/**
+ * The header's "Time left", line by line. With a vision phase the single bar spans both jobs, so the words do
+ * too: the scan's own time, then the identify pass and the cars it still has to read. The identify rate is a
+ * guess until a few cars are done, and says "estimating…" until then.
+ */
+export function etaLines({ vision = false, scanDone = false, scanEta = null, scanStable = false, identify = null } = {}) {
+  const plain = (label) => label.replace(/ 00 s left$/, ' left');
+  if (!vision) return [plain(leftLabel(etaLabel(scanEta, scanStable)))];
+  const scan = scanDone ? 'Scan done' : plain(leftLabel(etaLabel(scanEta, scanStable)));
+  const total = Math.max(0, Number(identify?.total) || 0);
+  const done = Math.max(0, Number(identify?.done) || 0);
+  const cars = total > 0 ? ` (${n(total)} ${total === 1 ? 'car' : 'cars'})` : '';
+  const when = scanDone ? 'Identify' : 'Then identify';
+  const id = identify?.state === 'done' ? 'Identify done' : `${when} ${leftLabel(etaLabel(identifyEta(identify), done >= 3))}${cars}`;
+  return [scan, id];
 }
 
 /**

@@ -214,7 +214,7 @@ export type ScanArgs = { root: string; label: string; profile: string; recursive
 export type MarkValues = { stars?: number | null; rejected?: boolean; picked?: boolean };
 export type Toaster = (message: string, options?: { tone?: 'error' | 'ok'; ms?: number }) => void;
 
-export type ProfileOption = { id: string; title: string };
+export type ProfileOption = { id: string; title: string; /** Shown instead of the group hint when this type is picked. */ hint?: string };
 export type ProfileGroup = ProfileOption & { hint: string; children: readonly ProfileOption[] };
 
 export const PROFILE_GROUPS: readonly ProfileGroup[] = [
@@ -223,11 +223,11 @@ export const PROFILE_GROUPS: readonly ProfileGroup[] = [
       { id: 'motorsport-burnouts', title: 'Burnouts' },
       { id: 'motorsport-track', title: 'Track days' },
       { id: 'motorsport-rally', title: 'Rallies' },
-      { id: 'motorsport-meet', title: 'Car meets' },
-      { id: 'sport-cycling', title: 'Cycling' },
-      { id: 'sport-action', title: 'Action sports' },
-      { id: 'auto-dealer', title: 'Dealership stock' },
-      { id: 'aviation', title: 'Aviation' },
+      { id: 'motorsport-meet', title: 'Car meets & shows', hint: 'Parked cars, owners and badges' },
+      { id: 'sport-cycling', title: 'Cycling', hint: 'Riders, bikes and the race' },
+      { id: 'sport-action', title: 'Action sports', hint: 'Riders, boards and tricks' },
+      { id: 'auto-dealer', title: 'Dealership stock', hint: 'One car at a time, clean and sharp' },
+      { id: 'aviation', title: 'Aviation', hint: 'Air shows and spotting' },
     ],
   },
   {
@@ -239,7 +239,7 @@ export const PROFILE_GROUPS: readonly ProfileGroup[] = [
   },
   {
     id: 'event', title: 'Events', hint: 'Every part of the occasion', children: [
-      { id: 'event-shows', title: 'Shows' },
+      { id: 'event-shows', title: 'Live shows (performers)', hint: 'Performers, animals and prizes — not car shows' },
       { id: 'event-parties', title: 'Parties' },
       { id: 'sport-field', title: 'Field sports' },
       { id: 'sport-court', title: 'Court sports' },

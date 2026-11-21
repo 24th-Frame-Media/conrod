@@ -8,6 +8,8 @@ type Props = { value: string; onChange: (profile: string) => void; id?: string; 
 export function ShootTypeSelect({ value, onChange, id, label = 'Shoot type' }: Props) {
   const current = KNOWN.has(value) ? value : profileParent(value);
   const group = PROFILE_GROUPS.find((g) => g.id === profileParent(current));
+  const chosen = PROFILE_GROUPS.flatMap((g) => g.children).find((child) => child.id === current);
+  const hint = chosen?.hint ?? group?.hint;
   return (
     <div className="shoot-type">
       <select id={id} aria-label={label} value={current} onChange={(e) => onChange(e.target.value)}>
@@ -18,7 +20,7 @@ export function ShootTypeSelect({ value, onChange, id, label = 'Shoot type' }: P
           </optgroup>
         ))}
       </select>
-      {group && <small className="muted">{group.hint}</small>}
+      {hint && <small className="muted">{hint}</small>}
     </div>
   );
 }

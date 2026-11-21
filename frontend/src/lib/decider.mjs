@@ -32,13 +32,11 @@ export function deciderNode(live) {
   const busy = (live?.busy ?? 0) > 0 || state === 'loading' || state === 'running';
   const answered = live?.done ?? 0;
   const off = UNAVAILABLE.has(state) && !busy && answered === 0;
-  let sub;
-  if (busy) sub = state === 'loading' ? 'loading' : `${answered.toLocaleString('en-US')} frames`;
-  else if (off) sub = deciderWord(state);
-  else if (answered > 0) sub = `${answered.toLocaleString('en-US')} frames`;
-  else sub = deciderWord(state);
+  // The box says what the model is for; the file, precision and speed live in the meta line and the tooltip.
+  const sub = off ? `Decision model · ${deciderWord(state)}` : 'Decision model';
+  const frames = answered > 0 || busy ? `${answered.toLocaleString('en-US')} frames` : '';
   const failed = live?.errors > 0 ? `${live.errors.toLocaleString('en-US')} failed` : '';
-  const meta = off ? '' : [failed, live?.quant, live?.avg_ms ? msWords(live.avg_ms) : ''].filter(Boolean).join(' · ');
+  const meta = off ? '' : [frames, failed, live?.quant, live?.avg_ms ? msWords(live.avg_ms) : ''].filter(Boolean).join(' · ');
   const title = [sub, live?.message, live?.device, live?.model].filter(Boolean).join(' · ');
   return {
     id: 'decider', number: '', label: 'DECIDER', sub, meta, title,

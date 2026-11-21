@@ -1,6 +1,6 @@
 // Pure logic for the identify live screen: the flow row, the image to show, the confidence meter and the words around them.
 import { msWords, percent } from './decider.mjs';
-import { visionNodeSub, visionOffReason } from './vision.mjs';
+import { visionModelWords, visionNodeSub, visionOffReason } from './vision.mjs';
 
 /** The stages the `identify-progress` event reports, in the order they happen. */
 export const IDENTIFY_STAGES = ['read', 'crop', 'vision', 'merge', 'done'];
@@ -40,7 +40,7 @@ export function flowNodes(live, model, stage) {
   const reason = visionOffReason(live);
   return FLOW_NODES.map((node, i) => ({
     ...node,
-    sub: node.label !== 'VISION' ? node.sub : reason ? visionNodeSub(reason) : model ? String(model) : node.sub,
+    sub: node.label !== 'VISION' ? node.sub : reason ? visionNodeSub(reason) : visionModelWords(model) ? `Reading cars — ${visionModelWords(model)}` : node.sub,
     off: node.label === 'VISION' && Boolean(reason),
     state: finished || i < active ? 'done' : node.stage === at ? 'active' : 'pending',
   }));

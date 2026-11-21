@@ -9,6 +9,10 @@
 .ing-lock { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin: -6px 0 0; }
 .ing-queue { flex-wrap: wrap; }
 .ing-queue > span { margin-right: 2px; }
+/* The lock note rides in the header now, so a short window never spends a row on it. */
+.ing-lock-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.id-stats .ing-eta span { display: block; white-space: nowrap; }
+.id-stats .ing-eta .ing-eta-next { color: var(--text-mute); font-size: 12.5px; }
 
 /* flowchart: the identify nodes as buttons */
 .ing-flow .id-flow-cell { min-width: 132px; }
@@ -82,6 +86,9 @@
 .id-view .ing-frame-box img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
 .ing-box, .ing-af { position: absolute; box-sizing: border-box; pointer-events: none; animation: ing-pop .38s var(--ease) backwards; transform-origin: center; }
 .ing-box { border: 1.5px solid var(--overlay-good); background: rgba(76, 195, 138, .1); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+/* The judged car is solid amber; every other car is a thin dashed grey box the eye can skip. */
+.ing-box.main { border: 2px solid var(--overlay-accent); background: rgba(227, 168, 58, .08); }
+.ing-box.background { border: 1px dashed var(--overlay-text-dim); background: transparent; opacity: .75; box-shadow: none; }
 .ing-af { border: 1.5px dashed var(--overlay-accent); background: rgba(227, 168, 58, .08); border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
 .ing-box-tag {
   position: absolute; left: 0; top: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -89,7 +96,11 @@
   border-bottom-right-radius: 3px;
 }
 .ing-box .ing-box-tag { color: var(--overlay-good); }
+.ing-box.main .ing-box-tag { color: var(--overlay-accent); letter-spacing: .04em; }
+.ing-box.background .ing-box-tag { color: var(--overlay-text-dim); }
 .ing-af .ing-box-tag { color: var(--overlay-accent); letter-spacing: .1em; }
+.ing-role.main { color: var(--accent); font-weight: 500; }
+.ing-role.background { color: var(--text-mute); font-weight: 400; }
 .ing-af.grid { border-style: dotted; }
 /* The AF tag starts at the bottom-left; the picture's script (afTagSpot) moves it to the corner, or just outside the box, that no detection label covers. */
 .ing-af .ing-af-tag { border-radius: 0; }
@@ -140,6 +151,14 @@
 .ing-det-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .ing-det-list li { display: flex; justify-content: space-between; font-size: 12.5px; }
 
+/* Below 1400 px wide the rail sits under the lanes, so the workers keep the page's width. */
+@media (max-width: 1399px) {
+  .ing-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; overflow-y: auto; }
+  .ing-main { grid-template-rows: none; gap: 12px; }
+  .ing-workers { overflow: visible; }
+  .ing-workers-head { position: static; }
+  .scan-rail { overflow: visible; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; align-items: start; }
+}
 @media (max-width: 1000px) {
   .ing-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; overflow-y: auto; }
   .ing-main { grid-template-rows: none; }
@@ -147,12 +166,43 @@
   .ing-workers-head { position: static; }
   .scan-rail { overflow: visible; }
 }
+
+/* A 1280 x 800 window gave the live worker view a 220 px slot. Below 900 px tall: the header keeps its facts on
+   one or two lines, the strip becomes a 96 px thumbnail row, the lanes form a compact two-column grid with a
+   capped 16:9 picture, and the decision model folds into a single row instead of a full page. */
+@media (max-height: 900px) {
+  .identify-page { padding-top: 16px; gap: 10px; }
+  .id-head { align-items: center; gap: 8px 18px; }
+  .id-head-main { gap: 1px; }
+  .id-head-main h2 { font-size: 20px; }
+  .id-stats { gap: 18px; align-items: center; }
+  .id-stats dd { font-size: 14px; line-height: 20px; }
+  .id-flow { padding: 0 0 2px; }
+  .ing-flow .id-flow-cell { min-width: 108px; }
+  .id-node { padding: 7px 9px; }
+  .id-node b { font-size: 11.5px; }
+  .ing-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .ing-lanes .decider-lane { grid-column: 1 / -1; }
+  .id-view-lane { aspect-ratio: 16 / 9; max-height: 180px; }
+  .ing-strip-row { gap: 6px; }
+  .ing-strip-row .id-card { flex: 0 0 96px; padding: 4px; gap: 2px; }
+  .ing-strip-row .id-card img, .ing-strip-row .id-card-noimg { height: 62px; aspect-ratio: auto; }
+  .ing-strip-row .id-card-make { display: none; }
+  .ing-strip-row .id-card-num { font-size: 11px; }
+  .ing-strip-row .id-card-conf { font-size: 9.5px; }
+  .decider-row { display: flex; align-items: baseline; gap: 10px 16px; flex-wrap: wrap; min-height: 0; padding: 4px 2px; }
+  .decider-row b { font-size: 13px; font-weight: 500; }
+  .decider-row span { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .decider-lane { min-height: 0; gap: 6px; padding: 10px 12px; }
+  .decider-lane .id-view, .decider-lane .dec-counters, .decider-lane .id-lane-panel, .decider-lane .dec-foot { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   .ing-box, .ing-af, .ing-steps li.cur, .ing-strip-row .id-card { animation: none; }
   .id-link.flow { animation: none; }
 }
 
 /* ── DECIDER: the decision model's lane (components/DeciderLane.tsx) and its Settings card ── */
+.decider-row { display: none; }
 .decider-lane.off { opacity: .6; }
 .decider-lane.off .id-view { filter: grayscale(.7) brightness(.8); }
 .dec-counters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 0; }

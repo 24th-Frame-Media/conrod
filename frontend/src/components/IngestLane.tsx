@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { asset } from '../lib/api';
 import {
-  SCAN_STEPS, STEP_STAGE, afLabel, afTagSpot, boxLabel, boxStyle, laneBadge, laneFrame, laneNumber, laneState, laneText, starsText, stepIndex, tagFits,
-  verdictText,
+  SCAN_STEPS, STEP_STAGE, afLabel, afTagSpot, boxRole, boxStyle, laneBadge, laneFrame, laneNumber, laneState, laneText, mainVehicle,
+  roleLabel, starsText, stepIndex, tagFits, verdictText,
 } from '../lib/ingest.mjs';
 import type { AfKind, LaneBox, PipelineWorker, ScanRecentFrame } from '../lib/types';
 import '../styles/ingest.css';
@@ -30,6 +30,7 @@ export function FrameStage({ src, boxes, af, afKind }: { src: string; boxes: Lan
   const afStyle = boxStyle(af);
   const afText = afLabel(afKind);
   const afSpot = afStyle ? afTagSpot(af, boxes, { width, height: width / ar }, afText) : null;
+  const main = mainVehicle(boxes, af);
   return (
     <div className="ing-frame">
       <div className="ing-frame-box" ref={stage} style={{ '--ar': ar } as CSSProperties}>
@@ -37,9 +38,10 @@ export function FrameStage({ src, boxes, af, afKind }: { src: string; boxes: Lan
           onLoad={(e) => { const { naturalWidth: w, naturalHeight: h } = e.currentTarget; if (w > 0 && h > 0) setShape({ src, ar: w / h }); }} />
         {boxes.map((b, i) => {
           const style = boxStyle(b.box);
-          const label = boxLabel(b);
+          const role = boxRole(b, i, boxes, af);
+          const label = roleLabel(b, role, main.byAf);
           return style && (
-            <span className="ing-box" style={style} key={`${b.cls}:${b.box.join(',')}:${i}`}>
+            <span className={`ing-box${role ? ` ${role}` : ''}`} style={style} key={`${b.cls}:${b.box.join(',')}:${i}`}>
               {tagFits(b.box, width, label) && <span className="ing-box-tag mono">{label}</span>}
             </span>
           );
@@ -120,6 +122,7 @@ export function FrameDetail({ frame }: { frame: ScanRecentFrame }) {
   const stars = starsText(frame.stars);
   const verdict = verdictText(frame.verdict, frame.panning);
   const boxes = frame.boxes ?? [];
+  const main = mainVehicle(boxes, frame.af);
   const facts: [string, string][] = [
     ['File', frame.file ?? '—'], ['Verdict', verdict || '—'], ['Stars', stars ? `${stars} (${frame.stars})` : '—'],
     ['Panning', frame.panning ? 'Yes' : 'No'], ['Subject', frame.subject || '—'], ['Reads as', frame.label || 'Not identified'],
@@ -155,7 +158,15 @@ export function FrameDetail({ frame }: { frame: ScanRecentFrame }) {
           <h4>DETECTIONS</h4>
           {boxes.length ? (
             <ul className="ing-det-list">
-              {boxes.map((b, i) => <li key={`${b.cls}:${i}`}><span>{b.cls}</span><span className="mono">{Math.round(b.conf * 100)}%</span></li>)}
+              {boxes.map((b, i) => {
+                const role = boxRole(b, i, boxes, frame.af);
+                return (
+                  <li key={`${b.cls}:${i}`}>
+                    <span>{b.cls}{role && <b className={`ing-role ${role}`}> · {roleLabel(b, role, main.byAf)}</b>}</span>
+                    <span className="mono">{Math.round(b.conf * 100)}%</span>
+                  </li>
+                );
+              })}
             </ul>
           ) : <p className="muted id-panel-empty">No boxes were kept for this frame.</p>}
         </section>

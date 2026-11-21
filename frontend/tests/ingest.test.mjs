@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  boxLabel, boxStyle, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneBadge, laneFrame, laneKey,
-  laneNumber, laneState, laneText, leftLabel, phaseRunning, phaseTone, phaseWord, selectLanes, stageOfStep, starsText, stepIndex, stripItems,
-  verdictText, visionExpected, tagFits, tagWidth, afLabel, afTagSpot, failedWords, TAG_HEIGHT,
+  boxLabel, boxRole, boxStyle, etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase,
+  laneBadge, laneFrame, laneKey, laneNumber, laneState, laneText, leftLabel, mainVehicle, phaseRunning, phaseTone, phaseWord, roleLabel,
+  selectLanes, stageOfStep, starsText, stepIndex, stripItems, verdictText, visionExpected, tagFits, tagWidth, afLabel, afTagSpot, failedWords,
+  TAG_HEIGHT,
 } from '../src/lib/ingest.mjs';
 
 const stage = (id, done, total, busy = 0, workers = 2, extra = {}) => ({ id, label: id[0].toUpperCase() + id.slice(1), model: `${id}-model`, device: 'CPU', workers_total: workers, workers_busy: busy, queue_len: 0, done, total, rate_per_s: 0, eta_s: null, ...extra });
@@ -23,7 +24,8 @@ test('the merged flowchart runs read to pick, then vision, then done', () => {
   assert.deepEqual(nodes.map((n) => n.label), ['READ', 'DETECT', 'SHARPNESS', 'FACES', 'GROUP', 'PICK', 'VISION', 'DONE']);
   assert.deepEqual(nodes.map((n) => n.number), ['01', '02', '03', '04', '05', '06', '07', '08']);
   assert.deepEqual(nodes.map((n) => n.state), ['done', 'active', 'active', 'pending', 'pending', 'pending', 'pending', 'pending']);
-  assert.equal(nodes[1].sub, '412 / 847');
+  assert.equal(nodes[1].sub, 'Car and person detector', 'the box says the job, not the model file');
+  assert.match(nodes[1].meta, /412 \/ 847/);
   assert.match(nodes[1].meta, /2\/2 busy/);
   assert.match(nodes[1].meta, /detect-model/);
   assert.equal(nodes[1].filter, 'detect');
@@ -36,11 +38,13 @@ test('the vision node takes its count from the identify run once it reports', ()
   const live = { state: 'running', done: 12, total: 60, workers: 3, model: 'qwen2.5vl:7b', stage: 'vision', current: null, active: [], recent: [], errors: [] };
   const vision = ingestNodes({ stages, identify: live }).find((n) => n.id === 'vision');
   assert.equal(vision.state, 'active');
-  assert.equal(vision.sub, '12 / 60 cars');
-  assert.match(vision.meta, /3 workers · qwen2\.5vl:7b/);
+  assert.equal(vision.sub, 'Reading cars — Qwen2.5-VL · this PC');
+  assert.match(vision.meta, /3 workers/);
+  assert.match(vision.meta, /12 \/ 60 cars/);
+  assert.match(vision.title, /qwen2\.5vl:7b/, 'the raw file stays in the tooltip');
   const idle = ingestNodes({ stages }).find((n) => n.id === 'vision');
   assert.equal(idle.state, 'pending');
-  assert.equal(idle.sub, '0 / 60 cars');
+  assert.equal(idle.sub, 'Reading cars — identify-model');
 });
 
 test('no vision node when the run does not identify, and an off stage is dimmed', () => {
@@ -68,7 +72,7 @@ test('the identify-only chart keeps the six identify nodes and none is a filter'
   const nodes = identifyNodes({ stage: 'vision', state: 'running' }, 'qwen');
   assert.deepEqual(nodes.map((n) => n.label), ['LOAD', 'CROP', 'READ', 'VISION', 'ENTRY LIST', 'RESULT']);
   assert.ok(nodes.every((n) => n.filter === null));
-  assert.equal(nodes[3].sub, 'qwen');
+  assert.equal(nodes[3].sub, 'Reading cars — Qwen · this PC');
 });
 
 test('the phase follows the scan, then the identify run', () => {
@@ -257,8 +261,9 @@ test('a stage that lost frames says how many failed', () => {
   assert.equal(failedWords(2), '2 failed');
   assert.equal(failedWords(1200), '1,200 failed');
   const [read, detect] = ingestNodes({ stages: [stage('read', 497, 497, 0, 2, { errors: 3 }), stage('detect', 100, 497, 2)] });
-  assert.equal(read.sub, '497 / 497', 'the counters reach the total: failed frames are out of it');
-  assert.match(read.meta, /^3 failed · /);
+  assert.equal(read.sub, 'Opens each RAW');
+  assert.match(read.meta, /^497 \/ 497 · 3 failed/, 'the counters reach the total: failed frames are out of it');
+  assert.match(read.meta, /3 failed/);
   assert.match(read.title, /3 failed/);
   assert.doesNotMatch(detect.meta, /failed/);
 });
@@ -318,4 +323,36 @@ test('the autofocus tag goes outside a box too short for it, and never off the p
   const frame = { width: 400, height: 300 };
   assert.equal(afTagSpot([0.3, 0.5, 0.6, 0.52], [], frame), 'below', 'a 6 px tall box cannot hold a 15 px tag');
   assert.equal(afTagSpot([0.3, 0.97, 0.6, 0.99], [], frame), 'above', 'below would fall off the picture');
+});
+
+test('the camera-focus car is main, and every other car is background', () => {
+  const boxes = [
+    { cls: 'car', conf: 0.9, box: [0.0, 0.2, 0.2, 0.6] },
+    { cls: 'car', conf: 0.8, box: [0.4, 0.3, 0.9, 0.8] },
+    { cls: 'person', conf: 0.5, box: [0.1, 0.1, 0.2, 0.5] },
+  ];
+  const main = mainVehicle(boxes, [0.5, 0.5, 0.55, 0.6]);
+  assert.deepEqual(main, { index: 1, byAf: true });
+  assert.equal(boxRole(boxes[1], 1, boxes, [0.5, 0.5, 0.55, 0.6]), 'main');
+  assert.equal(boxRole(boxes[0], 0, boxes, [0.5, 0.5, 0.55, 0.6]), 'background');
+  assert.equal(boxRole(boxes[2], 2, boxes, [0.5, 0.5, 0.55, 0.6]), null, 'a person is never the judged car');
+  assert.equal(roleLabel(boxes[1], 'main', true), 'MAIN · AF');
+  assert.equal(roleLabel(boxes[0], 'background'), 'background');
+  // Focus on empty ground, or no focus data: the biggest vehicle is the main one.
+  assert.deepEqual(mainVehicle(boxes, [0.95, 0.05, 0.99, 0.1]), { index: 1, byAf: false });
+  assert.deepEqual(mainVehicle(boxes, null), { index: 1, byAf: false });
+  assert.equal(roleLabel(boxes[1], 'main', false), 'MAIN · biggest');
+  assert.deepEqual(mainVehicle([], null), { index: -1, byAf: false });
+});
+
+test('the time left names the scan and the identify pass separately', () => {
+  assert.deepEqual(etaLines({ scanEta: 300, scanStable: true }), ['about 5 min left']);
+  const both = etaLines({ vision: true, scanEta: 300, scanStable: true, identify: { state: 'running', done: 0, total: 3000 } });
+  assert.equal(both.length, 2);
+  assert.equal(both[0], 'about 5 min left');
+  assert.match(both[1], /^Then identify estimating… \(3,000 cars\)$/);
+  const reading = etaLines({ vision: true, scanDone: true, identify: { state: 'running', done: 10, total: 30, elapsed_ms: 20000 } });
+  assert.equal(reading[0], 'Scan done');
+  assert.match(reading[1], /^Identify about 40 s left \(30 cars\)$/);
+  assert.deepEqual(etaLines({ vision: true, scanDone: true, identify: { state: 'done', done: 30, total: 30 } }), ['Scan done', 'Identify done']);
 });

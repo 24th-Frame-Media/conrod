@@ -9,10 +9,10 @@ import { Empty, Icon } from '../components/basics';
 import { asset } from '../lib/api';
 import { confidencePercent, confidenceTone, displayItem, elapsed, progressPercent, rateLabel, workerLanes } from '../lib/identifyFlow.mjs';
 import {
-  frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneKey, laneState, leftLabel,
+  etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneKey, laneState, leftLabel,
   phaseRunning, phaseTone, phaseWord, selectLanes, starsText, stripItems, verdictText, visionExpected,
 } from '../lib/ingest.mjs';
-import { visionHeader, visionOffReason, type VisionAction } from '../lib/vision.mjs';
+import { visionHeader, visionModelWords, visionOffReason, type VisionAction } from '../lib/vision.mjs';
 import { etaLabel, etaRemaining, formatRate, orderStages, overallEta, overallFraction, summaryLine } from '../lib/scan.mjs';
 import type { IdentifyLive, Job, ScanFound, ScanRecentFrame, Settings, Status } from '../lib/types';
 import { scanFailureFor, type ScanFailure } from '../lib/scanError.mjs';
@@ -177,11 +177,16 @@ export function IngestScreen({
   const done = idLive?.done ?? 0;
   const idTotal = idLive?.total ?? 0;
   const smoothed = scan ? etaRemaining(scan.history) : null;
-  const eta = phase === 'vision' ? etaLabel(identifyEta(idLive), done >= 3) : etaLabel(smoothed ?? (p ? overallEta(stages, p.overall) : null), Boolean(scan?.stable));
+  // The bar already spans scan + identify; the time left must say both, not only the stage that happens to be running.
+  const timeLeft = mode === 'identify'
+    ? [leftLabel(etaLabel(identifyEta(idLive), done >= 3))]
+    : etaLines({ vision, scanDone: phase === 'vision' || phase === 'done', scanEta: smoothed ?? (p ? overallEta(stages, p.overall) : null), scanStable: Boolean(scan?.stable), identify: idLive });
   const rate = phase === 'vision' ? (idLive ? rateLabel(idLive.done, idLive.elapsed_ms) : '') : frameRate(formatRate(p?.rate_per_s));
+  const stageTotal = nodes.filter((node) => node.id !== 'done').length;
+  const stageAt = nodes.findIndex((node) => node.id === (head?.id ?? p?.stage)) + 1;
   const sub = phase === 'starting' ? (mode === 'identify' ? 'Waiting for the first car…' : 'Reading the folder…')
-    : phase === 'vision' ? (visionOff ? visionHeader(visionOff) : `Reading cars with ${idLive?.model || model || 'the vision model'}`)
-      : phase === 'scan' || phase === 'group' || phase === 'pick' ? `Stage ${(p?.stage_index ?? 0) + 1} of ${p?.stage_count ?? nodes.length} · ${head?.label ?? p?.stage}`
+    : phase === 'vision' ? (visionOff ? visionHeader(visionOff) : `Reading cars with ${visionModelWords(idLive?.model || model) || 'the vision model'}`)
+      : phase === 'scan' || phase === 'group' || phase === 'pick' ? `Stage ${Math.max(1, stageAt)} of ${stageTotal} · ${head?.label ?? p?.stage}`
         : phase === 'done' ? (mode === 'identify' ? 'Identification complete' : 'Scan complete') : '';
 
   const detailCar = picked?.kind === 'car' ? displayItem(idLive, picked.id) : null;
@@ -200,6 +205,9 @@ export function IngestScreen({
             <span className="ing-statusline">
               <span className={`id-state ${phaseTone(phase, frozen)}`}><i />{phaseWord(phase, frozen)}</span>
               {sub && <span className="muted ing-sub-text">{sub}</span>}
+              {mode === 'ingest' && (phase === 'starting' || phase === 'scan' || phase === 'group' || phase === 'pick') && (
+                <span className="muted ing-lock-note"><Icon name="eye" size={13} /> Review opens when the scan finishes. Other albums stay open from the Library.</span>
+              )}
             </span>
           </div>
           {live && phase !== 'starting' && (
@@ -208,7 +216,7 @@ export function IngestScreen({
                 ? <div><dt>Cars</dt><dd className="mono">{idLive ? `${done.toLocaleString()} / ${idTotal.toLocaleString()}` : '–'}</dd></div>
                 : <div><dt>{head?.label ?? p?.stage ?? 'Frames'}</dt><dd className="mono">{p ? `${p.done.toLocaleString()} / ${p.total.toLocaleString()}` : '–'}</dd></div>}
               <div><dt>Rate</dt><dd className="mono">{rate || '–'}</dd></div>
-              <div><dt>Time left</dt><dd className="mono ing-eta">{leftLabel(eta)}</dd></div>
+              <div><dt>Time left</dt><dd className="mono ing-eta">{timeLeft.map((line, i) => <span key={`${i}:${line}`} className={i > 0 ? 'ing-eta-next' : ''}>{line}</span>)}</dd></div>
               <div><dt>Workers</dt><dd className="mono">{phase === 'vision' ? visionLanes.length || '–' : allScan.length ? `${awake} / ${allScan.length}` : '–'}</dd></div>
             </dl>
           )}
@@ -247,12 +255,6 @@ export function IngestScreen({
                 : mode === 'identify' ? `${pct}% · ${done.toLocaleString()} / ${idTotal.toLocaleString()}` : `${pct}%`}
             </span>
           </div>
-        )}
-        {mode === 'ingest' && (phase === 'starting' || phase === 'scan' || phase === 'group' || phase === 'pick') && (
-          <p className="muted ing-lock">
-            <Icon name="eye" size={13} /> Review is open for the frames already measured. Verdicts on them can still change while the scan runs.
-            <button type="button" className="ghost small" onClick={onReview}>Open Review</button>
-          </p>
         )}
 
         <ol className={`id-flow ing-flow${live ? '' : ' still'}`} aria-label={mode === 'identify' ? 'Identification stages' : 'Pipeline stages'}>

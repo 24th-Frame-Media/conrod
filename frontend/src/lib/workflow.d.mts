@@ -15,6 +15,7 @@ export const DEFAULT_WORKFLOW: WorkflowMode;
 export const WORKFLOW_OPTIONS: readonly WorkflowOption[];
 
 export function workflowModeOf(value: unknown): WorkflowMode;
+export function workflowHint(value: unknown, options?: { vehicles?: boolean }): string;
 export function workflowLabel(value: unknown): string;
 export function workflowIncludesCull(value: unknown): boolean;
 export function workflowIncludesIdentify(value: unknown): boolean;

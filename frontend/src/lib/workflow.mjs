@@ -10,6 +10,18 @@ export const WORKFLOW_OPTIONS = [
   { id: 'identify', label: 'Identify only', hint: 'Keep every photo and identify all subjects. No automatic culls.' },
 ];
 
+/**
+ * A mode's hint for this shoot. A wedding or a bird shoot has no numbers or plates to read, so the words say
+ * what Conrod can actually see instead of car data.
+ */
+export function workflowHint(value, { vehicles = true } = {}) {
+  const mode = workflowModeOf(value);
+  if (mode === 'both' && !vehicles) {
+    return 'Rate and reject soft frames, then read the names, numbers and details Conrod can see on the keepers.';
+  }
+  return (WORKFLOW_OPTIONS.find((option) => option.id === mode) ?? WORKFLOW_OPTIONS[0]).hint;
+}
+
 /** Whatever was stored (or nothing) becomes a mode the rest of the UI can switch on. */
 export function workflowModeOf(value) {
   return WORKFLOW_MODES.includes(value) ? value : DEFAULT_WORKFLOW;
