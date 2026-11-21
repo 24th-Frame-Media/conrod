@@ -252,6 +252,13 @@
     "d7e4704": [
       { "section": "New", "text": "The decision model now works from the start of identification: its question and answer appear in the identifying screen along with the frames it has judged and the time each takes, instead of staying quiet until the end." },
       { "section": "Improved", "text": "Waiting for the decision model no longer delays the end of identification, because it judges frames while the cars are being read." }
+    ],
+    "bbeb3c1": [
+      { "section": "Improved", "text": "The live view keeps its worker lanes usable on a small laptop screen instead of squeezing them into a narrow strip." },
+      { "section": "Improved", "text": "The time left now covers the whole album, scan and identification together, and says which part is running and how many cars are still to read." },
+      { "section": "Improved", "text": "Models are named by the job they do, so it is clear which one finds cars, checks focus, reads faces or makes the call." },
+      { "section": "New", "text": "The car the photo is judged on is marked MAIN · AF when the camera's focus point chose it, and MAIN · biggest when the largest car did." },
+      { "section": "Improved", "text": "The shoot-type list says what each type actually changes, so picking one for an album is easier to judge." }
     ]
   }
 }
