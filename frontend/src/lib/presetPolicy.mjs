@@ -26,12 +26,17 @@ export function overridesOf(stored) {
   return out;
 }
 
-/** The summary with these switches applied, the way the engine resolves them (a reader needs its detector). */
-export function applyOverrides(summary, overrides = {}) {
-  const raw = new Map(rowsOf(summary).map((r) => [r.key, typeof overrides[r.key] === 'boolean' ? overrides[r.key] : r.default]));
+/**
+ * The summary with these switches applied, the way the engine resolves them: the album's `overrides`, then the
+ * photographer's own `user` defaults for the type, then the type's policy (a reader needs its detector).
+ * A `user` default is what clearing the album's switch goes back to, so it becomes the row's `default`.
+ */
+export function applyOverrides(summary, overrides = {}, user = {}) {
+  const mine = (key) => (typeof user[key] === 'boolean' ? user[key] : undefined);
+  const raw = new Map(rowsOf(summary).map((r) => [r.key, typeof overrides[r.key] === 'boolean' ? overrides[r.key] : mine(r.key) ?? r.default]));
   const row = (r) => {
     const blocked = r.requires != null && raw.get(r.requires) !== true;
-    return { ...r, on: raw.get(r.key) === true && !blocked, overridden: typeof overrides[r.key] === 'boolean', blocked };
+    return { ...r, default: mine(r.key) ?? r.default, on: raw.get(r.key) === true && !blocked, overridden: typeof overrides[r.key] === 'boolean', blocked };
   };
   return {
     ...summary,

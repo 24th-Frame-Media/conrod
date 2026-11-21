@@ -92,7 +92,8 @@ export function ShootSettingsModal({
           <div className="field-group">
             <label className="field-label" htmlFor="shoot-type">Type of shoot</label>
             <ShootTypeSelect id="shoot-type" value={profile} onChange={(next) => { setProfile(next); if (next !== profile) setOverrides({}); }} />
-            <PresetPolicy preset={profile} overrides={overrides} onChange={setOverrides} disabled={saving} />
+            <PresetPolicy preset={profile} overrides={overrides} onChange={setOverrides} disabled={saving}
+              user={profile === initialProfile ? overridesOf(initialSettings.user_defaults) : undefined} />
           </div>
 
           <div className="field-group">

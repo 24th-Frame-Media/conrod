@@ -63,7 +63,9 @@ export const engine = {
   deleteAllKnown: () => call<{ removed: number }>('delete_all_known'),
   deleteJob: (jobId: number) => call('delete_job', { jobId }),
   setIncludePeople: (jobId: number, value: boolean) => call<{ ok: boolean; jobId: number; settings: Settings; operation: string | null }>('set_include_people', { jobId, value }),
-  presetPolicy: (preset: string, overrides: Record<string, boolean> = {}) => call<import('./presetPolicy.mjs').PolicySummary>('preset_policy', { preset, overrides }),
+  /** `userDefaults`: an album's own copy of the photographer's defaults; absent, the saved profile's apply (the import sheet). */
+  presetPolicy: (preset: string, overrides: Record<string, boolean> = {}, userDefaults?: Record<string, boolean>) =>
+    call<import('./presetPolicy.mjs').PolicySummary>('preset_policy', { preset, overrides, ...(userDefaults ? { userDefaults } : {}) }),
   setFeature: (jobId: number, feature: string, value: boolean | null) =>
     call<{ ok: boolean; jobId: number; settings: Settings; operation: string | null; needsRescan: boolean; lanes: import('./presetPolicy.mjs').PolicySummary }>('set_feature', { jobId, feature, value }),
   updateJobSettings: (jobId: number, patch: Record<string, unknown>) => call('update_job_settings', { jobId, patch }),

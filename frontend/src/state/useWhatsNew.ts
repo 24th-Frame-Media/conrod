@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   orderEntries, readSeen, shouldShowWhatsNew, splitEntries, writeSeen, type WhatsNewEntry,
 } from '../lib/whatsNew.mjs';
@@ -17,6 +17,8 @@ export type WhatsNew = {
   earlier: WhatsNewEntry[];
   close: () => void;
   openManually: () => void;
+  /** The first-run wizard is taking this build's place: count the release as seen so the sheet stays quiet. */
+  markSeen: () => void;
 };
 
 /**
@@ -31,6 +33,8 @@ export function useWhatsNew(): WhatsNew {
 
   const [seen, setSeen] = useState<string | null>(() => readSeen(localStorage));
   const [openedManually, setOpenedManually] = useState(false);
+  // Set by `markSeen` before the app version is known; the mark is written as soon as it is.
+  const [muted, setMuted] = useState(false);
 
   const autoOpen = useMemo(() => shouldShowWhatsNew({ current, lastSeen: seen, entries: ENTRIES }), [current, seen]);
   const { fresh, earlier } = useMemo(() => splitEntries({ entries: ENTRIES, current, lastSeen: seen }), [current, seen]);
@@ -40,6 +44,10 @@ export function useWhatsNew(): WhatsNew {
     if (current) setSeen(writeSeen(localStorage, current));
   }, [current]);
   const openManually = useCallback(() => setOpenedManually(true), []);
+  const markSeen = useCallback(() => setMuted(true), []);
+  useEffect(() => {
+    if (muted && current) setSeen(writeSeen(localStorage, current));
+  }, [muted, current]);
 
-  return { open: openedManually || autoOpen, fresh, earlier, close, openManually };
+  return { open: openedManually || (autoOpen && !muted), fresh, earlier, close, openManually, markSeen };
 }

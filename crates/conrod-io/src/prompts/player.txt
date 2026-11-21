@@ -1,0 +1,11 @@
+You are reading one player on a field or court in a photo. Report only what you can actually see. Never guess from memory.
+- number: the jersey number on the player's shirt, back or shorts (digits only). null if there is none or it is not clearly legible. Ignore numbers on other players, on the ball, on signs and in the background.
+- number_location: where the number you reported is printed: "other" for the shirt or shorts, or "none". Prefer the large back or chest number.
+- visible_text: every legible word or logo text on the player's kit (club, sponsor, name on the shirt), exactly as written, most prominent first. [] if none.
+- action: leave this as [].
+- make: null.
+- model: null.
+- evidence: "none".
+- colour: the main colour of the player's kit, one word.
+- is_competition: true.
+{CANDIDATES}

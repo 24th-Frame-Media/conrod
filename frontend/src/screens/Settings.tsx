@@ -474,10 +474,11 @@ type Props = {
   models?: ModelInfo[];
   onModelsChanged?: () => void;
   onOpenWhatsNew?: () => void;
+  onOpenWizard?: () => void;
 };
 
 /** Settings shared with the Python library; Save writes the whole block back. */
-export function Settings({ settings, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status, onOpenWhatsNew }: Props) {
+export function Settings({ settings, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status, onOpenWhatsNew, onOpenWizard }: Props) {
   const [draft, setDraft] = useState<SettingsMap>(settings);
   useEffect(() => setDraft(settings), [settings]);
 
@@ -818,6 +819,14 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
             onInstall={handleInstallUpdate}
             onOpenWhatsNew={onOpenWhatsNew}
           />
+
+          <section className="sidebar-card" aria-labelledby="settings-setup">
+            <h4 id="settings-setup">Set up Conrod</h4>
+            <p className="sidebar-card-note">Tell Conrod what you shoot and it tunes what it looks for, reads and how picky it is. Albums keep their own choices.</p>
+            <button type="button" className="ghost small sidebar-card-action" onClick={onOpenWizard} disabled={!onOpenWizard}>
+              Set up Conrod again
+            </button>
+          </section>
 
           <section className="sidebar-card" aria-labelledby="settings-library">
             <h4 id="settings-library">This library</h4>

@@ -1371,6 +1371,7 @@ impl VlmClient {
 pub const CAR_PROMPT: &str = include_str!("prompts/car.txt");
 pub const BIKE_PROMPT: &str = include_str!("prompts/bike.txt");
 pub const AIRCRAFT_PROMPT: &str = include_str!("prompts/aircraft.txt");
+pub const PLAYER_PROMPT: &str = include_str!("prompts/player.txt");
 pub const BURST_PROMPT: &str = include_str!("prompts/burst.txt");
 
 /// What the caller already knows about the vehicle before asking.
@@ -1395,6 +1396,8 @@ pub enum SubjectKind {
     Road,
     Aircraft,
     Bicycle,
+    /// A player on a field or court: the number is a jersey number.
+    Player,
 }
 
 impl SubjectKind {
@@ -1403,6 +1406,7 @@ impl SubjectKind {
         match class {
             "airplane" => SubjectKind::Aircraft,
             "bicycle" => SubjectKind::Bicycle,
+            "person" => SubjectKind::Player,
             _ => SubjectKind::Road,
         }
     }
@@ -1430,6 +1434,7 @@ pub fn vehicle_prompt(settings: &Settings, is_bike: bool, hints: &VlmHints) -> S
     let swapped;
     let base = match hints.subject {
         SubjectKind::Aircraft => AIRCRAFT_PROMPT,
+        SubjectKind::Player => PLAYER_PROMPT,
         SubjectKind::Bicycle => {
             swapped = BIKE_PROMPT.replace("motorcycle", "bicycle");
             swapped.as_str()
