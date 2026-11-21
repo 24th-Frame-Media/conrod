@@ -476,7 +476,9 @@ dialog.viewer {
   flex-direction: column;
   gap: 8px;
   margin-top: 4px;
-  flex: 1 1 auto;
+  /* Grows into spare room but never shrinks: when the inspector is taller than its column,
+     the panel keeps its height and the inspector scrolls, instead of squeezing the list to 0. */
+  flex: 1 0 auto;
   min-height: 0;
   overflow: hidden;
 }
@@ -2256,8 +2258,12 @@ dialog.viewer {
 @media (max-width: 1000px) { .scan-body { grid-template-columns: 1fr; } }
 
 /* ── identify live screen (the AI trace) ── */
-.identify-screen { flex: 1; min-height: 0; overflow-y: auto; }
-.identify-page { padding: 22px 28px 36px; max-width: 1440px; margin: 0 auto; display: grid; gap: 16px; }
+/* Fixed height: the page never scrolls as a whole; the header and pipeline stay put and the
+   panels below (`ing-body`) own the scrolling, one region each. */
+.identify-screen { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.identify-page { flex: 1; min-height: 0; width: 100%; padding: 22px 28px 24px; max-width: 1440px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.identify-page > * { flex: none; }
+.identify-page > .ing-body { flex: 1 1 auto; min-height: 0; }
 .id-head { display: flex; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
 .id-head-main { flex: 1 1 260px; min-width: 0; display: grid; gap: 3px; }
 .id-eyebrow { font-size: 11px; letter-spacing: .18em; color: var(--accent); }
