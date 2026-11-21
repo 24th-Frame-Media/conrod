@@ -40,3 +40,4 @@ MEMORY.md
 graphify-out/
 .venv/
 dist/
+.worktrees/
