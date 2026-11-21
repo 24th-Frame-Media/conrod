@@ -84,7 +84,7 @@ const MOCK_FILE = { name: 'Car and person detector', file: 'yolo11s-960.onnx', b
 /** The steps the mock plays; mirrors what the engine really runs at start. */
 export const MOCK_STEPS = [
   { step: 'library', label: 'Opening your library', detail: '3 albums' },
-  { step: 'albums', label: 'Checking for albums a crash left open', detail: 'None found' },
+  { step: 'albums', label: 'Checking for unfinished scans', detail: 'Nothing to resume' },
   { step: 'models', label: 'Checking models', detail: 'All 11 models are on disk', model: MOCK_FILE },
   { step: 'exiftool', label: 'Looking for ExifTool', detail: 'Bundled with Conrod' },
   { step: 'gpu', label: 'Checking the graphics card', detail: 'NVIDIA GeForce RTX 4070, 12 GB' },

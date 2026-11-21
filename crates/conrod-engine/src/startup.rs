@@ -361,7 +361,7 @@ mod tests {
         let d = Desktop::open(root.clone()).unwrap();
         let s = d.startup.snapshot();
         let albums = &s["completed"][1];
-        assert_eq!(albums["label"], "Tidying albums a crash left open");
+        assert_eq!(albums["label"], "Unfinished scans ready to resume");
         assert!(albums["detail"].as_str().unwrap().starts_with("1 album"));
         drop(d);
         let _ = std::fs::remove_dir_all(&root);

@@ -497,17 +497,14 @@ impl Desktop {
         // every finished frame and its results are kept.
         desktop
             .startup
-            .begin("albums", "Checking for albums a crash left open", None);
+            .begin("albums", "Checking for unfinished scans", None);
         match desktop.reconcile_interrupted() {
             Ok(0) => desktop
                 .startup
-                .finish(None, Some("None found".into()), None),
+                .finish(None, Some("Nothing to resume".into()), None),
             Ok(n) => desktop.startup.finish(
-                Some("Tidying albums a crash left open"),
-                Some(format!(
-                    "{n} {} marked stopped, ready to resume",
-                    if n == 1 { "album" } else { "albums" }
-                )),
+                Some("Unfinished scans ready to resume"),
+                Some(format!("{n} {}", if n == 1 { "album" } else { "albums" })),
                 None,
             ),
             Err(e) => {
