@@ -186,10 +186,12 @@ fn vlm_production_eval() {
             if let Some((_, io)) = readers.vlm.as_mut() {
                 *io = IoSettings::from_core(&s);
             }
+            let empty = HashMap::new();
             let ctx = Context {
                 settings: &s,
                 plates: &plate_opts,
                 known: &known,
+                seen_numbers: &empty,
             };
             let done = analyze(&crop, None, "car", false, &ctx, &mut readers)?;
             let elapsed = t0.elapsed().as_secs_f64();

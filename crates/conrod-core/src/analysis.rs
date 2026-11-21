@@ -213,12 +213,84 @@ impl Default for OcrReading {
     }
 }
 
-/// Decide the competition number from two disagreeing readers.
+/// A number the model saw, and where on the car it was.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NumberCandidate {
+    pub number: String,
+    /// "door", "bonnet", "roof", "windscreen", "nose" or "other".
+    pub location: String,
+}
+
+/// How prominent a number's panel is. A door or bonnet panel is the largest
+/// the car carries; a nose board is regularly a different, decorative number.
+fn location_rank(location: &str) -> i32 {
+    match location.trim().to_lowercase().as_str() {
+        "door" | "bonnet" => 4,
+        "roof" => 3,
+        "windscreen" => 2,
+        "nose" => 1,
+        _ => 0,
+    }
+}
+
+/// Pick the race number from every number the model saw, deterministically:
+/// (a) one the album's entry list has, (b) the most prominent panel (door,
+/// then bonnet, then roof, windscreen, nose, other), (c) the number already
+/// seen in this burst, which settles a tie between equally prominent panels.
+/// Equal scores keep the model's own order, so the answer never depends on
+/// hash iteration.
+pub fn choose_race_number(
+    candidates: &[NumberCandidate],
+    listed: impl Fn(&str) -> bool,
+    seen: &std::collections::HashMap<String, u32>,
+) -> Option<String> {
+    let mut unique: Vec<(&str, i32)> = Vec::new();
+    for candidate in candidates {
+        let number = candidate.number.trim();
+        if number.is_empty() {
+            continue;
+        }
+        let rank = location_rank(&candidate.location);
+        match unique.iter_mut().find(|(n, _)| *n == number) {
+            Some((_, best)) => *best = (*best).max(rank),
+            None => unique.push((number, rank)),
+        }
+    }
+    let mut pool: Vec<(&str, i32)> = unique
+        .iter()
+        .copied()
+        .filter(|(number, _)| listed(number))
+        .collect();
+    if pool.is_empty() {
+        pool = unique;
+    }
+    let best_rank = pool.iter().map(|(_, rank)| *rank).max()?;
+    let mut pool: Vec<(&str, i32)> = pool.into_iter().filter(|(_, r)| *r == best_rank).collect();
+    if pool.len() > 1 {
+        let best_seen = pool
+            .iter()
+            .map(|(number, _)| seen.get(*number).copied().unwrap_or(0))
+            .max()
+            .unwrap_or(0);
+        if best_seen > 0 {
+            pool.retain(|(number, _)| seen.get(*number).copied().unwrap_or(0) == best_seen);
+        }
+    }
+    pool.first().map(|(number, _)| (*number).to_string())
+}
+
+/// Decide the competition number from the two readers.
+///
+/// The model wins whenever it gave a number: it reads stylised, angled and
+/// partly hidden digits far better than OCR, and an OCR read is never allowed
+/// to override or outvote it. OCR only fills in when the model gave none, and
+/// then only above `ocr_accept_confidence`; such a read is marked down (its
+/// confidence scaled by [`OCR_ONLY_SCALE`]) so it lands in review as the
+/// weaker source.
 ///
 /// `vlm_confidence` is the model's own confidence in the number (already
 /// lowered for nose-board reads by `map_vehicle`); `ocr_accept_confidence`
-/// is `Settings.ocr_accept_confidence` (default 0.80), the OCR reading's own
-/// floor for winning outright.
+/// is `Settings.ocr_accept_confidence` (default 0.80).
 pub fn merge_number(
     ocr_reading: &OcrReading,
     vlm_number: Option<&str>,
@@ -239,34 +311,36 @@ pub fn merge_number(
         ocr_reading.source.clone()
     };
 
-    if let (Some(o), Some(v)) = (ocr_number, vlm_number) {
-        if o == v {
+    if let Some(v) = vlm_number {
+        if ocr_number == Some(v) {
             // Independent agreement is worth more than either one's confidence.
             let confidence = (ocr_reading.confidence.max(vlm_confidence).max(0.7) + 0.2).min(1.0);
             return (
-                Some(o.to_string()),
+                Some(v.to_string()),
                 Some(format!("{source}+vlm")),
                 confidence,
             );
         }
-    }
-    if let Some(o) = ocr_number {
-        if ocr_reading.confidence >= ocr_accept_confidence {
-            return (Some(o.to_string()), Some(source), ocr_reading.confidence);
-        }
-    }
-    if let Some(v) = vlm_number {
-        // The model reads stylised and angled numbers far better than OCR, so
-        // it wins where OCR was not already confident. Keep its own confidence:
-        // a high read can clear review, a low one stays visibly uncertain.
+        // The model's answer stands, even under a confident OCR read: OCR's
+        // race-number reads are wrong far more often.
         return (Some(v.to_string()), Some("vlm".to_string()), vlm_confidence);
     }
     if let Some(o) = ocr_number {
-        // Weak, but better than nothing -- the low score sends it to review.
-        return (Some(o.to_string()), Some(source), ocr_reading.confidence);
+        if ocr_reading.confidence >= ocr_accept_confidence {
+            return (
+                Some(o.to_string()),
+                Some(source),
+                (ocr_reading.confidence * OCR_ONLY_SCALE).clamp(0.0, 1.0),
+            );
+        }
+        // Below the floor, a lone OCR read is noise, not a number.
     }
     (None, None, 0.0)
 }
+
+/// How much a lone OCR read is scaled down: it fills a blank, but always
+/// reads as the weaker source than a model answer.
+pub const OCR_ONLY_SCALE: f64 = 0.75;
 
 /// Words a model-reported name needs at least one of, to count as
 /// corroborated rather than invented. "Racing" or "Team" prove nothing.
@@ -346,10 +420,110 @@ mod merge_number_tests {
     }
 
     #[test]
+    fn a_confident_ocr_read_never_overrides_the_model() {
+        let (number, source, confidence) =
+            merge_number(&ocr(Some("12"), 0.99), Some("88"), 0.7, 0.8);
+        assert_eq!(number.as_deref(), Some("88"));
+        assert_eq!(source.as_deref(), Some("vlm"));
+        assert_eq!(confidence, 0.7);
+    }
+
+    #[test]
+    fn ocr_only_fills_a_blank_above_the_floor_and_reads_as_the_weaker_source() {
+        let (number, source, confidence) = merge_number(&ocr(Some("12"), 0.9), None, 0.0, 0.8);
+        assert_eq!(number.as_deref(), Some("12"));
+        assert_eq!(source.as_deref(), Some("ocr"));
+        assert_eq!(confidence, 0.9 * OCR_ONLY_SCALE);
+        assert!(confidence < 0.8, "a lone OCR read stays in review");
+    }
+
+    #[test]
+    fn a_lone_ocr_read_below_the_floor_is_no_number() {
+        let (number, source, confidence) = merge_number(&ocr(Some("12"), 0.79), None, 0.0, 0.8);
+        assert_eq!((number, source), (None, None));
+        assert_eq!(confidence, 0.0);
+    }
+
+    #[test]
     fn an_out_of_range_vlm_confidence_is_clamped() {
         let (_, _, high) = merge_number(&ocr(None, 0.0), Some("7"), 9.0, 0.8);
         let (_, _, low) = merge_number(&ocr(None, 0.0), Some("7"), -1.0, 0.8);
         assert_eq!((high, low), (1.0, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod choose_race_number_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn candidate(number: &str, location: &str) -> NumberCandidate {
+        NumberCandidate {
+            number: number.into(),
+            location: location.into(),
+        }
+    }
+
+    fn none(_: &str) -> bool {
+        false
+    }
+
+    #[test]
+    fn an_entry_list_number_wins_over_a_bigger_panel() {
+        let candidates = [
+            candidate("99", "door"),
+            candidate("7", "windscreen"),
+            candidate("42", "nose"),
+        ];
+        let listed = |n: &str| n == "7";
+        assert_eq!(
+            choose_race_number(&candidates, listed, &HashMap::new()).as_deref(),
+            Some("7")
+        );
+    }
+
+    #[test]
+    fn no_list_match_falls_back_to_the_most_prominent_panel() {
+        let candidates = [
+            candidate("12", "windscreen"),
+            candidate("5", "bonnet"),
+            candidate("3", "roof"),
+        ];
+        assert_eq!(
+            choose_race_number(&candidates, none, &HashMap::new()).as_deref(),
+            Some("5")
+        );
+    }
+
+    #[test]
+    fn a_number_seen_in_the_burst_settles_a_prominence_tie() {
+        let candidates = [candidate("12", "door"), candidate("5", "door")];
+        let mut seen = HashMap::new();
+        seen.insert("5".to_string(), 3);
+        seen.insert("12".to_string(), 1);
+        assert_eq!(
+            choose_race_number(&candidates, none, &seen).as_deref(),
+            Some("5")
+        );
+        // Without a burst history the model's own order is the tiebreak.
+        assert_eq!(
+            choose_race_number(&candidates, none, &HashMap::new()).as_deref(),
+            Some("12")
+        );
+    }
+
+    #[test]
+    fn a_duplicate_keeps_its_most_prominent_location() {
+        let candidates = [candidate("8", "nose"), candidate("8", "door")];
+        let other = [candidate("9", "door")];
+        assert_eq!(
+            choose_race_number(&candidates, none, &HashMap::new()).as_deref(),
+            Some("8")
+        );
+        assert_eq!(
+            choose_race_number(&other, none, &HashMap::new()).as_deref(),
+            Some("9")
+        );
     }
 }
 

@@ -210,6 +210,9 @@ struct Run<'a> {
     progress: Option<&'a crate::progress::Progress>,
     /// The live feed the identify screen draws; shared by all workers.
     live: Option<&'a Arc<IdentifyLive>>,
+    /// How often each number was read in each burst, for the tiebreak that
+    /// settles two equally prominent panels. Keyed by `images.burst_key`.
+    burst_numbers: Mutex<HashMap<i64, HashMap<String, u32>>>,
 }
 
 impl Run<'_> {
@@ -349,6 +352,11 @@ impl Run<'_> {
             );
             let native = (s.plate_native_search && s.read_plates).then_some(&tight);
             let kind = row["cls"].as_str().unwrap_or("car");
+            let burst = row["burst_key"].as_i64().unwrap_or_default();
+            let seen_numbers = lock(&self.burst_numbers)
+                .get(&burst)
+                .cloned()
+                .unwrap_or_default();
             self.task.detail(format!("{filename} · {kind}"));
             self.busy(lane, &filename, "identify");
             if let Some(live) = self.live {
@@ -369,6 +377,7 @@ impl Run<'_> {
                     settings: s,
                     plates: self.plates,
                     known: self.known,
+                    seen_numbers: &seen_numbers,
                 },
                 readers,
                 prompt_sink.as_ref().map(|sink| sink as &dyn Fn(&str)),
@@ -384,6 +393,14 @@ impl Run<'_> {
                 self.report(failure.clone());
             }
             let mut analysis = outcome.analysis;
+            if let Some(number) = analysis.race_number.clone() {
+                lock(&self.burst_numbers)
+                    .entry(burst)
+                    .or_default()
+                    .entry(number)
+                    .and_modify(|count| *count += 1)
+                    .or_insert(1);
+            }
             // What the frame reads as, for the live strip on the scan screen.
             if let Some(label) = analysis
                 .race_number
@@ -482,7 +499,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
         } else {
             "vehicle"
         };
-        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='{region}' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
+        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path,i.burst_key FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='{region}' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
         // The live feed the identify screen draws, replaced by the next run and
         // kept after this one so its summary stays on screen. The guard ends an
         // early return (`?`) as an error rather than leaving the feed running.
@@ -600,6 +617,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             reported: &reported,
             progress: progress.as_deref(),
             live: Some(&live),
+            burst_numbers: Mutex::new(HashMap::new()),
         };
         let fail = |e: String| {
             lock(&failure).get_or_insert(e);
