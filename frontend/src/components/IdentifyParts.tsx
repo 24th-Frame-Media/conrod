@@ -2,7 +2,21 @@ import { asset } from '../lib/api';
 import {
   actionLabel, confidencePercent, confidenceTone, displayPath, fileName, prettyReply, sourceLabel,
 } from '../lib/identifyFlow.mjs';
+import { visionLaneWords, type VisionAction, type VisionOffReason } from '../lib/vision.mjs';
 import type { IdentifyItem } from '../lib/types';
+
+/** Why a car got no make, colour or team when vision is off, with the way to change that. */
+function VisionWhy({ reason, onAction }: { reason: VisionOffReason; onAction?: (id: VisionAction['id']) => void }) {
+  const { why, action } = visionLaneWords(reason);
+  return (
+    <>
+      {why}
+      {action && onAction && (
+        <button type="button" className="ghost small id-vision-action" onClick={() => onAction(action.id)}>{action.label}</button>
+      )}
+    </>
+  );
+}
 
 /** The photo the car was read from, by file name; a crop's own file name says nothing. */
 const caption = (item: IdentifyItem) => item.path?.split(/[\\/]/).pop() || fileName(item);
@@ -29,11 +43,14 @@ export function Chips({ item }: { item: IdentifyItem }) {
  * out. Several workers run at once, so the screen shows one of these per worker; a finished
  * worker keeps its last car until the next one starts.
  */
-export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', onOpen }: {
+export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', visionOff, onVisionAction, onOpen }: {
   worker: number; item: IdentifyItem | null; prompt?: string; live: boolean; name?: string; onOpen: () => void;
+  /** Why the vision model is not asked, when it is not: the card says so instead of "Make not read". */
+  visionOff?: VisionOffReason | null;
+  onVisionAction?: (id: VisionAction['id']) => void;
 }) {
   const image = item ? asset(displayPath(item)) : '';
-  const title = [item?.make, item?.model].filter(Boolean).join(' ') || (item ? 'Make not read' : 'Waiting for a car');
+  const title = [item?.make, item?.model].filter(Boolean).join(' ') || (item ? (visionOff ? visionLaneWords(visionOff).title : 'Make not read') : 'Waiting for a car');
   const source = sourceLabel(item?.number_source);
   // Confidence is about the number: a car with no number read is not a 0% reading.
   const conf = item?.number ? confidencePercent(item.number_conf) : null;
@@ -74,13 +91,13 @@ export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', onOp
         <h4>ASKING</h4>
         {prompt
           ? <pre className="mono">{prompt}</pre>
-          : <p className="muted id-panel-empty">{item ? 'No prompt for this car.' : 'Waiting…'}</p>}
+          : <p className="muted id-panel-empty">{item ? (visionOff ? <VisionWhy reason={visionOff} onAction={onVisionAction} /> : 'No prompt for this car.') : 'Waiting…'}</p>}
       </section>
       <section className="id-panel id-lane-panel">
         <h4>MODEL SAYS</h4>
         {item?.reply
           ? <pre className="mono">{prettyReply(item.reply)}</pre>
-          : <p className="muted id-panel-empty">{live ? 'Waiting for the model…' : 'No reply.'}</p>}
+          : <p className="muted id-panel-empty">{visionOff ? 'Vision is off, so there is no reply.' : live ? 'Waiting for the model…' : 'No reply.'}</p>}
         {item?.action?.length ? (
           <div className="id-action-tags">{item.action.map((tag) => <span className="tag" key={tag}>{actionLabel(tag)}</span>)}</div>
         ) : null}
@@ -107,9 +124,12 @@ export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', onOp
 }
 
 /** The full page for one car: the picture with its number, the question, the reply and the trace. */
-export function IdentifyDetail({ detail, prompt, live }: { detail: IdentifyItem | null; prompt?: string; live: boolean }) {
+export function IdentifyDetail({ detail, prompt, live, visionOff, onVisionAction }: {
+  detail: IdentifyItem | null; prompt?: string; live: boolean;
+  visionOff?: VisionOffReason | null; onVisionAction?: (id: VisionAction['id']) => void;
+}) {
   const number = hash(detail?.number);
-  const title = [detail?.make, detail?.model].filter(Boolean).join(' ') || (detail ? 'Make not read' : 'No car read yet');
+  const title = [detail?.make, detail?.model].filter(Boolean).join(' ') || (detail ? (visionOff ? visionLaneWords(visionOff).title : 'Make not read') : 'No car read yet');
   const source = sourceLabel(detail?.number_source);
   const conf = detail?.number ? confidencePercent(detail.number_conf) : null;
   const tone = confidenceTone(detail?.number_conf);
@@ -157,7 +177,7 @@ export function IdentifyDetail({ detail, prompt, live }: { detail: IdentifyItem 
           <h4>ASKING</h4>
           {prompt
             ? <pre className="mono">{prompt}</pre>
-            : <p className="muted id-panel-empty">{detail ? 'No prompt for this car.' : 'Waiting…'}</p>}
+            : <p className="muted id-panel-empty">{detail ? (visionOff ? <VisionWhy reason={visionOff} onAction={onVisionAction} /> : 'No prompt for this car.') : 'Waiting…'}</p>}
         </section>
         <section className="id-panel id-reply">
           <h4>MODEL SAYS</h4>

@@ -451,8 +451,10 @@ export type IdentifyLive = {
   started_at?: number | null;
   elapsed_ms?: number | null;
   stage: IdentifyStage;
-  /** The vision model this run calls, for the VISION node; empty when off. */
-  model?: string;
+  /** The vision model this run calls, for the VISION node; null when vision is off (see `vision_off_reason`). */
+  model?: string | null;
+  /** Why vision is off for this run: turned off for the album, off in Settings, no service switched on, or a shoot type with nothing to ask. Null when it is on. */
+  vision_off_reason?: 'album' | 'settings' | 'no_service' | 'lanes' | null;
   /** How many identify workers run at once: one panel per worker. */
   workers?: number;
   /** Null before the first car is read. */

@@ -15,7 +15,7 @@ export type IngestDeps = {
   onEnd: (how: 'done' | 'stopped') => void;
   speed: () => number;
 };
-export type IngestOptions = { jobId: number; mode: 'ingest' | 'identify'; total: number; cars: number; at: number; paused: boolean; /** Send only what today's engine sends: no lane frames, no lane ids, no per-frame details. */ legacy?: boolean };
+export type IngestOptions = { jobId: number; mode: 'ingest' | 'identify'; total: number; cars: number; at: number; paused: boolean; /** Send only what today's engine sends: no lane frames, no lane ids, no per-frame details. */ legacy?: boolean; /** Play the run with the vision model off, for this reason (?vision=off). */ visionOff?: 'album' | 'settings' | 'no_service' | 'lanes' };
 export type IngestInfo = { phase: 'scan' | 'group' | 'pick' | 'vision' | 'done' | 'stopped'; done: number; total: number; paused: boolean; detail: string; eta: number | null };
 export type IngestSim = {
   jobId: number; mode: 'ingest' | 'identify'; finished: boolean;
@@ -120,6 +120,8 @@ export function startIngestSim(deps: IngestDeps, opts: IngestOptions): IngestSim
       const lines = stage === 'read' ? 1 : stage === 'crop' ? 2 : stage === 'vision' ? 3 : 4;
       item.trace = (item.trace ?? []).slice(0, lines);
       // The model has not answered until the last step: its question is out, its reply is not.
+      // Vision off: the plate and number reads stand, but the model never asks, answers or names a make.
+      if (opts.visionOff) { item.prompt = null; item.reply = null; item.make = null; item.model = null; item.team = null; item.colour = null; }
       if (stage === 'read' || stage === 'crop' || stage === 'vision') { item.reply = null; item.number = null; item.make = null; item.model = null; item.team = null; item.colour = null; item.plate = null; }
       return item;
     };
@@ -132,7 +134,7 @@ export function startIngestSim(deps: IngestDeps, opts: IngestOptions): IngestSim
     const v = visionSnap();
     return {
       job_id: jobId, state, done: state === 'done' ? cars : v.done, total: cars, started_at: startedAt / 1000, elapsed_ms: Math.round(visionT * 1000),
-      stage: state === 'running' ? v.stage : 'done', model: VISION_MODEL, workers: VISION_WORKERS,
+      stage: state === 'running' ? v.stage : 'done', model: opts.visionOff ? null : VISION_MODEL, vision_off_reason: opts.visionOff ?? null, workers: VISION_WORKERS,
       current: state === 'running' ? v.active[0] ?? null : null, active: state === 'running' ? v.active : [], recent: v.recent, errors: [],
     };
   };
@@ -166,7 +168,7 @@ export function startIngestSim(deps: IngestDeps, opts: IngestOptions): IngestSim
     stages.push(
       { id: 'group', label: 'Group', model: 'EXIF time + similarity', device: 'CPU', workers_total: 1, workers_busy: phase === 'group' ? 1 : 0, queue_len: 0, done: Math.floor(group), total, errors: 0, rate_per_s: phase === 'group' ? total / GROUP_S : 0, eta_s: phase === 'group' ? GROUP_S - groupT : null },
       { id: 'pick', label: 'Pick', model: 'keeper ranker', device: 'CPU', workers_total: 1, workers_busy: phase === 'pick' ? 1 : 0, queue_len: 0, done: Math.floor(pick), total, errors: 0, rate_per_s: phase === 'pick' ? total / PICK_S : 0, eta_s: phase === 'pick' ? PICK_S - pickT : null },
-      { id: 'identify', label: 'Identify', model: vision ? `${VISION_MODEL} via Ollama` : '', device: vision ? 'ollama' : '', workers_total: vision ? VISION_WORKERS : 0, workers_busy: phase === 'vision' ? Math.min(VISION_WORKERS, cars - idDone) : 0, queue_len: 0, done: idDone, total: cars, errors: 0, rate_per_s: 0, eta_s: null },
+      { id: 'identify', label: 'Identify', model: vision && !opts.visionOff ? `${VISION_MODEL} via Ollama` : '', device: vision ? 'ollama' : '', workers_total: vision ? VISION_WORKERS : 0, workers_busy: phase === 'vision' ? Math.min(VISION_WORKERS, cars - idDone) : 0, queue_len: 0, done: idDone, total: cars, errors: 0, rate_per_s: 0, eta_s: null },
     );
     const open = stages.findIndex((s) => s.done < s.total);
     const headAt = open < 0 ? stages.length - 1 : open, head = stages[headAt];

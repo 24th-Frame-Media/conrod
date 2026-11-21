@@ -10,6 +10,7 @@ import { edgeFrameId, stepInStack } from '../lib/navigation.mjs';
 import { reviewedStacks, stackDecision } from '../lib/decisions.mjs';
 import { tasteStacks } from '../lib/taste.mjs';
 import { albumSetting } from '../lib/album.mjs';
+import { albumVisionChoice, albumVisionOn } from '../lib/vision.mjs';
 import { WORKFLOW_OPTIONS, pipelineSteps, workflowIncludesCull, workflowIncludesIdentify, workflowLabel, workflowModeOf, type PipelineStep } from '../lib/workflow.mjs';
 import { everythingCount, identifyActionLabel, identifyScopeOf, keeperCount } from '../lib/identify.mjs';
 import { call, engine } from '../lib/api';
@@ -478,6 +479,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     grouping_keep_pans: albumSetting(currentJob, 'grouping_keep_pans', settings) as boolean | undefined ?? true,
     grouping_focus_anchor: albumSetting(currentJob, 'grouping_focus_anchor', settings) as boolean | undefined ?? true,
     identify_scope: identifyScopeOf(albumSetting(currentJob, 'identify_scope', settings)),
+    use_vlm: albumVisionOn(currentJob, settings),
   };
   /** Album-scoped changes go to this album only; the global defaults are edited in Settings. */
   const saveAlbum = async (patch: Record<string, unknown>) => {
@@ -832,6 +834,8 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         jobLabel={currentJob?.label ?? ''}
         initialProfile={currentProfile}
         initialSettings={albumSettings}
+        initialVision={albumVisionChoice(currentJob)}
+        globals={settings}
         visible={shootSettingsOpen}
         onClose={() => setShootSettingsOpen(false)}
         onSave={async (patch) => {
@@ -970,7 +974,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           }}
         />
       )}
-      {identifyTask && <IdentificationBanner task={identifyTask} settings={settings} onSkip={onSkipIdentify} />}
+      {identifyTask && <IdentificationBanner task={identifyTask} settings={albumSettings} onSkip={onSkipIdentify} />}
       <div className="review-main">
         <Facets preset={currentProfile} overrides={{ ...userDefaults, ...albumOverrides }} facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
         {stacked

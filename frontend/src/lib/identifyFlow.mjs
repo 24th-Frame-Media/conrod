@@ -1,4 +1,5 @@
 // Pure logic for the identify live screen: the flow row, the image to show, the confidence meter and the words around them.
+import { visionNodeSub, visionOffReason } from './vision.mjs';
 
 /** The stages the `identify-progress` event reports, in the order they happen. */
 export const IDENTIFY_STAGES = ['read', 'crop', 'vision', 'merge', 'done'];
@@ -34,9 +35,12 @@ export function flowNodes(live, model, stage) {
   // `done` only ever comes from a finished car (the engine clears `current` when the run
   // ends), so the whole row checks off while that result is held.
   const finished = at === 'done';
+  // Vision off is a reason, not a model: the VISION node says so instead of naming one.
+  const reason = visionOffReason(live);
   return FLOW_NODES.map((node, i) => ({
     ...node,
-    sub: node.label === 'VISION' && model ? String(model) : node.sub,
+    sub: node.label !== 'VISION' ? node.sub : reason ? visionNodeSub(reason) : model ? String(model) : node.sub,
+    off: node.label === 'VISION' && Boolean(reason),
     state: finished || i < active ? 'done' : node.stage === at ? 'active' : 'pending',
   }));
 }

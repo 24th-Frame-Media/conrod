@@ -154,6 +154,10 @@ function identifyItem(k: number, stage: IdentifyStage, startedAt: number): Ident
   };
 }
 
+/** `?vision=off` (turned off for the album), `settings`, `service` (no service set up) or `lanes`: the identify page plays without the vision model. */
+function visionOffParam(word: string | null) {
+  return word === 'off' || word === 'album' ? 'album' : word === 'settings' ? 'settings' : word === 'service' || word === 'no_service' ? 'no_service' : word === 'lanes' ? 'lanes' : undefined;
+}
 let ingest: IngestSim | undefined;
 /** `mode: 'ingest'` plays a whole run on album `jobId`; `'identify'` plays only its vision phase. `?at=` jumps ahead, `?paused` freezes it, `?speed=` hurries it. */
 function startIngest(db: Db, jobId: number, mode: 'ingest' | 'identify'): void {
@@ -166,7 +170,7 @@ function startIngest(db: Db, jobId: number, mode: 'ingest' | 'identify'): void {
   ingest = startIngestSim({
     thumb: mockThumb, item: identifyItem, onScan: emitScan, onIdentify: emitIdentify, speed: () => Number(params().get('speed')) || 1,
     onEnd: (how) => { if (mode === 'ingest' && job) job.status = how === 'done' ? 'done' : 'stopped'; },
-  }, { jobId, mode, total, cars, at: Number(p.get('at')) || 0, paused: p.has('paused'), legacy: p.has('legacy') });
+  }, { jobId, mode, total, cars, at: Number(p.get('at')) || 0, paused: p.has('paused'), legacy: p.has('legacy'), visionOff: visionOffParam(p.get('vision')) });
   if (mode === 'ingest' && job && ingest.finished) job.status = 'done';
 }
 const startSim = (db: Db, jobId: number) => startIngest(db, jobId, 'ingest');
@@ -377,7 +381,9 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       const job = db.jobs.find((j) => j.id === a.jobId);
       if (job) {
         const patch = (a.patch ?? {}) as Record<string, unknown>;
-        job.settings_json = JSON.stringify({ ...JSON.parse(job.settings_json || '{}'), ...patch });
+        const next = { vlm_inherit: 1, ...JSON.parse(job.settings_json || '{}'), ...patch } as Record<string, unknown>;
+        if (next.use_vlm === null) delete next.use_vlm; // null hands the choice back to Settings, as the engine does
+        job.settings_json = JSON.stringify(next);
         if (typeof patch.scan_profile === 'string') job.scan_profile = patch.scan_profile;
       }
       return out({ ok: true, jobId: a.jobId });

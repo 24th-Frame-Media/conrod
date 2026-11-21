@@ -3,6 +3,7 @@
 import { deciderNode } from './decider.mjs';
 import { flowNodes } from './identifyFlow.mjs';
 import { STAGE_ORDER, orderStages, stageStatus } from './scan.mjs';
+import { visionNodeSub, visionOffReason } from './vision.mjs';
 
 /** The steps a scan lane carries a frame through, in order. */
 export const SCAN_STEPS = ['read', 'decode', 'detect', 'sharpness', 'faces', 'persist'];
@@ -67,13 +68,15 @@ function visionNode(identify, identifyStage, model, finished) {
   if (identify) state = identify.state === 'running' ? 'active' : identify.state === 'done' ? 'done' : 'pending';
   else if (identifyStage) state = stageStatus(identifyStage) === 'done' ? 'done' : stageStatus(identifyStage) === 'active' ? 'active' : 'pending';
   if (finished && (!identify || identify.state === 'done')) state = 'done';
-  const shownModel = identify?.model || model || identifyStage?.model || '';
+  // Vision off is a reason, never a model name: the engine sends `model: null` and says why.
+  const reason = visionOffReason(identify);
+  const shownModel = reason ? '' : identify?.model || model || identifyStage?.model || '';
   const total = identify ? identify.total : identifyStage?.total ?? 0;
   const done = identify ? identify.done : identifyStage?.done ?? 0;
   const workers = identify?.workers ?? identifyStage?.workers_total ?? 0;
-  const sub = total > 0 ? `${n(done)} / ${n(total)} cars` : state === 'pending' ? 'waiting' : 'reading';
+  const sub = reason ? visionNodeSub(reason) : total > 0 ? `${n(done)} / ${n(total)} cars` : state === 'pending' ? 'waiting' : 'reading';
   const meta = [workers > 0 ? `${workers} ${workers === 1 ? 'worker' : 'workers'}` : '', shownModel].filter(Boolean).join(' · ');
-  return { id: 'vision', number: '', label: 'VISION', sub, meta, title: [sub, meta].filter(Boolean).join(' · '), state, off: false, filter: 'vision' };
+  return { id: 'vision', number: '', label: 'VISION', sub, meta, title: [sub, meta].filter(Boolean).join(' · '), state, off: Boolean(reason), filter: 'vision' };
 }
 
 /**
@@ -102,7 +105,7 @@ export function ingestNodes({ stages, identify = null, model = '', finished = fa
 /** The identify-only flowchart: today's six nodes in the same shape, none of them a filter. */
 export function identifyNodes(live, model) {
   return flowNodes(live, model).map((node) => ({
-    id: node.label.toLowerCase(), number: node.number, label: node.label, sub: node.sub, meta: '', title: node.sub, state: node.state, off: false, filter: null,
+    id: node.label.toLowerCase(), number: node.number, label: node.label, sub: node.sub, meta: '', title: node.sub, state: node.state, off: node.off === true, filter: null,
   }));
 }
 

@@ -455,6 +455,60 @@ impl Default for Settings {
     }
 }
 
+/// Why the vision model is not asked for an album. The word is what the
+/// identify screen receives as `vision_off_reason`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisionOff {
+    /// Turned off for this album.
+    Album,
+    /// Turned off in Settings, and the album did not choose otherwise.
+    Settings,
+    /// On, but no vision service is switched on.
+    NoService,
+    /// This shoot type has nothing to ask the model.
+    Lanes,
+}
+
+impl VisionOff {
+    pub fn word(self) -> &'static str {
+        match self {
+            VisionOff::Album => "album",
+            VisionOff::Settings => "settings",
+            VisionOff::NoService => "no_service",
+            VisionOff::Lanes => "lanes",
+        }
+    }
+}
+
+/// Present in an album's stored settings once its `use_vlm` means something:
+/// an album with it follows the global vision switch unless it carries its own
+/// boolean `use_vlm`. An album without it was created before that, when the
+/// switch was copied in at creation and never offered as a choice, so its
+/// `use_vlm` is only a stale copy. See [`follow_global_vlm`].
+pub const ALBUM_VLM_MARK: &str = "vlm_inherit";
+
+/// Make a stored album settings map follow the global vision switch, once:
+/// drop the stale `use_vlm` copy and stamp [`ALBUM_VLM_MARK`]. Does nothing
+/// to an album that already has the mark, so a choice made since stays.
+/// Returns whether the map changed.
+pub fn follow_global_vlm(map: &mut Map<String, Value>) -> bool {
+    if map.contains_key(ALBUM_VLM_MARK) {
+        return false;
+    }
+    map.remove("use_vlm");
+    map.insert(ALBUM_VLM_MARK.into(), Value::from(1));
+    true
+}
+
+/// The album's own vision choice, if it made one: a boolean `use_vlm` in an
+/// album that carries [`ALBUM_VLM_MARK`]. `None` follows the global switch.
+pub fn album_vlm_choice(map: &Map<String, Value>) -> Option<bool> {
+    if !map.contains_key(ALBUM_VLM_MARK) {
+        return None;
+    }
+    map.get("use_vlm").and_then(Value::as_bool)
+}
+
 /// One VLM server: a provider at a host (with its key), and the model
 /// selected on that server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -603,6 +657,42 @@ impl Settings {
         lanes
     }
 
+    /// Is a vision service switched on? A settings file from before the
+    /// service list has none and uses the single-provider fields instead.
+    pub fn has_vision_service(&self) -> bool {
+        self.vlm_services.is_empty() || self.vlm_services.iter().any(|s| s.enabled)
+    }
+
+    /// The vision model a run would call: the first enabled service's, else
+    /// the single-provider model.
+    pub fn vision_model(&self) -> String {
+        self.vlm_services
+            .iter()
+            .find(|service| service.enabled)
+            .map(|service| service.model.clone())
+            .unwrap_or_else(|| self.vlm_model.clone())
+    }
+
+    /// Why the vision model is not asked for this album, or `None` when it is.
+    /// `album_choice` is the album's own stored `use_vlm`, if it ever set one:
+    /// it tells "turned off for this album" from "off in Settings".
+    /// Call it on settings that are not yet [`Settings::resolved`].
+    pub fn vision_off(&self, album_choice: Option<bool>) -> Option<VisionOff> {
+        if !self.lanes().asks_model() {
+            Some(VisionOff::Lanes)
+        } else if !self.use_vlm {
+            Some(if album_choice == Some(false) {
+                VisionOff::Album
+            } else {
+                VisionOff::Settings
+            })
+        } else if !self.has_vision_service() {
+            Some(VisionOff::NoService)
+        } else {
+            None
+        }
+    }
+
     /// The wizard's answers, read tolerantly.
     pub fn profile(&self) -> crate::user_profile::UserProfile {
         crate::user_profile::UserProfile::from_map(&self.user_profile)
@@ -632,6 +722,8 @@ impl Settings {
         self.read_text &= lanes.numbers || lanes.plates || lanes.sponsors;
         self.identify_make_model &= lanes.make_model;
         self.identify_team &= lanes.sponsors;
+        // With every vision service switched off there is nothing to ask.
+        self.use_vlm &= self.has_vision_service();
         self
     }
 
@@ -927,5 +1019,88 @@ mod tests {
         assert_eq!(clamp_workers(0, caps.identify, 3), 3);
         assert_eq!(clamp_workers(-2, caps.preview, 40), 4);
         assert_eq!(clamp_workers(2, caps.cull, 4), 2);
+    }
+
+    fn map(text: &str) -> Map<String, Value> {
+        serde_json::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn an_old_albums_vision_copy_is_dropped_once_and_a_later_choice_stays() {
+        // Stored before the mark existed: a copy of the global switch.
+        let mut old = map(r#"{"use_vlm":false,"scan_profile":"motorsport"}"#);
+        assert_eq!(album_vlm_choice(&old), None, "unmarked: never a choice");
+        assert!(follow_global_vlm(&mut old));
+        assert!(!old.contains_key("use_vlm"));
+        assert_eq!(old[ALBUM_VLM_MARK], 1);
+        assert_eq!(album_vlm_choice(&old), None, "now it follows the global");
+        assert_eq!(old["scan_profile"], "motorsport", "nothing else touched");
+
+        // The album then chooses; a second pass keeps the choice.
+        old.insert("use_vlm".into(), Value::Bool(false));
+        assert!(!follow_global_vlm(&mut old));
+        assert_eq!(album_vlm_choice(&old), Some(false));
+        old.insert("use_vlm".into(), Value::Bool(true));
+        assert_eq!(album_vlm_choice(&old), Some(true));
+    }
+
+    #[test]
+    fn an_album_that_follows_the_global_gets_the_global_vision_switch() {
+        let mut stored = map(r#"{"use_vlm":false}"#);
+        follow_global_vlm(&mut stored);
+        let mut global = Settings::default();
+        assert!(global.clone().apply(&stored).use_vlm, "global on: album on");
+        global.use_vlm = false;
+        assert!(!global.apply(&stored).use_vlm, "global off: album off");
+    }
+
+    #[test]
+    fn the_reason_vision_is_off_is_the_first_that_applies() {
+        let on = Settings::default();
+        assert_eq!(on.vision_off(None), None);
+        assert_eq!(on.vision_off(Some(true)), None);
+
+        let off = Settings {
+            use_vlm: false,
+            ..Settings::default()
+        };
+        assert_eq!(off.vision_off(Some(false)), Some(VisionOff::Album));
+        assert_eq!(off.vision_off(None), Some(VisionOff::Settings));
+        assert_eq!(VisionOff::Album.word(), "album");
+        assert_eq!(VisionOff::Settings.word(), "settings");
+
+        // On, but every service is switched off.
+        let mut none = Settings::default();
+        none.seed_vlm_services();
+        for service in &mut none.vlm_services {
+            service.enabled = false;
+        }
+        assert_eq!(none.vision_off(None), Some(VisionOff::NoService));
+        assert_eq!(VisionOff::NoService.word(), "no_service");
+        assert!(!none.clone().resolved().use_vlm, "nothing to ask");
+
+        // A shoot type with nothing to ask the model comes first.
+        let nothing = Settings {
+            scan_profile: "portrait".into(),
+            ..Settings::default()
+        };
+        assert!(!nothing.lanes().asks_model());
+        assert_eq!(nothing.vision_off(None), Some(VisionOff::Lanes));
+        assert_eq!(VisionOff::Lanes.word(), "lanes");
+    }
+
+    #[test]
+    fn the_vision_model_is_the_first_enabled_services() {
+        let mut settings = Settings::default();
+        settings.seed_vlm_services();
+        settings.vlm_services[0].enabled = false;
+        settings.vlm_services.push(VlmService {
+            id: "vlm-9".into(),
+            provider: "opencode".into(),
+            model: "glm-5.3-flash".into(),
+            ..VlmService::default()
+        });
+        assert_eq!(settings.vision_model(), "glm-5.3-flash");
+        assert!(settings.has_vision_service());
     }
 }
