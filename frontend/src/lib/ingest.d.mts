@@ -70,6 +70,12 @@ export function verdictText(verdict: string | null | undefined, panning?: boolea
 export function tagWidth(text: string | null | undefined): number;
 export function tagFits(box: readonly number[] | null | undefined, frameWidth: number, text: string | null | undefined): boolean;
 export function boxLabel(box: { cls?: string; conf?: number } | null | undefined): string;
+export type BoxRole = 'main' | 'background';
+/** The judged car: the vehicle under the focus area, else the biggest; `byAf` says which rule chose it. */
+export function mainVehicle(boxes: readonly LaneBox[] | null | undefined, af?: readonly number[] | null): { index: number; byAf: boolean };
+export function boxRole(box: { cls?: string } | null | undefined, index: number, boxes: readonly LaneBox[] | null | undefined, af?: readonly number[] | null): BoxRole | null;
+export function roleLabel(box: { cls?: string; conf?: number } | null | undefined, role: BoxRole | null, byAf?: boolean): string;
+export function etaLines(input?: { vision?: boolean; scanDone?: boolean; scanEta?: number | null; scanStable?: boolean; identify?: IdentifyLive | null }): string[];
 export const TAG_HEIGHT: number;
 export type AfTagSpot = 'bl' | 'br' | 'tr' | 'tl' | 'below' | 'above';
 export function afLabel(kind: 'point' | 'grid' | null | undefined): string;

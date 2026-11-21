@@ -15,7 +15,7 @@ test('every shoot type the wizard offers is one the engine knows, once', () => {
   assert.equal(new Set(WIZARD_PRESETS).size, WIZARD_PRESETS.length);
   for (const id of WIZARD_PRESETS) assert.ok(rustNames.includes(id), id);
   for (const id of PEOPLE_PRESETS) assert.ok(WIZARD_PRESETS.includes(id), id);
-  assert.deepEqual(WIZARD_GROUPS.map((g) => g.title), ['Motorsport', 'People', 'Sport', 'Other']);
+  assert.deepEqual(WIZARD_GROUPS.map((g) => g.title), ['Motorsport', 'Portraits', 'Events', 'Mixed'], 'the wizard lists shoots exactly as Import does');
 });
 
 test('the wizard opens by itself on a fresh install only', () => {

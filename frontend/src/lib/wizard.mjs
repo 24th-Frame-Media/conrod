@@ -5,37 +5,46 @@
 // previews its effect with the same rules. Pure, so node --test can import it.
 import { applyOverrides, defaultSummary, READ_KEYS } from './presetPolicy.mjs';
 
-/** What the wizard offers, grouped the way a photographer thinks about it. Every id is a shoot preset. */
+/**
+ * What the wizard offers, grouped exactly as the Import sheet groups it (types.ts `PROFILE_GROUPS`): the same
+ * Motorsport / Portraits / Events / Mixed headings and the same names, so a photographer learns one list.
+ */
 export const WIZARD_GROUPS = [
   { id: 'motorsport', title: 'Motorsport', choices: [
-    { id: 'motorsport', title: 'Circuit racing', hint: 'Race meetings and series' },
+    { id: 'motorsport', title: 'Motorsport', hint: 'Cars, bikes and the perfect pan' },
+    { id: 'motorsport-burnouts', title: 'Burnouts', hint: 'Smoke, crowds, comps' },
     { id: 'motorsport-track', title: 'Track days', hint: 'Road cars on a circuit' },
-    { id: 'motorsport-rally', title: 'Rally', hint: 'Stages, service parks, spectators' },
-    { id: 'motorsport-burnouts', title: 'Drift & burnouts', hint: 'Smoke, crowds, comps' },
-    { id: 'motorsport-meet', title: 'Car meets & shows', hint: 'Parked cars and their owners' },
-    { id: 'auto-dealer', title: 'Dealership', hint: 'Stock photos, one car at a time' },
+    { id: 'motorsport-rally', title: 'Rallies', hint: 'Stages, service parks, spectators' },
+    { id: 'motorsport-meet', title: 'Car meets & shows', hint: 'Parked cars, owners and badges' },
+    { id: 'sport-cycling', title: 'Cycling', hint: 'Riders, bikes and the race' },
+    { id: 'sport-action', title: 'Action sports', hint: 'Riders, boards and tricks' },
+    { id: 'auto-dealer', title: 'Dealership stock', hint: 'One car at a time, clean and sharp' },
+    { id: 'aviation', title: 'Aviation', hint: 'Air shows and spotting' },
   ] },
-  { id: 'people', title: 'People', choices: [
+  { id: 'portrait', title: 'Portraits', choices: [
     { id: 'portrait', title: 'Portraits', hint: 'Eyes and faces decide the frame' },
-    { id: 'wedding', title: 'Weddings', hint: 'Couple, guests, expressions' },
-    { id: 'event-parties', title: 'Parties', hint: 'Candids and celebrations' },
-    { id: 'event', title: 'Events', hint: 'Speakers, crowds, the occasion' },
-    { id: 'concert', title: 'Concerts', hint: 'Stage light, dark frames are fine' },
+    { id: 'portrait-group', title: 'Group photos', hint: 'Everyone looking at once' },
+    { id: 'portrait-couple', title: 'Couple photos', hint: 'Two people, one moment' },
+    { id: 'portrait-pets', title: 'Pets', hint: 'Eyes, play and expression' },
   ] },
-  { id: 'sport', title: 'Sport', choices: [
+  { id: 'event', title: 'Events', choices: [
+    { id: 'event', title: 'Events', hint: 'Speakers, crowds, the occasion' },
+    { id: 'event-shows', title: 'Live shows (performers)', hint: 'Performers, animals and prizes — not car shows' },
+    { id: 'event-parties', title: 'Parties', hint: 'Candids and celebrations' },
     { id: 'sport-field', title: 'Field sports', hint: 'Football, rugby, cricket' },
     { id: 'sport-court', title: 'Court sports', hint: 'Basketball, netball, volleyball' },
     { id: 'sport-rodeo', title: 'Rodeo', hint: 'Rider and animal' },
     { id: 'sport-equestrian', title: 'Equestrian', hint: 'Horse and rider' },
-    { id: 'sport-cycling', title: 'Cycling', hint: 'Road, track and mountain bike' },
-    { id: 'sport-action', title: 'Action sports', hint: 'Riders, boards, tricks' },
+    { id: 'wedding', title: 'Weddings', hint: 'Couple, guests, expressions' },
+    { id: 'concert', title: 'Concerts', hint: 'Stage light, dark frames are fine' },
   ] },
-  { id: 'other', title: 'Other', choices: [
-    { id: 'aviation', title: 'Aviation', hint: 'Air shows and spotting' },
-    { id: 'wildlife-birds', title: 'Wildlife & birds', hint: 'Animals and birds in flight' },
+  { id: 'mix', title: 'Mixed', choices: [
+    { id: 'mix', title: 'Mixed', hint: 'Nature, property and no dominant subject' },
+    { id: 'property-listing', title: 'Property listing', hint: 'Rooms and exteriors' },
+    { id: 'property-report', title: 'Condition report', hint: 'Every detail, nothing culled for taste' },
+    { id: 'wildlife-birds', title: 'Birds', hint: 'Animals and birds in flight' },
     { id: 'landscape', title: 'Landscape', hint: 'Horizon, foreground, sky' },
     { id: 'astro', title: 'Astro', hint: 'Stars, meteors, aurora' },
-    { id: 'property-listing', title: 'Property', hint: 'Rooms and exteriors' },
   ] },
 ];
 

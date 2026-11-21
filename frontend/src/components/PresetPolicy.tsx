@@ -18,23 +18,33 @@ type Props = {
 export function PresetPolicy({ preset, overrides, onChange, user, disabled, onSummary }: Props) {
   const summary = usePresetPolicy(preset, overrides, user);
   useEffect(() => { onSummary?.(summary); }, [summary]); // eslint-disable-line react-hooks/exhaustive-deps -- report each new answer
-  const list = (title: string, rows: PolicyRow[]) => (
-    <>
-      <h4>{title}</h4>
-      <ul className="policy-list">
-        {rows.map((row) => (
-          <li key={row.key} className={`policy-row${row.on ? ' on' : ''}`}>
-            <label>
-              <input type="checkbox" checked={row.on} disabled={disabled || row.blocked} onChange={(e) => onChange(nextOverrides(overrides, row, e.target.checked))} />
-              <span>{row.label}</span>
-            </label>
-            {row.blocked && <small className="muted">{needsLabel(summary, row)}</small>}
-            {row.overridden && !row.blocked && <small className="policy-tag">{row.default ? 'off for this album' : 'on for this album'}</small>}
-          </li>
-        ))}
-      </ul>
-    </>
+  const row = (r: PolicyRow) => (
+    <li key={r.key} className={`policy-row${r.on ? ' on' : ''}`}>
+      <label>
+        <input type="checkbox" checked={r.on} disabled={disabled || r.blocked} onChange={(e) => onChange(nextOverrides(overrides, r, e.target.checked))} />
+        <span>{r.label}</span>
+      </label>
+      {r.blocked && <small className="muted">{needsLabel(summary, r)}</small>}
+      {r.overridden && !r.blocked && <small className="policy-tag">{r.default ? 'off for this album' : 'on for this album'}</small>}
+    </li>
   );
+  // A row this shoot type cannot use (a plate needs a car) is noise on a wedding: keep it one click away, not on the page.
+  const list = (title: string, rows: PolicyRow[]) => {
+    const usable = rows.filter((r) => !r.blocked);
+    const blocked = rows.filter((r) => r.blocked);
+    return (
+      <>
+        <h4>{title}</h4>
+        {usable.length > 0 && <ul className="policy-list">{usable.map(row)}</ul>}
+        {blocked.length > 0 && (
+          <details className="policy-more">
+            <summary>More ({blocked.length})</summary>
+            <ul className="policy-list">{blocked.map(row)}</ul>
+          </details>
+        )}
+      </>
+    );
+  };
   return (
     <section className="policy" aria-label="What Conrod will do for this shoot type">
       <p className="policy-title">For {summary.label.toLowerCase()}, Conrod will</p>

@@ -9,7 +9,7 @@ import { StrictnessSlider } from '../components/StrictnessSlider';
 import { GroupingFields, groupingOf, type GroupingValues } from '../components/GroupingFields';
 import { call, chooseFolder } from '../lib/api';
 import { filename } from '../lib/review';
-import { WORKFLOW_OPTIONS, workflowModeOf } from '../lib/workflow.mjs';
+import { WORKFLOW_OPTIONS, workflowHint, workflowModeOf } from '../lib/workflow.mjs';
 import { IDENTIFY_SCOPE_OPTIONS, identifyScopeOf } from '../lib/identify.mjs';
 import { profileParent, type ScanArgs, type Scope, type Settings, type Status } from '../lib/types';
 
@@ -62,6 +62,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps -- seed from the saved defaults each time the sheet opens
 
   const readsNumbers = policy ? isOn(policy, 'numbers') : false;
+  const carShoot = policy ? isOn(policy, 'vehicles') : true;
   const changeProfile = (next: string) => { setProfile(next); setOverrides({}); };
   const scanning = status.activeJob !== null;
   const gap = Number(burstGap);
@@ -111,7 +112,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
           <select id="import-workflow" value={workflow} onChange={(e) => setWorkflow(workflowModeOf(e.target.value))}>
             {WORKFLOW_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
           </select>
-          <small className="muted">{(WORKFLOW_OPTIONS.find((option) => option.id === workflow) ?? WORKFLOW_OPTIONS[0]).hint}</small>
+          <small className="muted">{workflowHint(workflow, { vehicles: carShoot })}</small>
         </div>
         <div className="import-field">
           <label htmlFor="import-identify-scope">Identify</label>

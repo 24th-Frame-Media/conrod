@@ -15,19 +15,21 @@ test('the node says why it is dimmed and counts frames once it works', () => {
   for (const [state, word] of [['off', 'off'], ['not_installed', 'not installed'], ['no_vram', 'low VRAM'], ['no_gpu', 'no GPU']]) {
     const node = deciderNode(live({ state }));
     assert.equal(node.off, true, state);
-    assert.equal(node.sub, word);
+    assert.equal(node.sub, `Decision model · ${word}`);
     assert.equal(node.state, 'pending');
     assert.equal(node.meta, '', 'no counters on an off node');
   }
   const idle = deciderNode(live());
-  assert.deepEqual([idle.off, idle.state, idle.sub], [false, 'pending', 'ready']);
+  assert.deepEqual([idle.off, idle.state, idle.sub], [false, 'pending', 'Decision model']);
   const busy = deciderNode(live({ state: 'running', busy: 1, done: 12, errors: 1, avg_ms: 340 }));
-  assert.deepEqual([busy.off, busy.state, busy.sub], [false, 'active', '12 frames']);
+  assert.deepEqual([busy.off, busy.state, busy.sub], [false, 'active', 'Decision model']);
+  assert.match(busy.meta, /12 frames/);
   assert.match(busy.meta, /1 failed/);
   assert.match(busy.meta, /int8/);
   assert.match(busy.meta, /340 ms/);
   const finished = deciderNode(live({ done: 40, avg_ms: 1300 }));
-  assert.deepEqual([finished.state, finished.sub], ['done', '40 frames']);
+  assert.deepEqual([finished.state, finished.sub], ['done', 'Decision model']);
+  assert.match(finished.meta, /40 frames/);
   assert.match(finished.meta, /1\.3 s/);
   assert.equal(busy.filter, 'decider');
 });

@@ -48,6 +48,13 @@ export function DeciderLane({ live }: { live: DeciderLive }) {
         {busy && <i className="id-lane-dot" aria-hidden="true" />}
       </header>
 
+      {/* Short screens (below 900 px) fold the whole card into one row; the full page is below it. */}
+      <div className="decider-row">
+        <b>{deciderWord(live.state)}</b>
+        <span className="mono">{live.avg_ms ? `${msWords(live.avg_ms)} / frame` : 'no frame yet'}</span>
+        <span className="muted">{last ? (last.says[0] ? `${last.says[0].text}: ${last.says[0].label} ${percent(last.says[0].p)}` : `${live.done.toLocaleString('en-US')} frames judged`) : live.message}</span>
+      </div>
+
       <div className="id-view id-view-lane">
         {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
         {image

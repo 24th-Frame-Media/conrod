@@ -28,7 +28,7 @@ test('flow nodes mark done, active and pending; vision lights both AI nodes', ()
   assert.deepEqual(nodes.map((node) => node.state), ['done', 'done', 'active', 'active', 'pending', 'pending']);
   assert.equal(nodes[2].label, 'READ');
   assert.equal(nodes[3].label, 'VISION');
-  assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b')[3].sub, 'qwen2.5vl:7b', 'the VISION node names the model when known');
+  assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b')[3].sub, 'Reading cars — Qwen2.5-VL · this PC', 'the VISION node says what it does and names the model plainly');
   assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b')[2].sub, 'plate + OCR', 'the other sublines stay put');
 });
 

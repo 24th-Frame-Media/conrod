@@ -2703,6 +2703,10 @@ dialog.viewer {
 .policy-row.on label { color: var(--text); }
 .policy-row input { flex: none; }
 .policy-tag { color: var(--accent, var(--text-dim)); font-size: 11px; }
+.policy-more { margin: 2px 0 0; }
+.policy-more summary { cursor: pointer; font-size: 12px; color: var(--text-mute); }
+.policy-more summary:hover { color: var(--text-dim); }
+.policy-more .policy-list { margin-top: 4px; }
 .policy-notes { margin: 6px 0 0; font-size: 12px; line-height: 1.4; }
 
 /* Moment tags: sure ones in the accent, maybes dimmed and dashed. */

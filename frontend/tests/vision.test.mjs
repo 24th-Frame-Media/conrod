@@ -57,9 +57,9 @@ test('the flow row and the ingest flowchart show the reason where the model name
   assert.doesNotMatch(node.meta, /qwen|off/, 'no model name, and "off" is never one');
   assert.match(node.meta, /3 workers/);
   const on = ingestNodes({ stages, identify: { ...live, model: 'glm-5.3-flash', vision_off_reason: null }, model: 'x' }).find((n) => n.id === 'vision');
-  assert.equal(on.sub, '3 / 12 cars');
+  assert.equal(on.sub, 'Reading cars — glm-5.3-flash');
   assert.equal(on.off, false);
-  assert.match(on.meta, /glm-5\.3-flash/);
+  assert.match(on.meta, /3 \/ 12 cars/);
 
   const row = identifyNodes(live, 'qwen').find((n) => n.id === 'vision');
   assert.equal(row.sub, 'off for this album');
