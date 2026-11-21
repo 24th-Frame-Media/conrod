@@ -93,6 +93,13 @@ function makeDb(): Db {
     scan_profile: params().get('profile') ?? 'motorsport', detect_conf: 0.35, min_box_fraction: 0.04, max_vehicles_per_frame: 8, include_cars: true, include_bikes: true, include_trucks: false,
     sharp_at: 0.8, blurred_below: 0.5, blur_strictness: 'moderate', entry_list: '', auto_reject_below_stars: 0, cull_blurred: true, burst_gap: 1.5, read_plates: true, read_numbers: true, read_text: true,
     use_vlm: true, vlm_provider: 'ollama', vlm_model: 'qwen2.5vl:7b', vlm_host: 'http://localhost:11434', vlm_extra_hosts: '', vlm_api_key: '', vlm_timeout: 120,
+    // The real file keeps legacy fields beside the services; the enabled one is
+    // what the UI and engine must name, never the ollama rows that are off.
+    ...({ vlm_services: [
+      { id: 'vlm-1', provider: 'ollama', model: 'qwen2.5vl:7b', host: 'http://localhost:11434', enabled: false },
+      { id: 'vlm-2', provider: 'ollama', model: 'qwen2.5vl:7b', host: 'http://192.168.1.100:11434', enabled: false },
+      { id: 'vlm-3', provider: 'opencode-go', model: 'glm-5.3-flash', enabled: true },
+    ] } as unknown as Settings),
     workflow_mode: 'both', identify_scope: 'keepers',
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
     overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', use_decider: true, decider_quant: 'auto', close_to_tray: false,

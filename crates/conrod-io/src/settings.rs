@@ -67,13 +67,27 @@ impl Settings {
     /// Values are clamped before narrowing because settings files are user
     /// editable and negative integers must not wrap into huge limits.
     pub fn from_core(settings: &conrod_core::settings::Settings) -> Self {
+        // The legacy single-provider fields are only ever a display fallback:
+        // mirror the service that will actually answer so nothing names a
+        // disabled one (the settings screen may still hold "qwen2.5vl").
+        let primary = settings.enabled_vlm_service();
         Self {
-            vlm_provider: settings.vlm_provider.clone(),
-            vlm_model: settings.vlm_model.clone(),
-            vlm_host: settings.vlm_host.clone(),
+            vlm_provider: primary
+                .map(|s| s.provider.clone())
+                .unwrap_or_else(|| settings.vlm_provider.clone()),
+            vlm_model: primary
+                .map(|s| s.model.clone())
+                .unwrap_or_else(|| settings.vlm_model.clone()),
+            vlm_host: primary
+                .map(|s| s.host.clone())
+                .unwrap_or_else(|| settings.vlm_host.clone()),
             vlm_extra_hosts: settings.vlm_extra_hosts.clone(),
-            vlm_api_key: settings.vlm_api_key.clone(),
-            anthropic_key_kind: settings.anthropic_key_kind.clone(),
+            vlm_api_key: primary
+                .map(|s| s.api_key.clone())
+                .unwrap_or_else(|| settings.vlm_api_key.clone()),
+            anthropic_key_kind: primary
+                .map(|s| s.key_kind.clone())
+                .unwrap_or_else(|| settings.anthropic_key_kind.clone()),
             vlm_services: settings.vlm_services.clone(),
             vlm_strategy: settings.vlm_strategy.clone(),
             vlm_max_retries: settings.vlm_max_retries.max(1) as u32,
@@ -106,5 +120,40 @@ impl Settings {
             }
         }
         hosts
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use conrod_core::settings::{Settings as Core, VlmService};
+
+    #[test]
+    fn the_first_enabled_service_names_the_model_over_legacy_fields() {
+        let core = Core {
+            vlm_provider: "ollama".into(),
+            vlm_model: "qwen2.5vl:7b".into(),
+            vlm_host: "http://legacy:11434".into(),
+            vlm_services: vec![
+                VlmService {
+                    id: "off".into(),
+                    provider: "ollama".into(),
+                    model: "qwen2.5vl:7b".into(),
+                    enabled: false,
+                    ..VlmService::default()
+                },
+                VlmService {
+                    id: "on".into(),
+                    provider: "opencode-go".into(),
+                    model: "glm-5.3-flash".into(),
+                    enabled: true,
+                    ..VlmService::default()
+                },
+            ],
+            ..Core::default()
+        };
+        let io = Settings::from_core(&core);
+        assert_eq!(io.vlm_provider, "opencode-go");
+        assert_eq!(io.vlm_model, "glm-5.3-flash");
     }
 }

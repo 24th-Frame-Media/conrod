@@ -23,6 +23,7 @@ import { LightroomImport } from '../components/LightroomImport';
 import { Identifications } from '../components/Identifications';
 import type { Frame, Job, KnownVehicle, MarkValues, Scope, Settings, Status, Task } from '../lib/types';
 import { profileLabel, profileParent } from '../lib/types';
+import { vlmModelLabel } from '../lib/vlm';
 import { facetsFor } from '../lib/facets.mjs';
 import { usePresetPolicy } from '../state/usePresetPolicy';
 import { isOn, overridesOf } from '../lib/presetPolicy.mjs';
@@ -61,7 +62,7 @@ function IdentificationBanner({ task, settings, onSkip }: { task: Task; settings
   const models = [
     settings.read_plates && 'plate reader',
     (settings.read_plates || settings.read_numbers) && 'OCR',
-    settings.use_vlm && String(settings.vlm_model || 'vision model'),
+    settings.use_vlm && (vlmModelLabel(settings) ?? 'no service'),
     settings.group_vehicles && 'visual matcher',
   ].filter(Boolean) as string[];
   const percent = task.total > 0 ? Math.min(100, Math.round((task.done / task.total) * 100)) : 0;

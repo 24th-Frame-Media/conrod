@@ -1223,6 +1223,14 @@ impl VlmClient {
     ) -> Result<Value, VlmError> {
         let enabled: Vec<_> = settings.vlm_services.iter().filter(|s| s.enabled).collect();
         if enabled.is_empty() {
+            // A configured list whose every row is off means the model is not
+            // asked; the legacy single-provider fields must not resurrect a
+            // service the user disabled.
+            if !settings.vlm_services.is_empty() {
+                return Err(VlmError::Misconfigured(
+                    "No vision service is enabled".into(),
+                ));
+            }
             return self.call_one(
                 settings,
                 prompt,
@@ -2108,6 +2116,29 @@ mod tests {
             .call(&settings, "p", &[], &json!({}), 8)
             .expect("the live service answers");
         assert_eq!(answer, json!({"ok": true}));
+    }
+
+    #[test]
+    fn no_enabled_service_does_not_fall_back_to_the_legacy_model() {
+        let service = |id: &str| VlmService {
+            id: id.into(),
+            provider: "ollama".into(),
+            model: "qwen2.5vl:7b".into(),
+            enabled: false,
+            ..VlmService::default()
+        };
+        let settings = Settings {
+            vlm_services: vec![service("off-1"), service("off-2")],
+            vlm_provider: "ollama".into(),
+            vlm_model: "qwen2.5vl:7b".into(),
+            ..Settings::default()
+        };
+        let client = VlmClient::new(Arc::new(RealClock::default()));
+        let answer = client.call(&settings, "p", &[], &json!({}), 8);
+        assert!(
+            matches!(answer, Err(VlmError::Misconfigured(_))),
+            "{answer:?}"
+        );
     }
 
     #[test]

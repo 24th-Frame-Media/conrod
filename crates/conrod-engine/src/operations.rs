@@ -184,15 +184,19 @@ fn identify_models(settings: &Settings) -> (String, &'static str) {
         parts.push("PP-OCRv4".into());
     }
     if settings.use_vlm {
-        parts.push(format!(
-            "{} via {}",
-            settings.vlm_model, settings.vlm_provider
-        ));
+        match settings.enabled_vlm_service() {
+            Some(service) => parts.push(format!("{} via {}", service.model, service.provider)),
+            None => parts.push("no vision service".into()),
+        }
     }
     if parts.is_empty() {
         parts.push("embeddings only".into());
     }
-    let device = if settings.use_vlm { "ollama" } else { "CPU" };
+    let device = if settings.use_vlm && settings.enabled_vlm_service().is_some() {
+        "ollama"
+    } else {
+        "CPU"
+    };
     (parts.join(" + "), device)
 }
 
@@ -512,7 +516,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
                 .iter()
                 .find(|service| service.enabled)
                 .map(|service| service.model.clone())
-                .unwrap_or_else(|| settings.vlm_model.clone())
+                .unwrap_or_default()
         } else {
             "off".to_string()
         };
@@ -892,6 +896,43 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pipeline_names_the_enabled_service_not_the_legacy_model() {
+        let service = |id: &str, provider: &str, model: &str, enabled: bool| {
+            conrod_core::settings::VlmService {
+                id: id.into(),
+                provider: provider.into(),
+                model: model.into(),
+                enabled,
+                ..conrod_core::settings::VlmService::default()
+            }
+        };
+        let settings = Settings {
+            read_plates: false,
+            read_numbers: false,
+            read_text: false,
+            use_vlm: true,
+            vlm_provider: "ollama".into(),
+            vlm_model: "qwen2.5vl:7b".into(),
+            vlm_services: vec![
+                service("off", "ollama", "qwen2.5vl:7b", false),
+                service("on", "opencode-go", "glm-5.3-flash", true),
+            ],
+            ..Settings::default()
+        };
+        let (model, _) = identify_models(&settings);
+        assert!(model.contains("glm-5.3-flash via opencode-go"), "{model}");
+        assert!(!model.contains("qwen2.5vl"), "{model}");
+
+        let all_off = Settings {
+            vlm_services: vec![service("off", "ollama", "qwen2.5vl:7b", false)],
+            ..settings
+        };
+        let (model, device) = identify_models(&all_off);
+        assert_eq!(model, "no vision service");
+        assert_eq!(device, "CPU");
+    }
 
     /// The identify lane's pending query, with only the scope rule swapped.
     fn pending(db: &rusqlite::Connection, job: i64, scope: &str) -> Vec<i64> {
