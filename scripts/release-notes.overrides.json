@@ -38,6 +38,7 @@
     ],
     "3985500": { "section": "New", "text": "A short first-run setup asks what you shoot, who is in your pictures, what to read, how picky to be and whether to use the on-device decision model, then tunes Conrod to match. Every step can be skipped, and Settings > Set up Conrod again reopens it." },
     "cc6ade8": { "section": "Fixed", "text": "On the import screen, the live frames fill their card instead of sitting to the left." },
+    "05afd77": { "section": "Fixed", "text": "The setup summary reads clearly, and the models list no longer trips a warning." },
     "bce9f44": { "section": "New", "text": "Conrod remembers what each plate turned out to be, so a car it has seen before is not read again (and not read differently)." },
     "c2287b1": { "section": "Fixed", "text": "A car is learned once, not once per frame, so one car no longer ends up with several different model names." },
     "9d87b98": { "section": "Fixed", "text": "Close-ups and frames with no vehicle in them are measured for sharpness again." },
