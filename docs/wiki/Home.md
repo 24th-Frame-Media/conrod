@@ -1,0 +1,38 @@
+# Conrod wiki
+
+**November 2026**
+
+Conrod is a Windows app for culling and keywording motorsport, automotive, and event photography. It scans a folder of RAW or JPEG frames, finds the cars and people, measures what is sharp, groups bursts and moments, suggests a keeper for each pass, reads race numbers and plates, and can identify make, model, colour, team, and names. Everything is written to `.xmp` sidecars, so your RAW files are never changed.
+
+You do not need any AI model to use Conrod. Detection, sharpness, bursts, and suggested keepers run on the PC. The vision model adds make/model/colour and better race numbers; the decision model adds calibrated moments.
+
+## Start here
+
+- [Getting started](Getting-started) — install, first launch, the wizard, your first scan.
+- [Albums and scanning](Albums-and-scanning) — shoot types, the scan queue, stop and resume, unfinished scans.
+- [How culling works](How-culling-works) — sharpness, the autofocus subject, background cars, bursts, moments.
+- [Identify](Identify) — vision services, OCR, race numbers, skip identify.
+- [Lightroom integration](Lightroom-integration) — the plug-in, stars/picks/labels, folder layout, TO-IMPORT.
+- [Settings reference](Settings-reference) — the AI models card and per-album overrides.
+- [Recommended setups](Recommended-setups) — local, cloud, and mixed.
+- [Troubleshooting](Troubleshooting) — what the common messages mean.
+- [Roadmap](Roadmap) — what is built and what is planned.
+
+## What is new in this build
+
+- Scan queue: start several albums, one scans at a time. Pull a waiting album with **Unqueue**.
+- Start-up splash with real steps: library, unfinished albums, models, ExifTool, graphics card.
+- AI models card in Settings, with vision and decision model rows.
+- Vision inheritance and an explicit reason when vision is off.
+- OpenRouter and OpenCode Go as vision providers; OpenRouter as a decision-model transport.
+- OCR demoted behind the vision model, with a race-number tiebreak across panels and a burst.
+- Identified albums can skip identification or run **Identify new only**.
+- Detector fixes: sharp autofocus frames kept, cars/trucks/buses as one vehicle class, a confidence floor for big cars, AF-selected main subject, dimmed background cars, composition never culls.
+- The decision model sees the whole frame and the crop, and runs live during identify.
+- The Conrod Bridge Lightroom plug-in installs automatically and applies suggested stars, picks, and colour labels.
+
+Detailed model guidance, prices, and provider steps are in [AI models in Conrod](../user/ai-models.md).
+
+## Requirements
+
+Windows 10 or 11, 64-bit, with WebView2. A graphics card is optional but makes detection much faster. A vision model needs either Ollama on the same PC or a cloud key.

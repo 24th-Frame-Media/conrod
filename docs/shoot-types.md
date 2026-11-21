@@ -41,6 +41,8 @@ Cars are an option on every type but on by default only where vehicles are the s
 
 Faces are off at circuit racing, track days, rallies and burnouts (people stay on at the last three), cycling, action sports and field sports; the photographer can switch them on per album or, in setup, for every album of a type.
 
+Field and court sports read **jersey numbers** through the players lane: the number reader runs on person boxes with a player prompt (`prompts/player.txt`) instead of a vehicle, so it needs *People* on. Names stay court-only. Vehicles are off by default for shows, events, parties, portraits, weddings, concerts, field and court sport, rodeo, equestrian, wildlife, property, landscape and astro; switch them on for a car-heavy event.
+
 ## What changed
 
 | Type | Race numbers | Plates | Cars by default |
