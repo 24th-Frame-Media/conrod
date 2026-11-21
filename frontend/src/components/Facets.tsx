@@ -4,20 +4,20 @@ import { facetsFor, tabsWithData, validTab, type FacetKind } from '../lib/facets
 import type { FacetItem } from '../lib/review';
 import type { Facet } from '../lib/types';
 
-type Props = { preset: string; facets: Record<FacetKind, FacetItem[]>; facet: Facet | null; onPick: (facet: Facet | null) => void };
+type Props = { preset: string; overrides?: Record<string, boolean>; facets: Record<FacetKind, FacetItem[]>; facet: Facet | null; onPick: (facet: Facet | null) => void };
 
-const TABS: Record<FacetKind, string> = { number: 'Numbers', plate: 'Plates', make: 'Makes', team: 'Teams', person: 'People', subject: 'Subjects' };
+const TABS: Record<FacetKind, string> = { number: 'Numbers', plate: 'Plates', make: 'Makes', team: 'Teams', person: 'People', subject: 'Subjects', moment: 'Moments' };
 const EMPTY: Record<FacetKind, string> = {
   number: 'No race numbers read yet', plate: 'No plates read yet', make: 'No makes read yet', team: 'No teams read yet',
-  person: 'No people found yet. Turn on people for this album', subject: 'No subjects found yet',
+  person: 'No people found yet. Turn on people for this album', subject: 'No subjects found yet', moment: 'No moments spotted yet',
 };
 const sentence = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 /** The review sidebar: what this kind of shoot can be browsed by, narrowed to what the album has. Pick one to narrow the grid to it. */
-export function Facets({ preset, facets, facet, onPick }: Props) {
+export function Facets({ preset, overrides = {}, facets, facet, onPick }: Props) {
   const [wanted, setWanted] = useState<FacetKind | null>(null);
-  const allowed = facetsFor(preset);
-  const tabs = tabsWithData(preset, facets);
+  const allowed = facetsFor(preset, overrides);
+  const tabs = tabsWithData(preset, facets, overrides);
   const kind = validTab(wanted, tabs);
   const active = facet && allowed.includes(facet.kind) ? facet : null;
   // A filter that this preset no longer offers would hide frames with no way to clear it.
@@ -30,7 +30,7 @@ export function Facets({ preset, facets, facet, onPick }: Props) {
     const at = facets.person.findIndex((p) => p.value === value);
     return facets.person[at]?.who || `Person ${at + 1}`;
   };
-  const label = (f: Facet) => (f.kind === 'person' ? personLabel(f.value) : f.kind === 'number' ? `#${f.value}` : f.kind === 'subject' ? sentence(f.value) : f.value);
+  const label = (f: Facet) => (f.kind === 'person' ? personLabel(f.value) : f.kind === 'number' ? `#${f.value}` : f.kind === 'subject' || f.kind === 'moment' ? sentence(f.value.replace(/_/g, ' ')) : f.value);
   return (
     <aside className="facets" aria-label={allowed.map((k) => TABS[k]).join(', ')}>
       {tabs.length > 1 && (
@@ -57,7 +57,7 @@ export function Facets({ preset, facets, facet, onPick }: Props) {
                   </>
                 ) : (
                   <>
-                    <span className="n">{kind === 'number' ? '#' : ''}{kind === 'subject' ? sentence(item.value) : item.value}</span>
+                    <span className="n">{kind === 'number' ? '#' : ''}{kind === 'subject' ? sentence(item.value) : kind === 'moment' ? sentence(item.value.replace(/_/g, ' ')) : item.value}</span>
                     <span className="who">{item.who}</span>
                   </>
                 )}

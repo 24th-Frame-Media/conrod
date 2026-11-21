@@ -1,8 +1,10 @@
 /* Dev-only engine stand-in: `vite dev` + `?mock=1`. Imported dynamically behind import.meta.env.DEV, so it is not in `dist`.
    Extra params: page=library|scan|ingest|identify|review|known|settings, viewer, popover, scan (a scan is running), profile=<shoot preset id>. */
 import { startIngestSim, type IngestSim } from './mockIngest';
+import { mockDeciderStatus, startDeciderSim } from './mockDecider';
 import type { ShootStats } from './shot.mjs';
-import type { Bootstrap, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, Settings, Status, WorkerLimits } from './types';
+import { applyOverrides, defaultSummary, overridesOf } from './presetPolicy.mjs';
+import type { Bootstrap, DeciderLive, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, Settings, Status, WorkerLimits } from './types';
 
 export type DevStart = {
   page?: Page; jobId?: number; viewer?: boolean; popover?: boolean;
@@ -66,6 +68,7 @@ function makeDb(): Db {
       id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > count - 4 ? 'pending' : 'done',
       thumb_path: scene(hue, cx, s, colour, 420, 280), preview_path: null, width: W, height: H, rating,
       manual_stars: soft ? null : i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, picked: i % 17 === 5 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
+      moments: i % 7 === 3 ? JSON.stringify({ backend: 'decider', strength: 0.9, readings: [{ tag: 'tyre_smoke', p: 0.93, calibrated: true }, { tag: 'flames', p: 0.62, calibrated: true }] }) : null,
       comp_placement: 0.52 + ((i * 23) % 42) / 100, comp_mode: COMP_MODES[i % 3],
       comp_balance_x: ((i * 13 + 15) % 40 - 20) / 100, comp_balance_y: ((i * 19 + 10) % 40 - 20) / 100,
       comp_symmetry: ((i * 29) % 80) / 100, comp_clutter: clutter,
@@ -91,7 +94,7 @@ function makeDb(): Db {
     use_vlm: true, vlm_provider: 'ollama', vlm_model: 'qwen2.5vl:7b', vlm_host: 'http://localhost:11434', vlm_extra_hosts: '', vlm_api_key: '', vlm_timeout: 120,
     workflow_mode: 'both', identify_scope: 'keepers',
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
-    overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', close_to_tray: false,
+    overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', use_decider: true, decider_quant: 'auto', close_to_tray: false,
   };
   return { jobs, frames, dets, known, settings, ticks: 0, identifySkipped: false };
 }
@@ -110,6 +113,16 @@ export function subscribeIdentifyProgress(cb: (p: IdentifyLive) => void): () => 
   identifyListeners.add(cb);
   if (lastIdentify) cb(lastIdentify);
   return () => { identifyListeners.delete(cb); };
+}
+const deciderListeners = new Set<(p: DeciderLive) => void>();
+let lastDecider: DeciderLive | null = null;
+let stopDecider: (() => void) | null = null;
+/** The decision model's feed: starts the simulator with the first listener (see mockDecider.ts). */
+export function subscribeDeciderProgress(cb: (p: DeciderLive) => void): () => void {
+  deciderListeners.add(cb);
+  if (lastDecider) cb(lastDecider);
+  stopDecider ??= startDeciderSim((p) => { lastDecider = p; for (const fn of deciderListeners) fn(p); }, (k) => mockThumb(k));
+  return () => { deciderListeners.delete(cb); };
 }
 const emitScan = (p: ScanProgress) => { lastProgress = p; for (const cb of listeners) cb(p); };
 const emitIdentify = (p: IdentifyLive) => { lastIdentify = p; for (const cb of identifyListeners) cb(p); };
@@ -193,7 +206,9 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'watch_status': return out({active: false, jobId: null});
     case 'set_watch': return out(a);
     case 'cover': return out({path: db.frames[0]?.thumb_path});
-    case 'health': return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}]);
+    case 'health': return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}, {name: 'Decision model', ready: mockDeciderStatus().state === 'ready', optional: true, detail: mockDeciderStatus().message}]);
+    case 'decider_status': return out(mockDeciderStatus());
+    case 'install_decider': return out({operation: 'Installing decision model'});
     case 'cache_info': return out({total: {files: 64, bytes: 3200000}});
     case 'check_update': return out({ok: true, current: '0.0.0-mock', latest: '0.0.1-mock', newer: true, installable: true});
     case 'ollama_models': return out({
@@ -340,6 +355,20 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
         timed_albums: albums,
       } satisfies GlobalStats);
     }
+    case 'preset_policy': {
+      const given = (a.overrides ?? {}) as Record<string, boolean>;
+      return out(applyOverrides(defaultSummary(String(a.preset ?? 'mix')), overridesOf(given)));
+    }
+    case 'set_feature': {
+      const job = db.jobs.find((j) => j.id === a.jobId);
+      if (!job) throw new Error('No such album');
+      const stored = JSON.parse(job.settings_json || '{}') as Record<string, unknown>;
+      const next = overridesOf(stored.overrides);
+      if (typeof a.value === 'boolean') next[String(a.feature)] = a.value; else delete next[String(a.feature)];
+      job.settings_json = JSON.stringify({ ...stored, overrides: next });
+      const lanes = applyOverrides(defaultSummary(job.scan_profile ?? 'motorsport'), next);
+      return out({ ok: true, jobId: a.jobId, settings: { overrides: next }, operation: null, needsRescan: false, lanes });
+    }
     case 'update_job_settings': {
       const job = db.jobs.find((j) => j.id === a.jobId);
       if (job) {
@@ -370,7 +399,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       if (a.jobId == null && typeof a.root === 'string') {
         const id = Math.max(0, ...db.jobs.map((j) => j.id)) + 1;
         const label = String(a.label || '').trim() || a.root.split(/[\\/]/).filter(Boolean).pop() || 'Album';
-        db.jobs.unshift({ id, label, root: a.root, status: 'scanning', total: 0, done: 0, created_at: Math.floor(Date.now() / 1000), scan_profile: String(a.profile ?? 'motorsport') });
+        db.jobs.unshift({ id, label, root: a.root, status: 'scanning', total: 0, done: 0, created_at: Math.floor(Date.now() / 1000), scan_profile: String(a.profile ?? 'motorsport'), settings_json: JSON.stringify({ overrides: a.overrides ?? {} }) });
         if (a.stage === 'all') startSim(db, id);
         return out({ jobId: id });
       }

@@ -11,3 +11,4 @@ pub mod watch;
 pub mod writer;
 
 pub mod health;
+pub mod moments;

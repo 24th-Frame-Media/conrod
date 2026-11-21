@@ -115,17 +115,20 @@ pub mod catalog;
 pub mod commands;
 pub mod composition;
 pub mod copies;
+pub mod decider;
 pub mod desktop;
 #[cfg(test)]
 mod edgetest;
 pub mod edits;
 #[cfg(test)]
 mod evaltest;
+pub mod gpu;
 pub mod housekeeping;
 pub mod identify_live;
 pub mod library;
 pub mod lightroom;
 mod looks;
+pub mod moments;
 pub mod operations;
 #[cfg(test)]
 mod pantest;
@@ -412,20 +415,31 @@ pub(crate) fn pan_motion(
 }
 
 fn options(settings: &Settings, _profile: ScanProfile) -> DetectOptions {
+    detect_options(settings)
+}
+
+/// What the detector is asked for in this album: the lanes' own answer
+/// (preset policy plus the album's overrides), never a hardcoded list.
+#[doc(hidden)]
+pub fn detect_options(settings: &Settings) -> DetectOptions {
     let preset = ShootPreset::parse(&settings.scan_profile);
+    let lanes = settings.lanes();
     let mut classes = Vec::new();
-    if preset.wants_vehicles() {
-        classes.extend(settings.vehicle_classes());
+    if lanes.vehicles {
+        // A preset whose vehicles are not cars (aircraft, bicycles) names
+        // its own classes; otherwise the album's car / bike / truck switches.
+        if lanes.vehicle_classes.is_empty() {
+            classes.extend(settings.vehicle_classes());
+        } else {
+            classes.extend(lanes.vehicle_classes.iter().copied());
+        }
     }
-    if preset.wants_people() {
+    if lanes.people {
         classes.push(detect::PERSON);
     }
-    if preset.wants_animals() {
+    if lanes.animals {
         classes.extend(detect::ANIMALS);
     }
-    // Aviation asks for the airplane class (COCO 4) through its policy; the
-    // detector reports it as a vehicle region, which is what an aircraft is.
-    classes.extend(preset.extra_vehicle_classes().iter().copied());
     DetectOptions {
         conf: settings.detect_conf as f32,
         classes,
@@ -625,8 +639,7 @@ pub(crate) fn face_subjects(
 /// The frame's rating: the best subject of the first kind its priority finds.
 /// Subjects are `(region_type, bbox, rating)`.
 pub(crate) fn frame_rating(
-    profile: ScanProfile,
-    include_people: bool,
+    lanes: &conrod_core::profile::Lanes,
     subjects: &[(&str, [f64; 4], f64)],
     whole: Option<f64>,
 ) -> f64 {
@@ -639,8 +652,8 @@ pub(crate) fn frame_rating(
     let main = main_subject(subjects.iter().filter_map(|(region, [x0, y0, x1, y1], _)| {
         kind_of(region).map(|k| (k, (x1 - x0) * (y1 - y0)))
     }));
-    profile
-        .frame_priority(include_people, main)
+    lanes
+        .frame_priority(main)
         .iter()
         .find_map(|kind| {
             if *kind == Kind::WholeFrame {
@@ -1193,7 +1206,7 @@ pub fn cull_frame_live(
         .map(|s| (s.region_type, s.bbox, s.rating))
         .collect();
     let detected = pan_capped(
-        frame_rating(preset.profile(), settings.include_people, &rated, whole),
+        frame_rating(&settings.lanes(), &rated, whole),
         detected_panning,
         share_measured,
     );
@@ -1376,7 +1389,7 @@ pub(crate) fn scan_files_filtered(
             return;
         }
         let mut needs = setup::SCAN.to_vec();
-        if ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people) {
+        if settings.lanes().faces {
             needs.extend(setup::FACES);
         }
         if let Err(e) = setup::ensure(&hub, &flag, &needs) {
@@ -1384,6 +1397,9 @@ pub(crate) fn scan_files_filtered(
             loading.fail(format!("could not install the models: {e}"));
             return;
         }
+        // The sessions below share the card with the decision model: hold the gate
+        // until they are dropped (declared first, so released last).
+        let _gpu = gpu::stage();
         let detectors: Vec<Mutex<Detector>> = {
             let sessions = conrod_core::settings::clamp_workers(
                 settings.detect_workers,
@@ -1408,23 +1424,22 @@ pub(crate) fn scan_files_filtered(
         let detector_name = detector_model()
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-        let faces =
-            if ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people) {
-                let task = hub.start("Loading face detector", 0);
-                match load_faces_pool(detectors.len()) {
-                    Ok(pool) => {
-                        task.finish();
-                        Some(pool)
-                    }
-                    Err(e) => {
-                        *lock(&failure) = Some(e.clone());
-                        task.fail(e);
-                        return;
-                    }
+        let faces = if settings.lanes().faces {
+            let task = hub.start("Loading face detector", 0);
+            match load_faces_pool(detectors.len()) {
+                Ok(pool) => {
+                    task.finish();
+                    Some(pool)
                 }
-            } else {
-                None
-            };
+                Err(e) => {
+                    *lock(&failure) = Some(e.clone());
+                    task.fail(e);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         // Expression is optional: without the landmarker and blendshape files
         // the scan silently keeps the binary OCEC eye verdict.
         let expression = if faces.is_some() {
@@ -1688,7 +1703,7 @@ mod tests {
         paths.push(bad);
 
         let settings = Settings::default();
-        let faces = ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people);
+        let faces = settings.lanes().faces;
         let progress = crate::progress::for_scan(1, &settings, faces);
         let results = Arc::new(Mutex::new(Vec::new()));
         let sink = results.clone();
@@ -1997,6 +2012,91 @@ mod tests {
         );
     }
 
+    fn album(preset: &str, overrides: &str) -> Settings {
+        let patch: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&format!(
+            r#"{{"scan_profile":"{preset}","overrides":{overrides}}}"#
+        ))
+        .unwrap();
+        Settings::default().apply(&patch)
+    }
+
+    #[test]
+    fn the_detector_is_asked_only_for_what_the_lanes_look_for() {
+        let car = detect::VEHICLES;
+        // Circuit racing: cars, bikes and trucks plus people; no animals.
+        let o = detect_options(&album("motorsport", "{}"));
+        assert!(car.iter().all(|c| o.classes.contains(c)));
+        assert!(o.classes.contains(&detect::PERSON));
+        assert!(!o.classes.contains(&detect::ANIMALS[1]));
+        // A portrait session never asks for a car ...
+        let o = detect_options(&album("portrait", "{}"));
+        assert!(car.iter().all(|c| !o.classes.contains(c)));
+        // ... unless the album switches vehicles on.
+        let o = detect_options(&album("portrait", r#"{"vehicles":true}"#));
+        assert!(car.iter().all(|c| o.classes.contains(c)));
+        // Shows are not car shoots by default; the switch brings cars back.
+        assert!(!detect_options(&album("event-shows", "{}"))
+            .classes
+            .contains(&2));
+        assert!(
+            detect_options(&album("event-shows", r#"{"vehicles":true}"#))
+                .classes
+                .contains(&2)
+        );
+        // Switching vehicles off on a car shoot drops every vehicle class.
+        let o = detect_options(&album("motorsport-track", r#"{"vehicles":false}"#));
+        assert!(car.iter().all(|c| !o.classes.contains(c)));
+        assert!(o.classes.contains(&detect::PERSON));
+        // People and animals switch both ways too.
+        let o = detect_options(&album("wedding", r#"{"people":false}"#));
+        assert!(!o.classes.contains(&detect::PERSON));
+        let o = detect_options(&album("wildlife-birds", r#"{"animals":false}"#));
+        assert!(o.classes.is_empty());
+        // Aircraft and bicycles name their own classes, never cars.
+        assert_eq!(detect_options(&album("aviation", "{}")).classes, vec![4]);
+        assert_eq!(detect_options(&album("sport-cycling", "{}")).classes[0], 1);
+        assert!(!detect_options(&album("sport-cycling", "{}"))
+            .classes
+            .contains(&2));
+    }
+
+    #[test]
+    fn the_readers_a_preset_does_not_need_are_off_in_the_resolved_settings() {
+        let on = |s: &Settings| (s.read_plates, s.read_numbers, s.identify_make_model);
+        // Circuit racing: numbers and livery, no plates.
+        assert_eq!(
+            on(&album("motorsport", "{}").resolved()),
+            (false, true, true)
+        );
+        // Car meets: plates and model, no race numbers.
+        assert_eq!(
+            on(&album("motorsport-meet", "{}").resolved()),
+            (true, false, true)
+        );
+        // Weddings read nothing from vehicles.
+        assert_eq!(
+            on(&album("wedding", "{}").resolved()),
+            (false, false, false)
+        );
+        // Either direction is the album's to choose.
+        assert_eq!(
+            on(&album("motorsport-meet", r#"{"numbers":true}"#).resolved()),
+            (true, true, true)
+        );
+        assert_eq!(
+            on(&album("motorsport", r#"{"vehicles":false}"#).resolved()),
+            (false, false, false)
+        );
+        // The global master switch still wins.
+        let mut s = album("motorsport-meet", "{}");
+        s.read_plates = false;
+        assert!(!s.resolved().read_plates);
+    }
+
+    fn portrait_lanes() -> conrod_core::profile::Lanes {
+        conrod_core::profile::Lanes::defaults(ShootPreset::Portrait)
+    }
+
     #[test]
     fn a_portrait_is_as_sharp_as_its_softer_eye() {
         let portrait = [
@@ -2006,7 +2106,7 @@ mod tests {
             ("person", [0.0, 0.0, 100.0, 100.0], 0.88),
         ];
         assert_eq!(
-            frame_rating(ScanProfile::Portrait, false, &portrait, Some(0.5)),
+            frame_rating(&portrait_lanes(), &portrait, Some(0.5)),
             0.91,
             "one soft eye is a miss the sharp one must not hide"
         );
@@ -2015,10 +2115,7 @@ mod tests {
             ("person", [0.0, 0.0, 10.0, 10.0], 0.91),
             ("person", [0.0, 0.0, 50.0, 50.0], 0.99),
         ];
-        assert_eq!(
-            frame_rating(ScanProfile::Portrait, false, &people, None),
-            0.99
-        );
+        assert_eq!(frame_rating(&portrait_lanes(), &people, None), 0.99);
     }
 
     /// The frame the two subject-blur tests share.

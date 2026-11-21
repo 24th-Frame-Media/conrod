@@ -1,6 +1,7 @@
 import { burstTopRanks, filename, filterFrames, frameStars, frameExcluded } from '../review.mjs';
 import { decisionOf, groupKeyOf, keeperIds } from './stacks.mjs';
 import { tasteOrder } from './taste.mjs';
+import { sureTags } from './moments.mjs';
 import type { AttributeKey, Attributes, Detection, Facet, Frame, Review, Sort, View } from './types';
 
 export { filename, frameStars, frameExcluded, decisionOf, keeperIds };
@@ -10,6 +11,8 @@ export type FrameFacts = {
   dets: Detection[]; plates: string[]; numbers: string[];
   /** Make and model, team, and subject classes (animals and the like) seen in the frame. */
   makes: string[]; teams: string[]; subjects: string[];
+  /** The shoot's moments the judge was sure of (see `moments.mjs`), for the facet list. */
+  moments: string[];
   /** The people (face clusters, by `group_key`) seen in the frame. */
   people: string[];
   plate: string | null; number: string | null; vehicle: string | null;
@@ -73,7 +76,7 @@ function factsFor(frame: Frame, dets: Detection[]): FrameFacts {
   const teams = unique(attrs.map((a) => a.team));
   const subjects = unique(dets.filter((d) => !NOT_SUBJECT.has((d.cls || '').toLowerCase()) && d.region_type !== 'face' && d.region_type !== 'eye').map((d) => (d.cls || '').toLowerCase()));
   return {
-    dets, plates, numbers, makes, teams, subjects, people, plate: plates[0] ?? null, number: numbers[0] ?? null, vehicle, colour,
+    dets, plates, numbers, makes, teams, subjects, people, moments: sureTags(frame.moments), plate: plates[0] ?? null, number: numbers[0] ?? null, vehicle, colour,
     colourCss: first(attrs.map((a) => a.colour_hex)) ?? colour, team,
     panned: dets.some((d) => d.panning), pick: dets.some((d) => Boolean(d.burst_pick)) || Boolean(frame.burst_pick),
     reviewed: dets.length > 0 && dets.every((d) => Boolean(d.reviewed)),
@@ -93,7 +96,7 @@ export function buildFacts(review: Review): Map<number, FrameFacts> {
 }
 
 export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Record<Facet['kind'], FacetItem[]> {
-  const bucket = { number: new Map<string, FacetItem>(), plate: new Map<string, FacetItem>(), person: new Map<string, FacetItem>(), make: new Map<string, FacetItem>(), team: new Map<string, FacetItem>(), subject: new Map<string, FacetItem>() };
+  const bucket = { number: new Map<string, FacetItem>(), plate: new Map<string, FacetItem>(), person: new Map<string, FacetItem>(), make: new Map<string, FacetItem>(), team: new Map<string, FacetItem>(), subject: new Map<string, FacetItem>(), moment: new Map<string, FacetItem>() };
   // One number can belong to several cars (categories share numbers), so a
   // number's row says how many distinct cars it covers rather than naming one.
   const vehiclesByNumber = new Map<string, Set<string>>();
@@ -116,6 +119,7 @@ export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Re
     x.makes.forEach((m) => bump(bucket.make, m, null));
     x.teams.forEach((t) => bump(bucket.team, t, null));
     x.subjects.forEach((s) => bump(bucket.subject, s, null));
+    x.moments.forEach((m) => bump(bucket.moment, m, null));
     for (const key of x.people) {
       const face = x.dets.find((d) => d.region_type === 'face' && String(d.group_key) === key);
       bump(bucket.person, key, face?.known_person_match?.name ?? null);
@@ -137,12 +141,13 @@ export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Re
     make: [...bucket.make.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)),
     team: [...bucket.team.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)),
     subject: [...bucket.subject.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)),
+    moment: [...bucket.moment.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)),
   };
 }
 
 function facetValues(x: FrameFacts | undefined, kind: Facet['kind']): string[] | undefined {
   if (!x) return undefined;
-  return { number: x.numbers, plate: x.plates, make: x.makes, team: x.teams, person: x.people, subject: x.subjects }[kind];
+  return { number: x.numbers, plate: x.plates, make: x.makes, team: x.teams, person: x.people, subject: x.subjects, moment: x.moments }[kind];
 }
 
 /**

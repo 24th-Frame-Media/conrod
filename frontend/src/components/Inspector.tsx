@@ -4,6 +4,7 @@ import { compositionLabels } from '../lib/composition.mjs';
 import { afLabel } from '../lib/viewer.mjs';
 import { filename, frameStars, frameExcluded } from '../lib/review';
 import type { Detection, Frame, KnownVehicle, MarkValues } from '../lib/types';
+import { describe, liftNote, momentsOf, type VocabularyEntry } from '../lib/moments.mjs';
 import { StarControl } from './Stars';
 import { LoadableImage } from './Media';
 import { DetectionsTable, getCategory, type CategoryFilter } from './DetectionsTable';
@@ -18,6 +19,8 @@ type Props = {
   allFrames?: Frame[];
   known?: KnownVehicle[];
   kind?: ReviewKind;
+  /** The shoot's moments: what the judge may name, how sure it must be, and whether it lifts ranking. */
+  moments?: { vocabulary: readonly VocabularyEntry[]; threshold: number; rankOn: boolean; detectOn: boolean };
   onMark: (values: MarkValues) => void;
   onOpen: () => void;
   onEdit: (id: number, updates: Record<string, string | string[] | null>) => unknown;
@@ -54,6 +57,7 @@ export function Inspector({
   allFrames = [],
   known = [],
   kind = 'mixed',
+  moments,
   onMark,
   onOpen,
   onEdit,
@@ -140,6 +144,8 @@ export function Inspector({
   const stars = frameStars(frame);
   const labels = compositionLabels(frame);
   const af = afLabel(frame);
+  const seen = moments?.detectOn ? momentsOf(frame.moments, moments.vocabulary, moments.threshold) : null;
+  const lifted = moments ? liftNote(frame.moments, moments.vocabulary, moments.threshold, moments.rankOn) : '';
 
   return (
     <aside
@@ -202,6 +208,15 @@ export function Inspector({
           </>
         )}
       </dl>
+
+      {seen && (seen.sure.length > 0 || seen.maybe.length > 0 || seen.peak) && (
+        <div className="moment-tags" aria-label="Moments">
+          {seen.sure.map((m) => <span key={m.tag} className="tag moment sure" title={describe(m)}>{m.label}</span>)}
+          {seen.maybe.map((m) => <span key={m.tag} className="tag moment maybe" title={`${describe(m)}. Below the confidence bar, so it never changes ranking.`}>Maybe: {m.label}</span>)}
+          {seen.peak && <span className="tag moment sure" title="The decision model picked this frame as the peak of its burst">Peak of burst</span>}
+          {lifted && <small className="moment-lift muted">{lifted}</small>}
+        </div>
+      )}
 
       {frame.taste != null && (
         <p className="muted taste-score" title="Learned taste: ranks this frame against its burst. A sort signal, not a keeper.">

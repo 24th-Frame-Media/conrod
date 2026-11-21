@@ -67,7 +67,9 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
   const activeTasks = status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').sort((a, b) => b.id - a.id);
   const finishedTasks = status.tasks.filter((task) => task.state !== 'running' && task.state !== 'paused').sort((a, b) => b.id - a.id);
   const activeJob = jobs.find((job) => job.id === status.activeJob);
-  const readyModels = models.filter((model) => model.ready).length;
+  // Opt-in models (the decision model) are not counted against the machine when they are not installed.
+  const required = models.filter((model) => !model.optional);
+  const readyModels = required.filter((model) => model.ready).length;
 
   useEffect(() => {
     if (!open) return;
@@ -91,7 +93,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
           <div className="popover-head"><h3>Background work</h3><span className={`state ${tone === 'busy' ? 'running' : tone === 'error' ? 'failed' : 'done'}`}>{active ? (active.state === 'paused' ? 'Paused' : 'Running') : tone === 'error' ? 'Error' : 'Ready'}</span></div>
           <div className="activity-summary">
             <div><b>{activeJob && active?.total ? `${active.done.toLocaleString()} / ${active.total.toLocaleString()}` : '—'}</b><small>{activeJob ? activeJob.label : 'No active scan'}</small></div>
-            <div><b>{readyModels} / {models.length}</b><small>Models ready</small></div>
+            <div><b>{readyModels} / {required.length}</b><small>Models ready</small></div>
             <div><b>{status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').length}</b><small>Active tasks</small></div>
           </div>
           {activeJob && active?.total ? <div className="bar scan-overall" title="Overall scan progress"><div className="fill" style={{ width: `${pct(active.done, active.total)}%` }} /></div> : null}
@@ -115,9 +117,9 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
               {status.operations.map((key) => <button key={key} className="ghost small" onClick={() => actions.cancel(key)}>Cancel {key}</button>)}
             </div>
           )}
-          <div className="activity-section"><span>Detection models</span><span>{readyModels}/{models.length}</span></div>
+          <div className="activity-section"><span>Detection models</span><span>{readyModels}/{required.length}</span></div>
           <ul className="activity-models">
-            {models.map((model) => <li key={model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span>{model.name}</span><small>{model.ready ? 'Ready' : 'Unavailable'}</small></li>)}
+            {models.map((model) => <li key={model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span>{model.name}</span><small>{model.ready ? 'Ready' : model.optional ? 'Optional' : 'Unavailable'}</small></li>)}
             {!models.length && <li className="muted">Checking model availability…</li>}
           </ul>
           <details className="activity-history">

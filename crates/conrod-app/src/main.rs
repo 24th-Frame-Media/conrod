@@ -246,6 +246,11 @@ fn main() {
                     if let Some(snapshot) = worker.identify_snapshot() {
                         let _ = handle.emit("identify-progress", snapshot);
                     }
+                    // The DECIDER node: what the decision model was asked and said.
+                    // Quiet unless something changed or a request is in flight.
+                    if let Some(snapshot) = conrod_engine::decider::service().snapshot() {
+                        let _ = handle.emit("decider-progress", snapshot);
+                    }
                     if version == seen {
                         continue;
                     }

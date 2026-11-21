@@ -318,7 +318,7 @@ fn remeasure(
 
 /// The index of the subject whose rating became the frame's rating, decided
 /// the way `frame_rating` decides it (`lib.rs:325-355`).
-fn frame_setter(profile: ScanProfile, include_people: bool, subjects: &[Subject]) -> Option<usize> {
+fn frame_setter(lanes: &conrod_core::profile::Lanes, subjects: &[Subject]) -> Option<usize> {
     use conrod_core::profile::{main_subject, Subject as Kind};
     let kind_of = |region: &str| match region {
         "person" => Some(Kind::Person),
@@ -328,19 +328,16 @@ fn frame_setter(profile: ScanProfile, include_people: bool, subjects: &[Subject]
     let main = main_subject(subjects.iter().filter_map(|s| {
         kind_of(s.region_type).map(|k| (k, (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1])))
     }));
-    let region = profile
-        .frame_priority(include_people, main)
-        .iter()
-        .find_map(|kind| {
-            if *kind == Kind::WholeFrame {
-                return None;
-            }
-            let name = crate::passes::region_name(*kind);
-            subjects
-                .iter()
-                .any(|s| s.region_type == name)
-                .then_some(name)
-        })?;
+    let region = lanes.frame_priority(main).iter().find_map(|kind| {
+        if *kind == Kind::WholeFrame {
+            return None;
+        }
+        let name = crate::passes::region_name(*kind);
+        subjects
+            .iter()
+            .any(|s| s.region_type == name)
+            .then_some(name)
+    })?;
     subjects
         .iter()
         .enumerate()
@@ -494,17 +491,17 @@ fn export_recall() {
     // app's own (lib.rs:554-607).
     let hub = desktop.hub.clone();
     let stop = AtomicBool::new(false);
-    let preset = ShootPreset::parse(&settings.scan_profile);
     let mut needs = crate::setup::SCAN.to_vec();
-    if preset.wants_faces(settings.include_people) {
+    if settings.lanes().faces {
         needs.extend(crate::setup::FACES);
     }
     crate::setup::ensure(&hub, &stop, &needs).expect("install the models the app installs");
     let detector =
         Mutex::new(Detector::load(&detector_model(), Device::Auto).expect("load the detector"));
     let device = lock(&detector).device;
-    let faces = preset
-        .wants_faces(settings.include_people)
+    let faces = settings
+        .lanes()
+        .faces
         .then(|| crate::load_faces_pool(1).expect("load the face detector"));
     let expression = faces
         .is_some()
@@ -631,7 +628,7 @@ fn export_recall() {
                         }
                     }
                 }
-                let setter = frame_setter(profile, settings.include_people, &f.subjects);
+                let setter = frame_setter(&settings.lanes(), &f.subjects);
                 if let Some(i) = setter {
                     if (f.subjects[i].rating - f.rating).abs() > 1e-9 {
                         println!(
