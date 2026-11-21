@@ -15,13 +15,14 @@ import { ImportDialog, type ImportDefaults, type ScanDraft } from './screens/Imp
 import { IdentifyScreen } from './screens/Identify';
 import { ScanScreen } from './screens/Scan';
 import { Settings } from './screens/Settings';
-import { useFolderDrop, useLocalFlag, useRun } from './state/hooks';
+import { useAppVersion, useFolderDrop, useLocalFlag, useRun } from './state/hooks';
 import { useToast } from './state/toast';
 import { useEngine } from './state/useEngine';
 import { useHotkeys } from './state/useHotkeys';
 import { useIdentifyProgress } from './state/useIdentifyProgress';
 import { useReview } from './state/useReview';
 import { useScanProgress } from './state/useScanProgress';
+import { useStartup } from './state/useStartup';
 import { useWhatsNew } from './state/useWhatsNew';
 import { useWizard } from './state/useWizard';
 
@@ -46,6 +47,8 @@ export function App() {
 
   const rv = useReview(jobId, run);
   const eng = useEngine(jobId, rv.refresh, run);
+  const startup = useStartup();
+  const appVersion = useAppVersion();
   const wizard = useWizard({ ready: eng.ready, settings: eng.settings, albums: eng.jobs.length, markSeen: whatsNew.markSeen });
   const { status } = eng;
   const scanning = status.activeJob !== null;
@@ -239,7 +242,7 @@ export function App() {
         onSaved={(saved) => { eng.setSettings(saved); if (typeof saved.scan_profile === 'string') setProfile(saved.scan_profile); }}
         onOpenSettings={() => setPage('Settings')} />
       <WhatsNewSheet visible={whatsNew.open && wizard.decided && !wizard.open} fresh={whatsNew.fresh} earlier={whatsNew.earlier} onClose={whatsNew.close} />
-      <Splash gone={eng.ready} />
+      <Splash gone={eng.ready && startup.settled} status={startup.status} version={appVersion ?? (import.meta.env.DEV && mocked ? '0.0.0-mock' : null)} />
     </div>
   );
 }
