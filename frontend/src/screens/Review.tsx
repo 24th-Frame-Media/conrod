@@ -204,8 +204,9 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const currentProfile = String(currentJob?.scan_profile || settings.scan_profile || 'motorsport');
   // Vehicle-only controls (by-vehicle grouping, "needs a look" for unread numbers and plates) go away for shoots with no vehicles to read.
   const albumOverrides = overridesOf(albumSetting(currentJob, 'overrides', settings));
-  const policy = usePresetPolicy(currentProfile, albumOverrides);
-  const vehicleBrowse = facetsFor(currentProfile, albumOverrides).some((k) => k === 'number' || k === 'plate' || k === 'make');
+  const userDefaults = overridesOf(albumSetting(currentJob, 'user_defaults', settings));
+  const policy = usePresetPolicy(currentProfile, albumOverrides, userDefaults);
+  const vehicleBrowse = facetsFor(currentProfile, { ...userDefaults, ...albumOverrides }).some((k) => k === 'number' || k === 'plate' || k === 'make');
   const groupingNow = grouping === 'vehicles' && !vehicleBrowse ? 'bursts' : grouping;
   const identifyTask = jobId == null ? undefined : status.tasks.find((task) => (task.state === 'running' || task.state === 'paused') && /^Identifying\b/.test(task.label) && task.label.includes(`album ${jobId}`));
   const identifying = Boolean(identifyTask || (jobId != null && status.operations.some((key) => key === `Identifying:${jobId}`)));
@@ -971,7 +972,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       )}
       {identifyTask && <IdentificationBanner task={identifyTask} settings={settings} onSkip={onSkipIdentify} />}
       <div className="review-main">
-        <Facets preset={currentProfile} overrides={albumOverrides} facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
+        <Facets preset={currentProfile} overrides={{ ...userDefaults, ...albumOverrides }} facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
         {stacked
           ? <StackGrid stacks={shown} selectedKey={selectedKey} selectedId={selected} expandedKey={expandedKey} keeperIds={keepers} facts={facts} suggestions={suggestions} softBursts={softBursts}
               culled={(f) => Boolean(facts.get(f.id)?.cull)} onToggle={toggleStack} onSelect={rv.setSelected} onOpen={openViewer} onPick={acceptSuggestion}

@@ -2657,3 +2657,45 @@ dialog.viewer {
 .tag.moment.maybe { border-style: dashed; color: var(--text-mute); }
 .moment-lift { flex-basis: 100%; }
 .policy-moments { margin: 2px 0 0; font-size: 12px; line-height: 1.4; }
+
+/* ── first-run setup wizard ── */
+.wizard-sheet { width: min(640px, 92vw); max-height: 88vh; display: flex; flex-direction: column; gap: 0; }
+.wizard-sheet > section { overflow-y: auto; min-height: 0; padding-right: 4px; }
+.wizard-step { margin: 0 0 6px; font-size: 12px; }
+.wizard-dots { list-style: none; display: flex; gap: 6px; margin: 0 0 14px; padding: 0; }
+.wizard-dots li { width: 28px; height: 3px; border-radius: 2px; background: var(--line); }
+.wizard-dots li.done { background: var(--text-mute); }
+.wizard-dots li.on { background: var(--accent); }
+.wizard-group { border: 0; margin: 0 0 14px; padding: 0; min-width: 0; }
+.wizard-group legend, .wizard-ask legend { padding: 0; margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-mute); }
+.wizard-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.wizard-chip { position: relative; display: inline-flex; align-items: center; padding: 7px 13px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--text-dim); font-size: 13px; cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
+.wizard-chip:hover { border-color: var(--line-hover); color: var(--text); }
+.wizard-chip input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.wizard-chip.on { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--surface-2)); }
+.wizard-chip:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wizard-default { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.wizard-default label { color: var(--text-dim); font-size: 13px; }
+.wizard-default select { width: auto; min-width: 180px; }
+.wizard-note { margin: 6px 0 0; font-size: 12.5px; line-height: 1.5; }
+.wizard-ask { border: 0; margin: 0 0 18px; padding: 0; min-width: 0; display: grid; gap: 8px; }
+.wizard-radio, .wizard-read { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-2); cursor: pointer; color: var(--text-dim); }
+.wizard-radio:hover, .wizard-read:hover { border-color: var(--line); }
+.wizard-radio:has(input:checked), .wizard-read.on { border-color: var(--line-hover); color: var(--text); }
+.wizard-radio input, .wizard-read input { flex: none; margin: 3px 0 0; }
+.wizard-radio span, .wizard-read span { display: grid; gap: 2px; min-width: 0; }
+.wizard-radio small, .wizard-read small { color: var(--text-mute); font-size: 12px; line-height: 1.45; }
+.wizard-radio b, .wizard-read b { font-weight: 500; color: var(--text); font-size: 13px; }
+.wizard-reads { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.wizard-read input:disabled + span { opacity: .55; }
+.wizard-hardware { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.wizard-hardware p { margin: 0; }
+.wizard-link { background: transparent; border: 0; padding: 0; color: var(--accent); font-size: inherit; text-decoration: underline; cursor: pointer; }
+.wizard-link:hover:not(:disabled) { color: var(--accent-hover); }
+.wizard-summary { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 10px; }
+.wizard-summary li { padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-2); }
+.wizard-summary b { font-weight: 500; color: var(--text); }
+.wizard-summary p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--text-dim); }
+.wizard-tag { margin-left: 8px; font-size: 11px; color: var(--accent); }
+.wizard-actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+.wizard-spacer { flex: 1; }

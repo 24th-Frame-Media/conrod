@@ -16,7 +16,7 @@ export const MOMENT_KEYS: readonly string[];
 export const FACET_ORDER: readonly FacetKind[];
 export function defaultSummary(preset: string | null | undefined): PolicySummary;
 export function overridesOf(stored: unknown): Overrides;
-export function applyOverrides(summary: PolicySummary, overrides?: Overrides): PolicySummary;
+export function applyOverrides(summary: PolicySummary, overrides?: Overrides, user?: Overrides): PolicySummary;
 export function nextOverrides(overrides: Overrides, row: PolicyRow, on: boolean): Overrides;
 export function isOn(summary: PolicySummary, key: string): boolean;
 export function noteList(summary: PolicySummary): string[];

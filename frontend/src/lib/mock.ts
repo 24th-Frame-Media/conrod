@@ -4,6 +4,7 @@ import { startIngestSim, type IngestSim } from './mockIngest';
 import { mockDeciderStatus, startDeciderSim } from './mockDecider';
 import type { ShootStats } from './shot.mjs';
 import { applyOverrides, defaultSummary, overridesOf } from './presetPolicy.mjs';
+import { profileDefaults } from './wizard.mjs';
 import type { Bootstrap, DeciderLive, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, Settings, Status, WorkerLimits } from './types';
 
 export type DevStart = {
@@ -357,7 +358,10 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     }
     case 'preset_policy': {
       const given = (a.overrides ?? {}) as Record<string, boolean>;
-      return out(applyOverrides(defaultSummary(String(a.preset ?? 'mix')), overridesOf(given)));
+      const preset = String(a.preset ?? 'mix');
+      // An album's own copy of the photographer's defaults, else what the saved profile gives a new album.
+      const user = a.userDefaults ? overridesOf(a.userDefaults) : profileDefaults(db.settings.user_profile as never, preset);
+      return out(applyOverrides(defaultSummary(preset), overridesOf(given), user));
     }
     case 'set_feature': {
       const job = db.jobs.find((j) => j.id === a.jobId);
@@ -366,7 +370,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       const next = overridesOf(stored.overrides);
       if (typeof a.value === 'boolean') next[String(a.feature)] = a.value; else delete next[String(a.feature)];
       job.settings_json = JSON.stringify({ ...stored, overrides: next });
-      const lanes = applyOverrides(defaultSummary(job.scan_profile ?? 'motorsport'), next);
+      const lanes = applyOverrides(defaultSummary(job.scan_profile ?? 'motorsport'), next, overridesOf(stored.user_defaults));
       return out({ ok: true, jobId: a.jobId, settings: { overrides: next }, operation: null, needsRescan: false, lanes });
     }
     case 'update_job_settings': {
@@ -399,7 +403,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       if (a.jobId == null && typeof a.root === 'string') {
         const id = Math.max(0, ...db.jobs.map((j) => j.id)) + 1;
         const label = String(a.label || '').trim() || a.root.split(/[\\/]/).filter(Boolean).pop() || 'Album';
-        db.jobs.unshift({ id, label, root: a.root, status: 'scanning', total: 0, done: 0, created_at: Math.floor(Date.now() / 1000), scan_profile: String(a.profile ?? 'motorsport'), settings_json: JSON.stringify({ overrides: a.overrides ?? {} }) });
+        db.jobs.unshift({ id, label, root: a.root, status: 'scanning', total: 0, done: 0, created_at: Math.floor(Date.now() / 1000), scan_profile: String(a.profile ?? 'motorsport'), settings_json: JSON.stringify({ overrides: a.overrides ?? {}, user_defaults: profileDefaults(db.settings.user_profile as never, String(a.profile ?? 'motorsport')) }) });
         if (a.stage === 'all') startSim(db, id);
         return out({ jobId: id });
       }
