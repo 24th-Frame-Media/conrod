@@ -1308,6 +1308,22 @@ impl Scan {
     pub fn is_finished(&self) -> bool {
         self.finished.load(Ordering::Acquire)
     }
+    /// A scan handle that holds the one-scan slot and runs nothing: the queue
+    /// tests need "a scan is running" without any model files.
+    #[cfg(test)]
+    pub(crate) fn held() -> Scan {
+        Scan {
+            stop: Arc::new(AtomicBool::new(false)),
+            finished: Arc::new(AtomicBool::new(false)),
+            error: Arc::new(Mutex::new(None)),
+            pause: Arc::new((Mutex::new(false), Condvar::new())),
+        }
+    }
+    /// Let a `held` scan report finished, as a real one does when its work ends.
+    #[cfg(test)]
+    pub(crate) fn release(&self) {
+        self.finished.store(true, Ordering::Release);
+    }
 }
 
 /// Cull every frame under `root` on background threads. `on_frame` is called

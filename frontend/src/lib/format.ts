@@ -16,8 +16,17 @@ export function jobState(job: Job): string {
   if (job.status === 'done_errors') return `Ready to review · ${plural(job.errors ?? 0, 'photo')} could not be read`;
   if (job.status === 'indexed') return 'Indexed — ready to cull';
   if (job.status === 'scanning') return `Scanning ${pct(job.done, job.total)}%`;
+  // Waiting its turn, or left waiting by a restart: the scan starts by hand.
+  if (job.status === 'queued') return 'Not started';
   if (job.status === 'stopped' || job.status === 'incomplete') return `Stopped at ${pct(job.done, job.total)}%`;
   return job.done < job.total ? `In progress ${pct(job.done, job.total)}%` : job.status;
+}
+
+/** "Queued · 2nd in line" for an album at `position` in the waiting list (0 = starts next). */
+export function queueLabel(position: number): string {
+  const n = position + 1;
+  const suffix = n % 100 >= 11 && n % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th');
+  return `Queued · ${n}${suffix} in line`;
 }
 
 /** A stable, muted cover tint per album so the wall of cards is not one grey. */

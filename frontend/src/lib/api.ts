@@ -15,6 +15,10 @@ export type ScanStarted = {
   existing?: boolean;
   /** False when nothing was added, so no scan started. */
   scanning?: boolean;
+  /** True when another scan was running: the album is created and waits its turn. */
+  queued?: boolean;
+  /** Its place in line, counting from 1 (1 = starts next). */
+  queuePosition?: number;
 };
 
 /** `?mock=1` under `vite dev` only. The whole branch is dead code in production builds. */
@@ -45,6 +49,8 @@ export const engine = {
   pause: () => call('pause'),
   resumeScan: () => call('resume_scan'),
   stop: () => call('stop'),
+  /** Take an album out of the wait-for-its-turn line; it can be started by hand. */
+  unqueue: (jobId: number) => call('unqueue', { jobId }),
   mark: (imageId: number, values: MarkValues) => call('mark', { imageId, ...values }),
   editDetection: (detectionId: number, updates: Record<string, string | string[] | null>) => call('edit_detection', { detectionId, ...updates }),
   preview: (imageId: number) => call<string>('preview', { imageId }),

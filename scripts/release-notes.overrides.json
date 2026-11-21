@@ -35,6 +35,7 @@
       { "section": "Fixed", "text": "The live import screen keeps its header and pipeline in place: the worker cards scroll in their own panel instead of the whole page moving." },
       { "section": "Fixed", "text": "The list of detections in Review's side panel scrolls again when a frame has more than fit." }
     ],
+    "13a0374": { "section": "New", "text": "You can add another album while a scan runs: it waits in line and starts by itself when the first finishes. Waiting albums show their place and can be taken out of the line." },
     "d050e70": [
       { "section": "Improved", "text": "Faces are now off by default for track days, rallies and burnouts, since drivers sit behind helmets. People are still looked for (pit lane, paddock, crowds), and Faces & eyes is one tick away on any album." },
       { "section": "New", "text": "Field and court sports read jersey numbers off the players, so a player can be found by number." },

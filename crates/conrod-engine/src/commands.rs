@@ -82,7 +82,7 @@ pub struct PlateArgs {
 }
 
 /// Start a new album (`root`) or resume an unfinished one (`jobId`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanArgs {
     #[serde(default)]
@@ -417,6 +417,8 @@ pub enum Command {
     Pause {},
     ResumeScan {},
     Stop {},
+    /// Take one album out of the wait-for-its-turn list.
+    Unqueue(JobArgs),
     DeleteJob(JobArgs),
     Identify(IdentifyArgs),
     Identified(JobArgs),

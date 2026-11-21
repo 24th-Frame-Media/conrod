@@ -88,6 +88,8 @@ export type Detection = {
 export type Task = { id: number; label: string; detail: string; state: string; done: number; total: number; elapsed?: number; eta: number | null; error: string | null };
 export type Status = {
   revision?: number; tasks: Task[]; log: string[]; activeJob: number | null; operations: string[];
+  /** Albums waiting their turn, first to run first. They start when the running scan ends. */
+  queue?: number[];
   /** The scan that just ended: frames it could not read, with a few `name: reason` lines. */
   scan?: { job: number; errors: number; error_samples: string[] } | null;
 };
