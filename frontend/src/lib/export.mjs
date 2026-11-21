@@ -23,3 +23,12 @@ export function exportLine(summary) {
   const n = (v) => (v ?? 0).toLocaleString('en-US');
   return `${n(summary.total)} photos · ${n(summary.keepers)} keepers · ${n(summary.rejected)} rejected · ${n(summary.undecided)} undecided`;
 }
+
+/**
+ * What the writer actually does with each kind of frame, in one line. Undecided frames are
+ * not skipped: every finished frame gets its measured stars and colour label, and only
+ * keepers and hand picks carry a Pick.
+ */
+export function exportRule() {
+  return 'Keepers get their stars and a Pick. Rejected frames are marked Reject. Undecided frames keep their measured stars and colour label.';
+}

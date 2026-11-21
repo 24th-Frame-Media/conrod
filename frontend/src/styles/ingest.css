@@ -7,6 +7,8 @@
 .ing-sub-text { font-size: 13px; }
 .id-stats dd.ing-eta { color: var(--text-dim); font-family: inherit; font-size: 14px; line-height: 24px; font-weight: 400; }
 .ing-lock { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin: -6px 0 0; }
+.ing-queue { flex-wrap: wrap; }
+.ing-queue > span { margin-right: 2px; }
 
 /* flowchart: the identify nodes as buttons */
 .ing-flow .id-flow-cell { min-width: 132px; }
