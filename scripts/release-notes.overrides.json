@@ -253,6 +253,13 @@
     "d7e4704": [
       { "section": "New", "text": "The decision model now works from the start of identification: its question and answer appear in the identifying screen along with the frames it has judged and the time each takes, instead of staying quiet until the end." },
       { "section": "Improved", "text": "Waiting for the decision model no longer delays the end of identification, because it judges frames while the cars are being read." }
-    ]
+    ],
+    "a6395a1": { "section": "Improved", "text": "A scan that stops now says why in plain words, such as the disk being full, the folder being gone or the network drive being offline, instead of showing the engine's own error." },
+    "d3d7755": [
+      { "section": "New", "text": "A scan that fails keeps its reason on the ingest screen with a Resume button, instead of a message that disappears and leaves you guessing." },
+      { "section": "New", "text": "Review opens while a scan is still running: it shows the frames already measured with their scores and picks, says more are arriving and has a button back to the scan. Culling and identifying wait until the scan is done." },
+      { "section": "Improved", "text": "The status light tells one story: the header, its activity panel and the Library Setup card agree on Ready, Setup needed, Paused or Error, and a vision service that is switched off reads as Ready with vision off instead of looking broken." }
+    ],
+    "af678e0": { "section": "Improved", "text": "Install missing only counts Conrod's own models, so a vision model on Ollama or a cloud service is never something that button tries to fetch." }
   }
 }

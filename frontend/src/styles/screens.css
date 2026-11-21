@@ -2211,6 +2211,10 @@ dialog.viewer {
 .ss-text b { font-weight: 500; font-size: 16px; font-variant-numeric: tabular-nums; }
 .ss-text .muted { font-size: 12.5px; }
 .scan-summary button.primary { padding: 8px 28px; }
+.scan-failure { border-color: rgba(229, 87, 92, .45); }
+.scan-failure .ss-mark { color: var(--bad); border-color: rgba(229, 87, 92, .35); }
+.ss-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.ing-lock .ghost { margin-left: 4px; }
 
 .pipe { background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius-lg); padding: 16px; }
 .pipe.still *, .pipe.still *::after { animation: none !important; }

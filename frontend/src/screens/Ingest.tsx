@@ -15,6 +15,7 @@ import {
 import { visionHeader, visionOffReason, type VisionAction } from '../lib/vision.mjs';
 import { etaLabel, etaRemaining, formatRate, orderStages, overallEta, overallFraction, summaryLine } from '../lib/scan.mjs';
 import type { IdentifyLive, Job, ScanFound, ScanRecentFrame, Settings, Status } from '../lib/types';
+import { scanFailureFor, type ScanFailure } from '../lib/scanError.mjs';
 import type { Runner } from '../state/hooks';
 import type { ScanLive } from '../state/useScanProgress';
 
@@ -45,6 +46,10 @@ export type IngestProps = {
   onLibrary: () => void;
   /** Take a waiting album out of the queue; nothing already imported is lost. */
   onUnqueue?: (job: Job) => void;
+  /** A scan that failed before or during the run; shown as a persistent banner with Resume. */
+  scanError?: ScanFailure | null;
+  /** Retry the failed scan; the banner's Resume. */
+  onRetryScan?: () => void;
 };
 
 type Pick = { kind: 'car' | 'frame'; id: number };
@@ -66,6 +71,22 @@ function Found({ found, identify }: { found: ScanFound; identify: boolean }) {
   );
 }
 
+function ScanFailureBanner({ failure, onRetry, onLibrary }: { failure: ScanFailure; onRetry?: () => void; onLibrary?: () => void }) {
+  return (
+    <section className="scan-summary scan-failure" role="alert">
+      <div className="ss-mark"><Icon name="x" size={20} /></div>
+      <div className="ss-text">
+        <b>{failure.title}{failure.label ? ` — ${failure.label}` : ''}</b>
+        <span className="muted" title={failure.detail || undefined}>{failure.message}</span>
+      </div>
+      <div className="ss-actions">
+        {onRetry && <button className="primary" onClick={onRetry}>Resume</button>}
+        {onLibrary && <button className="ghost" onClick={onLibrary}>Library</button>}
+      </div>
+    </section>
+  );
+}
+
 /**
  * One live page for an album's whole ingest: one bar, one flowchart (read to pick, then vision), a grid of every worker that is
  * doing something (scan lanes with boxes and autofocus, vision lanes with the model's question and reply), and one strip of what
@@ -73,7 +94,7 @@ function Found({ found, identify }: { found: ScanFound; identify: boolean }) {
  */
 export function IngestScreen({
   mode, job, scan, identify, status, model, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onCancel,
-  onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue,
+  onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue, scanError, onRetryScan,
 }: IngestProps) {
   const [picked, setPicked] = useState<Pick | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
@@ -98,10 +119,21 @@ export function IngestScreen({
     if (idLive?.current?.prompt) prompts.current[idLive.current.detection_id] = idLive.current.prompt;
   }, [idLive]);
 
-  const scanState = !p ? (running ? 'starting' : job?.status === 'done' || job?.status === 'done_errors' ? 'done' : 'idle')
+  const scanState = !p ? (running ? 'starting' : job?.status === 'error' ? 'error' : job?.status === 'done' || job?.status === 'done_errors' ? 'done' : 'idle')
     : p.state === 'running' && !running && job?.status !== 'scanning' ? 'stopped' : p.state === 'done_errors' ? 'done' : p.state;
+  const seed = scanError && (scanError.jobId == null || scanError.jobId === job?.id) ? scanError : null;
+  const failure = mode === 'ingest' ? scanFailureFor({ job, progress: p, status, seed }) : null;
   const phase = ingestPhase({ mode, scan: mode === 'ingest' ? { state: scanState, stage: p?.stage } : null, identify: idLive, identifying: Boolean(operation) });
   if (!job || phase === 'idle') {
+    if (mode === 'ingest' && failure) {
+      return (
+        <div className="screen">
+          <div className="identify-page ingest-page">
+            <ScanFailureBanner failure={failure} onRetry={onRetryScan ?? onResume} onLibrary={onLibrary} />
+          </div>
+        </div>
+      );
+    }
     return mode === 'identify' ? (
       <div className="screen">
         <Empty icon="eye" title="No identification is running">
@@ -217,7 +249,10 @@ export function IngestScreen({
           </div>
         )}
         {mode === 'ingest' && (phase === 'starting' || phase === 'scan' || phase === 'group' || phase === 'pick') && (
-          <p className="muted ing-lock"><Icon name="eye" size={13} /> Review opens when the scan finishes. Other albums stay open from the Library.</p>
+          <p className="muted ing-lock">
+            <Icon name="eye" size={13} /> Review is open for the frames already measured. Verdicts on them can still change while the scan runs.
+            <button type="button" className="ghost small" onClick={onReview}>Open Review</button>
+          </p>
         )}
 
         <ol className={`id-flow ing-flow${live ? '' : ' still'}`} aria-label={mode === 'identify' ? 'Identification stages' : 'Pipeline stages'}>
@@ -265,8 +300,10 @@ export function IngestScreen({
           </section>
         )}
         {phase === 'error' && mode === 'ingest' && (
-          <div className="scan-summary"><div className="ss-text"><b>The scan did not finish.</b>
-            <span className="muted">{idLive?.errors?.[0] ?? 'Check the activity log in the top bar.'}</span></div><button onClick={onLibrary}>Back to library</button></div>
+          failure
+            ? <ScanFailureBanner failure={failure} onRetry={onRetryScan ?? onResume} onLibrary={onLibrary} />
+            : <div className="scan-summary"><div className="ss-text"><b>The scan did not finish.</b>
+              <span className="muted">Check the activity log in the top bar, then try again.</span></div><button onClick={onLibrary}>Back to library</button></div>
         )}
         {mode === 'identify' && (phase === 'done' || phase === 'stopped' || phase === 'error') && (
           <section className={`scan-summary id-summary ${phase}`} aria-label="Identification summary">
