@@ -743,12 +743,22 @@ impl Desktop {
             Command::SetIncludePeople(a) => {
                 crate::passes::set_include_people(self, a.job_id, a.value)
             }
-            Command::PresetPolicy(a) => Ok(conrod_core::profile::Lanes::resolve(
-                ShootPreset::parse(&a.preset),
-                a.include_people,
-                &conrod_core::profile::Overrides::from_map(&a.overrides),
-            )
-            .summary()),
+            Command::PresetPolicy(a) => {
+                let preset = ShootPreset::parse(&a.preset);
+                // An album carries its own copy of the photographer's defaults;
+                // the import sheet shows what a new album would take.
+                let user = match &a.user_defaults {
+                    Some(map) => conrod_core::profile::Overrides::from_map(map),
+                    None => lock(&self.settings).profile().defaults_for(preset),
+                };
+                Ok(conrod_core::profile::Lanes::resolve_with(
+                    preset,
+                    a.include_people,
+                    &conrod_core::profile::Overrides::from_map(&a.overrides),
+                    &user,
+                )
+                .summary())
+            }
             Command::SetFeature(a) => {
                 crate::passes::set_feature(self, a.job_id, &a.feature, a.value)
             }
@@ -800,6 +810,10 @@ impl Desktop {
     fn save_settings(&self, updates: &Map<String, Value>) -> Result<Value> {
         let mut stored = lock(&self.settings);
         let mut next = stored.clone().apply(updates);
+        // The wizard's answers: known shoot types, known switches, nothing
+        // else. An album's copy never lives in the global file.
+        next.user_profile = conrod_core::user_profile::UserProfile::sanitize(&next.user_profile);
+        next.user_defaults = Map::new();
         // The Settings screen saves the whole object, so only a changed value
         // is a choice.
         if next.blur_strictness != stored.blur_strictness {
@@ -1184,6 +1198,11 @@ impl Desktop {
                     .or(a.profile.as_deref())
                     .unwrap_or(&settings.scan_profile);
                 settings.scan_profile = ShootPreset::parse(profile).name().into();
+                // The photographer's own defaults for this type, copied in now:
+                // the album keeps them whatever the profile does later.
+                settings.take_profile_defaults(a.blur_strictness.is_some());
+                // The profile is global; the album keeps only its copy.
+                settings.user_profile = Map::new();
                 if let Some(read) = a.read_plates {
                     settings.read_plates = read;
                 }
@@ -1418,7 +1437,7 @@ impl Desktop {
                         && crate::operations::settings(&desktop, job).is_ok_and(|cfg| {
                             wants_identify(
                                 cfg.workflow(),
-                                cfg.lanes().identifies_vehicles()
+                                cfg.lanes().identifies()
                                     || cfg.lanes().names
                                     || cfg.lanes().moments_detect,
                                 cfg.read_plates
@@ -2874,6 +2893,92 @@ mod tests {
         ] {
             assert!(desktop.dispatch("scan", args).is_err());
         }
+        drop(desktop);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_new_album_copies_the_photographers_defaults_and_keeps_them_when_the_profile_changes() {
+        let root = std::env::temp_dir().join(format!(
+            "conrod-user-profile-{}-{}",
+            std::process::id(),
+            now()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let first = root.join("first");
+        let second = root.join("second");
+        for dir in [&first, &second] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join("a.jpg"), dir.to_string_lossy().as_bytes()).unwrap();
+        }
+        let desktop = Desktop::open(root.clone()).unwrap();
+        let saved = desktop
+            .dispatch(
+                "save_settings",
+                json!({"user_profile": {
+                    "done": true,
+                    "default_preset": "motorsport-track",
+                    "blur": "strict",
+                    "presets": {"motorsport-track": {"faces": true}, "nonsense": {"faces": true}},
+                    "junk": 1,
+                }, "user_defaults": {"faces": true}}),
+            )
+            .unwrap();
+        // Unknown keys are dropped; the global file never carries an album's copy.
+        assert_eq!(
+            saved["user_profile"]["presets"],
+            json!({"motorsport-track": {"faces": true}})
+        );
+        assert!(saved["user_profile"].get("junk").is_none());
+        assert_eq!(saved["user_defaults"], json!({}));
+        let scan = |dir: &std::path::Path, extra: Value| {
+            let mut args = json!({"root": dir.to_string_lossy(), "stage": "index", "scanProfile": "motorsport-track"});
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            desktop.dispatch("scan", args).unwrap()["jobId"]
+                .as_i64()
+                .unwrap()
+        };
+        let job = scan(&first, json!({}));
+        let effective = crate::operations::settings(&desktop, job).unwrap();
+        assert_eq!(effective.user_defaults["faces"], true);
+        assert!(
+            effective.user_profile.is_empty(),
+            "an album keeps a copy, not the profile"
+        );
+        // The photographer's default for the type: faces on at a track day.
+        assert!(effective.lanes().faces && effective.lanes().people_judged);
+        // The profile's blur level applies where the sheet chose none.
+        assert_eq!(effective.effective_blur(), "strict");
+
+        // The profile changes; the existing album does not.
+        desktop
+            .dispatch(
+                "save_settings",
+                json!({"user_profile": {"presets": {"motorsport-track": {"faces": false}}}}),
+            )
+            .unwrap();
+        let effective = crate::operations::settings(&desktop, job).unwrap();
+        assert!(effective.lanes().faces, "{:?}", effective.user_defaults);
+        // A new album follows the new profile; a sheet choice beats the profile's blur.
+        let job2 = scan(&second, json!({"blurStrictness": "lenient"}));
+        let effective = crate::operations::settings(&desktop, job2).unwrap();
+        assert!(!effective.lanes().faces);
+        assert_eq!(effective.effective_blur(), "lenient");
+        // The album's own override still wins, both ways.
+        let on = crate::passes::set_feature(&desktop, job2, "faces", Some(true)).unwrap();
+        assert_eq!(on["lanes"]["detects"][2]["on"], true);
+        assert_eq!(on["lanes"]["detects"][2]["default"], false);
+        let off = crate::passes::set_feature(&desktop, job, "faces", Some(false)).unwrap();
+        assert_eq!(off["lanes"]["detects"][2]["on"], false);
+        assert_eq!(off["lanes"]["detects"][2]["default"], true);
+        // The policy command reports the saved profile for the import sheet.
+        let sheet = desktop
+            .dispatch("preset_policy", json!({"preset": "motorsport-track"}))
+            .unwrap();
+        assert_eq!(sheet["detects"][2]["on"], false);
         drop(desktop);
         std::fs::remove_dir_all(root).unwrap();
     }

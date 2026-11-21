@@ -251,6 +251,11 @@ pub struct PresetPolicyArgs {
     pub overrides: Map<String, Value>,
     #[serde(default)]
     pub include_people: bool,
+    /// An album's own copy of the photographer's defaults (its
+    /// `user_defaults`). Without one (the import sheet), the profile in the
+    /// global settings gives what a new album would take.
+    #[serde(default)]
+    pub user_defaults: Option<Map<String, Value>>,
 }
 
 /// Switch one detector or reader on or off for an album; `value: null`

@@ -144,6 +144,9 @@ pub struct PresetPolicy {
     /// subject is not cars, bikes and trucks (4 airplane, 1 bicycle). Empty
     /// keeps the album's own car / bike / truck switches.
     pub vehicle_classes: &'static [usize],
+    /// The competitors are people (field and court sport): race numbers are
+    /// read off the people, as jersey numbers, instead of off a vehicle.
+    pub players: bool,
 }
 
 impl PresetPolicy {
@@ -165,7 +168,13 @@ impl PresetPolicy {
             level: false,
             dark_ok: false,
             vehicle_classes: &[],
+            players: false,
         }
+    }
+
+    const fn players(mut self) -> Self {
+        self.players = true;
+        self
     }
 
     const fn vehicles(mut self) -> Self {
@@ -528,23 +537,29 @@ impl ShootPreset {
                 .blur("critical")
                 .vlm(VlmTargets::RACE),
             // Burnout comps: numbered entries on street-registered cars; the
-            // driver and the crowd are part of the picture.
+            // crowd is part of the picture (people stay on). Faces are the
+            // photographer's choice: off until asked for.
             ShootPreset::MotorsportBurnouts => PresetPolicy::new(Motorsport)
                 .vehicles()
+                .no_faces()
                 .pan()
                 .blur("lenient")
                 .vlm(none.with_numbers().with_plates().with_make_model()),
             // Track days: road cars (plates) with taped numbers, plus pit lane,
-            // paddock, drivers and crew.
+            // paddock, drivers and crew (people stay on; faces are the
+            // photographer's choice).
             ShootPreset::MotorsportTrack => PresetPolicy::new(Motorsport)
                 .vehicles()
+                .no_faces()
                 .pan()
                 .blur("critical")
                 .min_box(0.7)
                 .vlm(VlmTargets::CREW.with_plates()),
-            // Rally: door numbers, plated cars, crews, service park, spectators.
+            // Rally: door numbers, plated cars, crews, service park, spectators
+            // (people stay on; faces are the photographer's choice).
             ShootPreset::MotorsportRally => PresetPolicy::new(Motorsport)
                 .vehicles()
+                .no_faces()
                 .pan()
                 .blur("lenient")
                 .min_box(0.7)
@@ -577,16 +592,20 @@ impl ShootPreset {
                 .animals()
                 .pan()
                 .vlm(VlmTargets::CREW.with_plates()),
+            // Players and the ball; jersey numbers are read off the players.
             ShootPreset::SportField => PresetPolicy::new(Event)
                 .ball()
                 .no_faces()
+                .players()
                 .min_box(0.7)
-                .floor(24),
+                .floor(24)
+                .vlm(none.with_numbers()),
             ShootPreset::SportCourt => PresetPolicy::new(Event)
                 .ball()
+                .players()
                 .pan()
                 .blur("strict")
-                .vlm(VlmTargets::NAMES),
+                .vlm(VlmTargets::NAMES.with_numbers()),
             ShootPreset::SportRodeo => PresetPolicy::new(Event)
                 .animals()
                 .min_box(0.7)
@@ -784,8 +803,9 @@ impl Feature {
 
     /// Plain photographer wording, in the shoot's own terms.
     pub fn label(self, preset: ShootPreset) -> &'static str {
-        use ShootPreset::{Aviation, SportAction, SportCycling};
+        use ShootPreset::{Aviation, SportAction, SportCourt, SportCycling, SportField};
         match (self, preset) {
+            (Feature::Numbers, SportField | SportCourt) => "Jersey numbers",
             (Feature::Vehicles, Aviation) => "Aircraft",
             (Feature::Vehicles, SportCycling) => "Bicycles",
             (Feature::Vehicles, SportAction) => "Bikes",
@@ -816,6 +836,15 @@ impl Feature {
             Feature::Names => Some(Feature::Faces),
             Feature::MomentsRank => Some(Feature::MomentsDetect),
             _ => None,
+        }
+    }
+
+    /// [`Feature::requires`] for one shoot type: on a players' type the
+    /// numbers are jersey numbers, read off the people.
+    pub fn requires_for(self, preset: ShootPreset) -> Option<Feature> {
+        match self {
+            Feature::Numbers if preset.policy().players => Some(Feature::People),
+            _ => self.requires(),
         }
     }
 }
@@ -897,7 +926,8 @@ pub struct Lanes {
     pub people: bool,
     pub faces: bool,
     pub animals: bool,
-    /// Race numbers; needs `vehicles`.
+    /// Race numbers; need `vehicles` (or, on field and court sport, `people`:
+    /// jersey numbers).
     pub numbers: bool,
     pub plates: bool,
     pub make_model: bool,
@@ -916,32 +946,54 @@ pub struct Lanes {
     /// COCO classes the vehicles lane asks for; empty = the album's own
     /// car / bike / truck switches.
     pub vehicle_classes: &'static [usize],
+    /// The type's competitors are people: numbers are jersey numbers.
+    players: bool,
     overrides: Overrides,
+    user: Overrides,
 }
 
 impl Lanes {
     /// `include_people` is the older motorsport-only "also look at people"
     /// switch; it only changes the default for faces.
     pub fn resolve(preset: ShootPreset, include_people: bool, overrides: &Overrides) -> Lanes {
+        Lanes::resolve_with(preset, include_people, overrides, &Overrides::default())
+    }
+
+    /// [`Lanes::resolve`] with the photographer's own defaults for this shoot
+    /// type (`user`, from the setup wizard). The order, first present wins:
+    /// the album's override, the older `include_people` switch (faces only),
+    /// the photographer's default for the type, the type's own policy.
+    pub fn resolve_with(
+        preset: ShootPreset,
+        include_people: bool,
+        overrides: &Overrides,
+        user: &Overrides,
+    ) -> Lanes {
         let p = preset.policy();
         let raw = |f: Feature| {
             overrides
                 .get(f)
+                .or((f == Feature::Faces && include_people).then_some(true))
+                .or_else(|| user.get(f))
                 .unwrap_or_else(|| policy_default(preset, &p, include_people, f))
         };
         let vehicles = raw(Feature::Vehicles);
+        let people = raw(Feature::People);
         let faces = raw(Feature::Faces);
         let moments_detect =
             raw(Feature::MomentsDetect) && !crate::moments::vocabulary(preset).is_empty();
         let explicit_people = overrides.get(Feature::Faces) == Some(true)
             || overrides.get(Feature::People) == Some(true);
+        let faces_by_type = user.get(Feature::Faces).unwrap_or(p.faces_default);
+        // Numbers are read off a vehicle; on a players' type, off the people.
+        let numbers_subject = vehicles || (p.players && people);
         Lanes {
             preset,
             vehicles,
-            people: raw(Feature::People),
+            people,
             faces,
             animals: raw(Feature::Animals),
-            numbers: raw(Feature::Numbers) && vehicles,
+            numbers: raw(Feature::Numbers) && numbers_subject,
             plates: raw(Feature::Plates) && vehicles,
             make_model: raw(Feature::MakeModel) && vehicles,
             sponsors: raw(Feature::Sponsors) && vehicles,
@@ -952,9 +1004,11 @@ impl Lanes {
             people_judged: faces
                 && (include_people
                     || explicit_people
-                    || (p.profile == ScanProfile::Motorsport && p.faces_default)),
+                    || (p.profile == ScanProfile::Motorsport && faces_by_type)),
             vehicle_classes: p.vehicle_classes,
+            players: p.players,
             overrides: overrides.clone(),
+            user: user.clone(),
         }
     }
 
@@ -985,9 +1039,21 @@ impl Lanes {
         self.vehicles && (self.numbers || self.plates || self.make_model || self.sponsors)
     }
 
-    /// The vision model has something to ask about a vehicle.
+    /// Jersey numbers are read off the people: a players' type, numbers on,
+    /// no vehicle to read instead.
+    pub fn reads_players(&self) -> bool {
+        self.players && self.people && self.numbers && !self.vehicles
+    }
+
+    /// The identification lane has a subject to work on: a vehicle to read,
+    /// or players' jerseys.
+    pub fn identifies(&self) -> bool {
+        self.identifies_vehicles() || self.reads_players()
+    }
+
+    /// The vision model has something to ask about a subject.
     pub fn asks_model(&self) -> bool {
-        self.identifies_vehicles()
+        self.identifies()
     }
 
     /// The moments this album asks a judge for.
@@ -1031,13 +1097,18 @@ impl Lanes {
         use serde_json::json;
         let policy = self.preset.policy();
         let row = |f: Feature| {
-            let requires = f.requires();
+            let requires = f.requires_for(self.preset);
             let blocked = requires.is_some_and(|r| !self.on(r));
             json!({
                 "key": f.key(),
                 "label": f.label(self.preset),
                 "on": self.on(f),
-                "default": policy_default(self.preset, &policy, false, f),
+                // What clearing the album's switch goes back to: the
+                // photographer's default for the type, else the type's own.
+                "default": self
+                    .user
+                    .get(f)
+                    .unwrap_or_else(|| policy_default(self.preset, &policy, false, f)),
                 "overridden": self.overridden(f),
                 "requires": requires.map(Feature::key),
                 "blocked": blocked,
@@ -1223,8 +1294,8 @@ mod tests {
 
     #[test]
     fn race_numbers_are_read_where_competitors_wear_them() {
-        // Competition shoots, plus a mix that assumes nothing. Meets,
-        // dealers, aircraft, portraits, weddings, shows... get none.
+        // Competition shoots, players' jerseys, plus a mix that assumes
+        // nothing. Meets, dealers, aircraft, portraits, weddings, shows... get none.
         partition(
             &[
                 Motorsport,
@@ -1233,10 +1304,80 @@ mod tests {
                 MotorsportRally,
                 SportCycling,
                 SportAction,
+                SportField,
+                SportCourt,
                 Mix,
             ],
             |l| l.numbers,
         );
+    }
+
+    #[test]
+    fn field_and_court_sport_read_jersey_numbers_off_the_people() {
+        for preset in [SportField, SportCourt] {
+            let l = lanes(preset);
+            assert!(l.numbers && l.people && !l.vehicles, "{preset:?}");
+            assert!(l.reads_players() && l.identifies() && l.asks_model());
+            // Not a vehicle lane: nothing about plates, make or livery.
+            assert!(!l.identifies_vehicles());
+            assert!(!l.plates && !l.make_model && !l.sponsors);
+            let s = l.summary();
+            assert_eq!(s["reads"][0]["label"], "Jersey numbers");
+            assert_eq!(s["reads"][0]["requires"], "people");
+            assert_eq!(s["reads"][0]["blocked"], false);
+        }
+        // No people, no jerseys to read.
+        let l = with(SportField, Feature::People, false);
+        assert!(!l.numbers && !l.reads_players());
+        assert_eq!(l.summary()["reads"][0]["blocked"], true);
+        // Numbers off: the lane has nothing to do.
+        assert!(!with(SportCourt, Feature::Numbers, false).identifies());
+        // Everywhere else the lane is a vehicle lane only.
+        for preset in ShootPreset::ALL {
+            if !matches!(preset, SportField | SportCourt) {
+                assert!(!lanes(preset).reads_players(), "{preset:?}");
+            }
+        }
+        // A type that is not about players cannot read them: portraits need a vehicle.
+        assert!(!with(Portrait, Feature::Numbers, true).reads_players());
+        // Court sport still names people from faces, and reads their numbers.
+        assert!(lanes(SportCourt).names && !lanes(SportField).names);
+    }
+
+    #[test]
+    fn faces_at_motorsport_are_the_photographers_choice_and_people_stay_on() {
+        // Faces are off by default at every motorsport type with a crowd or a
+        // paddock; people are on (the crowd, the pit lane, the service park).
+        for preset in [
+            Motorsport,
+            MotorsportTrack,
+            MotorsportRally,
+            MotorsportBurnouts,
+        ] {
+            let l = lanes(preset);
+            assert!(l.people && !l.faces && !l.people_judged, "{preset:?}");
+            assert!(!l.names, "names ride on faces: {preset:?}");
+        }
+        // Car meets are owners with their cars: faces stay on.
+        assert!(lanes(MotorsportMeet).faces);
+        // One switch brings faces, names and the portrait-style judging back.
+        for preset in [MotorsportTrack, MotorsportRally] {
+            let l = with(preset, Feature::Faces, true);
+            assert!(l.faces && l.names && l.people_judged, "{preset:?}");
+        }
+        let l = with(MotorsportBurnouts, Feature::Faces, true);
+        assert!(l.faces && l.people_judged && !l.names);
+    }
+
+    #[test]
+    fn moments_are_on_for_every_type_that_has_a_vocabulary() {
+        for preset in ShootPreset::ALL {
+            let l = lanes(preset);
+            let has = !crate::moments::vocabulary(preset).is_empty();
+            assert_eq!(l.moments_detect, has, "{preset:?}");
+            assert_eq!(l.moments_rank, has, "{preset:?}");
+            assert_eq!(!l.moments().is_empty(), has, "{preset:?}");
+        }
     }
 
     #[test]
@@ -1397,8 +1538,16 @@ mod tests {
     }
 
     #[test]
-    fn track_days_look_at_people_and_judge_person_frames_as_portraits() {
+    fn track_days_judge_person_frames_as_portraits_once_faces_are_on() {
+        // Faces are the photographer's choice; until they ask, a person is
+        // judged as a person and the car still decides.
         let l = lanes(MotorsportTrack);
+        assert!(l.vehicles && l.people && !l.faces && !l.people_judged);
+        assert_eq!(
+            l.frame_priority(Some(Subject::Person)),
+            vec![Subject::Vehicle, Subject::Person, Subject::WholeFrame]
+        );
+        let l = with(MotorsportTrack, Feature::Faces, true);
         assert!(l.vehicles && l.people && l.faces && l.people_judged);
         // The car still decides when it is the biggest thing in the frame.
         assert_eq!(
@@ -1545,13 +1694,25 @@ mod tests {
         for preset in ShootPreset::ALL {
             let p = preset.policy();
             if !p.vehicles {
+                // Jersey numbers are read off the people, not a vehicle.
                 assert!(
-                    !(p.vlm.numbers || p.vlm.plates || p.vlm.make_model || p.vlm.sponsors),
+                    !((p.vlm.numbers && !p.players)
+                        || p.vlm.plates
+                        || p.vlm.make_model
+                        || p.vlm.sponsors),
                     "{preset:?} reads vehicles it does not look for"
                 );
+                if p.players {
+                    assert!(p.people, "{preset:?} reads jerseys with no people");
+                }
             }
-            if !p.faces_default {
-                assert!(!p.vlm.names, "{preset:?} names people it cannot see");
+            // Names ride the face pass: a type that names people but starts
+            // with faces off keeps the names idle until faces are switched on.
+            if !p.faces_default && p.vlm.names {
+                assert!(
+                    !lanes(preset).names,
+                    "{preset:?} names people it cannot see"
+                );
             }
         }
     }
