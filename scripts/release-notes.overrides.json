@@ -31,6 +31,7 @@
     }
   },
   "commits": {
+    "9aa30a4": { "section": "Fixed", "text": "An album you've identified stays identified. If new cars turn up, Conrod reads just those, and you can skip identifying altogether." },
     "91d27b3": [
       { "section": "Fixed", "text": "The live import screen keeps its header and pipeline in place: the worker cards scroll in their own panel instead of the whole page moving." },
       { "section": "Fixed", "text": "The list of detections in Review's side panel scrolls again when a frame has more than fit." }
