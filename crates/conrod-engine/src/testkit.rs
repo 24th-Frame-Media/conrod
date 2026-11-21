@@ -81,9 +81,10 @@ impl Lib {
         db.last_insert_rowid()
     }
 
-    /// Wait for the album's background operation to end.
+    /// Wait for the album's background operation to end. Model loading on a
+    /// busy machine can take longer than a minute.
     pub fn wait_idle(&self) {
-        for _ in 0..400 {
+        for _ in 0..2400 {
             if lock(&self.d().operations).is_empty() {
                 return;
             }

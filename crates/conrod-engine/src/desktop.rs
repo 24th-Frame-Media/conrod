@@ -3304,6 +3304,18 @@ mod tests {
             .dispatch("preset_policy", json!({"preset": "motorsport-track"}))
             .unwrap();
         assert_eq!(sheet["detects"][2]["on"], false);
+        // Turning faces on started the people pass on the second album; let it
+        // end so the library's database is closed before the folder is removed.
+        for _ in 0..2400 {
+            if lock(&desktop.operations).is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(
+            lock(&desktop.operations).is_empty(),
+            "the people pass did not finish"
+        );
         drop(desktop);
         std::fs::remove_dir_all(root).unwrap();
     }
