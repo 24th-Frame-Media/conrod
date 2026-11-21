@@ -97,9 +97,11 @@ test('the settings card explains each state and offers install only where it can
   assert.equal(statusLine(null).title, 'Checking…');
 });
 
-test('the settings page has the toggle and the precision override in their own section', () => {
-  const section = SECTIONS.find((s) => s.id === 'decision-model');
-  assert.deepEqual(section.keys, ['use_decider', 'decider_quant']);
+test('the settings page has the decision toggle and precision override in the AI models section', () => {
+  const section = SECTIONS.find((s) => s.id === 'ai-models');
+  assert.ok(section.keys.includes('use_decider') && section.keys.includes('decider_quant'));
+  assert.ok(section.keys.includes('moments_transport'), 'and where it runs');
   assert.equal(FIELDS.use_decider.kind, 'toggle');
   assert.deepEqual(FIELDS.decider_quant.options.map((o) => o.id), ['auto', 'int8', 'int4']);
+  assert.deepEqual(FIELDS.moments_transport.options.map((o) => o.id), ['auto', 'in_process', 'openrouter']);
 });
