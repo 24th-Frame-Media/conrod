@@ -54,8 +54,8 @@
     "publisher": "kapsikkum",
     "copyright": "Copyright (C) kapsikkum. AGPL-3.0-only.",
     "resources": {
-      "resources/**/*": "resources/",
-      "../../lightroom-plugin/ConrodBridge.lrplugin/**/*": "lightroom-plugin/ConrodBridge.lrplugin/"
+      "resources": "resources",
+      "../../lightroom-plugin/ConrodBridge.lrplugin": "lightroom-plugin/ConrodBridge.lrplugin"
     },
     "windows": {
       "nsis": {
