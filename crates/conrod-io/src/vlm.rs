@@ -1290,6 +1290,14 @@ impl VlmClient {
     ) -> Result<Value, VlmError> {
         let enabled: Vec<_> = settings.vlm_services.iter().filter(|s| s.enabled).collect();
         if enabled.is_empty() {
+            // A configured list whose every row is off means the model is not
+            // asked; the legacy single-provider fields must not resurrect a
+            // service the user disabled.
+            if !settings.vlm_services.is_empty() {
+                return Err(VlmError::Misconfigured(
+                    "No vision service is enabled".into(),
+                ));
+            }
             return self.call_one(
                 settings,
                 prompt,
@@ -1539,7 +1547,21 @@ pub fn schema(with_plate: bool) -> Value {
         "number": {"type": ["string", "null"]},
         "number_location": {
             "type": "string",
-            "enum": ["door", "roof", "windscreen", "nose", "other", "none"],
+            "enum": ["door", "bonnet", "roof", "windscreen", "nose", "other", "none"],
+        },
+        "numbers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "number": {"type": "string"},
+                    "location": {
+                        "type": "string",
+                        "enum": ["door", "bonnet", "roof", "windscreen", "nose", "other"],
+                    },
+                },
+                "required": ["number", "location"],
+            },
         },
         "visible_text": {"type": "array", "items": {"type": "string"}},
         "action": {
@@ -1582,6 +1604,10 @@ pub struct VehicleDescription {
     pub colour: Option<String>,
     pub body_type: Option<String>,
     pub race_number: Option<String>,
+    /// Every number the model saw, with the panel it was on. The race number
+    /// is chosen from these (entry list, then the most prominent panel, then
+    /// what the burst has already shown); `race_number` is its own answer.
+    pub numbers: Vec<conrod_core::analysis::NumberCandidate>,
     /// How sure the model is of the race number, lowered when it was read
     /// off the nose board, where numbers are often incidental and can
     /// conflict with the official window number.
@@ -1760,7 +1786,10 @@ fn map_vehicle(
     let confidence = number(parsed.get("confidence"));
     // A nose board can carry a different number from the official window one
     // (the benchmark's car 2: window 2, nose 1), so it is the weak spot.
-    let weak_spot = matches!(text(parsed.get("number_location")).as_deref(), Some("nose"));
+    let number_location = text(parsed.get("number_location"))
+        .map(|l| l.trim().to_lowercase())
+        .unwrap_or_default();
+    let weak_spot = number_location == "nose";
     let model_evidence = match evidence.as_str() {
         "badge" | "script" | "design" => Some(evidence.clone()),
         _ => None,
@@ -1771,16 +1800,36 @@ fn map_vehicle(
     } else {
         Vec::new()
     };
+    let race_number = if with_number {
+        digits(parsed.get("number"), settings)
+    } else {
+        None
+    };
+    let mut numbers = if with_number {
+        number_candidates(parsed.get("numbers"), settings)
+    } else {
+        Vec::new()
+    };
+    // The answer's own number belongs in the candidate list, so the tiebreak
+    // always has something to choose from even on an older reply shape.
+    if let Some(number) = &race_number {
+        if !numbers.iter().any(|c| &c.number == number) {
+            numbers.insert(
+                0,
+                conrod_core::analysis::NumberCandidate {
+                    number: number.clone(),
+                    location: number_location.clone(),
+                },
+            );
+        }
+    }
     VehicleDescription {
         make,
         model,
         colour: text(parsed.get("colour")),
         body_type: None,
-        race_number: if with_number {
-            digits(parsed.get("number"), settings)
-        } else {
-            None
-        },
+        race_number,
+        numbers,
         number_confidence: if weak_spot {
             confidence * 0.7
         } else {
@@ -1802,6 +1851,29 @@ fn map_vehicle(
         is_competition: is_competition(parsed.get("is_competition")),
         confidence,
     }
+}
+
+/// The numbers a reply listed, deduplicated by number, first sighting kept.
+/// Each must pass the same [`digits`] gate as the answer's own number, so a
+/// year sticker or over-long digit run cannot enter the tiebreak.
+fn number_candidates(
+    value: Option<&Value>,
+    settings: &Settings,
+) -> Vec<conrod_core::analysis::NumberCandidate> {
+    let mut out: Vec<conrod_core::analysis::NumberCandidate> = Vec::new();
+    for item in value.and_then(Value::as_array).into_iter().flatten() {
+        let Some(number) = digits(item.get("number"), settings) else {
+            continue;
+        };
+        if out.iter().any(|c| c.number == number) {
+            continue;
+        }
+        let location = text(item.get("location"))
+            .map(|l| l.trim().to_lowercase())
+            .unwrap_or_default();
+        out.push(conrod_core::analysis::NumberCandidate { number, location });
+    }
+    out
 }
 
 /// The action effects the model reported, restricted to the schema's set so a
@@ -2114,6 +2186,29 @@ mod tests {
     }
 
     #[test]
+    fn no_enabled_service_does_not_fall_back_to_the_legacy_model() {
+        let service = |id: &str| VlmService {
+            id: id.into(),
+            provider: "ollama".into(),
+            model: "qwen2.5vl:7b".into(),
+            enabled: false,
+            ..VlmService::default()
+        };
+        let settings = Settings {
+            vlm_services: vec![service("off-1"), service("off-2")],
+            vlm_provider: "ollama".into(),
+            vlm_model: "qwen2.5vl:7b".into(),
+            ..Settings::default()
+        };
+        let client = VlmClient::new(Arc::new(RealClock::default()));
+        let answer = client.call(&settings, "p", &[], &json!({}), 8);
+        assert!(
+            matches!(answer, Err(VlmError::Misconfigured(_))),
+            "{answer:?}"
+        );
+    }
+
+    #[test]
     fn plates_are_cleaned_and_accept_mixed_or_six_letter_personalised() {
         let plate = |s: &str| plate_text(Some(&json!(s)));
         assert_eq!(plate("ab-12 cd"), Some("AB12CD".into()));
@@ -2200,6 +2295,50 @@ mod tests {
         assert!(map_vehicle(&json!({"number": "7"}), &settings, true, false)
             .action
             .is_empty());
+    }
+
+    #[test]
+    fn every_visible_number_is_kept_with_its_panel() {
+        use conrod_core::analysis::NumberCandidate;
+        let settings = Settings::default();
+        let reply = json!({
+            "number": "7",
+            "number_location": "windscreen",
+            "numbers": [
+                {"number": "7", "location": "windscreen"},
+                {"number": "99", "location": "door"},
+                {"number": "2023", "location": "other"},
+            ],
+            "confidence": 0.9,
+        });
+        let d = map_vehicle(&reply, &settings, true, false);
+        assert_eq!(
+            d.numbers,
+            vec![
+                NumberCandidate {
+                    number: "7".into(),
+                    location: "windscreen".into()
+                },
+                NumberCandidate {
+                    number: "99".into(),
+                    location: "door".into()
+                },
+            ],
+            "a year sticker is not a race number"
+        );
+        // A reply from before this field existed still yields the answer's own
+        // number, so the tiebreak has one candidate.
+        let old = map_vehicle(&json!({"number": "5"}), &settings, true, false);
+        assert_eq!(old.numbers.len(), 1);
+        assert_eq!(old.numbers[0].number, "5");
+    }
+
+    #[test]
+    fn the_prompt_asks_for_every_number_and_its_panel() {
+        let settings = Settings::default();
+        let prompt = vehicle_prompt(&settings, false, &VlmHints::default());
+        assert!(prompt.contains("- numbers:"), "{prompt}");
+        assert!(prompt.contains("\"bonnet\""), "{prompt}");
     }
 
     #[test]

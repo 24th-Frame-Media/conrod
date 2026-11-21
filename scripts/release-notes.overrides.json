@@ -241,6 +241,11 @@
     "6c73e5a": { "section": "New", "text": "Review shows each moment on the frame, marks the less certain ones as maybe, tells you when a moment decided a pick, and lets you filter by moment. Moments have their own switches and a confidence setting." },
     "e91848b": { "section": "New", "text": "Moments can be judged by the decision model running on your own graphics card, with no account or internet. Its questions and answers show live in the import flowchart, and on a smaller card it waits for the cull to finish rather than running out of video memory." },
     "8558e23": { "section": "New", "text": "Conrod now keeps track of what it is doing as it starts up, such as opening your library, checking your models and looking for ExifTool." },
-    "e66496c": { "section": "New", "text": "The opening screen shows what Conrod is really doing while it starts, with the model it is checking, a progress bar and the steps already done. If a step has a problem it says so and the app still opens." }
+    "e66496c": { "section": "New", "text": "The opening screen shows what Conrod is really doing while it starts, with the model it is checking, a progress bar and the steps already done. If a step has a problem it says so and the app still opens." },
+    "3b727bc": [
+      { "section": "Fixed", "text": "Race numbers come from the vision model; text reading only fills in when it saw nothing, so far fewer wrong numbers." },
+      { "section": "Fixed", "text": "When a car shows several numbers, Conrod picks the race number using your entry list, the door or bonnet panel, and the rest of the burst." }
+    ],
+    "9323bb6": { "section": "Fixed", "text": "A vision service you switched off no longer shows up by name." }
   }
 }

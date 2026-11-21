@@ -8,6 +8,7 @@ import { call, engine, inTauri, mocked } from './lib/api';
 import { filename } from './lib/review';
 import { queueLabel } from './lib/format';
 import { subjectExcluded } from './review.mjs';
+import { vlmModelLabel } from './lib/vlm';
 import type { DevStart } from './lib/mock';
 import type { Page, ScanArgs, Scope, Status } from './lib/types';
 import type { SettingsTabId } from './lib/settings.mjs';
@@ -229,13 +230,13 @@ export function App() {
           <ScanScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? scanLive[jobId] : undefined} running={locked}
             paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={eng.setSettings}
             identify={jobId != null ? identifyLive[jobId] : undefined} status={status} identifyPaused={identifyPaused}
-            model={typeof eng.settings.vlm_model === 'string' ? eng.settings.vlm_model : undefined}
+            model={vlmModelLabel(eng.settings)}
             onPause={actions.pause} onResume={actions.resume} onCancel={actions.stop} onCancelOperation={actions.cancel} onVisionAction={visionAction}
             onReview={() => setPage('Review')} onLibrary={() => setPage('Library')} />
         )}
         {view === 'Identify' && (
           <IdentifyScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? identifyLive[jobId] : undefined}
-            status={status} model={typeof eng.settings.vlm_model === 'string' ? eng.settings.vlm_model : undefined}
+            status={status} model={vlmModelLabel(eng.settings)}
             paused={identifyPaused} onCancel={actions.cancel} onVisionAction={visionAction} onReview={() => setPage('Review')} />
         )}
         {view === 'Review' && (

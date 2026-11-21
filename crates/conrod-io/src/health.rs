@@ -60,14 +60,27 @@ pub fn service_label(provider: &str, host: &str) -> String {
 
 /// One status row per enabled VLM service, checked in parallel so N hosts
 /// cost one timeout, not N. No services configured: the single legacy row.
+/// Every configured service disabled: one row saying so, since the legacy
+/// fields may still name a model the user turned off.
 /// Row shape: `{"id", "name", "file": "vlm", "ready", "detail"}` where `id`
 /// is `VlmService::id`, `name` is `service_label`, and `detail` starts with
 /// the server's selected model ("qwen2.5vl:7b: qwen2.5vl:7b available").
 /// The legacy row has no `id`.
 pub fn services(settings: &Settings, enabled: bool) -> Vec<Value> {
     let active: Vec<_> = settings.vlm_services.iter().filter(|s| s.enabled).collect();
-    if !enabled || active.is_empty() {
+    if !enabled {
         return vec![vision(settings, enabled)];
+    }
+    if active.is_empty() {
+        if settings.vlm_services.is_empty() {
+            return vec![vision(settings, enabled)];
+        }
+        return vec![json!({
+            "name": "Vision model",
+            "file": "vlm",
+            "ready": false,
+            "detail": "No vision service enabled",
+        })];
     }
     std::thread::scope(|scope| {
         let checks: Vec<_> = active
@@ -193,6 +206,8 @@ pub fn ollama_models(host: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn service_label_is_server_not_model() {
         assert_eq!(
@@ -200,5 +215,26 @@ mod tests {
             "Ollama @ 192.168.1.100:11434"
         );
         assert_eq!(super::service_label("anthropic", ""), "Anthropic");
+    }
+
+    #[test]
+    fn every_service_disabled_says_so_instead_of_naming_the_legacy_model() {
+        let settings = Settings {
+            vlm_provider: "ollama".into(),
+            vlm_model: "qwen2.5vl:7b".into(),
+            vlm_services: vec![conrod_core::settings::VlmService {
+                id: "off".into(),
+                provider: "ollama".into(),
+                model: "qwen2.5vl:7b".into(),
+                enabled: false,
+                ..conrod_core::settings::VlmService::default()
+            }],
+            ..Settings::default()
+        };
+        let rows = super::services(&settings, true);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["detail"], "No vision service enabled");
+        assert_eq!(rows[0]["ready"], false);
+        assert!(!rows[0].to_string().contains("qwen2.5vl"));
     }
 }

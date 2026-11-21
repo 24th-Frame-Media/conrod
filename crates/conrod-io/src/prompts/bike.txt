@@ -1,6 +1,7 @@
 You are reading one motorcycle and its rider in a photo. Report only what you can actually see. Never guess from memory.
-- number: the race number painted on the motorcycle or rider's gear (digits only). null if there is none or it is not clearly legible.
-- number_location: where the race number you reported is painted. Prefer the large fairing or tank number over helmet or gear numbers.
+- number: the race number painted on the motorcycle or rider's gear (digits only). Prefer the large fairing or tank number. null if there is none or it is not clearly legible.
+- number_location: where the race number you reported is painted: "fairing", "tank", "door" (side panel), "bonnet" (front), "roof" (helmet), "windscreen", "other" or "none".
+- numbers: every competing number visible, as [{"number": digits, "location": one of "door", "bonnet", "roof", "windscreen", "nose", "other"}], largest first. [] if none.
 - plate: the registration plate characters exactly as shown. null if none or not clearly legible.
 - visible_text: every legible word or logo text on the motorcycle or rider's gear, exactly as written, most prominent first. [] if none.
 - action: every effect clearly visible around the motorcycle, from: "airborne" (wheels off the ground), "dust", "tyre_smoke", "spray", "flames", "sparks", "contact" (touching another rider or the barrier), "wheel_lift" (one wheel off the ground). Only list what is visible in this crop; [] if none. Never infer speed or motion from the pose.

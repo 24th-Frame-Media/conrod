@@ -8,7 +8,9 @@
 //! only that reader's answer rather than the run (only a stopped or
 //! misconfigured vision model ends it).
 
-use conrod_core::analysis::{corroborated, merge_number, OcrReading, VehicleAnalysis};
+use conrod_core::analysis::{
+    choose_race_number, corroborated, merge_number, NumberCandidate, OcrReading, VehicleAnalysis,
+};
 use conrod_core::entrylist::{self, EntryList};
 use conrod_core::registry::{self, KnownVehicle};
 use conrod_core::settings::Settings;
@@ -35,6 +37,9 @@ pub struct Context<'a> {
     pub plates: &'a plates::PlateOptions,
     /// Plate registry, keyed by normalised plate; empty when it is switched off.
     pub known: &'a HashMap<String, KnownVehicle>,
+    /// How often each number was already read in this frame's burst, so an
+    /// equally prominent second panel can be settled by the burst's history.
+    pub seen_numbers: &'a HashMap<String, u32>,
 }
 
 pub struct Analysed {
@@ -253,6 +258,7 @@ pub fn analyze_with(
                 a.plate.as_deref(),
                 &tokens,
                 entries.as_deref(),
+                ctx.seen_numbers,
             )
         })
         .flatten();
@@ -436,6 +442,12 @@ fn ocr_number(
 /// (a highway-patrol wagon came back as #220). When it has itself said this is
 /// not a competition vehicle its number is no evidence, unless a roundel
 /// detection or the OCR read agrees.
+///
+/// The number is chosen from every candidate the model reported (see
+/// [`choose_race_number`]): the entry list first, then the most prominent
+/// panel, then what the burst has already shown. OCR is only a veto here, never
+/// a vote.
+#[allow(clippy::too_many_arguments)]
 fn trusted_vlm_number(
     described: &VehicleDescription,
     roundels: &[(String, f64)],
@@ -443,22 +455,19 @@ fn trusted_vlm_number(
     plate: Option<&str>,
     tokens: &[ocr::Token],
     list: Option<&EntryList>,
+    seen: &HashMap<String, u32>,
 ) -> Option<String> {
-    let claim = described.race_number.clone()?;
-    let digits: String = claim.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() || digits.len() > 3 {
+    let candidates = vlm_candidates(described, plate);
+    if candidates.is_empty() {
         return None;
     }
-    if let Ok(y) = digits.parse::<u32>() {
-        if (1900..=2099).contains(&y) {
-            return None;
-        }
-    }
+    let listed = |n: &str| list.is_some_and(|l| l.get(n).is_some());
+    let claim = choose_race_number(&candidates, listed, seen)?;
     if let Some(p) = plate {
         let p_digits: String = p.chars().filter(|c| c.is_ascii_digit()).collect();
         if !p_digits.is_empty()
-            && (p_digits == digits
-                || p_digits.trim_start_matches('0') == digits.trim_start_matches('0'))
+            && (p_digits == claim
+                || p_digits.trim_start_matches('0') == claim.trim_start_matches('0'))
         {
             return None;
         }
@@ -467,7 +476,7 @@ fn trusted_vlm_number(
         return Some(claim);
     }
     if !tokens.is_empty()
-        && digits.len() >= 3
+        && claim.len() >= 3
         && roundels.is_empty()
         && ocr_number.number.as_deref() != Some(&claim)
     {
@@ -477,6 +486,54 @@ fn trusted_vlm_number(
         && roundels.is_empty()
         && ocr_number.number.as_deref() != Some(&claim);
     (!disowned).then_some(claim)
+}
+
+/// Every number the model reported, filtered to what can be a race number: a
+/// digit run of at most three, not a year and not a slice of the plate. Older
+/// replies have only `race_number`, so it is always included.
+fn vlm_candidates(described: &VehicleDescription, plate: Option<&str>) -> Vec<NumberCandidate> {
+    let plate_digits: String = plate
+        .unwrap_or_default()
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect();
+    let mut out: Vec<NumberCandidate> = Vec::new();
+    let fallback = described
+        .race_number
+        .as_ref()
+        .map(|number| NumberCandidate {
+            number: number.clone(),
+            location: String::new(),
+        });
+    for candidate in described.numbers.iter().chain(fallback.iter()) {
+        let digits: String = candidate
+            .number
+            .chars()
+            .filter(char::is_ascii_digit)
+            .collect();
+        if digits.is_empty() || digits.len() > 3 {
+            continue;
+        }
+        if let Ok(year) = digits.parse::<u32>() {
+            if (1900..=2099).contains(&year) {
+                continue;
+            }
+        }
+        if !plate_digits.is_empty()
+            && (plate_digits == digits
+                || plate_digits.trim_start_matches('0') == digits.trim_start_matches('0'))
+        {
+            continue;
+        }
+        if out.iter().any(|c| c.number == digits) {
+            continue;
+        }
+        out.push(NumberCandidate {
+            number: digits,
+            location: candidate.location.clone(),
+        });
+    }
+    out
 }
 
 type EntryCache = Option<(String, Option<SystemTime>, Option<Arc<EntryList>>)>;
@@ -639,6 +696,26 @@ mod tests {
         }
     }
 
+    /// The tiebreak with no burst history, which is what a first frame sees.
+    fn trusted(
+        described: &VehicleDescription,
+        roundels: &[(String, f64)],
+        ocr: &OcrReading,
+        plate: Option<&str>,
+        tokens: &[ocr::Token],
+        list: Option<&EntryList>,
+    ) -> Option<String> {
+        trusted_vlm_number(
+            described,
+            roundels,
+            ocr,
+            plate,
+            tokens,
+            list,
+            &HashMap::new(),
+        )
+    }
+
     const TWO_ENTRIES: &str = "number,team,drivers,make,model,sponsors\n\
         7,Team Alpha,Ann Ash; Ben Birch,Ford,Mustang,Mobil 1;Optus\n\
         42,Team Beta,Cal Cole,Toyota,GR Supra,Liqui Moly\n";
@@ -788,10 +865,7 @@ mod tests {
             ..VehicleDescription::default()
         };
         let none = OcrReading::default();
-        assert_eq!(
-            trusted_vlm_number(&road_car, &[], &none, None, &[], None),
-            None
-        );
+        assert_eq!(trusted(&road_car, &[], &none, None, &[], None), None);
         // ...unless OCR read the same number, or a roundel was found.
         let same = OcrReading {
             number: Some("220".into()),
@@ -799,11 +873,11 @@ mod tests {
             source: "ocr".into(),
         };
         assert_eq!(
-            trusted_vlm_number(&road_car, &[], &same, None, &[], None).as_deref(),
+            trusted(&road_car, &[], &same, None, &[], None).as_deref(),
             Some("220")
         );
         assert_eq!(
-            trusted_vlm_number(&road_car, &[("5".into(), 0.5)], &none, None, &[], None).as_deref(),
+            trusted(&road_car, &[("5".into(), 0.5)], &none, None, &[], None).as_deref(),
             Some("220")
         );
         let racer = VehicleDescription {
@@ -811,7 +885,7 @@ mod tests {
             ..road_car
         };
         assert_eq!(
-            trusted_vlm_number(&racer, &[], &none, None, &[], None).as_deref(),
+            trusted(&racer, &[], &none, None, &[], None).as_deref(),
             Some("220")
         );
     }
@@ -827,13 +901,10 @@ mod tests {
         let none = OcrReading::default();
         let tok = vec![token("GAMMA", 0.9)];
         assert_eq!(
-            trusted_vlm_number(&racer, &[], &none, None, &tok, Some(&list)).as_deref(),
+            trusted(&racer, &[], &none, None, &tok, Some(&list)).as_deref(),
             Some("142")
         );
-        assert_eq!(
-            trusted_vlm_number(&racer, &[], &none, None, &tok, None),
-            None
-        );
+        assert_eq!(trusted(&racer, &[], &none, None, &tok, None), None);
     }
 
     #[test]
@@ -845,10 +916,7 @@ mod tests {
         };
         let none = OcrReading::default();
         // Rejected because "100" is part of registration plate "TZ100"
-        assert_eq!(
-            trusted_vlm_number(&racer, &[], &none, Some("TZ100"), &[], None),
-            None
-        );
+        assert_eq!(trusted(&racer, &[], &none, Some("TZ100"), &[], None), None);
 
         // Rejected because 4-digit year
         let year_car = VehicleDescription {
@@ -856,16 +924,73 @@ mod tests {
             is_competition: true,
             ..VehicleDescription::default()
         };
-        assert_eq!(
-            trusted_vlm_number(&year_car, &[], &none, None, &[], None),
-            None
-        );
+        assert_eq!(trusted(&year_car, &[], &none, None, &[], None), None);
 
         // Rejected uncorroborated 3-digit number when OCR tokens are present
         let tok = vec![token("FORD", 0.9)];
+        assert_eq!(trusted(&racer, &[], &none, None, &tok, None), None);
+    }
+
+    #[test]
+    fn the_tiebreak_prefers_a_listed_number_then_the_biggest_panel() {
+        let racer = VehicleDescription {
+            race_number: Some("99".into()),
+            numbers: vec![
+                NumberCandidate {
+                    number: "7".into(),
+                    location: "windscreen".into(),
+                },
+                NumberCandidate {
+                    number: "99".into(),
+                    location: "door".into(),
+                },
+            ],
+            is_competition: true,
+            ..VehicleDescription::default()
+        };
+        let none = OcrReading::default();
+        // No list: the door panel wins over the windscreen.
         assert_eq!(
-            trusted_vlm_number(&racer, &[], &none, None, &tok, None),
-            None
+            trusted(&racer, &[], &none, None, &[], None).as_deref(),
+            Some("99")
+        );
+        // With a list, its number wins even though it is on a smaller panel.
+        let list = entrylist::parse("number,team\n7,Team Alpha\n").unwrap();
+        assert_eq!(
+            trusted(&racer, &[], &none, None, &[], Some(&list)).as_deref(),
+            Some("7")
+        );
+    }
+
+    #[test]
+    fn the_burst_history_settles_two_equally_prominent_panels() {
+        let racer = VehicleDescription {
+            race_number: Some("5".into()),
+            numbers: vec![
+                NumberCandidate {
+                    number: "12".into(),
+                    location: "door".into(),
+                },
+                NumberCandidate {
+                    number: "5".into(),
+                    location: "door".into(),
+                },
+            ],
+            is_competition: true,
+            ..VehicleDescription::default()
+        };
+        let none = OcrReading::default();
+        let mut seen = HashMap::new();
+        seen.insert("12".to_string(), 1);
+        seen.insert("5".to_string(), 4);
+        assert_eq!(
+            trusted_vlm_number(&racer, &[], &none, None, &[], None, &seen).as_deref(),
+            Some("5")
+        );
+        // Without burst history, equally prominent panels keep the model's order.
+        assert_eq!(
+            trusted(&racer, &[], &none, None, &[], None).as_deref(),
+            Some("12")
         );
     }
 
@@ -886,10 +1011,12 @@ mod tests {
                 ..KnownVehicle::default()
             },
         );
+        let empty = HashMap::new();
         let ctx = Context {
             settings: &s,
             plates: &plates::PlateOptions::default(),
             known: &known,
+            seen_numbers: &empty,
         };
         let out = analyze(
             &Rgb {

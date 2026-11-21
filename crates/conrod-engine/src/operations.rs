@@ -203,15 +203,19 @@ fn identify_models(settings: &Settings) -> (String, &'static str) {
         parts.push("PP-OCRv4".into());
     }
     if settings.use_vlm {
-        parts.push(format!(
-            "{} via {}",
-            settings.vlm_model, settings.vlm_provider
-        ));
+        match settings.enabled_vlm_service() {
+            Some(service) => parts.push(format!("{} via {}", service.model, service.provider)),
+            None => parts.push("no vision service".into()),
+        }
     }
     if parts.is_empty() {
         parts.push("embeddings only".into());
     }
-    let device = if settings.use_vlm { "ollama" } else { "CPU" };
+    let device = if settings.use_vlm && settings.enabled_vlm_service().is_some() {
+        "ollama"
+    } else {
+        "CPU"
+    };
     (parts.join(" + "), device)
 }
 
@@ -229,6 +233,9 @@ struct Run<'a> {
     progress: Option<&'a crate::progress::Progress>,
     /// The live feed the identify screen draws; shared by all workers.
     live: Option<&'a Arc<IdentifyLive>>,
+    /// How often each number was read in each burst, for the tiebreak that
+    /// settles two equally prominent panels. Keyed by `images.burst_key`.
+    burst_numbers: Mutex<HashMap<i64, HashMap<String, u32>>>,
 }
 
 impl Run<'_> {
@@ -368,6 +375,11 @@ impl Run<'_> {
             );
             let native = (s.plate_native_search && s.read_plates).then_some(&tight);
             let kind = row["cls"].as_str().unwrap_or("car");
+            let burst = row["burst_key"].as_i64().unwrap_or_default();
+            let seen_numbers = lock(&self.burst_numbers)
+                .get(&burst)
+                .cloned()
+                .unwrap_or_default();
             self.task.detail(format!("{filename} · {kind}"));
             self.busy(lane, &filename, "identify");
             if let Some(live) = self.live {
@@ -388,6 +400,7 @@ impl Run<'_> {
                     settings: s,
                     plates: self.plates,
                     known: self.known,
+                    seen_numbers: &seen_numbers,
                 },
                 readers,
                 prompt_sink.as_ref().map(|sink| sink as &dyn Fn(&str)),
@@ -403,6 +416,14 @@ impl Run<'_> {
                 self.report(failure.clone());
             }
             let mut analysis = outcome.analysis;
+            if let Some(number) = analysis.race_number.clone() {
+                lock(&self.burst_numbers)
+                    .entry(burst)
+                    .or_default()
+                    .entry(number)
+                    .and_modify(|count| *count += 1)
+                    .or_insert(1);
+            }
             // What the frame reads as, for the live strip on the scan screen.
             if let Some(label) = analysis
                 .race_number
@@ -502,14 +523,15 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
         } else {
             "vehicle"
         };
-        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='{region}' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
+        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path,i.burst_key FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='{region}' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
         // The live feed the identify screen draws, replaced by the next run and
         // kept after this one so its summary stays on screen. The guard ends an
         // early return (`?`) as an error rather than leaving the feed running.
         let live = Arc::new(IdentifyLive::new(job, pending.len()));
         // The model the VISION node should name: the enabled service that will
         // actually answer, not the album's unused fallback.
-        // Off is never a model name: the screen is told why instead.
+        // Off is never a model name: the screen is told why instead. The name
+        // comes from the enabled service, never the old fallback fields.
         match vision_off {
             Some(reason) => live.set_vision_off(reason.word()),
             None => live.set_model(&settings.vision_model()),
@@ -614,6 +636,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             reported: &reported,
             progress: progress.as_deref(),
             live: Some(&live),
+            burst_numbers: Mutex::new(HashMap::new()),
         };
         let fail = |e: String| {
             lock(&failure).get_or_insert(e);
@@ -888,6 +911,43 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pipeline_names_the_enabled_service_not_the_legacy_model() {
+        let service = |id: &str, provider: &str, model: &str, enabled: bool| {
+            conrod_core::settings::VlmService {
+                id: id.into(),
+                provider: provider.into(),
+                model: model.into(),
+                enabled,
+                ..conrod_core::settings::VlmService::default()
+            }
+        };
+        let settings = Settings {
+            read_plates: false,
+            read_numbers: false,
+            read_text: false,
+            use_vlm: true,
+            vlm_provider: "ollama".into(),
+            vlm_model: "qwen2.5vl:7b".into(),
+            vlm_services: vec![
+                service("off", "ollama", "qwen2.5vl:7b", false),
+                service("on", "opencode-go", "glm-5.3-flash", true),
+            ],
+            ..Settings::default()
+        };
+        let (model, _) = identify_models(&settings);
+        assert!(model.contains("glm-5.3-flash via opencode-go"), "{model}");
+        assert!(!model.contains("qwen2.5vl"), "{model}");
+
+        let all_off = Settings {
+            vlm_services: vec![service("off", "ollama", "qwen2.5vl:7b", false)],
+            ..settings
+        };
+        let (model, device) = identify_models(&all_off);
+        assert_eq!(model, "no vision service");
+        assert_eq!(device, "CPU");
+    }
 
     /// The identify lane's pending query, with only the scope rule swapped.
     fn pending(db: &rusqlite::Connection, job: i64, scope: &str) -> Vec<i64> {

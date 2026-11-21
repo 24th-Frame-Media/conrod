@@ -616,6 +616,14 @@ impl Settings {
         }
     }
 
+    /// The vision service that will actually answer: the first enabled one.
+    /// `None` when every configured service is off (the legacy single
+    /// provider is then not a fallback: a disabled service means the model is
+    /// not asked).
+    pub fn enabled_vlm_service(&self) -> Option<&VlmService> {
+        self.vlm_services.iter().find(|service| service.enabled)
+    }
+
     /// This album's workflow, normalised: [`WORKFLOW_BOTH`] unless the album
     /// says "cull" or "identify".
     pub fn workflow(&self) -> &'static str {
