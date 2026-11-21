@@ -364,14 +364,29 @@ dialog[open] { animation: dialog-in .18s var(--ease); }
 /* splash and drop overlay */
 .splash { position: fixed; inset: 0; z-index: 200; background: var(--bg); display: grid; place-items: center; transition: opacity .35s var(--ease); }
 .splash.gone { opacity: 0; pointer-events: none; }
-.splash-card { width: 320px; padding: 24px 28px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; display: grid; grid-template-columns: auto 1fr; gap: 0 20px; align-items: center; }
-.splash-mark { height: 56px; color: var(--accent); grid-row: span 2; }
+.splash-card { width: 440px; max-width: calc(100vw - 32px); padding: 24px 28px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; display: grid; grid-template-columns: auto 1fr; gap: 0 20px; align-items: center; }
+.splash-mark { height: 56px; color: var(--accent); }
 .splash-name { font-size: 26px; font-weight: 400; margin: 0; }
 .splash-name b { font-weight: 600; }
-.splash-ver { color: var(--text-mute); font-size: 12px; font-weight: 400; margin: 0; }
-.splash-msg { grid-column: 2; color: var(--text-dim); font-size: 12px; margin: 12px 0 8px; }
+.splash-ver { color: var(--text-mute); font-size: 12px; font-weight: 400; margin: 2px 0 0; }
+.splash-now { grid-column: 1 / -1; margin: 18px 0 10px; min-height: 40px; }
+.splash-msg { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; color: var(--text-dim); font-size: 13px; margin: 0; }
+.splash-msg.warn { color: var(--warn2); }
+.splash-count { color: var(--text-mute); font-size: 11px; flex: none; }
+.splash-model { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; color: var(--text-mute); font-size: 12px; margin: 4px 0 0; }
+.splash-model code { color: var(--text-dim); font-size: 12px; }
 .splash-bar { grid-column: 1 / -1; height: 4px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
 .splash-bar i { display: block; height: 100%; width: 35%; background: var(--scan); border-radius: 4px; animation: sweep 1.5s ease-in-out infinite; }
+.splash-bar.determinate i { animation: none; transition: width .3s var(--ease); }
+.splash-steps { grid-column: 1 / -1; list-style: none; margin: 12px 0 0; padding: 0; min-height: 112px; display: grid; align-content: start; gap: 6px; }
+.splash-steps li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; line-height: 16px; color: var(--text-dim); animation: splash-tick .3s var(--ease) both; }
+.splash-steps li svg { color: var(--good); flex: none; }
+.splash-steps li b { flex: none; width: 12px; text-align: center; font-size: 11px; font-weight: 700; }
+.splash-steps li.warn { color: var(--warn2); }
+.splash-step-label { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.splash-step-detail { flex: 1 1 0; min-width: 0; margin-left: 4px; text-align: right; color: var(--text-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.splash-steps li.warn .splash-step-detail { color: inherit; }
+@keyframes splash-tick { from { opacity: 0; transform: translateY(3px); } }
 @keyframes sweep { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
 .drop-overlay { position: fixed; inset: 8px; z-index: 150; display: grid; place-content: center; justify-items: center; gap: 8px; border: 2px dashed var(--line-hover); border-radius: 16px; background: rgba(15, 15, 16, .88); color: var(--text); pointer-events: none; animation: dialog-in .16s var(--ease); }
 .drop-overlay b { font-size: 18px; font-weight: 500; color: var(--text); }

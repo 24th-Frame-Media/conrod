@@ -187,6 +187,13 @@ export type DeciderStatus = {
 };
 export type Bootstrap = { jobs: Job[]; settings: Settings; models: ModelInfo[]; status: Status };
 
+/** A model a start-up step is about (shown in mono on the splash). */
+export type StartupModel = { name: string; file: string; bytes?: number | null };
+/** One start-up step the engine ran or is running. `error` shows amber and never blocks the app. */
+export type StartupStep = { step: string; label: string; detail: string | null; error: string | null; model: StartupModel | null };
+/** Engine start-up so far: the `startup-progress` event and the `startup_status` answer. */
+export type StartupStatus = StartupStep & { done: number; total: number; ready: boolean; completed: StartupStep[] };
+
 export const ATTRIBUTE_KEYS = ['plate', 'race_number', 'make', 'model', 'colour', 'team', 'driver', 'country', 'plate_state', 'body_type'] as const;
 export type AttributeKey = (typeof ATTRIBUTE_KEYS)[number];
 export type Attributes = Partial<Record<AttributeKey, string>> & { colour_hex?: string; sponsors?: string[]; person_name?: string; plate_bbox?: [number, number, number, number]; model_suggested?: boolean; model_evidence?: string; number_source?: string; number_conf?: number; vlm_conf?: number; action?: string[] };
