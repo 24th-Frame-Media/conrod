@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window';
 import { Icon, KeysDialog, Splash } from './components/basics';
 import { TitleBar, type StatusActions } from './components/TitleBar';
+import { SetupWizard } from './components/SetupWizard';
 import { WhatsNewSheet } from './components/WhatsNewSheet';
 import { call, engine, inTauri, mocked } from './lib/api';
 import { filename } from './lib/review';
@@ -22,6 +23,7 @@ import { useIdentifyProgress } from './state/useIdentifyProgress';
 import { useReview } from './state/useReview';
 import { useScanProgress } from './state/useScanProgress';
 import { useWhatsNew } from './state/useWhatsNew';
+import { useWizard } from './state/useWizard';
 
 /** Wires the engine hooks to the screens; every screen is a plain component that gets what it shows as props. */
 export function App() {
@@ -44,6 +46,7 @@ export function App() {
 
   const rv = useReview(jobId, run);
   const eng = useEngine(jobId, rv.refresh, run);
+  const wizard = useWizard({ ready: eng.ready, settings: eng.settings, albums: eng.jobs.length, markSeen: whatsNew.markSeen });
   const { status } = eng;
   const scanning = status.activeJob !== null;
   const scanLive = useScanProgress();
@@ -225,14 +228,17 @@ export function App() {
         )}
         {view === 'Settings' && (
           <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status}
-            onOpenWhatsNew={whatsNew.openManually} />
+            onOpenWhatsNew={whatsNew.openManually} onOpenWizard={wizard.openManually} />
         )}
       </main>
       <ImportDialog draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} settings={eng.settings} status={status} busy={starting}
         onStart={(args, defaults) => void startScan(args, defaults)} visible={showImport} onClose={() => setShowImport(false)} />
       {help && <KeysDialog onClose={() => setHelp(false)} />}
       {dropping && <div className="drop-overlay"><Icon name="drop" size={34} /><b>Drop a folder to scan it</b><span>Photos, or a folder of them</span></div>}
-      <WhatsNewSheet visible={whatsNew.open} fresh={whatsNew.fresh} earlier={whatsNew.earlier} onClose={whatsNew.close} />
+      <SetupWizard visible={wizard.open} settings={eng.settings} toast={toast} onClose={wizard.close}
+        onSaved={(saved) => { eng.setSettings(saved); if (typeof saved.scan_profile === 'string') setProfile(saved.scan_profile); }}
+        onOpenSettings={() => setPage('Settings')} />
+      <WhatsNewSheet visible={whatsNew.open && wizard.decided && !wizard.open} fresh={whatsNew.fresh} earlier={whatsNew.earlier} onClose={whatsNew.close} />
       <Splash gone={eng.ready} />
     </div>
   );
