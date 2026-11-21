@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { modelParts, startupCount, startupFraction, startupHeadline, visibleSteps } from '../lib/startup.mjs';
+import type { StartupStatus } from '../lib/types';
 
 /**
  * Sheets live on `document.body`, not inside the screen: a transformed or scrolled
@@ -110,17 +112,49 @@ export function Empty({ icon = 'images', title, children }: { icon?: IconName; t
   );
 }
 
-export function Splash({ gone }: { gone: boolean }) {
+/**
+ * Start-up screen: what the engine is doing right now (with the model it is about, if any), a bar
+ * that fills as steps finish, and the last few finished steps ticked off. A step that went wrong
+ * shows amber and never blocks. Without a status yet it is the logo and an indeterminate bar.
+ */
+export function Splash({ gone, status, version }: { gone: boolean; status?: StartupStatus | null; version?: string | null }) {
+  const fraction = startupFraction(status);
+  const model = modelParts(status?.model);
+  const count = startupCount(status);
+  const steps = visibleSteps(status);
   return (
     <div className={gone ? 'splash gone' : 'splash'} aria-hidden={gone}>
       <div className="splash-card">
         <div className="splash-mark"><Mark /></div>
         <div>
           <p className="splash-name"><b>con</b>rod</p>
-          <p className="splash-ver">Rust edition</p>
+          {version && <p className="splash-ver">v{version}</p>}
         </div>
-        <p className="splash-msg">Warming up the detectors</p>
-        <div className="splash-bar"><i /></div>
+        <div className="splash-now" role="status">
+          <p className={status?.error ? 'splash-msg warn' : 'splash-msg'}>
+            <span>{startupHeadline(status)}</span>
+            {count && !status?.ready && <span className="splash-count mono">{count}</span>}
+          </p>
+          {model && (
+            <p className="splash-model">
+              {model.name && <span>{model.name}</span>}
+              <code className="mono">{model.file}</code>
+              {model.size && <span className="splash-size">{model.size}</span>}
+            </p>
+          )}
+        </div>
+        <div className={fraction == null ? 'splash-bar' : 'splash-bar determinate'}>
+          <i style={fraction == null ? undefined : { width: `${Math.round(fraction * 100)}%` }} />
+        </div>
+        <ul className="splash-steps" aria-label="Finished start-up steps">
+          {steps.map((s) => (
+            <li key={s.key} className={s.tone === 'warn' ? 'warn' : undefined} title={s.detail ? `${s.label}: ${s.detail}` : s.label}>
+              {s.tone === 'warn' ? <b aria-label="Problem">!</b> : <Icon name="check" size={12} />}
+              <span className="splash-step-label">{s.label}</span>
+              {s.detail && <span className="splash-step-detail">{s.detail}</span>}
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );

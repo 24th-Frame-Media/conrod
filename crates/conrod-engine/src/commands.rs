@@ -409,6 +409,8 @@ pub enum Command {
     Bootstrap {},
     Health {},
     Status {},
+    /// Where start-up is: the running step and the finished ones (the splash reads it).
+    StartupStatus {},
     Jobs {},
     Review(JobArgs),
     Scan(ScanArgs),

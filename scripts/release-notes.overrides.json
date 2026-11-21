@@ -222,6 +222,8 @@
     "fdf2cb4": { "section": "New", "text": "When you import, Conrod lists what it will do for that kind of shoot, with a switch for each step, and the same list sits in the album's settings." },
     "22e79d5": { "section": "New", "text": "Conrod can pick out the moments that matter for the shoot, like a first kiss, the ride's peak or a car in the air, and use them to choose between near-identical frames. It never keeps a blurry frame over a sharp one." },
     "6c73e5a": { "section": "New", "text": "Review shows each moment on the frame, marks the less certain ones as maybe, tells you when a moment decided a pick, and lets you filter by moment. Moments have their own switches and a confidence setting." },
-    "e91848b": { "section": "New", "text": "Moments can be judged by the decision model running on your own graphics card, with no account or internet. Its questions and answers show live in the import flowchart, and on a smaller card it waits for the cull to finish rather than running out of video memory." }
+    "e91848b": { "section": "New", "text": "Moments can be judged by the decision model running on your own graphics card, with no account or internet. Its questions and answers show live in the import flowchart, and on a smaller card it waits for the cull to finish rather than running out of video memory." },
+    "8558e23": { "section": "New", "text": "Conrod now keeps track of what it is doing as it starts up, such as opening your library, checking your models and looking for ExifTool." },
+    "e66496c": { "section": "New", "text": "The opening screen shows what Conrod is really doing while it starts, with the model it is checking, a progress bar and the steps already done. If a step has a problem it says so and the app still opens." }
   }
 }

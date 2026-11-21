@@ -140,6 +140,7 @@ pub mod selftest;
 pub mod setup;
 #[cfg(test)]
 mod sporttest;
+pub mod startup;
 pub mod taste;
 #[cfg(test)]
 mod testkit;
