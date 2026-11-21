@@ -26,7 +26,7 @@ test('every setting keeps its engine key and appears in exactly one section', ()
     if (key === 'vlm_services') continue; // a whole list, rendered by the providers section
     assert.ok(seen.has(key), `${key} is still on the page`);
   }
-  assert.equal(SECTIONS.length, 15); // incl. the opt-in decision model and Lightroom
+  assert.equal(SECTIONS.length, 16); // incl. the opt-in decision model and Lightroom
   assert.deepEqual(TABS.map((t) => t.label), ['Culling', 'Identification', 'Metadata', 'Lightroom', 'System']);
 });
 

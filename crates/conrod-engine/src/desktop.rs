@@ -1246,6 +1246,7 @@ impl Desktop {
             );
         }
         let mut settings = lock(&self.settings).clone();
+        let auto_apply = settings.auto_apply;
         let task = self.hub.start("Indexing album", 0);
         // How far this run's tail goes, which stage it reads at, and what the
         // import found. A resume keeps the album's own stage; a folder that is
@@ -1695,6 +1696,35 @@ impl Desktop {
                 progress.finish(outcome);
             }
             desktop.finishing.store(false, Ordering::Release);
+            // The photographer's folders get their verdicts without a second
+            // command: stars, and a pick colour because Lightroom stores pick
+            // flags in the catalog only. The bridge package follows, so an
+            // open Lightroom can apply the flag itself.
+            if !stopped
+                && outcome == "done"
+                && auto_apply
+                && crate::operations::auto_apply_enabled()
+            {
+                let worker = desktop.clone();
+                let bridge = lock(&worker.settings).lightroom_bridge;
+                std::thread::spawn(move || {
+                    if let Err(e) = crate::operations::write(&worker, job, false, false) {
+                        worker.hub.start("Applying stars and picks", 0).fail(e);
+                        return;
+                    }
+                    // `write` runs as its own operation; wait for it before the
+                    // package claims the sidecars were written.
+                    let key = format!("Writing metadata:{job}");
+                    while lock(&worker.operations).contains_key(&key) {
+                        std::thread::sleep(std::time::Duration::from_millis(150));
+                    }
+                    if bridge {
+                        if let Err(e) = crate::lightroom::export(&worker, job) {
+                            worker.hub.start("Sending verdicts to Lightroom", 0).fail(e);
+                        }
+                    }
+                });
+            }
             desktop.hub.note(if stopped {
                 "Scan stopped"
             } else {

@@ -602,6 +602,19 @@ mod tests {
     }
 
     #[test]
+    fn a_pick_colour_is_written_as_the_xmp_label() {
+        // Lightroom keeps pick flags in its catalog, so a suggested keep reaches
+        // the files as the photographer's chosen colour label.
+        let packet = xmp_packet(&[], None, None, Some("Blue"));
+        assert!(packet.contains("<xmp:Label>Blue</xmp:Label>"));
+        assert!(
+            !packet.contains("<xmp:Rating>"),
+            "a pick adds no star rating"
+        );
+        assert!(!packet.contains("<dc:subject>"), "a pick adds no keywords");
+    }
+
+    #[test]
     fn new_sidecar_is_atomic_and_escapes_xml() {
         let root = std::env::temp_dir().join(format!("conrod-io-writer-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);

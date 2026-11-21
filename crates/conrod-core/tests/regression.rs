@@ -1229,6 +1229,7 @@ fn settings_match_snapshot() {
         // chooses one.
         m.remove("blur_explicit");
         m.remove("lightroom_bridge"); // Rust-only: the plug-in installer
+        m.remove("auto_apply"); // Rust-only: stars and picks applied at album finish
         v
     };
     let as_map = |s: &Settings| prune(serde_json::to_value(s).unwrap());

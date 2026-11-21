@@ -226,6 +226,7 @@ fn main() {
                 Desktop::open(conrod_core::settings::data_root()).map_err(std::io::Error::other)?;
             conrod_engine::lightroom::set_plugin_source(lightroom_plugin_dir(app));
             conrod_engine::lightroom::sync_on_start(&desktop);
+            conrod_engine::operations::enable_auto_apply();
             app.asset_protocol_scope()
                 .allow_directory(desktop.root.join("cache"), true)?;
             app.manage(desktop);

@@ -135,6 +135,20 @@ export const FIELDS = {
   overwrite_caption: { label: 'Overwrite existing captions', kind: 'toggle' },
   close_to_tray: { label: 'Keep running in the tray when closed', kind: 'toggle' },
 
+  // ── applied automatically ──
+  auto_apply: {
+    label: 'Apply stars and picks automatically', kind: 'toggle',
+    hint: 'When an album finishes, write its stars and its suggested picks to the files. A pick flag cannot live in an XMP file, so the pick is written as a colour label (Blue by default) that Lightroom reads on Metadata → Read Metadata from File, or when the photos are imported. Verdicts also wait for the Lightroom plug-in.',
+  },
+  pick_label: {
+    label: 'Colour for suggested picks', kind: 'segmented',
+    hint: 'Lightroom shows this colour on the frames Conrod suggests keeping. None leaves the colour label alone.',
+    options: [
+      { id: 'None', name: 'None' }, { id: 'Red', name: 'Red' }, { id: 'Yellow', name: 'Yellow' },
+      { id: 'Green', name: 'Green' }, { id: 'Blue', name: 'Blue' }, { id: 'Purple', name: 'Purple' },
+    ],
+  },
+
   // ── lightroom ──
   lightroom_bridge: {
     label: 'Lightroom Classic bridge', kind: 'toggle',
@@ -214,6 +228,11 @@ for (const [key, field] of Object.entries(FIELDS)) field.key = key;
   {
     id: 'desktop', tab: 'metadata', title: 'Desktop',
     keys: ['close_to_tray'],
+  },
+  {
+    id: 'auto-apply', tab: 'metadata', title: 'Applied automatically',
+    hint: 'What Conrod writes without being asked, once an album finishes. Never over your own stars or labels.',
+    keys: ['auto_apply', 'pick_label'],
   },
   {
     id: 'lightroom', tab: 'lightroom', title: 'Lightroom Classic',

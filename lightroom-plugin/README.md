@@ -93,7 +93,9 @@ On **Apply** the plug-in:
    re-adding keywords/photos is idempotent.
 
 Per-photo errors are caught and counted; one bad entry does not abort the
-package.
+package. A rating or colour label is written only when the photo has none
+unless the package's `overwrite` object allows replacing it; a pick flag is set
+only on an unflagged photo and is never cleared.
 
 ### Show pending packages
 

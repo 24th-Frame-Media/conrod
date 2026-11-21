@@ -283,6 +283,11 @@ pub struct Settings {
     /// Keep the Conrod Bridge plug-in installed in Lightroom Classic and let
     /// Conrod's verdicts reach the catalog. Off removes the plug-in.
     pub lightroom_bridge: bool,
+    /// When an album finishes, write its stars and suggested picks (the pick
+    /// colour label, because Lightroom keeps pick flags catalog-only) and hand
+    /// the verdicts to the bridge. Off, only "Write XMP" and "Send verdicts"
+    /// do it.
+    pub auto_apply: bool,
     pub analysis_workers: i64,
     pub preview_workers: i64,
     pub detect_workers: i64,
@@ -434,6 +439,7 @@ impl Default for Settings {
             write_plate_keyword: true,
             write_caption: false,
             lightroom_bridge: true,
+            auto_apply: true,
             analysis_workers: 3,
             preview_workers: 4,
             detect_workers: 2,

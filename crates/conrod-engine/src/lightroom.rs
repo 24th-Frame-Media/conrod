@@ -90,8 +90,20 @@ pub struct Envelope {
     pub producer: Option<Producer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collection: Option<String>,
+    /// `to-lightroom` only: whether the photographer lets Conrod replace a
+    /// hand-set star rating or colour label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overwrite: Option<Overwrite>,
     #[serde(default)]
     pub photos: Vec<Value>,
+}
+
+/// The two flags a package carries so the plug-in never overwrites a choice
+/// the photographer made by hand.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Overwrite {
+    pub rating: bool,
+    pub label: bool,
 }
 
 /// Why a package must go to `failed\`: the same wording the plugin uses.
@@ -498,8 +510,11 @@ pub fn export(d: &Desktop, job: i64) -> Result<Value> {
         let picked = frame["hand_pick"].as_i64() == Some(1);
         let burst = frame["burst_key"].as_i64();
         let suggested = frame["pick_flag"].as_i64() == Some(1);
-        let keeper = !rejected
-            && (picked || (suggested && !burst.is_some_and(|key| picked_bursts.contains(&key))));
+        let auto_pick = !rejected
+            && !picked
+            && suggested
+            && !burst.is_some_and(|key| picked_bursts.contains(&key));
+        let keeper = picked || auto_pick;
         let stars = manual_stars.unwrap_or_else(|| {
             frame["rating"]
                 .as_f64()
@@ -515,20 +530,26 @@ pub fn export(d: &Desktop, job: i64) -> Result<Value> {
         if let Some(burst) = burst {
             keywords.push(format!("{prefix} burst {burst}"));
         }
-
+        // A pick flag lives in the catalog only, so a suggested keeper also
+        // carries the photographer's chosen colour label; the plug-in sets
+        // both, and the XMP sidecar carries the label for the no-plugin path.
+        let pick_colour =
+            crate::operations::pick_label_colour(&settings.pick_label).map(str::to_ascii_lowercase);
         let photo = Photo {
             path: frame["path"].as_str().unwrap_or_default().to_string(),
             rating: Some(stars),
             pick: Some(if rejected {
                 -1
-            } else if picked {
+            } else if keeper {
                 1
             } else {
                 0
             }),
             label: if rejected {
                 Some("red".into())
-            } else if keeper {
+            } else if auto_pick {
+                pick_colour.clone()
+            } else if picked {
                 Some("green".into())
             } else if frame["looks"].as_i64().unwrap_or(0) > 0 {
                 Some("yellow".into())
@@ -561,6 +582,10 @@ pub fn export(d: &Desktop, job: i64) -> Result<Value> {
         collection: label
             .clone()
             .map(|label| format!("Conrod keepers - {label}")),
+        overwrite: Some(Overwrite {
+            rating: settings.overwrite_rating,
+            label: settings.overwrite_label,
+        }),
         photos,
     };
     let directory = folder(d, "out");
@@ -1340,6 +1365,10 @@ mod tests {
                 version: "1.0.0-beta.8".into(),
             }),
             collection: Some("Conrod keepers - Bathurst 1000".into()),
+            overwrite: Some(Overwrite {
+                rating: false,
+                label: false,
+            }),
             photos: vec![serde_json::to_value(photo).unwrap()],
         };
         let text = serde_json::to_string(&envelope).unwrap();
@@ -1447,16 +1476,22 @@ mod tests {
         let lib = Lib::new("lightroom-export");
         let keeper = lib.frame("a.CR3", Some(1));
         let rejected = lib.frame("b.CR3", Some(1));
+        let suggested = lib.frame("c.CR3", Some(3));
         lib.sql(
             "UPDATE images SET picked=1,stars=4 WHERE id=?",
             params![keeper],
         );
         lib.sql("UPDATE images SET rejected=1 WHERE id=?", params![rejected]);
+        let suggestion = lib.detection(suggested, "vehicle", 0.9);
+        lib.sql(
+            "UPDATE detections SET burst_pick=1 WHERE id=?",
+            params![suggestion],
+        );
 
         let out = lib
             .run("lightroom_export", json!({"jobId": lib.job}))
             .unwrap();
-        assert_eq!(out["photos"], 2);
+        assert_eq!(out["photos"], 3);
         let name = out["package"].as_str().unwrap();
         let path = PathBuf::from(out["path"].as_str().unwrap());
         assert_eq!(
@@ -1481,7 +1516,11 @@ mod tests {
             "the album label names the collection"
         );
         let photos = package["photos"].as_array().unwrap();
-        assert_eq!(photos.len(), 2);
+        assert_eq!(photos.len(), 3);
+        assert_eq!(
+            package["overwrite"],
+            json!({"rating": false, "label": false})
+        );
         let kept: Photo = serde_json::from_value(photos[0].clone()).unwrap();
         assert_eq!((kept.rating, kept.pick), (Some(4), Some(1)));
         assert_eq!(kept.label.as_deref(), Some("green"));
@@ -1505,6 +1544,14 @@ mod tests {
             .keywords
             .unwrap()
             .contains(&"Conrod cull".to_string()));
+
+        let auto: Photo = serde_json::from_value(photos[2].clone()).unwrap();
+        assert_eq!(
+            (auto.pick, auto.label.as_deref()),
+            (Some(1), Some("blue")),
+            "a suggested keeper is picked and carries the pick colour"
+        );
+        assert_eq!(auto.keeper, Some(true));
     }
 
     #[test]
