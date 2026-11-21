@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::UNIX_EPOCH;
 
 /// The envelope's format tag, shared with the plugin.
@@ -89,8 +90,20 @@ pub struct Envelope {
     pub producer: Option<Producer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collection: Option<String>,
+    /// `to-lightroom` only: whether the photographer lets Conrod replace a
+    /// hand-set star rating or colour label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overwrite: Option<Overwrite>,
     #[serde(default)]
     pub photos: Vec<Value>,
+}
+
+/// The two flags a package carries so the plug-in never overwrites a choice
+/// the photographer made by hand.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Overwrite {
+    pub rating: bool,
+    pub label: bool,
 }
 
 /// Why a package must go to `failed\`: the same wording the plugin uses.
@@ -497,8 +510,11 @@ pub fn export(d: &Desktop, job: i64) -> Result<Value> {
         let picked = frame["hand_pick"].as_i64() == Some(1);
         let burst = frame["burst_key"].as_i64();
         let suggested = frame["pick_flag"].as_i64() == Some(1);
-        let keeper = !rejected
-            && (picked || (suggested && !burst.is_some_and(|key| picked_bursts.contains(&key))));
+        let auto_pick = !rejected
+            && !picked
+            && suggested
+            && !burst.is_some_and(|key| picked_bursts.contains(&key));
+        let keeper = picked || auto_pick;
         let stars = manual_stars.unwrap_or_else(|| {
             frame["rating"]
                 .as_f64()
@@ -514,19 +530,26 @@ pub fn export(d: &Desktop, job: i64) -> Result<Value> {
         if let Some(burst) = burst {
             keywords.push(format!("{prefix} burst {burst}"));
         }
+        // A pick flag lives in the catalog only, so a suggested keeper also
+        // carries the photographer's chosen colour label; the plug-in sets
+        // both, and the XMP sidecar carries the label for the no-plugin path.
+        let pick_colour =
+            crate::operations::pick_label_colour(&settings.pick_label).map(str::to_ascii_lowercase);
         let photo = Photo {
             path: frame["path"].as_str().unwrap_or_default().to_string(),
             rating: Some(stars),
             pick: Some(if rejected {
                 -1
-            } else if picked {
+            } else if keeper {
                 1
             } else {
                 0
             }),
             label: if rejected {
                 Some("red".into())
-            } else if keeper {
+            } else if auto_pick {
+                pick_colour.clone()
+            } else if picked {
                 Some("green".into())
             } else if frame["looks"].as_i64().unwrap_or(0) > 0 {
                 Some("yellow".into())
@@ -559,6 +582,10 @@ pub fn export(d: &Desktop, job: i64) -> Result<Value> {
         collection: label
             .clone()
             .map(|label| format!("Conrod keepers - {label}")),
+        overwrite: Some(Overwrite {
+            rating: settings.overwrite_rating,
+            label: settings.overwrite_label,
+        }),
         photos,
     };
     let directory = folder(d, "out");
@@ -1026,6 +1053,254 @@ pub fn import(d: &Desktop, job: i64, catalog: Option<&str>) -> Result<Value> {
     }))
 }
 
+// --- installing the plug-in --------------------------------------------------
+
+/// The bundle Lightroom Classic loads from its Modules folder.
+const PLUGIN_FOLDER: &str = "ConrodBridge.lrplugin";
+/// Written inside our folder, so a later app knows which build put it there.
+const VERSION_MARKER: &str = "conrod-version.txt";
+
+/// Where the app bundled the plug-in (the installer's resources, or the repo
+/// in a development build). Set once at start-up; tests pass their own path.
+static PLUGIN_SOURCE: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// The shell tells the engine where the bundled plug-in is. Only the app does
+/// this, which is what keeps start-up and Save from touching a test machine's
+/// real Lightroom folder.
+pub fn set_plugin_source(path: PathBuf) {
+    let _ = PLUGIN_SOURCE.set(Some(path));
+}
+
+fn plugin_source() -> Option<PathBuf> {
+    PLUGIN_SOURCE.get().cloned().flatten()
+}
+
+/// The folder the app should have bundled the plug-in in, on this build.
+pub fn default_plugin_source() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lightroom-plugin")
+}
+
+/// Lightroom Classic's Modules folder for this user.
+pub fn modules_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let roaming = std::env::var_os("APPDATA")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("USERPROFILE")
+                    .filter(|value| !value.is_empty())
+                    .map(|home| PathBuf::from(home).join("AppData/Roaming"))
+            })?;
+        Some(roaming.join("Adobe").join("Lightroom").join("Modules"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").filter(|value| !value.is_empty())?;
+        Some(
+            PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("Adobe")
+                .join("Lightroom")
+                .join("Modules"),
+        )
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+fn modules_or(modules: Option<&Path>) -> Result<PathBuf> {
+    modules
+        .map(Path::to_path_buf)
+        .or_else(modules_dir)
+        .ok_or_else(|| {
+            "Conrod does not know where Lightroom Classic keeps its plug-ins on this system"
+                .to_string()
+        })
+}
+
+/// Number groups of a version, so `1.0.0-beta.8` orders before `1.0.0-beta.9`
+/// and both sit below a later number. Good enough to decide an update.
+fn version_key(text: &str) -> Vec<u64> {
+    text.trim()
+        .trim_start_matches(['v', 'V'])
+        .split(['.', '-', '+'])
+        .map(|part| part.parse().unwrap_or(0))
+        .collect()
+}
+
+fn bundled_is_newer(bundled: &str, installed: &str) -> bool {
+    if bundled.trim() == installed.trim() {
+        return false;
+    }
+    version_key(bundled) > version_key(installed)
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    fs::create_dir_all(to).map_err(|e| format!("cannot create {} ({e})", to.display()))?;
+    let entries =
+        fs::read_dir(from).map_err(|e| format!("cannot read {} ({e})", from.display()))?;
+    for entry in entries.flatten() {
+        let source = entry.path();
+        let target = to.join(entry.file_name());
+        let meta =
+            fs::metadata(&source).map_err(|e| format!("cannot read {} ({e})", source.display()))?;
+        if meta.is_dir() {
+            copy_tree(&source, &target)?;
+        } else {
+            fs::copy(&source, &target)
+                .map_err(|e| format!("cannot copy {} ({e})", source.display()))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn lightroom_running() -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq Lightroom.exe", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .to_ascii_lowercase()
+                .contains("lightroom.exe")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn lightroom_running() -> bool {
+    std::process::Command::new("pgrep")
+        .args(["-x", "Lightroom"])
+        .output()
+        .is_ok_and(|out| out.status.success())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn lightroom_running() -> bool {
+    false
+}
+
+fn installed_version(target: &Path) -> Option<String> {
+    if !target.join("Info.lua").is_file() {
+        return None;
+    }
+    fs::read_to_string(target.join(VERSION_MARKER))
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+/// Where the plug-in stands, in the words the Settings card shows.
+pub fn status(d: &Desktop, modules: Option<&Path>, source: Option<&Path>) -> Result<Value> {
+    let modules = modules_or(modules)?;
+    let target = modules.join(PLUGIN_FOLDER);
+    let version = installed_version(&target);
+    let source = source.map(Path::to_path_buf).or_else(plugin_source);
+    let bundled = source.as_ref().is_some_and(|path| path.is_dir());
+    let bundled_version = env!("CARGO_PKG_VERSION");
+    let needs_update = bundled
+        && version
+            .as_deref()
+            .is_some_and(|installed| bundled_is_newer(bundled_version, installed));
+    Ok(json!({
+        "installed": version.is_some(),
+        "version": version,
+        "bundled": bundled,
+        "bundledVersion": bundled_version,
+        "needsUpdate": needs_update,
+        "modules": modules,
+        "path": target,
+        "running": lightroom_running(),
+        "enabled": lock(&d.settings).lightroom_bridge,
+    }))
+}
+
+/// Copy the bundled plug-in into Lightroom's Modules folder, replacing only our
+/// own folder. A build already there at the same version is left alone.
+pub fn install(modules: Option<&Path>, source: Option<&Path>) -> Result<Value> {
+    let modules = modules_or(modules)?;
+    let source = match source.map(Path::to_path_buf).or_else(plugin_source) {
+        Some(path) => path,
+        None => {
+            return Err("the Conrod Bridge plug-in is not bundled with this build".into());
+        }
+    };
+    if !source.is_dir() {
+        return Err(format!(
+            "the Conrod Bridge plug-in is missing from this build ({})",
+            source.display()
+        ));
+    }
+    let target = modules.join(PLUGIN_FOLDER);
+    let version = env!("CARGO_PKG_VERSION");
+    let updated = installed_version(&target).as_deref() != Some(version);
+    if updated {
+        if target.exists() {
+            fs::remove_dir_all(&target)
+                .map_err(|e| format!("cannot replace {} ({e})", target.display()))?;
+        }
+        copy_tree(&source, &target)?;
+        let marker = target.join(VERSION_MARKER);
+        fs::write(&marker, format!("{version}\n"))
+            .map_err(|e| format!("cannot write {} ({e})", marker.display()))?;
+    }
+    Ok(json!({
+        "installed": true,
+        "updated": updated,
+        "version": version,
+        "path": target,
+        "running": lightroom_running(),
+    }))
+}
+
+/// Remove our folder from Lightroom's Modules folder, and nothing else.
+pub fn remove(modules: Option<&Path>) -> Result<Value> {
+    let modules = modules_or(modules)?;
+    let target = modules.join(PLUGIN_FOLDER);
+    let removed = target.is_dir();
+    if removed {
+        fs::remove_dir_all(&target)
+            .map_err(|e| format!("cannot remove {} ({e})", target.display()))?;
+    }
+    Ok(json!({"installed": false, "removed": removed, "path": target}))
+}
+
+/// A real app start or Save keeps the installed copy in step with the setting.
+/// Only runs when the shell configured a bundled source, so a test or the CLI
+/// never touches the photographer's Lightroom folder.
+pub fn sync(d: &Desktop) {
+    let Some(modules) = modules_dir() else {
+        return;
+    };
+    if plugin_source().is_none() {
+        return;
+    }
+    if lock(&d.settings).lightroom_bridge {
+        let _ = install(Some(&modules), None);
+    } else {
+        let _ = remove(Some(&modules));
+    }
+}
+
+/// On start, update a stale plug-in when the bridge is on. A start never
+/// removes anything.
+pub fn sync_on_start(d: &Desktop) {
+    if plugin_source().is_none() || !lock(&d.settings).lightroom_bridge {
+        return;
+    }
+    let Some(modules) = modules_dir() else {
+        return;
+    };
+    let _ = install(Some(&modules), None);
+}
+
 // --- tests -------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1090,6 +1365,10 @@ mod tests {
                 version: "1.0.0-beta.8".into(),
             }),
             collection: Some("Conrod keepers - Bathurst 1000".into()),
+            overwrite: Some(Overwrite {
+                rating: false,
+                label: false,
+            }),
             photos: vec![serde_json::to_value(photo).unwrap()],
         };
         let text = serde_json::to_string(&envelope).unwrap();
@@ -1197,16 +1476,22 @@ mod tests {
         let lib = Lib::new("lightroom-export");
         let keeper = lib.frame("a.CR3", Some(1));
         let rejected = lib.frame("b.CR3", Some(1));
+        let suggested = lib.frame("c.CR3", Some(3));
         lib.sql(
             "UPDATE images SET picked=1,stars=4 WHERE id=?",
             params![keeper],
         );
         lib.sql("UPDATE images SET rejected=1 WHERE id=?", params![rejected]);
+        let suggestion = lib.detection(suggested, "vehicle", 0.9);
+        lib.sql(
+            "UPDATE detections SET burst_pick=1 WHERE id=?",
+            params![suggestion],
+        );
 
         let out = lib
             .run("lightroom_export", json!({"jobId": lib.job}))
             .unwrap();
-        assert_eq!(out["photos"], 2);
+        assert_eq!(out["photos"], 3);
         let name = out["package"].as_str().unwrap();
         let path = PathBuf::from(out["path"].as_str().unwrap());
         assert_eq!(
@@ -1231,7 +1516,11 @@ mod tests {
             "the album label names the collection"
         );
         let photos = package["photos"].as_array().unwrap();
-        assert_eq!(photos.len(), 2);
+        assert_eq!(photos.len(), 3);
+        assert_eq!(
+            package["overwrite"],
+            json!({"rating": false, "label": false})
+        );
         let kept: Photo = serde_json::from_value(photos[0].clone()).unwrap();
         assert_eq!((kept.rating, kept.pick), (Some(4), Some(1)));
         assert_eq!(kept.label.as_deref(), Some("green"));
@@ -1255,6 +1544,14 @@ mod tests {
             .keywords
             .unwrap()
             .contains(&"Conrod cull".to_string()));
+
+        let auto: Photo = serde_json::from_value(photos[2].clone()).unwrap();
+        assert_eq!(
+            (auto.pick, auto.label.as_deref()),
+            (Some(1), Some("blue")),
+            "a suggested keeper is picked and carries the pick colour"
+        );
+        assert_eq!(auto.keeper, Some(true));
     }
 
     #[test]
@@ -1632,5 +1929,85 @@ mod tests {
         assert_eq!(epoch_from_iso("1970-01-01T02:00:00+02:00").unwrap(), 0.0);
         assert_eq!(epoch_from_iso("1970-01-01T00:00:00.500Z").unwrap(), 0.0);
         assert_eq!(epoch_from_iso("not a time"), None);
+    }
+
+    fn plugin_source() -> PathBuf {
+        default_plugin_source().join(PLUGIN_FOLDER)
+    }
+
+    #[test]
+    fn the_plugin_installs_into_the_given_modules_folder_and_leaves_others_alone() {
+        let lib = Lib::new("lightroom-plugin-install");
+        let modules = lib.root.join("modules");
+        let other = modules.join("SomeoneElse.lrplugin");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("Info.lua"), b"-- not ours").unwrap();
+        let source = plugin_source();
+        assert!(source.is_dir(), "the checkout carries the plug-in");
+
+        let before = status(lib.d(), Some(&modules), Some(&source)).unwrap();
+        assert_eq!(before["installed"], false);
+        assert_eq!(before["needsUpdate"], false, "nothing installed yet");
+        assert_eq!(before["bundled"], true);
+        assert_eq!(before["enabled"], true, "the bridge starts on");
+
+        let first = install(Some(&modules), Some(&source)).unwrap();
+        assert_eq!(
+            (first["installed"].as_bool(), first["updated"].as_bool()),
+            (Some(true), Some(true))
+        );
+        let target = modules.join(PLUGIN_FOLDER);
+        assert!(target.join("Info.lua").is_file());
+        assert!(target.join("ConrodBridge.lua").is_file());
+        assert_eq!(
+            fs::read_to_string(target.join(VERSION_MARKER))
+                .unwrap()
+                .trim(),
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(
+            other.join("Info.lua").is_file(),
+            "another plug-in is untouched"
+        );
+
+        let again = install(Some(&modules), Some(&source)).unwrap();
+        assert_eq!(
+            again["updated"], false,
+            "the same version is not copied again"
+        );
+
+        // An older marker is replaced, so the app updates a stale install.
+        fs::write(target.join(VERSION_MARKER), b"0.0.1\n").unwrap();
+        let after = status(lib.d(), Some(&modules), Some(&source)).unwrap();
+        assert_eq!(after["installed"], true);
+        assert_eq!(after["version"], "0.0.1");
+        assert_eq!(after["needsUpdate"], true);
+        let updated = install(Some(&modules), Some(&source)).unwrap();
+        assert_eq!(updated["updated"], true);
+        assert_eq!(
+            status(lib.d(), Some(&modules), Some(&source)).unwrap()["needsUpdate"],
+            false
+        );
+
+        let removed = remove(Some(&modules)).unwrap();
+        assert_eq!(
+            (removed["installed"].as_bool(), removed["removed"].as_bool()),
+            (Some(false), Some(true))
+        );
+        assert!(!target.exists());
+        assert!(other.join("Info.lua").is_file(), "only our folder went");
+        assert_eq!(
+            remove(Some(&modules)).unwrap()["removed"],
+            false,
+            "a second remove is a no-op"
+        );
+    }
+
+    #[test]
+    fn a_newer_version_orders_by_its_numbers() {
+        assert!(bundled_is_newer("1.0.0", "0.9.9"));
+        assert!(bundled_is_newer("1.0.0-beta.9", "1.0.0-beta.8"));
+        assert!(!bundled_is_newer("1.0.0-beta.8", "1.0.0-beta.8"));
+        assert!(!bundled_is_newer("0.9.0", "1.0.0"));
     }
 }

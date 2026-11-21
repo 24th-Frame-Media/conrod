@@ -1,4 +1,4 @@
-//! The slower identification and metadata lanes. Work is visible and cancellable.
+﻿//! The slower identification and metadata lanes. Work is visible and cancellable.
 use crate::analyze::{self, Context, Readers};
 use crate::desktop::{rows, Desktop, Result};
 use crate::err;
@@ -132,7 +132,7 @@ pub(crate) fn launch(
         }
         ops.insert(key.clone(), flag.clone());
     }
-    let task = d.hub.start(format!("{kind} · album {job}"), 0);
+    let task = d.hub.start(format!("{kind} Â· album {job}"), 0);
     let desktop = d.clone();
     let operation = key.clone();
     std::thread::spawn(move || {
@@ -380,7 +380,7 @@ impl Run<'_> {
                 .get(&burst)
                 .cloned()
                 .unwrap_or_default();
-            self.task.detail(format!("{filename} · {kind}"));
+            self.task.detail(format!("{filename} Â· {kind}"));
             self.busy(lane, &filename, "identify");
             if let Some(live) = self.live {
                 live.phase(id, identify_live::VISION);
@@ -871,6 +871,18 @@ fn known_vehicles(d: &Desktop) -> Result<HashMap<String, KnownVehicle>> {
     Ok(known)
 }
 
+/// The shell turns this on: only the desktop app applies verdicts by itself,
+/// so the CLI and the tests never write a file they were not asked to.
+static AUTO_APPLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn enable_auto_apply() {
+    AUTO_APPLY.store(true, Ordering::Release);
+}
+
+pub(crate) fn auto_apply_enabled() -> bool {
+    AUTO_APPLY.load(Ordering::Acquire)
+}
+
 fn exiftool() -> String {
     models::exiftool().map_or_else(|| "exiftool".into(), |p| p.to_string_lossy().into_owned())
 }
@@ -881,20 +893,38 @@ fn metadata_verdict(
     manual_stars: Option<i64>,
     rating: f64,
     settings: &Settings,
-) -> (i32, &'static str, bool) {
+    suggested: bool,
+) -> (i32, Option<&'static str>, bool) {
     let culled = rejected || (settings.respect_culling && manual_stars.is_none() && auto_rejected);
     if culled {
-        (-1, "Red", true)
+        return (-1, Some("Red"), true);
+    }
+    let stars = manual_stars.unwrap_or_else(|| i64::from(sharpness::stars_for(rating))) as i32;
+    // A suggested keeper carries the photographer's chosen "this is my pick"
+    // colour, which Lightroom reads on the next metadata read. A hand pick
+    // keeps its own label, and "None" leaves the choice to the photographer.
+    let label = if suggested {
+        pick_label_colour(&settings.pick_label)
     } else {
-        (
-            manual_stars.unwrap_or_else(|| i64::from(sharpness::stars_for(rating))) as i32,
-            sharpness::label_for(sharpness::rating_for(
-                rating,
-                settings.sharp_at,
-                settings.blurred_below,
-            )),
-            false,
-        )
+        Some(sharpness::label_for(sharpness::rating_for(
+            rating,
+            settings.sharp_at,
+            settings.blurred_below,
+        )))
+    };
+    (stars, label, false)
+}
+
+/// The colour a suggested pick is labelled with; the option names are the
+/// words Lightroom shows, and the XMP value is the same word.
+pub(crate) fn pick_label_colour(name: &str) -> Option<&'static str> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "red" => Some("Red"),
+        "yellow" => Some("Yellow"),
+        "green" => Some("Green"),
+        "blue" => Some("Blue"),
+        "purple" => Some("Purple"),
+        _ => None,
     }
 }
 
@@ -915,6 +945,18 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
             "SELECT * FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 ORDER BY id",
             [job],
         )?;
+        // A hand pick in a burst suppresses every suggestion in it, exactly as
+        // the review grid and the Lightroom package do.
+        let picked_bursts: HashSet<i64> = rows(
+            &lock(&d.db),
+            "SELECT DISTINCT burst_key FROM images
+              WHERE job_id=? AND picked=1 AND COALESCE(copy_of,0)=0
+                AND COALESCE(rejected,0)=0 AND burst_key IS NOT NULL",
+            [job],
+        )?
+        .iter()
+        .filter_map(|row| row["burst_key"].as_i64())
+        .collect();
         let mut writer = MetadataWriter::new(exiftool());
         let io = IoSettings::from_core(&settings);
         let mapping = crate::catalog::mapping(&d.root, &settings)?;
@@ -933,6 +975,15 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
                 [image],
             )?;
             let rejected = frame["rejected"].as_i64() == Some(1);
+            let hand_pick = frame["picked"].as_i64() == Some(1);
+            let burst = frame["burst_key"].as_i64();
+            let suggested = !rejected
+                && !hand_pick
+                && (frame["burst_pick"].as_i64() == Some(1)
+                    || detections
+                        .iter()
+                        .any(|d| d["burst_pick"].as_i64() == Some(1)))
+                && !burst.is_some_and(|key| picked_bursts.contains(&key));
             let auto_rejected = !detections.is_empty()
                 && detections
                     .iter()
@@ -943,6 +994,7 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
                 frame["stars"].as_i64(),
                 frame["rating"].as_f64().unwrap_or(0.0),
                 &settings,
+                suggested,
             );
             let analyses: Vec<_> = detections
                 .iter()
@@ -964,7 +1016,7 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
                 })
                 .collect();
             let mut keywords = keywords::for_frame(&analyses, &options, mapping.as_ref());
-            if frame["picked"].as_i64() == Some(1) {
+            if hand_pick || (settings.mark_burst_picks && suggested) {
                 keywords.push(format!("{}Pick", settings.keyword_prefix));
             }
             let caption = keywords::caption_for(&analyses);
@@ -986,7 +1038,7 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
                     &io,
                     settings.write_caption.then_some(caption.as_str()),
                     settings.write_rating.then_some(rating),
-                    settings.write_label.then_some(label),
+                    label.filter(|_| settings.write_label),
                 )
                 .map_err(err)?;
             if !result.ok {
@@ -1284,5 +1336,46 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stale, None, "skip clears the stale note");
+    }
+    #[test]
+    fn metadata_marks_manual_and_automatic_culls_as_rejected() {
+        let settings = Settings::default();
+        assert_eq!(
+            metadata_verdict(true, false, Some(5), 1.0, &settings, false),
+            (-1, Some("Red"), true)
+        );
+        assert_eq!(
+            metadata_verdict(false, true, None, 0.2, &settings, false),
+            (-1, Some("Red"), true)
+        );
+        assert_eq!(
+            metadata_verdict(false, true, Some(4), 0.2, &settings, false),
+            (4, Some("Red"), false)
+        );
+    }
+
+    #[test]
+    fn a_suggested_keep_takes_the_pick_colour_and_none_leaves_the_label_alone() {
+        let mut settings = Settings::default();
+        assert_eq!(
+            metadata_verdict(false, false, None, 0.9, &settings, true).1,
+            Some("Blue")
+        );
+        settings.pick_label = "Purple".into();
+        assert_eq!(
+            metadata_verdict(false, false, None, 0.9, &settings, true).1,
+            Some("Purple")
+        );
+        settings.pick_label = "None".into();
+        assert_eq!(
+            metadata_verdict(false, false, None, 0.9, &settings, true).1,
+            None
+        );
+        // A hand pick keeps the sharpness label; only the suggestion changes.
+        settings.pick_label = "Blue".into();
+        assert_eq!(
+            metadata_verdict(false, false, Some(4), 0.9, &settings, false),
+            (4, Some("Green"), false)
+        );
     }
 }

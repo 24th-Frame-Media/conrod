@@ -577,6 +577,35 @@ export type LightroomPackage = {
 /** `lightroom_pending` returns the rows directly or wrapped; the UI accepts both. */
 export type LightroomPending = LightroomPackage[] | { packages: LightroomPackage[] };
 
+/** `lightroom_plugin_status`: the Conrod Bridge plug-in in Lightroom's Modules folder. */
+export type LightroomPluginStatus = {
+  installed: boolean;
+  /** The version marker inside our folder; null when nothing is installed. */
+  version: string | null;
+  /** Whether this build carries a copy to install. */
+  bundled: boolean;
+  bundledVersion: string;
+  /** A newer bundled copy is waiting for a copy into Lightroom's folder. */
+  needsUpdate: boolean;
+  modules: string;
+  path: string;
+  /** Lightroom Classic is open, so it loads the plug-in only at its next start. */
+  running: boolean;
+  enabled: boolean;
+};
+
+/** `install_lightroom_plugin` / `remove_lightroom_plugin`. */
+export type LightroomPluginAction = {
+  installed: boolean;
+  /** True when the bundled copy replaced what was there. */
+  updated?: boolean;
+  version?: string;
+  /** `remove` only: our folder existed and was deleted. */
+  removed?: boolean;
+  path: string;
+  running?: boolean;
+};
+
 /** `shoot_stats`' optional catalog column: how many keepers agree with Lightroom's picks. */
 export type CatalogMatch = {
   matched: number;

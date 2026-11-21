@@ -2138,6 +2138,10 @@ dialog.viewer {
 .export-result svg { flex: none; color: var(--good); }
 .export-result span { overflow-wrap: anywhere; }
 .lightroom-dialog .lr-block { margin-bottom: 16px; }
+.lightroom-plugin-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.lightroom-plugin-status { font-size: 12.5px; color: var(--text-dim); }
+.lightroom-plugin-note { margin: 6px 0 0; }
+.apply-note { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
 .lr-block-actions { display: flex; justify-content: flex-start; }
 .lr-packages { display: grid; gap: 6px; }
 .lr-package { display: grid; gap: 2px; padding: 8px 12px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface-2); }

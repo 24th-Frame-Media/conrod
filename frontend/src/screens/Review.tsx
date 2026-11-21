@@ -14,6 +14,7 @@ import { albumVisionChoice, albumVisionOn } from '../lib/vision.mjs';
 import { WORKFLOW_OPTIONS, pipelineSteps, workflowIncludesCull, workflowIncludesIdentify, workflowLabel, workflowModeOf, type PipelineStep } from '../lib/workflow.mjs';
 import { everythingCount, hasReadings, identifyActionLabel, identifyNewLabel, identifyScopeOf, keeperCount } from '../lib/identify.mjs';
 import { call, engine } from '../lib/api';
+import { applyLine } from '../lib/apply.mjs';
 import { useLocalFlag, useRun } from '../state/hooks';
 import { useToast } from '../state/toast';
 import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
@@ -840,6 +841,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           </select>
         </label>
         <PipelineStepper steps={steps} />
+        <span
+          className="apply-note"
+          title="Conrod's stars and suggested picks reach the files, and the Lightroom plug-in, without a separate command."
+        >
+          {applyLine({ autoApply: settings.auto_apply !== false, status: currentJob?.status, pickLabel: typeof settings.pick_label === 'string' ? settings.pick_label : null })}
+        </span>
         {identifying && (
           <button type="button" className="ghost small pipeline-watch" onClick={onWatchIdentify}
             title="Open the live identification trace">

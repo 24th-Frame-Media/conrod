@@ -11,6 +11,13 @@ modules.
 
 ## Install
 
+Conrod installs the plug-in for you: **Settings → Lightroom → Install plug-in**
+copies this folder into `%APPDATA%\Adobe\Lightroom\Modules\` (macOS:
+`~/Library/Application Support/Adobe/Lightroom/Modules/`) and keeps it current
+when the app updates. Restart Lightroom Classic after an install or update.
+
+By hand:
+
 1. In Lightroom Classic: **File > Plug-in Manager > Add**, then choose
    `lightroom-plugin/ConrodBridge.lrplugin`.
 2. Or copy the `ConrodBridge.lrplugin` folder into
@@ -86,7 +93,9 @@ On **Apply** the plug-in:
    re-adding keywords/photos is idempotent.
 
 Per-photo errors are caught and counted; one bad entry does not abort the
-package.
+package. A rating or colour label is written only when the photo has none
+unless the package's `overwrite` object allows replacing it; a pick flag is set
+only on an unflagged photo and is never cleared.
 
 ### Show pending packages
 

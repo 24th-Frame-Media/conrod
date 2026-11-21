@@ -940,18 +940,38 @@ end
 
 -- Applies one chunk inside a single write block. Per-photo errors are caught
 -- and counted, so one bad entry never aborts the package.
-local function applyChunk(catalog, chunk, collectionName, keywordCache, result)
+--
+-- Conrod never clears a choice the photographer made by hand: a rating or
+-- colour label is only written when the photo has none, unless the package
+-- says to overwrite, and a pick flag is only set on an unflagged photo (a
+-- flag is never cleared, and a rejection never replaces a hand pick).
+local function applyChunk(catalog, chunk, collectionName, keywordCache, result, overwrite)
+  overwrite = overwrite or {}
+  local function current(photo, key)
+    local ok, value = pcall(function() return photo:getRawMetadata(key) end)
+    if ok then
+      return value
+    end
+    return nil
+  end
   catalog:withWriteAccessDo('Conrod verdicts', function()
     for _, item in ipairs(chunk) do
       local okPhoto, problem = pcall(function()
         local photo = item.photo
-        if item.rating ~= nil then
+        if item.rating ~= nil
+          and (overwrite.rating or (tonumber(current(photo, 'rating')) or 0) == 0)
+        then
           photo:setRawMetadata('rating', item.rating)
         end
-        if item.pick ~= nil then
-          photo:setRawMetadata('pickStatus', item.pick)
+        if item.pick ~= nil and item.pick ~= 0 then
+          local pick = toPick(current(photo, 'pickStatus')) or 0
+          if pick == 0 then
+            photo:setRawMetadata('pickStatus', item.pick)
+          end
         end
-        if item.label ~= nil then
+        if item.label ~= nil
+          and (overwrite.label or toLabel(current(photo, 'colorNameForLabel')) == nil)
+        then
           if not setLabel(photo, item.label) then
             error('the colour label could not be set')
           end
@@ -993,7 +1013,7 @@ local function applyChunk(catalog, chunk, collectionName, keywordCache, result)
   end, { timeout = WRITE_TIMEOUT })
 end
 
-local function applyMatched(catalog, matched, collectionName, progress)
+local function applyMatched(catalog, matched, collectionName, progress, overwrite)
   local result = {
     applied = 0,
     failed = 0,
@@ -1016,7 +1036,7 @@ local function applyMatched(catalog, matched, collectionName, progress)
     end
 
     local ok, problem = taskPcall(function()
-      applyChunk(catalog, chunk, collectionName, keywordCache, result)
+      applyChunk(catalog, chunk, collectionName, keywordCache, result, overwrite)
     end)
     if not ok then
       result.stopped = string.format('write access failed: %s', tostring(problem))
@@ -1270,7 +1290,14 @@ local function applyVerdicts(context)
 
   local applyProgress = startProgress(context, 'Applying Conrod verdicts')
   applyProgress:setPortionComplete(0, #matched)
-  local result = applyMatched(catalog, matched, collectionName, applyProgress)
+  local overwrite = package.data.overwrite
+  if type(overwrite) ~= 'table' then
+    overwrite = {}
+  end
+  local result = applyMatched(catalog, matched, collectionName, applyProgress, {
+    rating = overwrite.rating == true,
+    label = overwrite.label == true,
+  })
   applyProgress:done()
 
   local lines = {

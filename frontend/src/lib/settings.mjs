@@ -6,6 +6,7 @@ export const TABS = [
   { id: 'culling', label: 'Culling', hint: 'What counts as a keeper' },
   { id: 'identification', label: 'Identification', hint: 'Plates, numbers and vision models' },
   { id: 'metadata', label: 'Metadata', hint: 'What is written next to your files' },
+  { id: 'lightroom', label: 'Lightroom', hint: 'The Conrod Bridge plug-in' },
   { id: 'system', label: 'System', hint: 'Models, cache and library data' },
 ];
 
@@ -146,6 +147,26 @@ export const FIELDS = {
   overwrite_label: { label: 'Overwrite existing colour labels', kind: 'toggle' },
   overwrite_caption: { label: 'Overwrite existing captions', kind: 'toggle' },
   close_to_tray: { label: 'Keep running in the tray when closed', kind: 'toggle' },
+
+  // ── applied automatically ──
+  auto_apply: {
+    label: 'Apply stars and picks automatically', kind: 'toggle',
+    hint: 'When an album finishes, write its stars and its suggested picks to the files. A pick flag cannot live in an XMP file, so the pick is written as a colour label (Blue by default) that Lightroom reads on Metadata → Read Metadata from File, or when the photos are imported. Verdicts also wait for the Lightroom plug-in.',
+  },
+  pick_label: {
+    label: 'Colour for suggested picks', kind: 'segmented',
+    hint: 'Lightroom shows this colour on the frames Conrod suggests keeping. None leaves the colour label alone.',
+    options: [
+      { id: 'None', name: 'None' }, { id: 'Red', name: 'Red' }, { id: 'Yellow', name: 'Yellow' },
+      { id: 'Green', name: 'Green' }, { id: 'Blue', name: 'Blue' }, { id: 'Purple', name: 'Purple' },
+    ],
+  },
+
+  // ── lightroom ──
+  lightroom_bridge: {
+    label: 'Lightroom Classic bridge', kind: 'toggle',
+    hint: 'Installs the Conrod Bridge plug-in in Lightroom Classic, so verdicts move both ways without adding it by hand.',
+  },
 };
 
 // Each definition carries its own key, so rows and search results are self-describing.
@@ -327,6 +348,16 @@ export function aiModelStatusLabel(state) {
   {
     id: 'desktop', tab: 'metadata', title: 'Desktop',
     keys: ['close_to_tray'],
+  },
+  {
+    id: 'auto-apply', tab: 'metadata', title: 'Applied automatically',
+    hint: 'What Conrod writes without being asked, once an album finishes. Never over your own stars or labels.',
+    keys: ['auto_apply', 'pick_label'],
+  },
+  {
+    id: 'lightroom', tab: 'lightroom', title: 'Lightroom Classic',
+    hint: 'The Conrod Bridge plug-in connects this library with your Lightroom catalog. Conrod installs it for you and keeps it current.',
+    keys: ['lightroom_bridge'],
   },
 ];
 
