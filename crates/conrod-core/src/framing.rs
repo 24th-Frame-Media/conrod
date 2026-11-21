@@ -2,22 +2,24 @@
 //!
 //! Port of `conrod/framing.py`. A vehicle that runs off the edge of the
 //! photograph is a worse picture than the same vehicle inside it, however sharp
-//! the visible part is, so this is measured apart from focus and applied to the
-//! rating afterwards. It is arithmetic on the detector's box, not a model.
+//! the visible part is. That is measured apart from focus and used to order
+//! sharp frames of a burst; it never lowers the rating or culls one, because a
+//! sharp car must not lose the keep for being cropped.
 
 /// How close to the edge still counts as touching it, as a share of the frame's
 /// width or height. Detector boxes rarely land exactly on the boundary.
 pub const EDGE_TOLERANCE: f64 = 0.004;
 
-/// How hard clipping bites: one edge is a blemish, two are serious, three leave
-/// a rating that will not survive the cull.
+/// How hard clipping reads: one edge is a blemish, two are serious, three leave
+/// a framing that loses to a cleaner subject of the same burst.
 pub const PENALTY: f64 = 0.6;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Framing {
     /// How many frame edges the subject runs off.
     pub sides: u32,
-    /// What to multiply the rating by.
+    /// What the edge took, for the record and for ranking a burst. It is not
+    /// multiplied into the rating: composition never culls a sharp frame.
     pub factor: f64,
 }
 

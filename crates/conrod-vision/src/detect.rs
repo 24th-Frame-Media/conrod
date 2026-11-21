@@ -18,6 +18,14 @@ const STRIDE: usize = 32;
 const PAD: f32 = 114.0 / 255.0;
 /// Offsets each class apart so NMS never compares boxes of different classes.
 const CLASS_OFFSET: f64 = 7680.0;
+/// A box filling this share of the frame is the subject, whatever the detector's
+/// confidence: a race car close enough to fill a quarter of the frame is the
+/// picture even when the model is only 0.3 sure (a 240Z filling the frame read
+/// 0.32 at the album's 0.55 bar and was thrown away with the frame).
+const DOMINANT_BOX_SHARE: f32 = 0.25;
+/// The floor a dominant box may come from. Background clutter never fills a
+/// quarter of the frame at this confidence.
+const DOMINANT_CONF: f32 = 0.20;
 
 /// COCO ids. The person id is `conrod-core`'s too, so the sport rules and the
 /// detector cannot disagree about which class is a person.
@@ -289,15 +297,20 @@ fn decode(
                 cls = c;
             }
         }
-        if best <= options.conf || !options.classes.contains(&cls) {
-            continue;
-        }
         let (cx, cy, w, h) = (
             raw[a],
             raw[anchors + a],
             raw[2 * anchors + a],
             raw[3 * anchors + a],
         );
+        // A box that fills the frame is the subject even below the album's bar:
+        // confidence is about clutter, and a car close enough to fill a quarter
+        // of the picture is not clutter.
+        let share = (w * h) / (input.width * input.height) as f32;
+        let dominant = best > DOMINANT_CONF && share >= DOMINANT_BOX_SHARE;
+        if (best <= options.conf && !dominant) || !options.classes.contains(&cls) {
+            continue;
+        }
         let b = [cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0].map(f64::from);
         found.push((cls, best, b));
     }
@@ -393,7 +406,64 @@ pub fn expand_box(b: [f64; 4], width: usize, height: usize, options: &DetectOpti
 
 #[cfg(test)]
 mod tests {
-    use super::{class_name, ANIMALS};
+    use super::{class_name, decode, DetectOptions, Letterboxed, ANIMALS};
+
+    /// Raw YOLO output `[1, 84, anchors]`, as `decode` reads it.
+    fn raw_output(anchors: usize, boxes: &[(usize, f32, [f32; 4])]) -> Vec<f32> {
+        let mut raw = vec![0.0; 84 * anchors];
+        for (a, (class, conf, [cx, cy, w, h])) in boxes.iter().enumerate() {
+            raw[a] = *cx;
+            raw[anchors + a] = *cy;
+            raw[2 * anchors + a] = *w;
+            raw[3 * anchors + a] = *h;
+            raw[(4 + class) * anchors + a] = *conf;
+        }
+        raw
+    }
+
+    #[test]
+    fn a_car_filling_the_frame_is_not_lost_below_the_confidence_bar() {
+        // A 3:2 frame letterboxed into a 960-wide input.
+        let input = Letterboxed {
+            tensor: Vec::new(),
+            width: 960,
+            height: 672,
+            gain: 1.0,
+            pad: (0.0, 16.0),
+            frame: (960, 640),
+        };
+        let options = DetectOptions {
+            conf: 0.55,
+            iou: 0.7,
+            classes: vec![2],
+            ..Default::default()
+        };
+        // The 240Z: most of the frame, 0.32 confidence. The distant car: small,
+        // the same confidence, and still not a subject.
+        let big = [700.0f32, 400.0f32];
+        let small = [50.0f32, 40.0f32];
+        let raw = raw_output(
+            2,
+            &[
+                (2, 0.32, [480.0, 336.0, big[0], big[1]]),
+                (2, 0.32, [100.0, 100.0, small[0], small[1]]),
+            ],
+        );
+        let kept = decode(&raw, 2, &input, &options);
+        assert_eq!(kept.len(), 1, "only the dominant car survives");
+        assert_eq!(kept[0].0, 2);
+        assert!((kept[0].1 - 0.32).abs() < 1e-6);
+
+        // Without the dominant share the same box is dropped as before.
+        let mut narrow = input;
+        narrow.width = 3840;
+        narrow.height = 2688;
+        let tiny = decode(&raw, 2, &narrow, &options);
+        assert!(
+            tiny.is_empty(),
+            "a small low-confidence box is still clutter"
+        );
+    }
 
     #[test]
     fn animals_are_named_not_called_vehicles() {

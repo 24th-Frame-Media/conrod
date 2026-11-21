@@ -1016,10 +1016,11 @@ pub fn cull_frame_live(
             }
         }
         let edges = framing::assess(Some(det.bbox), fw as i64, fh as i64);
-        // Portraits and wildlife close-ups routinely touch the frame edge
-        // without being miscropped; only vehicles take the edge penalty.
-        let factor = if kind == "vehicle" { edges.factor } else { 1.0 };
-        let rating = focus.score * factor;
+        // Composition only orders sharp frames, it never culls one: a sharp car
+        // that runs off the frame edge keeps its focus rating. How much of it
+        // the edge took rides `cut_sides` and the framing score, which rank
+        // frames of a burst without pulling one below the keeper bar.
+        let rating = focus.score;
         // A held pan is a *sharp subject over a streaked background*, not a
         // blurred subject: the camera moved with the subject, so the subject
         // stays sharp while everything else is one set of parallel streaks.
