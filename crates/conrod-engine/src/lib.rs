@@ -430,7 +430,21 @@ pub fn detect_options(settings: &Settings) -> DetectOptions {
         // A preset whose vehicles are not cars (aircraft, bicycles) names
         // its own classes; otherwise the album's car / bike / truck switches.
         if lanes.vehicle_classes.is_empty() {
-            classes.extend(settings.vehicle_classes());
+            let mut wanted = settings.vehicle_classes();
+            // Motorsport treats car, bus and truck as one subject: a race car
+            // the detector labels a truck (or a bus) is never dropped because
+            // the album switched trucks off, or a truck because cars are off.
+            // The label stays a hint; the box is a vehicle either way.
+            if preset.profile() == ScanProfile::Motorsport
+                && wanted.iter().any(|class| matches!(class, 2 | 5 | 7))
+            {
+                for class in [2, 5, 7] {
+                    if !wanted.contains(&class) {
+                        wanted.push(class);
+                    }
+                }
+            }
+            classes.extend(wanted);
         } else {
             classes.extend(lanes.vehicle_classes.iter().copied());
         }
@@ -2048,6 +2062,19 @@ mod tests {
         let o = detect_options(&album("motorsport-track", r#"{"vehicles":false}"#));
         assert!(car.iter().all(|c| !o.classes.contains(c)));
         assert!(o.classes.contains(&detect::PERSON));
+        // Even with trucks switched off, a motorsport album still asks for bus
+        // and truck: the detector may label a race car either one, and a
+        // vehicle is a vehicle whatever the label says.
+        let patch: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"scan_profile":"motorsport","include_trucks":false}"#)
+                .unwrap();
+        let o = detect_options(&Settings::default().apply(&patch));
+        for class in [2, 5, 7] {
+            assert!(
+                o.classes.contains(&class),
+                "class {class} is asked for on a motorsport album"
+            );
+        }
         // People and animals switch both ways too.
         let o = detect_options(&album("wedding", r#"{"people":false}"#));
         assert!(!o.classes.contains(&detect::PERSON));
