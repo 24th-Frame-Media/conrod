@@ -18,7 +18,7 @@ This page separates what is **built** from what is only **planned**. Plans chang
 - **Identified albums** — skip identify, and identify new subjects only.
 - **Detector fixes** — sharp AF frames kept, cars/trucks/buses as one vehicle class, a confidence floor for big cars, the AF-selected car as main subject, background cars dimmed, composition never culls.
 - **Decision model sees the whole frame and the crop**, and runs live during identify.
-- **Lightroom plug-in auto-install**, with suggested stars, picks, and colour labels applied to the catalog.
+- **Stars, picks and colour labels written to your files**, with the Lightroom plug-in an optional extra.
 
 ## Planned, not built
 

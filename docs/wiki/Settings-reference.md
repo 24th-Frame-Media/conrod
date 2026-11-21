@@ -63,9 +63,8 @@ Controls what **Write** puts in the sidecar: rating, label, keywords, prefixes f
 
 ## Lightroom
 
-- The bridge switch (on by default).
-- The plug-in status card: installed, version, needs update, Lightroom running.
-- **Install plug-in** / **Remove plug-in**.
+- Stars, picks and colour labels written to your files (the main path).
+- The optional plug-in: its switch (off by default), status card (installed, version, needs update, Lightroom running), and **Install plug-in** / **Remove plug-in**.
 
 See [Lightroom integration](Lightroom-integration).
 

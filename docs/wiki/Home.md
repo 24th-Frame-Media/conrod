@@ -12,7 +12,7 @@ You do not need any AI model to use Conrod. Detection, sharpness, bursts, and su
 - [Albums and scanning](Albums-and-scanning) — shoot types, the scan queue, stop and resume, unfinished scans.
 - [How culling works](How-culling-works) — sharpness, the autofocus subject, background cars, bursts, moments.
 - [Identify](Identify) — vision services, OCR, race numbers, skip identify.
-- [Lightroom integration](Lightroom-integration) — the plug-in, stars/picks/labels, folder layout, TO-IMPORT.
+- [Lightroom integration](Lightroom-integration) — stars/picks/labels in your files, the optional plug-in, folder layout, TO-IMPORT.
 - [Settings reference](Settings-reference) — the AI models card and per-album overrides.
 - [Recommended setups](Recommended-setups) — local, cloud, and mixed.
 - [Troubleshooting](Troubleshooting) — what the common messages mean.
@@ -29,7 +29,7 @@ You do not need any AI model to use Conrod. Detection, sharpness, bursts, and su
 - Identified albums can skip identification or run **Identify new only**.
 - Detector fixes: sharp autofocus frames kept, cars/trucks/buses as one vehicle class, a confidence floor for big cars, AF-selected main subject, dimmed background cars, composition never culls.
 - The decision model sees the whole frame and the crop, and runs live during identify.
-- The Conrod Bridge Lightroom plug-in installs automatically and applies suggested stars, picks, and colour labels.
+- Conrod writes suggested stars, picks, and colour labels to your files; the Lightroom plug-in is optional.
 
 Detailed model guidance, prices, and provider steps are in [AI models in Conrod](../user/ai-models.md).
 

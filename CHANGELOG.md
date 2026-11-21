@@ -3,7 +3,7 @@
 What changed in Conrod, release by release, in plain language. Generated from the git history by
 `node scripts/release-notes.mjs --all --write`; wording is steered by `scripts/release-notes.overrides.json`.
 
-Installers and checksums are on the [releases page](https://github.com/kapsikkum/conrod/releases).
+Installers and checksums are on the [releases page](https://github.com/24th-Frame-Media/conrod/releases).
 
 ## Unreleased
 

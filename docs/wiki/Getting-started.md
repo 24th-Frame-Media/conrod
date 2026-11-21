@@ -58,7 +58,7 @@ The **Ingest** tab shows the live flowchart and the scan log. When the scan ends
 
 ## 6. Optional: Lightroom
 
-The bridge is on by default. Conrod installs the plug-in into Lightroom's Modules folder on start and keeps it current. Restart Lightroom Classic, then use **Library > Plug-in Extras**. See [Lightroom integration](Lightroom-integration).
+Conrod writes stars, picks, and colour labels into your files by default, so Lightroom sees them after **Read Metadata from File** or on import. The plug-in is optional: turn on Settings > **Lightroom** > **Install the Conrod Bridge plug-in**, restart Lightroom Classic, then use **Library > Plug-in Extras**. See [Lightroom integration](Lightroom-integration).
 
 ## 7. Optional: a vision model
 

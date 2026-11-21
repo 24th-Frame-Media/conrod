@@ -24,7 +24,7 @@ import {
 } from './release-notes-lib.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const REPO_URL = 'https://github.com/kapsikkum/conrod';
+const REPO_URL = 'https://github.com/24th-Frame-Media/conrod';
 const FIRST_TAG = 'v0.6.0';
 
 const args = process.argv.slice(2);

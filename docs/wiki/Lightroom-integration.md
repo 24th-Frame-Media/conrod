@@ -4,11 +4,13 @@
 
 [Home](Home) · Previous: [Identify](Identify) · Next: [Settings reference](Settings-reference)
 
-The Conrod Bridge plug-in connects Conrod and Lightroom Classic in both directions. It is file-based: neither app has to be running while the other works, so a 3,000-frame import cannot time out.
+Conrod writes stars, picks and colour labels into your photos' XMP sidecars when an album finishes. That is the main path: Lightroom reads them with **Metadata → Read Metadata from File**, or when you import the photos, and nothing needs installing.
 
-## It installs itself
+The optional Conrod Bridge plug-in adds live flags and labels inside Lightroom, and sends Lightroom's own flags back, without re-reading metadata. It is file-based: neither app has to be running while the other works, so a 3,000-frame import cannot time out.
 
-The bridge is **on by default**. On start, and whenever you save Settings, Conrod copies the bundled plug-in into Lightroom's Modules folder:
+## Optional: install the plug-in
+
+The bridge is **off by default**. Turn it on in Settings > **Lightroom**, then Conrod copies the bundled plug-in into Lightroom's Modules folder:
 
 `%APPDATA%\Adobe\Lightroom\Modules\ConrodBridge.lrplugin`
 
@@ -72,7 +74,7 @@ The import reports matched, unmatched, missing, the percentage of effective keep
 Conrod does not require a folder layout, but this one keeps albums and Lightroom collections predictable:
 
 ```
-P:\24th Frame Media\02_Projects\2026-11-22_Bathurst-1000\
+P:\Photography\02_Projects\2026-11-22_Bathurst-1000\
     TO-IMPORT\        cards copied here first
     01_RAW\           the files Conrod scans
     02_Selects\       exports and picks

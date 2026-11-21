@@ -26,12 +26,12 @@
     "Unreleased": {
       "highlights": "Culling works with the camera's own focus point, Conrod talks to Lightroom, ingest is one live screen, and a crash no longer loses your place.",
       "add": [
-        { "section": "New", "text": "An optional decision model, switched on in Settings, answers yes/no questions about your frames on your own graphics card. It is a large one-time download and stays off until you choose it; with it off, or on a card without enough video memory, nothing changes." },
-        { "section": "Improved", "text": "The Lightroom plug-in is now optional; Conrod writes stars, picks and colour labels to your photos by default." }
+        { "section": "New", "text": "An optional decision model, switched on in Settings, answers yes/no questions about your frames on your own graphics card. It is a large one-time download and stays off until you choose it; with it off, or on a card without enough video memory, nothing changes." }
       ]
     }
   },
   "commits": {
+    "4c553fe0": { "section": "New", "text": "The Lightroom plug-in is now optional; Conrod writes stars, picks and colour labels to your photos by default." },
     "5130167": [
       { "section": "New", "text": "Settings has one AI models page: every model Conrod can use, in plain words, with where it runs, whether it is ready and a switch to turn it on or off." },
       { "section": "New", "text": "The decision model can run on your graphics card or through OpenRouter, with a key field and a test button; OpenRouter can also read cars as a vision service and share that key." },

@@ -51,4 +51,4 @@ For weddings, children, or anything under a privacy agreement, keep vision local
 
 ## What works with no AI at all
 
-Plates, race numbers via OCR, sharpness, bursts, suggested keepers, hand rating, XMP writing, and the Lightroom bridge. You lose make/model/colour/team and calibrated moments.
+Plates, race numbers via OCR, sharpness, bursts, suggested keepers, hand rating, and stars/picks/colour labels written to XMP. You lose make/model/colour/team and calibrated moments.

@@ -20,7 +20,7 @@ Download the latest release from [Releases](../releases):
 - **Batteries included**: the detector, plate reader, OCR, face, and grouping models and ExifTool ship with the app or download automatically on first run. A start-up splash shows each step.
 - **Graphics card (optional)**: DirectML speeds up detection; without one, detection runs on the processor.
 - **Optional AI**: make/model/colour needs a vision model. Use a local [Ollama](https://ollama.com/) server (`ollama pull qwen2.5vl:7b`), or add an OpenRouter or OpenCode Go key in **Settings > Identification > AI models**. A built-in vision model and a smaller decision model are planned, not shipped.
-- **Lightroom (optional)**: the Conrod Bridge plug-in installs automatically when the Lightroom bridge is on, and can apply stars, picks, and colour labels straight to the catalog.
+- **Lightroom (optional extra)**: Conrod writes stars, picks, and colour labels straight into your files by default, so Lightroom sees them without anything else installed. An optional Conrod Bridge plug-in can apply them live to the catalog.
 - **Existing Users**: libraries in `%USERPROFILE%\.conrod` (database, settings, models, Lightroom bridge packages) open automatically.
 - See [`docs/user/ai-models.md`](docs/user/ai-models.md) for model choices, prices, and setup, and [`docs/wiki/`](docs/wiki/Home.md) for photographer-facing guides.
 
@@ -34,7 +34,7 @@ Download the latest release from [Releases](../releases):
 - **Identify**: race numbers, plates, make/model/colour/team, sponsor livery, and names. Works with local Ollama, OpenRouter, or OpenCode Go, and still reads plates and numbers with the vision model off.
 - **Entry List Matching**: drop in an event entry CSV (`number,driver,team,...`) to guarantee accurate keywords for competitors. (See [`samples/entries-example.csv`](samples/entries-example.csv)).
 - **Folder Watch**: automatically processes new frames as they copy from memory cards.
-- **Lightroom bridge**: export verdicts for the Conrod Bridge plug-in, or read flags back from Lightroom or a `.lrcat` catalog.
+- **Lightroom**: stars, picks, and colour labels written to your files; an optional plug-in applies them live in Lightroom, and flags can be read back from the plug-in or a `.lrcat` catalog.
 - **Formats**: tested on Canon `.cr3` and `.cr2`, alongside `.jpg` / `.jpeg`.
 
 ## Screens
