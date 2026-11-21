@@ -82,6 +82,9 @@ export function IngestScreen({
   const operation = job ? status.operations.find((key) => key.startsWith('Identifying:') && key.endsWith(`:${job.id}`)) : undefined;
   const stages = p ? orderStages(p.pipeline.stages) : [];
   const idLive = mode === 'identify' ? identify : ingestIdentify(identify, { planned: visionExpected(stages, null), identifying: Boolean(operation) });
+  // The decision model's newest feed: the dedicated event, else the copy the identify snapshot
+  // carries so the identify page shows it even before the first `decider-progress` arrives.
+  const deciderLive = decider ?? idLive?.decider ?? null;
   // Vision off is a reason, never a model name: the screen says why and offers the way to change it.
   const visionOff = visionOffReason(idLive);
   useEffect(() => {
@@ -118,7 +121,7 @@ export function IngestScreen({
   const frac = mode === 'identify' ? progressPercent(idLive?.done, idLive?.total) / 100
     : phase === 'done' ? 1 : ingestFraction({ scanFraction: scanFrac, identify: idLive, vision });
   const pct = Math.round(frac * 100);
-  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model) : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: mode === 'ingest' ? decider : null });
+  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive) : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive });
 
   const visionLanes = workerLanes(idLive);
   const scanFilter = filter && filter !== 'vision' && filter !== 'decider' ? filter : null;
@@ -131,7 +134,8 @@ export function IngestScreen({
   const showScan = mode === 'ingest' && Boolean(p) && filter !== 'vision' && filter !== 'decider' && !hideScan;
   const showVision = visionLanes.length > 0 && (filter == null || filter === 'vision');
   // The decision model's page: when picked in the flowchart, or while it has something to show.
-  const showDecider = mode === 'ingest' && decider != null && (filter === 'decider' || (filter == null && deciderActive(decider)));
+  // Identify runs it beside vision, so the page is not limited to the scan screen.
+  const showDecider = deciderLive != null && (filter === 'decider' || (filter == null && deciderActive(deciderLive)));
 
   const total = stages[0]?.total || p?.total || job.total;
   const done = idLive?.done ?? 0;
@@ -292,7 +296,7 @@ export function IngestScreen({
                     </div>
                   )}
                   <div className="id-lanes ing-lanes">
-              {showDecider && decider && <DeciderLane live={decider} />}
+              {showDecider && deciderLive && <DeciderLane live={deciderLive} />}
                     {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} />)}
                     {showVision && visionLanes.map((lane) => (
                       <IdentifyLane key={`vision:${lane.worker}`} name="VISION" worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction}

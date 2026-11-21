@@ -1,4 +1,4 @@
-import type { IdentifyItem, IdentifyLive, IdentifyStage } from './types';
+import type { DeciderLive, IdentifyItem, IdentifyLive, IdentifyStage } from './types';
 
 export type FlowState = 'done' | 'active' | 'pending';
 export type FlowNode = { number: string; label: string; sub: string; stage: IdentifyStage; state: FlowState; /** The VISION node while the vision model is off. */ off?: boolean };
@@ -8,6 +8,9 @@ export const IDENTIFY_STAGES: readonly IdentifyStage[];
 export const FLOW_NODES: readonly Omit<FlowNode, 'state'>[];
 export function activeStage(stage: string | null | undefined): number;
 export function flowNodes(live: IdentifyLive | null | undefined, model?: string | null, stage?: IdentifyStage | null): FlowNode[];
+export type DeciderNode = { id: string; number: string; label: string; sub: string; meta: string; title: string; state: FlowState; off: boolean; filter: null };
+/** The decision model's node for the identify flow, or null before it reports anything. */
+export function deciderStepNode(live: DeciderLive | null | undefined): DeciderNode | null;
 export function displayPath(item: IdentifyItem | null | undefined): string;
 export function fileName(item: IdentifyItem | null | undefined): string;
 export function displayItem(live: IdentifyLive | null | undefined, selectedId?: number | null): IdentifyItem | null;

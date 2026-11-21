@@ -618,7 +618,15 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
         let fail = |e: String| {
             lock(&failure).get_or_insert(e);
         };
-        std::thread::scope(|scope| {
+        // Moments run from the start, beside the vision workers, so the decision model answers
+        // each frame as it comes rather than sitting silent until the end of the run. They are
+        // joined before the pick, which ranks on them.
+        let moments: Mutex<Option<Result<usize>>> = Mutex::new(None);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let result = crate::moments::run(d, job, stop, task, &settings, &lanes, scope);
+                *lock(&moments) = Some(result);
+            });
             for lane in 0..workers {
                 let (settings, ocr_engine, stop, next, failure, frames, pending, run) = (
                     &settings,
@@ -631,7 +639,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
                     &run,
                 );
                 let (progress, fail) = (&progress, &fail);
-                scope.spawn(move || {
+                s.spawn(move || {
                     let mut readers = match load_readers(settings, ocr_engine) {
                         Ok(r) => r,
                         Err(e) => return fail(e),
@@ -666,6 +674,12 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             end.finish("error");
             return Err(e);
         }
+        if let Some(Err(e)) = moments.into_inner().unwrap_or_else(|e| e.into_inner()) {
+            // The frame reads are done; a moments failure still ends the run the way it did
+            // when moments were the last step.
+            end.finish("error");
+            return Err(e);
+        }
         if !stop.load(Ordering::Relaxed) {
             if lanes.names {
                 crate::passes::embed_faces_missing(d, job, stop, task)?;
@@ -680,8 +694,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             if let Some(p) = &progress {
                 p.phase("pick");
             }
-            // Moments are read last, so the pick below can rank on them.
-            crate::moments::run(d, job, stop, task, &settings, &lanes, scope)?;
+            // Moments were joined above, while the cars were read, so the pick ranks on them.
             task.detail("Picking keepers");
             crate::passes::pick_keepers(d, job)?;
             end.finish("done");

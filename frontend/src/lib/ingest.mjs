@@ -1,7 +1,7 @@
 // Pure logic for the unified ingest screen: one flowchart for scan + group + pick + vision, lane state words,
 // which lanes the grid shows, and the single progress bar. The contract the engine fills is in docs/plans/ingest-live-contract.md.
 import { deciderNode } from './decider.mjs';
-import { flowNodes } from './identifyFlow.mjs';
+import { deciderStepNode, flowNodes } from './identifyFlow.mjs';
 import { STAGE_ORDER, orderStages, stageStatus } from './scan.mjs';
 import { visionNodeSub, visionOffReason } from './vision.mjs';
 
@@ -102,11 +102,18 @@ export function ingestNodes({ stages, identify = null, model = '', finished = fa
   return nodes.map((node, i) => ({ ...node, number: two(i) }));
 }
 
-/** The identify-only flowchart: today's six nodes in the same shape, none of them a filter. */
-export function identifyNodes(live, model) {
-  return flowNodes(live, model).map((node) => ({
+/**
+ * The identify-only flowchart: today's six nodes in the same shape, none of them a filter. When
+ * the decision model reports in (`decider`, else `live.decider`), its node sits after VISION,
+ * with the question it is on and the frames it has judged.
+ */
+export function identifyNodes(live, model, decider = null) {
+  const nodes = flowNodes(live, model).map((node) => ({
     id: node.label.toLowerCase(), number: node.number, label: node.label, sub: node.sub, meta: '', title: node.sub, state: node.state, off: node.off === true, filter: null,
   }));
+  const step = deciderStepNode(decider ?? live?.decider ?? null);
+  if (step) nodes.splice(4, 0, step);
+  return nodes.map((node, i) => ({ ...node, number: String(i + 1).padStart(2, '0') }));
 }
 
 /**

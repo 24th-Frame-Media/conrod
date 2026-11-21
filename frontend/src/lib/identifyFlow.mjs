@@ -1,4 +1,5 @@
 // Pure logic for the identify live screen: the flow row, the image to show, the confidence meter and the words around them.
+import { msWords, percent } from './decider.mjs';
 import { visionNodeSub, visionOffReason } from './vision.mjs';
 
 /** The stages the `identify-progress` event reports, in the order they happen. */
@@ -43,6 +44,38 @@ export function flowNodes(live, model, stage) {
     off: node.label === 'VISION' && Boolean(reason),
     state: finished || i < active ? 'done' : node.stage === at ? 'active' : 'pending',
   }));
+}
+
+/** States in which the decision model cannot run as things stand, for the node's dimmed look. */
+const DECIDER_OFF = new Set(['off', 'not_installed', 'installing', 'no_gpu', 'no_vram']);
+
+/** A question, shortened for the node's subline; the whole text stays in the node's title. */
+function shortAsk(text) {
+  const t = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return t.length > 44 ? `${t.slice(0, 43)}…` : t;
+}
+
+/**
+ * The decision model's node for the identify flow: what it is asking (or last answered), how many
+ * frames it has judged, and the seconds each frame takes. It runs beside the vision workers, so
+ * it appears in the same row; when it is off, the node is dimmed and says why.
+ */
+export function deciderStepNode(live) {
+  if (!live || typeof live !== 'object') return null;
+  const frames = Math.max(0, Math.round(Number(live.done) || 0));
+  const busy = Number(live.busy) > 0 || live.current != null;
+  const ask = live.current?.asking?.[0]?.text ?? '';
+  const said = live.recent?.[0]?.says?.[0];
+  const answer = said ? `${said.label} ${percent(said.p)}` : '';
+  const off = DECIDER_OFF.has(live.state) && !busy && frames === 0;
+  const sub = off ? 'off' : shortAsk(ask) || (frames ? `${frames} frames` : 'waiting');
+  const per = live.avg_ms ? `${msWords(live.avg_ms)}/frame` : '';
+  const meta = off ? '' : [frames ? `${frames} frames` : '', per, answer].filter(Boolean).join(' · ');
+  return {
+    id: 'decider', number: '', label: 'DECIDER', sub, meta,
+    title: [sub, live.message, answer].filter(Boolean).join(' · '),
+    state: busy ? 'active' : frames > 0 ? 'done' : 'pending', off, filter: null,
+  };
 }
 
 /** The picture of the car: the crop when there is one, else the preview, else the thumbnail. */
