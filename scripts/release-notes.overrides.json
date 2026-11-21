@@ -213,6 +213,10 @@
     "dec9dfd": { "section": "Improved", "text": "Regrouping no longer makes the rest of the app wait." },
     "cfd2d77": { "section": "Improved", "text": "Security updates to the networking components." },
     "18e04ca": { "section": "Improved", "text": "The app framework and its plug-ins are updated to their latest patch releases." },
+    "2de0f04": [
+      { "section": "Fixed", "text": "Turning the vision model on in Settings now reaches every album, including one imported while it was off. An album can still be switched off or on for itself in its shoot settings." },
+      { "section": "Improved", "text": "When the vision model is off, the identify screen says why instead of naming a model called off, and offers to turn vision on for that album or to set up a vision service." }
+    ],
     "2156244": [
       { "section": "Fixed", "text": "If Conrod crashes or is closed mid-scan, the next start tidies up and the album shows what really happened." },
       { "section": "Fixed", "text": "A scan that finishes with problem frames says done with errors and lists them, instead of looking clean." },

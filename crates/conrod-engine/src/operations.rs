@@ -9,7 +9,7 @@ use conrod_core::{
     analysis::VehicleAnalysis,
     keywords, models,
     registry::{self, KnownVehicle},
-    settings::Settings,
+    settings::{Settings, VisionOff},
 };
 use conrod_io::{settings::Settings as IoSettings, vlm, writer::MetadataWriter};
 use conrod_vision::{
@@ -73,6 +73,14 @@ pub(crate) fn run_scope(album_scope: &str, arg: Option<&str>) -> &'static str {
     conrod_core::settings::identify_scope_word(arg.unwrap_or(album_scope))
 }
 pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
+    // The lanes the album (or its preset) leaves off are off for every reader.
+    Ok(merged(d, job)?.0.resolved())
+}
+
+/// The album's settings laid over the current global ones, before the lane
+/// switches are folded in, and the album's own vision choice (`None`: it
+/// follows the global switch).
+fn merged(d: &Desktop, job: i64) -> Result<(Settings, Option<bool>)> {
     crate::library::require_job(d, job)?; // "No such album", not a bare "Query returned no rows"
     let raw: Option<String> = lock(&d.db)
         .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
@@ -80,12 +88,17 @@ pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
         })
         .map_err(err)?;
     let current = lock(&d.settings).clone();
+    let mut choice = None;
     let mut s = raw
         .and_then(|s| serde_json::from_str::<Map<String, Value>>(&s).ok())
         .map(|mut map| {
             // An album stored before per-album gaps keeps grouping at the old
             // effective default, not at its stored 4.0 sentinel.
             conrod_core::settings::migrate_burst_gap(&mut map);
+            // An album stored before vision had a per-album switch holds only a
+            // stale copy of the global one: it follows the global.
+            conrod_core::settings::follow_global_vlm(&mut map);
+            choice = conrod_core::settings::album_vlm_choice(&map);
             current.clone().apply(&map)
         })
         .unwrap_or(current.clone());
@@ -95,8 +108,14 @@ pub(crate) fn settings(d: &Desktop, job: i64) -> Result<Settings> {
     s.vlm_extra_hosts = current.vlm_extra_hosts;
     s.vlm_services = current.vlm_services;
     s.vlm_strategy = current.vlm_strategy;
-    // The lanes the album (or its preset) leaves off are off for every reader.
-    Ok(s.resolved())
+    Ok((s, choice))
+}
+
+/// Why this album's identify run does not ask the vision model, or `None`
+/// when it does.
+pub(crate) fn vision_off(d: &Desktop, job: i64) -> Result<Option<VisionOff>> {
+    let (settings, choice) = merged(d, job)?;
+    Ok(settings.vision_off(choice))
 }
 pub(crate) fn launch(
     d: &Arc<Desktop>,
@@ -451,6 +470,7 @@ fn load_readers(settings: &Settings, ocr: &Option<Arc<ocr::Ocr>>) -> Result<Read
 
 pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value> {
     let settings = settings(d, job)?;
+    let vision_off = vision_off(d, job)?;
     let lanes = settings.lanes();
     let finds_faces = lanes.names;
     if !lanes.identifies() && !finds_faces && !lanes.moments_detect {
@@ -489,17 +509,11 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
         let live = Arc::new(IdentifyLive::new(job, pending.len()));
         // The model the VISION node should name: the enabled service that will
         // actually answer, not the album's unused fallback.
-        let vision = if settings.use_vlm {
-            settings
-                .vlm_services
-                .iter()
-                .find(|service| service.enabled)
-                .map(|service| service.model.clone())
-                .unwrap_or_else(|| settings.vlm_model.clone())
-        } else {
-            "off".to_string()
-        };
-        live.set_model(&vision);
+        // Off is never a model name: the screen is told why instead.
+        match vision_off {
+            Some(reason) => live.set_vision_off(reason.word()),
+            None => live.set_model(&settings.vision_model()),
+        }
         *lock(&d.identify) = Some(live.clone());
         let mut end = LiveRun(live.clone());
         if pending.is_empty() {

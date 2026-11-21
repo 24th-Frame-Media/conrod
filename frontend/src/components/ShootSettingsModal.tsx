@@ -7,17 +7,24 @@ import { overridesOf, type Overrides } from '../lib/presetPolicy.mjs';
 import { thresholdOf } from '../lib/moments.mjs';
 import { GroupingFields, groupingOf, type GroupingValues } from './GroupingFields';
 import { IDENTIFY_SCOPE_OPTIONS, identifyScopeOf } from '../lib/identify.mjs';
+import { albumVisionHint, nextAlbumVision } from '../lib/vision.mjs';
 
 type Props = {
   jobLabel: string;
   initialProfile: string;
   initialSettings: Settings;
+  /** The album's own vision choice; null while it follows the Settings switch. */
+  initialVision: boolean | null;
+  /** The global Settings, for the vision switch an album follows. */
+  globals: Settings;
   visible: boolean;
   onClose: () => void;
   onSave: (patch: {
     scan_profile: string;
     /** Detector and reader switches; a missing key follows the shoot type. Saved through `set_feature`, not the settings patch. */
     overrides: Overrides;
+    /** The album's own vision choice, or null to follow the Settings switch again. */
+    use_vlm: boolean | null;
     read_action: boolean;
     group_vehicles: boolean;
     /** Which subjects identification reads; does not need a regroup. */
@@ -31,12 +38,15 @@ export function ShootSettingsModal({
   jobLabel,
   initialProfile,
   initialSettings,
+  initialVision,
+  globals,
   visible,
   onClose,
   onSave,
 }: Props) {
   const [profile, setProfile] = useState(initialProfile || 'motorsport');
   const [overrides, setOverrides] = useState<Overrides>(() => overridesOf(initialSettings.overrides));
+  const [vision, setVision] = useState<boolean | null>(initialVision);
   const [readAction, setReadAction] = useState(initialSettings.read_action !== false);
   const [groupVehicles, setGroupVehicles] = useState(initialSettings.group_vehicles !== false);
   const [identifyScope, setIdentifyScope] = useState<Scope>(() => identifyScopeOf(initialSettings.identify_scope));
@@ -49,6 +59,7 @@ export function ShootSettingsModal({
     if (visible) {
       setProfile(initialProfile || 'motorsport');
       setOverrides(overridesOf(initialSettings.overrides));
+      setVision(initialVision);
       setReadAction(initialSettings.read_action !== false);
       setGroupVehicles(initialSettings.group_vehicles !== false);
       setIdentifyScope(identifyScopeOf(initialSettings.identify_scope));
@@ -56,9 +67,11 @@ export function ShootSettingsModal({
       setGrouping(groupingOf(initialSettings));
       setSaving(false);
     }
-  }, [visible, initialProfile, initialSettings]);
+  }, [visible, initialProfile, initialSettings, initialVision]);
 
   if (!visible) return null;
+  // What Settings says; the album follows it until it is set here.
+  const settingsVision = globals.use_vlm !== false;
 
   const handleSave = async () => {
     setSaving(true);
@@ -66,6 +79,7 @@ export function ShootSettingsModal({
       await onSave({
         scan_profile: profile,
         overrides,
+        use_vlm: vision,
         read_action: readAction,
         group_vehicles: groupVehicles,
         identify_scope: identifyScope,
@@ -115,6 +129,22 @@ export function ShootSettingsModal({
             <label className="field-label" htmlFor="shoot-moments-threshold">Moment confidence</label>
             <input id="shoot-moments-threshold" type="number" min={0.5} max={1} step={0.05} value={momentsThreshold} disabled={saving} onChange={(e) => setMomentsThreshold(e.target.value)} />
             <small className="muted">A moment must be this likely before it is shown as sure or can lift a frame. Below it, it shows as maybe and never changes ranking.</small>
+          </div>
+
+          <div className="field-group toggles-group">
+            <label className="field-label">Vision model</label>
+            <label className="shoot-toggle-row">
+              <input
+                type="checkbox"
+                checked={vision ?? settingsVision}
+                disabled={saving}
+                onChange={(e) => setVision(nextAlbumVision(e.target.checked, settingsVision))}
+              />
+              <div className="toggle-text">
+                <b>Ask the vision model for make, colour and team</b>
+                <span>{albumVisionHint(vision, globals)}</span>
+              </div>
+            </label>
           </div>
 
           <div className="field-group toggles-group">

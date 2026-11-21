@@ -12,6 +12,7 @@ import {
   frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneKey, laneState, leftLabel,
   phaseRunning, phaseTone, phaseWord, selectLanes, starsText, stripItems, verdictText, visionExpected,
 } from '../lib/ingest.mjs';
+import { visionHeader, visionOffReason, type VisionAction } from '../lib/vision.mjs';
 import { etaLabel, etaRemaining, formatRate, orderStages, overallEta, overallFraction, summaryLine } from '../lib/scan.mjs';
 import type { IdentifyLive, Job, ScanFound, ScanRecentFrame, Settings, Status } from '../lib/types';
 import type { Runner } from '../state/hooks';
@@ -26,6 +27,8 @@ export type IngestProps = {
   status: Status;
   /** The vision model this album would call, for the VISION node's subline. */
   model?: string;
+  /** The Vision off card's button: turn vision on for this album, or open Settings to set up a service. */
+  onVisionAction?: (id: VisionAction['id']) => void;
   /** The album's scan is running right now (the engine says so; the last snapshot can lag). */
   running?: boolean;
   paused: boolean;
@@ -66,7 +69,7 @@ function Found({ found, identify }: { found: ScanFound; identify: boolean }) {
  */
 export function IngestScreen({
   mode, job, scan, identify, status, model, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onCancel,
-  onCancelOperation, onReview, onLibrary,
+  onCancelOperation, onVisionAction, onReview, onLibrary,
 }: IngestProps) {
   const [picked, setPicked] = useState<Pick | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
@@ -79,6 +82,8 @@ export function IngestScreen({
   const operation = job ? status.operations.find((key) => key.startsWith('Identifying:') && key.endsWith(`:${job.id}`)) : undefined;
   const stages = p ? orderStages(p.pipeline.stages) : [];
   const idLive = mode === 'identify' ? identify : ingestIdentify(identify, { planned: visionExpected(stages, null), identifying: Boolean(operation) });
+  // Vision off is a reason, never a model name: the screen says why and offers the way to change it.
+  const visionOff = visionOffReason(idLive);
   useEffect(() => {
     for (const car of idLive?.active ?? []) {
       if (car.prompt) prompts.current[car.detection_id] = car.prompt;
@@ -135,7 +140,7 @@ export function IngestScreen({
   const eta = phase === 'vision' ? etaLabel(identifyEta(idLive), done >= 3) : etaLabel(smoothed ?? (p ? overallEta(stages, p.overall) : null), Boolean(scan?.stable));
   const rate = phase === 'vision' ? (idLive ? rateLabel(idLive.done, idLive.elapsed_ms) : '') : frameRate(formatRate(p?.rate_per_s));
   const sub = phase === 'starting' ? (mode === 'identify' ? 'Waiting for the first car…' : 'Reading the folder…')
-    : phase === 'vision' ? `Reading cars with ${idLive?.model || model || 'the vision model'}`
+    : phase === 'vision' ? (visionOff ? visionHeader(visionOff) : `Reading cars with ${idLive?.model || model || 'the vision model'}`)
       : phase === 'scan' || phase === 'group' || phase === 'pick' ? `Stage ${(p?.stage_index ?? 0) + 1} of ${p?.stage_count ?? nodes.length} · ${head?.label ?? p?.stage}`
         : phase === 'done' ? (mode === 'identify' ? 'Identification complete' : 'Scan complete') : '';
 
@@ -274,7 +279,7 @@ export function IngestScreen({
                 </div>
               )}
               {detailCar ? (
-                <IdentifyDetail detail={detailCar} prompt={detailCar.prompt ?? prompts.current[detailCar.detection_id]} live={detailCar.stage !== 'done' && phase === 'vision'} />
+                <IdentifyDetail detail={detailCar} prompt={detailCar.prompt ?? prompts.current[detailCar.detection_id]} live={detailCar.stage !== 'done' && phase === 'vision'} visionOff={visionOff} onVisionAction={onVisionAction} />
               ) : detailFrame ? (
                 <FrameDetail frame={detailFrame} />
               ) : (showScan && picks.lanes.length) || showVision || showDecider || barrier ? (
@@ -290,7 +295,7 @@ export function IngestScreen({
               {showDecider && decider && <DeciderLane live={decider} />}
                     {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} />)}
                     {showVision && visionLanes.map((lane) => (
-                      <IdentifyLane key={`vision:${lane.worker}`} name="VISION" worker={lane.worker} item={lane.item} live={lane.live}
+                      <IdentifyLane key={`vision:${lane.worker}`} name="VISION" worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction}
                         prompt={lane.item ? lane.item.prompt ?? prompts.current[lane.item.detection_id] : undefined}
                         onOpen={() => lane.item && pickCar(lane.item.detection_id)} />
                     ))}
@@ -331,7 +336,7 @@ export function IngestScreen({
                           title={[car.make, car.model, car.team].filter(Boolean).join(' · ') || 'Car read'} onClick={() => pickCar(car.detection_id)}>
                           {thumb ? <img src={thumb} alt="" loading="lazy" draggable={false} /> : <span className="id-card-noimg" aria-hidden="true" />}
                           <span className="id-card-num">{hash(car.number)}</span>
-                          <span className="id-card-make">{[car.make, car.model].filter(Boolean).join(' ') || car.plate || 'Make not read'}</span>
+                          <span className="id-card-make">{[car.make, car.model].filter(Boolean).join(' ') || car.plate || (visionOff ? 'Vision off' : 'Make not read')}</span>
                           <span className={`id-card-conf ${car.number ? tone : 'none'}`}>{conf != null ? `${conf}%` : car.number ? 'no confidence' : 'no number'}</span>
                         </button>
                       );

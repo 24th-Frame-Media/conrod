@@ -475,14 +475,17 @@ type Props = {
   onModelsChanged?: () => void;
   onOpenWhatsNew?: () => void;
   onOpenWizard?: () => void;
+  /** A tab another screen asked for (the Vision off card opens Identification); a new nonce asks again. */
+  openTab?: { id: SettingsTabId; nonce: number };
 };
 
 /** Settings shared with the Python library; Save writes the whole block back. */
-export function Settings({ settings, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status, onOpenWhatsNew, onOpenWizard }: Props) {
+export function Settings({ settings, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status, onOpenWhatsNew, onOpenWizard, openTab }: Props) {
   const [draft, setDraft] = useState<SettingsMap>(settings);
   useEffect(() => setDraft(settings), [settings]);
 
-  const [activeTab, setActiveTab] = useState<SettingsTabId>('culling');
+  const [activeTab, setActiveTab] = useState<SettingsTabId>(openTab?.id ?? 'culling');
+  useEffect(() => { if (openTab) setActiveTab(openTab.id); }, [openTab]);
   const [query, setQuery] = useState('');
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [knownCount, setKnownCount] = useState<number | null>(null);
@@ -589,7 +592,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
 
   const discard = () => setDraft(settings);
 
-  const openTab = (id: SettingsTabId) => {
+  const pickTab = (id: SettingsTabId) => {
     setQuery('');
     setActiveTab(id);
   };
@@ -604,7 +607,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
     else if (e.key === 'End') next = ids.length - 1;
     if (next < 0) return;
     e.preventDefault();
-    openTab(ids[next]);
+    pickTab(ids[next]);
     document.getElementById(`settings-tab-${ids[next]}`)?.focus();
   };
 
@@ -686,7 +689,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                   aria-controls={selected ? `settings-panel-${tab.id}` : undefined}
                   tabIndex={activeTab === tab.id ? 0 : -1}
                   className={`settings-tab-btn${selected ? ' active' : ''}`}
-                  onClick={() => openTab(tab.id)}
+                  onClick={() => pickTab(tab.id)}
                 >
                   <span>{tab.label}</span>
                   {dirtyCount > 0 && <span className="tab-dirty-dot" aria-hidden="true" title={`${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}`} />}

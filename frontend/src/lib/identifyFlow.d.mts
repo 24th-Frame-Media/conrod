@@ -1,7 +1,7 @@
 import type { IdentifyItem, IdentifyLive, IdentifyStage } from './types';
 
 export type FlowState = 'done' | 'active' | 'pending';
-export type FlowNode = { number: string; label: string; sub: string; stage: IdentifyStage; state: FlowState };
+export type FlowNode = { number: string; label: string; sub: string; stage: IdentifyStage; state: FlowState; /** The VISION node while the vision model is off. */ off?: boolean };
 export type Rate = { perMin: number; secondsPerCar: number };
 
 export const IDENTIFY_STAGES: readonly IdentifyStage[];

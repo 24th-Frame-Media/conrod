@@ -9,6 +9,8 @@ import { filename } from './lib/review';
 import { subjectExcluded } from './review.mjs';
 import type { DevStart } from './lib/mock';
 import type { Page, ScanArgs, Scope, Status } from './lib/types';
+import type { SettingsTabId } from './lib/settings.mjs';
+import type { VisionAction } from './lib/vision.mjs';
 import { Library } from './screens/Library';
 import { noReviewVerbs, ReviewScreen, type ReviewVerbs } from './screens/Review';
 import { ImportDialog, type ImportDefaults, type ScanDraft } from './screens/Import';
@@ -36,6 +38,8 @@ export function App() {
   const [draft, setDraft] = useState<ScanDraft>({ root: '', label: '' });
   const [starting, setStarting] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  // A Settings tab another screen asked for; the nonce lets the same tab be asked for twice.
+  const [settingsTab, setSettingsTab] = useState<{ id: SettingsTabId; nonce: number } | undefined>();
   // Best-effort mirror of Review's loupe/compare state, only for the Enter-key open-guard and dev-start below;
   // Review.tsx owns the real `view` state and App reaches it through `reviewVerbs` (see useHotkeys wiring).
   const [viewer, setViewer] = useState(false);
@@ -68,6 +72,22 @@ export function App() {
       if (Number.isFinite(id)) setJobId(id);
     }
     setPage(next === 'Review' && locked ? 'Scan' : next);
+  };
+  // The request is for one visit: leaving Settings forgets it, so the next visit opens on the first tab.
+  useEffect(() => { if (page !== 'Settings') setSettingsTab(undefined); }, [page]);
+  // The Vision off card's button: switch vision on for this album alone, or go and set a service up.
+  const visionAction = (action: VisionAction['id']) => {
+    if (action === 'service') {
+      setSettingsTab({ id: 'identification', nonce: Date.now() });
+      setPage('Settings');
+      return;
+    }
+    if (jobId == null) return;
+    void run(async () => {
+      await engine.updateJobSettings(jobId, { use_vlm: true });
+      await eng.refreshJobs();
+      toast('Vision is on for this album. Run Identify again to use it.', { tone: 'ok' });
+    });
   };
 
   useEffect(() => {
@@ -196,13 +216,13 @@ export function App() {
             paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={eng.setSettings}
             identify={jobId != null ? identifyLive[jobId] : undefined} status={status} identifyPaused={identifyPaused}
             model={typeof eng.settings.vlm_model === 'string' ? eng.settings.vlm_model : undefined}
-            onPause={actions.pause} onResume={actions.resume} onCancel={actions.stop} onCancelOperation={actions.cancel}
+            onPause={actions.pause} onResume={actions.resume} onCancel={actions.stop} onCancelOperation={actions.cancel} onVisionAction={visionAction}
             onReview={() => setPage('Review')} onLibrary={() => setPage('Library')} />
         )}
         {view === 'Identify' && (
           <IdentifyScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? identifyLive[jobId] : undefined}
             status={status} model={typeof eng.settings.vlm_model === 'string' ? eng.settings.vlm_model : undefined}
-            paused={identifyPaused} onCancel={actions.cancel} onReview={() => setPage('Review')} />
+            paused={identifyPaused} onCancel={actions.cancel} onVisionAction={visionAction} onReview={() => setPage('Review')} />
         )}
         {view === 'Review' && (
           <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} status={status} settings={eng.settings}
@@ -231,7 +251,7 @@ export function App() {
         )}
         {view === 'Settings' && (
           <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status}
-            onOpenWhatsNew={whatsNew.openManually} onOpenWizard={wizard.openManually} />
+            onOpenWhatsNew={whatsNew.openManually} onOpenWizard={wizard.openManually} openTab={settingsTab} />
         )}
       </main>
       <ImportDialog draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} settings={eng.settings} status={status} busy={starting}

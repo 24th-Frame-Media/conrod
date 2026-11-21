@@ -492,6 +492,13 @@ impl Desktop {
             startup,
         });
         crate::watching::restore(&desktop);
+        // Albums made before vision had a per-album switch hold a stale copy of
+        // the global one: let them follow it.
+        if let Err(e) = desktop.follow_global_vision() {
+            desktop
+                .hub
+                .note(format!("Could not update albums' vision setting: {e}"));
+        }
         // Before anything can offer to resume: an album a crash left mid-scan
         // still says `scanning`, which hides Resume. Mark it stopped instead;
         // every finished frame and its results are kept.
@@ -515,6 +522,43 @@ impl Desktop {
             }
         }
         Ok(desktop)
+    }
+
+    /// One-time, per album: before an album had its own vision switch,
+    /// creation copied the global one into its settings and no screen could
+    /// change it, so a stored `use_vlm` is only the global value of the day
+    /// (an album made while it was off stayed off after it was turned back
+    /// on). Drop that copy and stamp the album as following the global switch;
+    /// an album that already carries the stamp keeps whatever it chose.
+    /// Returns how many albums changed.
+    pub(crate) fn follow_global_vision(&self) -> Result<usize> {
+        let db = lock(&self.db);
+        let stored: Vec<(i64, Option<String>)> = {
+            let mut stmt = db
+                .prepare("SELECT id, settings_json FROM jobs")
+                .map_err(err)?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(err)?;
+            rows.collect::<std::result::Result<_, _>>().map_err(err)?
+        };
+        let mut changed = 0;
+        for (id, json) in stored {
+            let Some(mut map) =
+                json.and_then(|text| serde_json::from_str::<Map<String, Value>>(&text).ok())
+            else {
+                continue;
+            };
+            if conrod_core::settings::follow_global_vlm(&mut map) {
+                db.execute(
+                    "UPDATE jobs SET settings_json=? WHERE id=?",
+                    params![Value::Object(map).to_string(), id],
+                )
+                .map_err(err)?;
+                changed += 1;
+            }
+        }
+        Ok(changed)
     }
 
     /// Mark every album a previous run left in an in-progress status as
@@ -1301,10 +1345,15 @@ impl Desktop {
                     }),
                 );
                 let added = plan.fresh.len();
+                // Vision is not copied in: the album follows the global switch
+                // until the photographer sets it for this album alone.
+                let mut stored = json!(settings);
+                if let Some(map) = stored.as_object_mut() {
+                    conrod_core::settings::follow_global_vlm(map);
+                }
                 let tx = db.unchecked_transaction().map_err(err)?;
-                let job =
-                    conrod_store::create_job(&tx, &root, a.label.as_deref(), &json!(settings))
-                        .map_err(err)?;
+                let job = conrod_store::create_job(&tx, &root, a.label.as_deref(), &stored)
+                    .map_err(err)?;
                 conrod_store::add_images(&tx, job, &plan.fresh).map_err(err)?;
                 tx.commit().map_err(err)?;
                 (
@@ -2927,6 +2976,146 @@ mod tests {
         }
         drop(desktop);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_new_album_follows_the_global_vision_switch_until_it_chooses() {
+        use conrod_core::settings::VisionOff;
+        let root =
+            std::env::temp_dir().join(format!("conrod-vision-{}-{}", std::process::id(), now()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.jpg"), b"x").unwrap();
+        let desktop = Desktop::open(root.clone()).unwrap();
+        // The Import sheet: vision is on in Settings, and the album is made.
+        let job = desktop
+            .dispatch(
+                "scan",
+                json!({"root": root.to_string_lossy(), "stage": "index", "scanProfile": "motorsport-track"}),
+            )
+            .unwrap()["jobId"]
+            .as_i64()
+            .unwrap();
+        let stored = |desktop: &Desktop| -> Map<String, Value> {
+            let text: String = lock(&desktop.db)
+                .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            serde_json::from_str(&text).unwrap()
+        };
+        let map = stored(&desktop);
+        assert!(
+            !map.contains_key("use_vlm"),
+            "creation does not copy the switch"
+        );
+        assert_eq!(map["vlm_inherit"], 1);
+        let on = |desktop: &Desktop| crate::operations::settings(desktop, job).unwrap().use_vlm;
+        let why = |desktop: &Desktop| crate::operations::vision_off(desktop, job).unwrap();
+        assert!(
+            on(&desktop),
+            "an album made while Settings has it on uses it"
+        );
+        assert_eq!(why(&desktop), None);
+
+        // Turning it off in Settings reaches the album that already exists.
+        desktop
+            .dispatch("save_settings", json!({"use_vlm": false}))
+            .unwrap();
+        assert!(!on(&desktop), "the album follows the global switch");
+        assert_eq!(why(&desktop), Some(VisionOff::Settings));
+        desktop
+            .dispatch("save_settings", json!({"use_vlm": true}))
+            .unwrap();
+        assert!(on(&desktop));
+        assert_eq!(why(&desktop), None);
+
+        // The album's own choice beats the global one, in both directions.
+        desktop
+            .dispatch(
+                "update_job_settings",
+                json!({"jobId": job, "patch": {"use_vlm": false}}),
+            )
+            .unwrap();
+        assert!(!on(&desktop));
+        assert_eq!(why(&desktop), Some(VisionOff::Album));
+        assert_eq!(stored(&desktop)["use_vlm"], false);
+        desktop
+            .dispatch("save_settings", json!({"use_vlm": false}))
+            .unwrap();
+        desktop
+            .dispatch(
+                "update_job_settings",
+                json!({"jobId": job, "patch": {"use_vlm": true}}),
+            )
+            .unwrap();
+        assert!(on(&desktop), "on for this album although off in Settings");
+        // Null hands the choice back to Settings; junk changes nothing.
+        desktop
+            .dispatch(
+                "update_job_settings",
+                json!({"jobId": job, "patch": {"use_vlm": "maybe"}}),
+            )
+            .unwrap();
+        assert_eq!(stored(&desktop)["use_vlm"], true);
+        desktop
+            .dispatch(
+                "update_job_settings",
+                json!({"jobId": job, "patch": {"use_vlm": null}}),
+            )
+            .unwrap();
+        assert!(!stored(&desktop).contains_key("use_vlm"));
+        assert!(!on(&desktop));
+        assert_eq!(why(&desktop), Some(VisionOff::Settings));
+
+        // Every service off: there is nothing to ask, and the reason says so.
+        desktop
+            .dispatch("save_settings", json!({"use_vlm": true}))
+            .unwrap();
+        let mut services = lock(&desktop.settings).vlm_services.clone();
+        for service in &mut services {
+            service.enabled = false;
+        }
+        lock(&desktop.settings).vlm_services = services;
+        assert!(!on(&desktop));
+        assert_eq!(why(&desktop), Some(VisionOff::NoService));
+        drop(desktop);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn albums_from_before_the_vision_switch_follow_the_global_once() {
+        let lib = crate::testkit::Lib::new("vision-migrate");
+        // Stored the old way: a copy of the global switch the album never chose.
+        let old = json!({"use_vlm": false, "scan_profile": "motorsport"}).to_string();
+        lib.sql(
+            "UPDATE jobs SET settings_json=? WHERE id=?",
+            params![old, lib.job],
+        );
+        assert_eq!(lib.d().follow_global_vision().unwrap(), 1);
+        let text: String = lib.one("SELECT settings_json FROM jobs WHERE id=?", [lib.job]);
+        let map: Map<String, Value> = serde_json::from_str(&text).unwrap();
+        assert!(!map.contains_key("use_vlm"));
+        assert_eq!(map["vlm_inherit"], 1);
+        assert_eq!(map["scan_profile"], "motorsport");
+        assert!(
+            crate::operations::settings(lib.d(), lib.job)
+                .unwrap()
+                .use_vlm
+        );
+
+        // A choice made after that is kept by every later start.
+        lib.run(
+            "update_job_settings",
+            json!({"jobId": lib.job, "patch": {"use_vlm": false}}),
+        )
+        .unwrap();
+        assert_eq!(lib.d().follow_global_vision().unwrap(), 0);
+        assert!(
+            !crate::operations::settings(lib.d(), lib.job)
+                .unwrap()
+                .use_vlm
+        );
     }
 
     #[test]

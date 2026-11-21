@@ -52,8 +52,25 @@ pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Val
         // An album stored before per-album gaps carries the old ignored 4.0;
         // rewrite it before the patch lands so a deliberate 4.0 sticks.
         conrod_core::settings::migrate_burst_gap(&mut map);
+        // Drop an old album's stale vision copy first, so a choice made now is
+        // the first the album has ever had.
+        conrod_core::settings::follow_global_vlm(&mut map);
 
         for (k, v) in &a.patch {
+            if k == "use_vlm" {
+                // The album's own vision choice: a boolean, or null to follow
+                // the global switch again. Anything else is ignored.
+                match v {
+                    Value::Bool(_) => {
+                        map.insert(k.clone(), v.clone());
+                    }
+                    Value::Null => {
+                        map.remove(k);
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             if k == "scan_profile" {
                 if let Some(s) = v.as_str() {
                     let preset = conrod_core::profile::ShootPreset::parse(s);

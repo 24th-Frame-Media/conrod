@@ -172,8 +172,11 @@ struct State {
     errors: Vec<String>,
     state: &'static str,
     /// The vision model this run will actually call, for the flow's VISION
-    /// node. Empty when the shoot has no vision model.
-    model: String,
+    /// node. `None` when vision is off; `vision_off_reason` says why.
+    model: Option<String>,
+    /// Why vision is off for this run (`album`, `settings`, `no_service` or
+    /// `lanes`), if it is.
+    vision_off_reason: Option<&'static str>,
     /// How many identify workers this run uses: the screen draws one panel each.
     workers: usize,
 }
@@ -205,7 +208,8 @@ impl IdentifyLive {
                 recent: VecDeque::new(),
                 errors: Vec::new(),
                 state: "running",
-                model: String::new(),
+                model: None,
+                vision_off_reason: None,
                 workers: 0,
             }),
             finished: AtomicBool::new(false),
@@ -341,7 +345,17 @@ impl IdentifyLive {
     /// Name the vision model this run calls, so the flow shows the one that
     /// actually answers rather than the album's fallback name.
     pub fn set_model(&self, model: &str) {
-        lock(&self.inner).model = model.to_string();
+        let mut inner = lock(&self.inner);
+        inner.model = Some(model.to_string());
+        inner.vision_off_reason = None;
+    }
+
+    /// Say the vision model is not used in this run, and why. The model is
+    /// cleared: the screen never has to read the word "off" as a model name.
+    pub fn set_vision_off(&self, reason: &'static str) {
+        let mut inner = lock(&self.inner);
+        inner.model = None;
+        inner.vision_off_reason = Some(reason);
     }
 
     /// How many workers run at once, for the one-panel-per-worker view.
@@ -389,6 +403,7 @@ impl IdentifyLive {
             "elapsed_ms": round1(self.started.elapsed().as_secs_f64() * 1000.0),
             "stage": state.stage,
             "model": state.model,
+            "vision_off_reason": state.vision_off_reason,
             "workers": state.workers,
             "current": current,
             // Every car a worker is inside right now, including `current`:
@@ -721,6 +736,7 @@ mod tests {
                 "stage",
                 "state",
                 "total",
+                "vision_off_reason",
                 "workers",
             ]
             .map(String::from)
@@ -837,5 +853,29 @@ mod tests {
             "a finished item, with no prompt"
         );
         println!("{}", serde_json::to_string_pretty(&snapshot).unwrap());
+    }
+
+    #[test]
+    fn vision_off_sends_no_model_and_a_reason() {
+        let live = IdentifyLive::new(1, 4);
+        let before = live.snapshot();
+        assert!(before["model"].is_null(), "no model named yet");
+        assert!(before["vision_off_reason"].is_null());
+
+        live.set_model("glm-5.3-flash");
+        let on = live.snapshot();
+        assert_eq!(on["model"], "glm-5.3-flash");
+        assert!(on["vision_off_reason"].is_null());
+
+        live.set_vision_off("album");
+        let off = live.snapshot();
+        assert!(
+            off["model"].is_null(),
+            "never the word 'off' as if it were a model"
+        );
+        assert_eq!(off["vision_off_reason"], "album");
+
+        live.set_model("glm-5.3-flash");
+        assert!(live.snapshot()["vision_off_reason"].is_null());
     }
 }
