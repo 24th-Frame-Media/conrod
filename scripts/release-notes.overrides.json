@@ -252,6 +252,7 @@
     "d7e4704": [
       { "section": "New", "text": "The decision model now works from the start of identification: its question and answer appear in the identifying screen along with the frames it has judged and the time each takes, instead of staying quiet until the end." },
       { "section": "Improved", "text": "Waiting for the decision model no longer delays the end of identification, because it judges frames while the cars are being read." }
-    ]
+    ],
+    "3197952": { "section": "New", "text": "Focus areas are now read from Sony, Nikon, Fujifilm, OM System and Panasonic cameras too, so the camera's own focus point can pick the subject there as it does for Canon." }
   }
 }
