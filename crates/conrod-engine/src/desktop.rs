@@ -320,6 +320,9 @@ pub struct Desktop {
     finishing: AtomicBool,
     pub(crate) watching: Mutex<crate::watching::Watching>,
     active: Mutex<Option<(i64, Arc<Scan>)>>,
+    /// Albums whose scan was asked for while another ran: they start, first
+    /// asked first, when that one ends. The album rows already exist.
+    queue: Mutex<std::collections::VecDeque<i64>>,
     /// The scan in progress (or just finished), for `scan-progress` events.
     progress: Mutex<Option<Arc<crate::progress::Progress>>>,
     /// The identify run in progress (or just finished), for `identify-progress`
@@ -486,6 +489,7 @@ impl Desktop {
             finishing: AtomicBool::new(false),
             watching: Mutex::new(Default::default()),
             active: Mutex::new(None),
+            queue: Mutex::new(std::collections::VecDeque::new()),
             progress: Mutex::new(None),
             identify: Mutex::new(None),
             operations: Mutex::new(std::collections::BTreeMap::new()),
@@ -608,6 +612,76 @@ impl Desktop {
             .as_ref()
             .is_some_and(|(_, scan)| !scan.is_finished() || self.finishing.load(Ordering::Acquire))
     }
+    /// Wait for one scan at a time: put `job` at the back of the line and mark
+    /// it queued. An album already waiting keeps its place, so asking again
+    /// from the sheet or the watcher does not jump it. Returns its place in
+    /// line, counting from 1.
+    fn enqueue(&self, job: i64) -> Result<usize> {
+        let place = {
+            let mut queue = lock(&self.queue);
+            match queue.iter().position(|waiting| *waiting == job) {
+                Some(place) => place + 1,
+                None => {
+                    queue.push_back(job);
+                    queue.len()
+                }
+            }
+        };
+        self.db
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .execute("UPDATE jobs SET status='queued' WHERE id=?", [job])
+            .map_err(err)?;
+        // A note bumps the task revision, so the open window sees the new line
+        // at once instead of on its next poll.
+        self.hub.note("Album added to the scan queue");
+        Ok(place)
+    }
+
+    /// The next album in line, if any. An album deleted while it waited is
+    /// skipped rather than started.
+    fn take_queued(&self) -> Option<i64> {
+        loop {
+            let next = {
+                let mut queue = lock(&self.queue);
+                queue.pop_front()
+            }?;
+            let exists: i64 = self
+                .reader
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .query_row("SELECT count(*) FROM jobs WHERE id=?", [next], |r| r.get(0))
+                .unwrap_or(0);
+            if exists > 0 {
+                return Some(next);
+            }
+        }
+    }
+
+    /// Take an album out of the line: it keeps its frames and results, and
+    /// waits to be started by hand.
+    fn unqueue(&self, job: i64) -> Result<Value> {
+        let removed = {
+            let mut queue = lock(&self.queue);
+            match queue.iter().position(|waiting| *waiting == job) {
+                Some(place) => {
+                    let _ = queue.remove(place);
+                    true
+                }
+                None => false,
+            }
+        };
+        if !removed {
+            return Err("That album is not waiting in the queue".into());
+        }
+        self.db
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .execute("UPDATE jobs SET status='stopped' WHERE id=?", [job])
+            .map_err(err)?;
+        Ok(Value::Null)
+    }
+
     pub(crate) fn resume_album(self: &Arc<Self>, job: i64) -> Result<()> {
         let stored = crate::operations::settings(self, job)?;
         let stage = stored
@@ -694,6 +768,7 @@ impl Desktop {
                 self.hub.note("Stopping scan...");
                 self.control(Scan::cancel)
             }
+            Command::Unqueue(a) => self.unqueue(a.job_id),
             Command::DeleteJob(a) => self.delete_job(a.job_id),
             Command::Identify(a) => crate::operations::identify(self, a.job_id, a.scope.as_deref()),
             Command::Identified(a) => self.identified(a.job_id),
@@ -871,6 +946,7 @@ impl Desktop {
         }) {
             return Err("Stop the scan before removing its album".into());
         }
+        lock(&self.queue).retain(|waiting| *waiting != job);
         let task = self.hub.start("Removing album from library", 0);
         self.db
             .lock()
@@ -975,7 +1051,9 @@ impl Desktop {
             let (errors, error_samples) = scan_errors(&lock(&self.reader), job);
             json!({"job": job, "errors": errors, "error_samples": error_samples})
         });
-        json!({"revision":self.hub.version(),"tasks":tasks,"log":self.hub.log(),"operations":operations,"activeJob":active_job,"scan":scan})
+        // The albums waiting their turn, in the order they will start.
+        let queue: Vec<i64> = lock(&self.queue).iter().copied().collect();
+        json!({"revision":self.hub.version(),"tasks":tasks,"log":self.hub.log(),"operations":operations,"activeJob":active_job,"queue":queue,"scan":scan})
     }
 
     fn jobs(&self) -> Result<Vec<Value>> {
@@ -1116,13 +1194,6 @@ impl Desktop {
                 a.job_id.ok_or("Identify requires an existing album")?,
                 None,
             );
-        }
-        let mut active = lock(&self.active);
-        if active
-            .as_ref()
-            .is_some_and(|(_, s)| !s.is_finished() || self.finishing.load(Ordering::Acquire))
-        {
-            return Err("A scan is already running".into());
         }
         let mut settings = lock(&self.settings).clone();
         let task = self.hub.start("Indexing album", 0);
@@ -1328,6 +1399,28 @@ impl Desktop {
             return Ok(
                 json!({"jobId": job, "duplicates": duplicates, "added": added, "existing": existing, "scanning": false}),
             );
+        }
+        let mut active = lock(&self.active);
+        if let Some((running, _)) = active
+            .as_ref()
+            .filter(|(_, s)| !s.is_finished() || self.finishing.load(Ordering::Acquire))
+        {
+            if *running == job {
+                return Err("That album is already scanning".into());
+            }
+            // One scan at a time: the album is already made (its rows, its
+            // settings), so it waits its turn and starts when this one ends.
+            task.finish();
+            let position = self.enqueue(job)?;
+            return Ok(json!({
+                "jobId": job,
+                "duplicates": duplicates,
+                "added": added,
+                "existing": existing,
+                "scanning": false,
+                "queued": true,
+                "queuePosition": position,
+            }));
         }
         self.db
             .lock()
@@ -1552,6 +1645,17 @@ impl Desktop {
             } else {
                 "Album processing updated"
             });
+            // FIFO: the album that waited for this one starts now, whether this
+            // one finished, failed or was stopped. A new thread runs it so the
+            // next start does not happen while this one is still closing.
+            if let Some(next) = desktop.take_queued() {
+                let waiting = desktop.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = waiting.resume_album(next) {
+                        waiting.hub.start("Starting the queued album", 0).fail(e);
+                    }
+                });
+            }
         });
         Ok(
             json!({"jobId": job, "duplicates": duplicates, "added": added, "existing": existing, "scanning": true}),
@@ -3299,6 +3403,78 @@ mod tests {
         );
         drop(desktop);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_second_start_while_one_runs_waits_in_line_and_starts_after_it() {
+        // Two folders, each with one frame: two albums.
+        let temp =
+            std::env::temp_dir().join(format!("conrod-queue-{}-{}", std::process::id(), now()));
+        let folders: Vec<_> = ["first", "second"]
+            .into_iter()
+            .map(|name| {
+                let folder = temp.join(name);
+                std::fs::create_dir_all(&folder).unwrap();
+                std::fs::write(folder.join("a.jpg"), b"x").unwrap();
+                folder
+            })
+            .collect();
+        let desktop = Desktop::open(temp.join("library")).unwrap();
+        // A scan that holds the one-scan slot without reading anything.
+        let held = Arc::new(Scan::held());
+        *lock(&desktop.active) = Some((0, held.clone()));
+        let scan = |desktop: &Arc<Desktop>, folder: &Path| {
+            desktop
+                .dispatch(
+                    "scan",
+                    json!({"root": folder.to_string_lossy(), "stage": "all"}),
+                )
+                .unwrap()
+        };
+
+        let first = scan(&desktop, &folders[0]);
+        assert_eq!(first["queued"], true, "a scan was running");
+        assert_eq!(first["scanning"], false);
+        assert_eq!(first["queuePosition"], 1);
+        let first_job = first["jobId"].as_i64().unwrap();
+        let second = scan(&desktop, &folders[1]);
+        let second_job = second["jobId"].as_i64().unwrap();
+        assert_ne!(first_job, second_job, "each folder is its own album");
+        assert_eq!(second["queuePosition"], 2, "first asked is first in line");
+        assert_eq!(desktop.status()["queue"], json!([first_job, second_job]));
+        let status = |job: i64| -> String {
+            lock(&desktop.db)
+                .query_row("SELECT status FROM jobs WHERE id=?", [job], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(status(first_job), "queued");
+        assert_eq!(status(second_job), "queued");
+        // Asking again for an album already waiting keeps its place.
+        let again = desktop
+            .dispatch("scan", json!({"jobId": first_job}))
+            .unwrap();
+        assert_eq!(again["queuePosition"], 1, "asking again keeps its place");
+        assert_eq!(desktop.status()["queue"], json!([first_job, second_job]));
+
+        // The album on the card can be taken out of the line.
+        desktop
+            .dispatch("unqueue", json!({"jobId": second_job}))
+            .unwrap();
+        assert_eq!(desktop.status()["queue"], json!([first_job]));
+        assert_eq!(
+            status(second_job),
+            "stopped",
+            "it waits to be started by hand"
+        );
+
+        // The running scan ends (finished, stopped or failed alike): the head
+        // of the line is next, then nothing.
+        held.release();
+        assert_eq!(desktop.take_queued(), Some(first_job));
+        assert_eq!(desktop.take_queued(), None);
+        assert_eq!(desktop.status()["queue"], json!([]));
+        drop(desktop);
+        std::fs::remove_dir_all(&temp).unwrap();
     }
 
     #[test]

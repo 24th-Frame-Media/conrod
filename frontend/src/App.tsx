@@ -6,6 +6,7 @@ import { SetupWizard } from './components/SetupWizard';
 import { WhatsNewSheet } from './components/WhatsNewSheet';
 import { call, engine, inTauri, mocked } from './lib/api';
 import { filename } from './lib/review';
+import { queueLabel } from './lib/format';
 import { subjectExcluded } from './review.mjs';
 import type { DevStart } from './lib/mock';
 import type { Page, ScanArgs, Scope, Status } from './lib/types';
@@ -107,7 +108,7 @@ export function App() {
             workflowMode: defaults.workflow_mode, identifyScope: defaults.identify_scope,
           }
         : args;
-      const { jobId: id, duplicates = 0, added = 0, scanning: started = true } = await engine.scan(scan);
+      const { jobId: id, duplicates = 0, added = 0, scanning: started = true, queued = false, queuePosition = 0 } = await engine.scan(scan);
       await eng.refreshJobs();
       if (id != null) setJobId(id);
       eng.setStatus(await engine.status());
@@ -117,6 +118,13 @@ export function App() {
       if (!started && added === 0 && duplicates > 0) {
         setPage('Library');
         toast(`${duplicates.toLocaleString()} photos are already in this library. Nothing was imported.`, { tone: 'ok' });
+        return;
+      }
+      // Another scan was running: the album is made and waits its turn; the
+      // running one starts it when it ends.
+      if (queued) {
+        setPage('Library');
+        toast(`Album queued. ${queueLabel(Math.max(0, queuePosition - 1))}. It starts when the running scan finishes.`, { tone: 'ok' });
         return;
       }
       if (duplicates > 0) {
@@ -177,8 +185,14 @@ export function App() {
       <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} actions={actions} popoverOpen={dev?.popover ?? false} />
       <main className="stage" key={view}>
         {view === 'Library' && (
-          <Library jobs={eng.jobs} models={eng.models} scanning={scanning} live={scanLive} activeJob={status.activeJob} onOpen={(j) => openJob(j.id)} onNewScan={() => setShowImport(true)}
+          <Library jobs={eng.jobs} models={eng.models} scanning={scanning} live={scanLive} activeJob={status.activeJob} queue={status.queue ?? []} onOpen={(j) => openJob(j.id)} onNewScan={() => setShowImport(true)}
             onIdentify={(j) => identify(j.id)} onResume={(j) => void startScan({ jobId: j.id })}
+            onUnqueue={(j) => void run(async () => {
+              await engine.unqueue(j.id);
+              eng.setStatus(await engine.status());
+              await eng.refreshJobs();
+              toast(`${j.label} is out of the queue. Start it from its card when you're ready.`);
+            })}
             onDelete={(j) => void run(async () => {
               await engine.deleteJob(j.id);
               await eng.refreshJobs();

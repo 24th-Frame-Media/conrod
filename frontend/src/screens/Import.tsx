@@ -141,8 +141,8 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
         </details>
 
         <div className="actions-row">
-          <button className="primary" disabled={!draft.root.trim() || busy || scanning || !gapOk} onClick={start}>{busy ? 'Starting…' : 'Scan'}</button>
-          {scanning && <span className="muted busy-note">A scan is already running. Stop it from the Scan screen to start another.</span>}
+          <button className="primary" disabled={!draft.root.trim() || busy || !gapOk} onClick={start}>{busy ? 'Starting…' : scanning ? 'Add to queue' : 'Scan'}</button>
+          {scanning && <span className="muted busy-note">A scan is running. This album joins the queue{(status.queue ?? []).length ? ` (${(status.queue ?? []).length} already waiting)` : ''} and starts by itself when that scan finishes.</span>}
         </div>
       </div>
     </div>
