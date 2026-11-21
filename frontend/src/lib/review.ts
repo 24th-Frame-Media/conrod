@@ -20,6 +20,8 @@ export type FrameFacts = {
   panned: boolean; pick: boolean; cull: string | null; cullDetail: string | null;
   /** A frame the detector found no vehicle in that the camera's sharp focus area keeps. */
   keepNote: string | null;
+  /** One plain sentence: the main car and why this frame was kept or set aside. */
+  why: string | null;
   text: string;
   reviewed: boolean;
 };
@@ -51,8 +53,68 @@ function cullDetail(frame: Frame, dets: Detection[]): string | null {
   return bits.join(' · ');
 }
 
-/** A vehicle detection with neither number nor plate read, or a shaky group match: worth a second look. */
+/** The detection the frame is about: a vehicle, the burst pick first, then the sharpest. */
+function mainDetection(dets: Detection[]): Detection | null {
+  if (!dets.length) return null;
+  const vehicles = dets.filter((d) => (d.region_type ?? 'vehicle') === 'vehicle' && !d.bystander);
+  const pool = vehicles.length ? vehicles : dets.filter((d) => !d.bystander);
+  const candidates = pool.length ? pool : dets;
+  return candidates.find((d) => d.burst_pick) ?? [...candidates].sort((a, b) => (b.rating ?? b.sharpness) - (a.rating ?? a.sharpness))[0];
+}
+
+/** "the #32 car" / "the Porsche 911" / "the car", from what was read. */
+function subjectName(d: Detection): string {
+  const attrs = parseAttributes(d);
+  const number = attrs.race_number ?? d.number;
+  if (number) return `the #${number} car`;
+  const make = [attrs.make, attrs.model].filter(Boolean).join(' ');
+  if (make) return `the ${make}`;
+  const plate = attrs.plate ?? d.plate;
+  if (plate) return `the car with plate ${plate}`;
+  if (d.region_type === 'face') return 'the face';
+  return (d.region_type ?? 'vehicle') === 'vehicle' ? 'the car' : 'the subject';
+}
+
+/** One plain sentence for a culled subject's stored reason; never says "culled". */
+function cullWords(reason: string, name: string, d: Detection, frame: Frame): string {
+  const r = reason.trim().toLowerCase();
+  if (r === 'eyes closed') return 'The eyes are closed.';
+  if (r === 'too blurred' || r.endsWith(' soft') || /^\d star/.test(r)) {
+    const soft = (d.rating ?? d.sharpness) < 0.606;
+    if (soft && focusSharp(frame)) return `Soft: focus landed elsewhere, not on ${name}.`;
+    return `Soft: ${name} is out of focus.`;
+  }
+  if (r.includes('edge') || r.includes('cut off')) return `${name[0].toUpperCase()}${name.slice(1)} is cut off at the frame edge.`;
+  return `${name[0].toUpperCase()}${name.slice(1)}: ${reason.trim()}.`;
+}
+
+/**
+ * The inspector's one plain line: which car the frame is about, and why it was kept or set
+ * aside. Read from fields the engine already stores (`burst_pick`, `rating_verdict`,
+ * `cull_reason`, `sharpness`, the frame's AF reading); a sharp main car is never called culled.
+ */
+function whyNote(frame: Frame, dets: Detection[], burstSize: number): string | null {
+  if (frame.rejected) return 'You rejected this frame.';
+  const main = mainDetection(dets);
+  const culled = frameExcluded(frame, dets);
+  if (culled) {
+    const det = dets.find((d) => d.cull_reason && !d.bystander) ?? dets.find((d) => d.cull_reason);
+    if (det?.cull_reason) return cullWords(det.cull_reason, subjectName(det), det, frame);
+    return main ? `No sharp photo of ${subjectName(main)} in this frame.` : 'Nothing in this frame is sharp enough.';
+  }
+  if (!main) return dets.length ? 'No car found — kept because focus is sharp' : null;
+  const name = subjectName(main);
+  const panned = dets.some((d) => d.panning);
+  const verdict = main.rating_verdict ?? '';
+  const pick = Boolean(main.burst_pick || frame.burst_pick);
+  if (pick) return burstSize > 1 ? `Sharp photo of ${name}, best of its burst.` : `Sharp photo of ${name}.`;
+  if (verdict === 'good') return `Sharp photo of ${name}.`;
+  if (panned) return `Kept: ${name} is blurred against a panning background.`;
+  return `Kept: ${name} is sharp enough.`;
+}
+
 const GROUP_AGREEMENT_LOW = 0.5;
+/** A vehicle detection with neither number nor plate read, or a shaky group match: worth a second look. */
 function needsLook(x: FrameFacts | undefined): boolean {
   if (!x) return false;
   return x.dets.some((d) => {
@@ -66,7 +128,7 @@ function needsLook(x: FrameFacts | undefined): boolean {
 
 const NOT_SUBJECT = new Set(['person', 'face', 'eye', 'plate']);
 
-function factsFor(frame: Frame, dets: Detection[]): FrameFacts {
+function factsFor(frame: Frame, dets: Detection[], burstSize: number): FrameFacts {
   const attrs = dets.map(parseAttributes);
   const pick = (key: AttributeKey) => first(attrs.map((a) => a[key]));
   const plates = unique(attrs.map((a) => a.plate));
@@ -88,6 +150,7 @@ function factsFor(frame: Frame, dets: Detection[]): FrameFacts {
     cull: frameExcluded(frame, dets) ? (frame.rejected ? 'Rejected · excluded from ML' : 'Culled · excluded from ML') : null,
     cullDetail: cullDetail(frame, dets),
     keepNote: keptByFocus ? 'No car found — kept because focus is sharp' : null,
+    why: whyNote(frame, dets, burstSize),
     text: [frame.path, ...plates, ...numbers, vehicle, colour, team, ...attrs.map((a) => a.driver), ...attrs.map((a) => a.country), ...attrs.map((a) => a.person_name)].join(' ').toLowerCase(),
   };
 }
@@ -98,7 +161,13 @@ export function buildFacts(review: Review): Map<number, FrameFacts> {
     const list = byFrame.get(d.image_id);
     if (list) list.push(d); else byFrame.set(d.image_id, [d]);
   }
-  return new Map(review.frames.map((f) => [f.id, factsFor(f, byFrame.get(f.id) ?? [])]));
+  // How many frames share each burst: "best of its burst" only when there is a burst to be best of.
+  const burstSizes = new Map<number, number>();
+  for (const f of review.frames) {
+    if (f.burst_key == null) continue;
+    burstSizes.set(f.burst_key, (burstSizes.get(f.burst_key) ?? 0) + 1);
+  }
+  return new Map(review.frames.map((f) => [f.id, factsFor(f, byFrame.get(f.id) ?? [], f.burst_key == null ? 1 : burstSizes.get(f.burst_key) ?? 1)]));
 }
 
 export function buildFacets(frames: Frame[], facts: Map<number, FrameFacts>): Record<Facet['kind'], FacetItem[]> {

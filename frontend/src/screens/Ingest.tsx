@@ -31,6 +31,8 @@ export type IngestProps = {
   onVisionAction?: (id: VisionAction['id']) => void;
   /** The album's scan is running right now (the engine says so; the last snapshot can lag). */
   running?: boolean;
+  /** Albums waiting their turn, first to start first. */
+  queue?: Job[];
   paused: boolean;
   identifyPaused: boolean;
   run?: Runner;
@@ -41,6 +43,8 @@ export type IngestProps = {
   onCancelOperation: (key: string) => void;
   onReview: () => void;
   onLibrary: () => void;
+  /** Take a waiting album out of the queue; nothing already imported is lost. */
+  onUnqueue?: (job: Job) => void;
 };
 
 type Pick = { kind: 'car' | 'frame'; id: number };
@@ -69,7 +73,7 @@ function Found({ found, identify }: { found: ScanFound; identify: boolean }) {
  */
 export function IngestScreen({
   mode, job, scan, identify, status, model, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onCancel,
-  onCancelOperation, onVisionAction, onReview, onLibrary,
+  onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue,
 }: IngestProps) {
   const [picked, setPicked] = useState<Pick | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
@@ -188,6 +192,17 @@ export function IngestScreen({
             </div>
           )}
         </header>
+
+        {mode === 'ingest' && queue.length > 0 && (
+          <div className="ing-lock ing-queue" role="status">
+            <Icon name="hourglass" size={13} />
+            <span>Next: {queue[0].label}, {queue.length} waiting</span>
+            {onUnqueue && queue.map((q) => (
+              <button key={q.id} type="button" className="ghost small" title={`Take ${q.label} out of the line. Nothing imported is lost.`}
+                onClick={() => onUnqueue(q)}>Remove {q.label}</button>
+            ))}
+          </div>
+        )}
 
         {(live || mode === 'identify') && (
           <div className="id-progress">

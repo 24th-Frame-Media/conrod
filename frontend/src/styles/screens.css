@@ -324,6 +324,8 @@
 .frame-side-head { display: flex; align-items: flex-start; gap: 10px; flex-shrink: 0; justify-content: space-between; }
 .frame-title-wrap { flex: 1; min-width: 0; }
 .frame-side-head h3 { flex: 1; margin: 0; font-size: 15px; font-weight: 500; color: var(--text); text-transform: none; letter-spacing: 0; line-height: 1.35; word-break: break-all; }
+.inspector-why { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--text); flex-shrink: 0; }
+.warn-note { color: var(--warn2); }
 .frame-side-foot { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); flex-shrink: 0; margin-top: auto; }
 .frame-side-bottom-info { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
 .inspect-image { padding: 0; border: 1px solid var(--line-soft); border-radius: var(--radius); overflow: hidden; background: #08080a; line-height: 0; }

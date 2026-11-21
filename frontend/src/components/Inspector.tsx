@@ -21,6 +21,8 @@ type Props = {
   kind?: ReviewKind;
   /** The shoot's moments: what the judge may name, how sure it must be, and whether it lifts ranking. */
   moments?: { vocabulary: readonly VocabularyEntry[]; threshold: number; rankOn: boolean; detectOn: boolean };
+  /** The album's plain-words verdict for this frame: the main car and why it was kept or set aside. */
+  why?: string | null;
   onMark: (values: MarkValues) => void;
   onOpen: () => void;
   onEdit: (id: number, updates: Record<string, string | string[] | null>) => unknown;
@@ -58,6 +60,7 @@ export function Inspector({
   known = [],
   kind = 'mixed',
   moments,
+  why,
   onMark,
   onOpen,
   onEdit,
@@ -163,6 +166,8 @@ export function Inspector({
         <h3 title={frame.path}>{filename(frame.path)}</h3>
         {frame.status !== 'done' && <span className="tag">{frame.status}</span>}
       </div>
+
+      {why && <p className="inspector-why">{why}</p>}
 
       <button className="inspect-image" onClick={onOpen} title="Open the full frame (Enter)">
         <LoadableImage src={asset(frame.thumb_path)} alt={filename(frame.path)} />

@@ -550,7 +550,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         title: 'Accept all pending detections and identifications',
       }
     : {
-        label: 'Write XMP',
+        label: 'Export',
         onClick: () => setExportOpen(true),
         title: 'Export: write ratings, tags, and vehicle metadata to XMP sidecars',
       };
@@ -1039,6 +1039,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           : <PhotoGrid frames={frames} facts={facts} ranks={ranks} keepers={keepers} singletons={singletons} suggestions={suggestions} selected={selected} onSelect={rv.setSelected} onOpen={openViewer} onCols={setCols}
               onReject={(id, rejected) => void rv.mark({ rejected }, id)} onPick={acceptSuggestion} onDecide={(id, values) => void rv.mark(values, id)} empty={emptyState} />}
         <Inspector frame={frame} detections={frame ? facts.get(frame.id)?.dets ?? [] : []} allDetections={review.detections} allFrames={review.frames} known={known} scanning={scanning} kind={kind}
+          why={frame ? facts.get(frame.id)?.why ?? null : null}
           moments={{ vocabulary: policy.moments.vocabulary, threshold: thresholdOf(albumSetting(currentJob, 'moments_threshold', settings)), rankOn: isOn(policy, 'moments_rank'), detectOn: isOn(policy, 'moments_detect') }}
           onMark={(values) => void rv.mark(values)} onOpen={openViewer} onEdit={onEdit} />
       </div>

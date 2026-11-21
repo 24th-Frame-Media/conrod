@@ -10,7 +10,7 @@ import { queueLabel } from './lib/format';
 import { subjectExcluded } from './review.mjs';
 import { vlmModelLabel } from './lib/vlm';
 import type { DevStart } from './lib/mock';
-import type { Page, ScanArgs, Scope, Status } from './lib/types';
+import type { Job, Page, ScanArgs, Scope, Status } from './lib/types';
 import type { SettingsTabId } from './lib/settings.mjs';
 import type { VisionAction } from './lib/vision.mjs';
 import { Library } from './screens/Library';
@@ -178,7 +178,15 @@ export function App() {
       toast('Stopping scan. Progress on current photos is saved.');
     }),
     cancel: (key) => void run(() => engine.cancelOperation(key)),
+    unqueue: (j: Job) => void run(async () => {
+      await engine.unqueue(j.id);
+      eng.setStatus(await engine.status());
+      await eng.refreshJobs();
+      toast(`${j.label} is out of the queue. Start it from its card when you're ready.`);
+    }),
   };
+  // Albums waiting their turn, in the engine's order, named from the loaded job list.
+  const queueJobs = (status.queue ?? []).map((id) => eng.jobs.find((j) => j.id === id)).filter((j): j is Job => Boolean(j));
 
   useHotkeys({
     page: view, viewerOpen: viewer, rejected: () => reviewVerbs.current.rejected(), picked: () => reviewVerbs.current.picked(),
@@ -208,12 +216,7 @@ export function App() {
         {view === 'Library' && (
           <Library jobs={eng.jobs} models={eng.models} scanning={scanning} live={scanLive} activeJob={status.activeJob} queue={status.queue ?? []} onOpen={(j) => openJob(j.id)} onNewScan={() => setShowImport(true)}
             onIdentify={(j) => identify(j.id)} onResume={(j) => void startScan({ jobId: j.id })}
-            onUnqueue={(j) => void run(async () => {
-              await engine.unqueue(j.id);
-              eng.setStatus(await engine.status());
-              await eng.refreshJobs();
-              toast(`${j.label} is out of the queue. Start it from its card when you're ready.`);
-            })}
+            onUnqueue={actions.unqueue}
             onDelete={(j) => void run(async () => {
               await engine.deleteJob(j.id);
               await eng.refreshJobs();
@@ -228,6 +231,7 @@ export function App() {
         )}
         {view === 'Scan' && (
           <ScanScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? scanLive[jobId] : undefined} running={locked}
+            queue={queueJobs} onUnqueue={actions.unqueue}
             paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={eng.setSettings}
             identify={jobId != null ? identifyLive[jobId] : undefined} status={status} identifyPaused={identifyPaused}
             model={vlmModelLabel(eng.settings)}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { call } from '../lib/api';
-import { exportLine, exportSummary } from '../lib/export.mjs';
+import { exportLine, exportRule, exportSummary } from '../lib/export.mjs';
 import { lightroomError, lightroomExportLine } from '../lib/lightroom.mjs';
 import type { Frame, LightroomExport } from '../lib/types';
 import { Icon, Portal, useBackdropClose } from './basics';
@@ -76,6 +76,7 @@ export function ExportSheet({ visible, jobId, albumLabel, frames, keepers, dryRu
         <div className="export-counts">
           <span className="mono">{exportLine(summary)}</span>
         </div>
+        <p className="muted export-rule">{exportRule()}</p>
 
         <div className="export-dest">
           <span className="export-dest-icon"><Icon name="drop" size={16} /></span>
@@ -106,7 +107,7 @@ export function ExportSheet({ visible, jobId, albumLabel, frames, keepers, dryRu
         </p>
 
         <div className="export-lr">
-          <button type="button" className="primary" disabled={sending} onClick={() => void send()}>
+          <button type="button" className="ghost" disabled={sending} onClick={() => void send()}>
             {sending ? 'Sending…' : sent ? 'Send again' : 'Send verdicts to Lightroom'}
           </button>
           {sent != null && (
@@ -126,7 +127,7 @@ export function ExportSheet({ visible, jobId, albumLabel, frames, keepers, dryRu
         <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
           <button type="button" className="ghost" onClick={onClose}>Cancel</button>
           <button type="button" className="primary" onClick={() => { onWrite(dryRun); onClose(); }}>
-            {dryRun ? 'Check what would be written' : 'Write XMP'}
+            {dryRun ? 'Check what would be written' : 'Export'}
           </button>
         </div>
       </div>

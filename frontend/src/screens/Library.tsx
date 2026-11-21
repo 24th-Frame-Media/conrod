@@ -143,6 +143,13 @@ export function Library({ jobs, models, scanning, live, activeJob, queue, onOpen
         <Confirm title="Forget this album?" action="Forget album" onCancel={() => setDoomed(null)}
           onConfirm={() => { onDelete(doomed); setDoomed(null); }}>
           <p><b>{doomed.label}</b>: its results and cached crops go. Your photographs and any XMP already written are not touched.</p>
+          {(doomed.id === activeJob || queue.includes(doomed.id)) && (
+            <p className="warn-note">
+              {doomed.id === activeJob
+                ? 'This album is scanning right now. Stop the scan first: Conrod will refuse to delete an album that is still being read.'
+                : 'This album is waiting to scan. Deleting it also takes it out of the queue.'}
+            </p>
+          )}
         </Confirm>
       )}
       <GlobalStatsModal visible={statsOpen} onClose={() => setStatsOpen(false)} />

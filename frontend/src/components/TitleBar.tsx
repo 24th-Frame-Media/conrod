@@ -16,7 +16,7 @@ const TABS: [Page, string, string][] = [
 /** One tab for a whole ingest: the scan and the identification that follows it (or a standalone identify run) share it. The Identify page key stays for callers. */
 const INGEST_TAB: [Page, string, string] = ['Scan', 'Ingest', 'Watch the scan and the identification'];
 
-export type StatusActions = { pause: () => void; resume: () => void; stop: () => void; cancel: (key: string) => void };
+export type StatusActions = { pause: () => void; resume: () => void; stop: () => void; cancel: (key: string) => void; unqueue: (job: Job) => void };
 
 function workLabel(label: string): string {
   if (label.startsWith('Identifying')) return 'Identifying';
@@ -67,6 +67,7 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
   const activeTasks = status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').sort((a, b) => b.id - a.id);
   const finishedTasks = status.tasks.filter((task) => task.state !== 'running' && task.state !== 'paused').sort((a, b) => b.id - a.id);
   const activeJob = jobs.find((job) => job.id === status.activeJob);
+  const waiting = (status.queue ?? []).map((id) => jobs.find((job) => job.id === id)).filter((job): job is Job => Boolean(job));
   // Opt-in models (the decision model) are not counted against the machine when they are not installed.
   const required = models.filter((model) => !model.optional);
   const readyModels = required.filter((model) => model.ready).length;
@@ -97,6 +98,18 @@ function StatusPill({ status, jobs, models, actions, defaultOpen }: { status: St
             <div><b>{status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').length}</b><small>Active tasks</small></div>
           </div>
           {activeJob && active?.total ? <div className="bar scan-overall" title="Overall scan progress"><div className="fill" style={{ width: `${pct(active.done, active.total)}%` }} /></div> : null}
+          {waiting.length > 0 && (
+            <>
+              <div className="activity-section"><span>Waiting to scan</span><span>{waiting.length}</span></div>
+              <p className="muted activity-empty">Next: {waiting[0].label}, {waiting.length} waiting</p>
+              {waiting.map((job, i) => (
+                <div className="task" key={job.id}>
+                  <div className="task-row"><b>{job.label}</b><span className="state">{i + 1}</span></div>
+                  <button className="ghost small" onClick={() => actions.unqueue(job)}>Remove from queue</button>
+                </div>
+              ))}
+            </>
+          )}
           <div className="activity-section"><span>Running now</span><span>{activeTasks.length}</span></div>
           {activeTasks.length === 0 && <p className="muted activity-empty">No background tasks</p>}
           {activeTasks.map((t) => (

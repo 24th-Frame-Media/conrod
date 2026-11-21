@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { exportLine, exportSummary } from '../src/lib/export.mjs';
+import { exportLine, exportRule, exportSummary } from '../src/lib/export.mjs';
 
 const frames = [
   { id: 1, rejected: 0 },
@@ -24,4 +24,9 @@ test('empty and missing input are safe', () => {
   assert.deepEqual(exportSummary([], null), { total: 0, keepers: 0, rejected: 0, undecided: 0 });
   assert.deepEqual(exportSummary(undefined, undefined), { total: 0, keepers: 0, rejected: 0, undecided: 0 });
   assert.match(exportLine({ total: 3061, keepers: 1173, rejected: 0, undecided: 1888 }), /3,061 photos · 1,173 keepers/);
+});
+
+test('the sheet says what happens to undecided frames', () => {
+  assert.match(exportRule(), /Undecided frames keep their measured stars/);
+  assert.doesNotMatch(exportRule(), /skipped/);
 });
