@@ -2341,7 +2341,10 @@ dialog.viewer {
 .id-lane-open { justify-self: start; }
 .id-left { display: grid; gap: 12px; min-width: 0; }
 .id-view {
-  position: relative; aspect-ratio: 16 / 10; max-height: min(40vh, 420px); overflow: hidden; display: grid; place-items: center;
+  /* Full width of its column: when max-height caps a wide stage, aspect-ratio
+     would otherwise shrink the width and leave the stage hugging the left. The
+     picture is contained and centred inside, with its blurred fill behind it. */
+  position: relative; width: 100%; aspect-ratio: 16 / 10; max-height: min(40vh, 420px); overflow: hidden; display: grid; place-items: center;
   border: 1px solid var(--line); border-radius: var(--radius-lg); background-color: #0a0b0c;
   background-image: linear-gradient(rgba(255, 255, 255, .045) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, .045) 1px, transparent 1px);
   background-size: 34px 34px;
