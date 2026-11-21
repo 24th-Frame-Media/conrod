@@ -51,7 +51,7 @@ pub fn service_label(provider: &str, host: &str) -> String {
         c.make_ascii_uppercase();
     }
     if provider != "ollama" {
-        return name;
+        return crate::vlm::display_name(provider);
     }
     let h = host.trim().trim_end_matches('/');
     let h = h.split_once("://").map_or(h, |(_, rest)| rest);

@@ -26,6 +26,10 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 pub const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
+/// OpenRouter's OpenAI-compatible chat endpoint and its model/key metadata.
+pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+pub const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
+pub const OPENROUTER_KEY_URL: &str = "https://openrouter.ai/api/v1/key";
 /// OpenCode Console / Go: one key for the models it lists, OpenAI-compatible.
 /// The chat endpoint lives under `inference/openai/v1`; the model list under
 /// `inference/v1`.
@@ -721,6 +725,7 @@ fn models_agent() -> ureq::Agent {
 fn models_url(provider: &str, host: &str) -> Result<(String, bool), String> {
     match provider {
         "openai" => Ok((OPENAI_MODELS_URL.to_string(), true)),
+        "openrouter" => Ok((OPENROUTER_MODELS_URL.to_string(), true)),
         "opencode" | "opencode-go" => {
             let default = if provider == "opencode-go" {
                 OPENCODE_GO_MODELS_URL
@@ -831,6 +836,55 @@ pub fn list_models(
     models.sort();
     models.dedup();
     Ok(models)
+}
+
+/// Parse OpenRouter's key-info reply. A non-2xx is an error carrying the
+/// provider's own message, never the key.
+pub fn openrouter_key_reply(status: u16, body: &Value) -> Result<Value, String> {
+    if !(200..300).contains(&status) {
+        let said = body
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or("no message");
+        return Err(format!("OpenRouter answered {status}: {said}"));
+    }
+    let data = body.get("data").cloned().unwrap_or_else(|| body.clone());
+    Ok(json!({
+        "ok": true,
+        "label": data.get("label").and_then(Value::as_str).unwrap_or("OpenRouter key"),
+        "limit": data.get("limit").cloned().unwrap_or(Value::Null),
+        "usage": data.get("usage").cloned().unwrap_or(Value::Null),
+    }))
+}
+
+/// Ask OpenRouter who a key belongs to, without spending a request on a model.
+/// `openrouter_key_at` takes its URL so a test can point it at a local server.
+pub fn openrouter_key_at(url: &str, key: &str) -> Result<Value, String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("Add an OpenRouter key first".into());
+    }
+    let agent = models_agent();
+    let mut reply = agent
+        .get(url)
+        .header("Authorization", &format!("Bearer {key}"))
+        .call()
+        .map_err(|e| {
+            format!(
+                "OpenRouter could not be reached: {}",
+                e.to_string().replace(key, "***")
+            )
+        })?;
+    let status = reply.status().as_u16();
+    let body: Value = reply
+        .body_mut()
+        .read_json()
+        .map_err(|e| format!("OpenRouter replied without JSON: {e}"))?;
+    openrouter_key_reply(status, &body)
+}
+
+pub fn openrouter_key_check(key: &str) -> Result<Value, String> {
+    openrouter_key_at(OPENROUTER_KEY_URL, key)
 }
 
 /// Where an OpenCode service talks: the configured endpoint if there is one
@@ -980,6 +1034,7 @@ pub fn display_name(provider: &str) -> String {
     match provider.to_lowercase().as_str() {
         "ollama" => "Ollama".into(),
         "openai" => "OpenAI".into(),
+        "openrouter" => "OpenRouter".into(),
         "anthropic" => "Anthropic".into(),
         "gemini" => "Gemini".into(),
         "opencode" => "OpenCode".into(),
@@ -1013,6 +1068,16 @@ pub fn build_request(
             num_predict,
         )),
         "openai" => Ok(openai_request(
+            &settings.vlm_model,
+            &settings.vlm_api_key,
+            prompt,
+            images,
+            schema,
+            num_predict,
+        )),
+        "openrouter" => Ok(openai_request_at(
+            OPENROUTER_URL,
+            false,
             &settings.vlm_model,
             &settings.vlm_api_key,
             prompt,
@@ -1161,6 +1226,8 @@ fn parse_response(provider: &str, body: &Value) -> Result<Value, VlmError> {
     match provider {
         "ollama" => parse_ollama_response(body),
         "openai" => parse_openai_response(body),
+        // OpenRouter speaks the OpenAI envelope too.
+        "openrouter" => parse_openai_response(body),
         "anthropic" => parse_anthropic_response(body),
         // The gateway speaks the OpenAI envelope.
         "opencode" | "opencode-go" => parse_openai_response(body),
@@ -2229,11 +2296,93 @@ mod tests {
     }
 
     #[test]
+    fn the_openrouter_provider_speaks_openai_with_a_bearer_key() {
+        let settings = Settings {
+            vlm_provider: "openrouter".into(),
+            vlm_model: "qwen/qwen2.5-vl-72b-instruct".into(),
+            vlm_api_key: "sk-or-test".into(),
+            ..Default::default()
+        };
+        let schema = json!({"type": "object", "properties": {"number": {"type": "string"}}});
+        let request = build_request(&settings, "read the number", &["abc".into()], &schema, 100)
+            .expect("openrouter is a provider");
+        assert_eq!(request.url, OPENROUTER_URL);
+        assert!(request
+            .headers
+            .iter()
+            .any(|(k, v)| k == "Authorization" && v == "Bearer sk-or-test"));
+        // json_object, not a strict schema: OpenRouter models do not all accept one.
+        assert_eq!(request.json["response_format"]["type"], "json_object");
+        // The image travels as an OpenAI image_url data URI.
+        assert_eq!(
+            request.json["messages"][0]["content"][1]["type"],
+            "image_url"
+        );
+        assert_eq!(
+            parse_response(
+                "openrouter",
+                &json!({"choices": [{"message": {"content": "{\"number\": \"7\"}"}}]})
+            )
+            .unwrap()["number"],
+            "7"
+        );
+    }
+
+    #[test]
+    fn an_openrouter_key_check_reports_the_account_and_never_the_key() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/key", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 2048];
+            loop {
+                let n = stream.read(&mut buf).unwrap_or(0);
+                seen.extend_from_slice(&buf[..n]);
+                if n == 0 || String::from_utf8_lossy(&seen).contains("\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&seen).to_lowercase();
+            assert!(request.starts_with("get "), "{request}");
+            assert!(
+                request.contains("authorization: bearer sk-or-test"),
+                "{request}"
+            );
+            let body = br#"{"data":{"label":"conrod-test","limit":50,"usage":1}}"#;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body);
+        });
+        let answer = openrouter_key_at(&url, " sk-or-test ").expect("the key is accepted");
+        server.join().unwrap();
+        assert_eq!(answer["ok"], true);
+        assert_eq!(answer["label"], "conrod-test");
+
+        assert!(
+            openrouter_key_check("   ").is_err(),
+            "a blank key is not sent"
+        );
+        let denied =
+            openrouter_key_reply(401, &json!({"error": {"message": "No auth"}})).unwrap_err();
+        assert!(denied.contains("401") && denied.contains("No auth"));
+        assert!(!denied.contains("sk-"));
+    }
+
+    #[test]
     fn model_lists_stay_on_allowlisted_hosts_and_time_out() {
         // A fixed provider ignores a webview-supplied host entirely.
         assert_eq!(
             models_url("openai", "http://attacker.example/v1").unwrap(),
             (OPENAI_MODELS_URL.to_string(), true)
+        );
+        assert_eq!(
+            models_url("openrouter", "http://attacker.example/v1").unwrap(),
+            (OPENROUTER_MODELS_URL.to_string(), true)
         );
         // Providers with no list endpoint are refused, whatever host is sent.
         assert!(models_url("gemini", "").is_err());

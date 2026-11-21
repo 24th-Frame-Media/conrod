@@ -354,6 +354,13 @@ pub struct OllamaModelsArgs {
     pub host: Option<String>,
 }
 
+/// `openrouter_check`: validate an OpenRouter key without spending a model call.
+#[derive(Debug, Deserialize, Default)]
+pub struct OpenRouterCheckArgs {
+    #[serde(default)]
+    pub key: String,
+}
+
 /// What a bench item is claimed to be; a blank field is skipped when scoring.
 #[derive(Debug, Deserialize, Default)]
 pub struct BenchTruth {
@@ -421,6 +428,7 @@ pub enum Command {
     Identify(IdentifyArgs),
     Identified(JobArgs),
     ProviderModels(ProviderModelsArgs),
+    OpenRouterCheck(OpenRouterCheckArgs),
     Write(WriteArgs),
     CancelOperation(KeyArgs),
     InstallModels {},

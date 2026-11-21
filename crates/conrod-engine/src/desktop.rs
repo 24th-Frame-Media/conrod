@@ -751,6 +751,10 @@ impl Desktop {
                     Err(e) => json!({"models": [], "error": e}),
                 },
             ),
+            Command::OpenRouterCheck(a) => Ok(match conrod_io::vlm::openrouter_key_check(&a.key) {
+                Ok(info) => info,
+                Err(e) => json!({"ok": false, "error": e}),
+            }),
             Command::Write(a) => {
                 crate::operations::write(self, a.job_id, a.dry_run, a.embed_in_raw)
             }
