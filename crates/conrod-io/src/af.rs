@@ -1,11 +1,11 @@
 //! The camera's autofocus area, as fractions of the upright frame.
 //!
-//! Each maker records the AF point in its own frame: Canon and Nikon as an
-//! offset from the centre of an "AF image" canvas, Sony and Fuji as a pixel in
-//! the image, Panasonic as a fraction of it. exiftool normalises the tag names
-//! but not the geometry, so [`parse`] does the arithmetic and returns 0..1 of
-//! the frame as it is displayed, the space the rest of Conrod measures a crop
-//! in.
+//! Each maker records the AF point in its own frame: Canon as an offset from
+//! the centre of an "AF image" canvas, Nikon as the area's centre in that
+//! canvas's pixels, Sony and Fuji as a pixel in the image, Panasonic and
+//! Olympus as a fraction of it. exiftool normalises the tag names but not the
+//! geometry, so [`parse`] does the arithmetic and returns 0..1 of the frame as
+//! it is displayed, the space the rest of Conrod measures a crop in.
 //!
 //! None of this is needed for a scan to succeed: a frame with no AF metadata, a
 //! body this module does not know, or a file cropped after capture simply has
@@ -112,7 +112,7 @@ type PixelBox = (f64, f64, f64, f64, f64, f64);
 
 /// The makers' readers, in the order tried when the record carries no `Make`
 /// this module recognises.
-const MAKERS: [Maker; 5] = [canon, nikon, sony, fuji, panasonic];
+const MAKERS: [Maker; 6] = [canon, nikon, sony, fuji, panasonic, olympus];
 
 type Maker = fn(&Tags, (f64, f64)) -> Option<PixelBox>;
 
@@ -152,7 +152,7 @@ pub fn parse(record: &Value, frame: (u32, u32), orientation: u16) -> Option<AfAr
     }
     // A named maker is tried first; the others follow so a wrong or missing
     // `Make` still lets the tags speak for themselves.
-    let mut order = [0usize, 1, 2, 3, 4];
+    let mut order = [0usize, 1, 2, 3, 4, 5];
     if let Some(i) = tags.text("Make").and_then(maker_index) {
         order.rotate_left(i);
     }
@@ -313,6 +313,8 @@ fn maker_index(make: &str) -> Option<usize> {
         Some(3)
     } else if make.contains("PANASONIC") || make.contains("LUMIX") {
         Some(4)
+    } else if make.contains("OLYMPUS") || make.contains("OM SYSTEM") {
+        Some(5)
     } else {
         None
     }
@@ -373,12 +375,20 @@ fn centred(canvas: (f64, f64), cx: f64, cy: f64, w: f64, h: f64) -> PixelBox {
 ///
 /// A point at the exact top-left corner is how these bodies say "no point", and
 /// no real AF area sits there, so it is dropped rather than boxed in the corner.
-fn point(tags: &Tags, sensor: (f64, f64), x: f64, y: f64) -> Option<PixelBox> {
+fn point(
+    tags: &Tags,
+    sensor: (f64, f64),
+    x: f64,
+    y: f64,
+    size: Option<(f64, f64)>,
+) -> Option<PixelBox> {
     if x <= 0.0 && y <= 0.0 {
         return None;
     }
     let canvas = canvas(tags, sensor);
-    let (w, h) = area_size(tags).unwrap_or_else(|| small_square(canvas));
+    let (w, h) = size
+        .or_else(|| area_size(tags))
+        .unwrap_or_else(|| small_square(canvas));
     Some(centred(canvas, x, y, w, h))
 }
 
@@ -410,8 +420,20 @@ fn canon_point(tags: &Tags, sensor: (f64, f64), index: usize) -> Option<PixelBox
     ))
 }
 
-/// Nikon: the same centre-origin offsets as Canon.
+/// Nikon: `AFAreaXPosition`/`AFAreaYPosition` are the centre of the AF area in
+/// AFImage pixels, top-left origin (the fields are unsigned, so they cannot be
+/// an offset from the centre), and `AFAreaWidth`/`AFAreaHeight` its size.
+/// Older records that carry only the Canon-style plural arrays keep the
+/// centre-origin arithmetic.
 fn nikon(tags: &Tags, sensor: (f64, f64)) -> Option<PixelBox> {
+    if let (Some(cx), Some(cy)) = (tags.first("AFAreaXPosition"), tags.first("AFAreaYPosition")) {
+        let canvas = canvas(tags, sensor);
+        let (w, h) = match (tags.first("AFAreaWidth"), tags.first("AFAreaHeight")) {
+            (Some(w), Some(h)) if w > 0.0 && h > 0.0 => (w, h),
+            _ => small_square(canvas),
+        };
+        return Some(centred(canvas, cx, cy, w, h));
+    }
     let dx = tags.first("AFAreaXPositions")?;
     let dy = tags.first("AFAreaYPositions")?;
     let canvas = canvas(tags, sensor);
@@ -426,14 +448,24 @@ fn nikon(tags: &Tags, sensor: (f64, f64)) -> Option<PixelBox> {
 }
 
 /// Sony: `FocusLocation` is `w h x y` of the point in image pixels, top-left
-/// origin. The point is what the AF area is built around; its own w and h are
-/// ignored in favour of `AFAreaWidths`/`AFAreaHeights` when those exist.
+/// origin, sized by `FocusFrameSize` (`w h flag`) when the body writes one and
+/// by `AFAreaWidths`/`AFAreaHeights` when it does not.
 fn sony(tags: &Tags, sensor: (f64, f64)) -> Option<PixelBox> {
     let location = tags.numbers("FocusLocation");
     if location.len() < 4 {
         return None;
     }
-    point(tags, sensor, location[2], location[3])
+    point(tags, sensor, location[2], location[3], sony_frame(tags))
+}
+
+/// `FocusFrameSize` is `w h flag` in image pixels; the flag is zero when the
+/// size is not known, which exiftool prints as `n/a`.
+fn sony_frame(tags: &Tags) -> Option<(f64, f64)> {
+    let frame = tags.numbers("FocusFrameSize");
+    if frame.len() < 3 || frame[2] == 0.0 || frame[0] <= 0.0 || frame[1] <= 0.0 {
+        return None;
+    }
+    Some((frame[0], frame[1]))
 }
 
 /// Fuji: `FocusPixel` is `x y` in image pixels, top-left origin.
@@ -442,7 +474,7 @@ fn fuji(tags: &Tags, sensor: (f64, f64)) -> Option<PixelBox> {
     if pixel.len() < 2 {
         return None;
     }
-    point(tags, sensor, pixel[0], pixel[1])
+    point(tags, sensor, pixel[0], pixel[1], None)
 }
 
 /// Panasonic: `AFPointPosition` is already 0..1 of the image, top-left origin.
@@ -455,7 +487,36 @@ fn panasonic(tags: &Tags, sensor: (f64, f64)) -> Option<PixelBox> {
         return None;
     }
     let canvas = canvas(tags, sensor);
-    point(tags, sensor, position[0] * canvas.0, position[1] * canvas.1)
+    point(
+        tags,
+        sensor,
+        position[0] * canvas.0,
+        position[1] * canvas.1,
+        None,
+    )
+}
+
+/// Olympus and OM System: `AFPointSelected` is four 0..1 fractions of the
+/// image, top-left origin, the corners of the AF target; exiftool's own print
+/// conversion pairs them as `(x1%,y1%) (x2%,y2%)` after dropping a leading
+/// undefined value, so a raw record may still carry five numbers.
+fn olympus(tags: &Tags, sensor: (f64, f64)) -> Option<PixelBox> {
+    let mut values = tags.numbers("AFPointSelected");
+    if values.len() == 5 {
+        values.remove(0);
+    }
+    let [a, b, c, d] = <[f64; 4]>::try_from(values).ok()?;
+    if ![a, b, c, d].iter().all(|v| (0.0..=1.0).contains(v)) {
+        return None;
+    }
+    let canvas = canvas(tags, sensor);
+    let (x1, x2) = (a.min(c) * canvas.0, a.max(c) * canvas.0);
+    let (y1, y2) = (b.min(d) * canvas.1, b.max(d) * canvas.1);
+    // A single AF target is sometimes written as a bare point.
+    if x2 <= x1 || y2 <= y1 {
+        return point(tags, sensor, x1, y1, None);
+    }
+    Some((canvas.0, canvas.1, x1, y1, x2, y2))
 }
 
 /// Put the box in the frame's displayed orientation, the way `Rgb::orient`
@@ -502,14 +563,20 @@ pub fn read(
         "-AFAreaHeights",
         "-AFAreaXPositions",
         "-AFAreaYPositions",
+        "-AFAreaXPosition",
+        "-AFAreaYPosition",
+        "-AFAreaWidth",
+        "-AFAreaHeight",
         "-AFAreaMode",
         "-ValidAFPoints",
         "-NumAFPoints",
         "-AFPointsInFocus",
         "-AFPointsSelected",
         "-FocusLocation",
+        "-FocusFrameSize",
         "-FocusPixel",
         "-AFPointPosition",
+        "-AFPointSelected",
         "-Make",
         "-ImageWidth",
         "-ImageHeight",
@@ -696,6 +763,109 @@ mod tests {
         assert!(near((area.x1 + area.x2) / 2.0, 0.5), "{area:?}");
         assert!(near((area.y1 + area.y2) / 2.0, 0.25), "{area:?}");
         assert!(near((area.x2 - area.x1) * 6000.0, 80.0), "{area:?}");
+    }
+
+    #[test]
+    fn nikon_af_area_is_its_centre_in_af_image_pixels() {
+        let record = json!({
+            "IFD0:Make": "NIKON CORPORATION",
+            "IFD0:ImageWidth": 6000,
+            "IFD0:ImageHeight": 4000,
+            "Nikon:AFImageWidth": 6000,
+            "Nikon:AFImageHeight": 4000,
+            "Nikon:AFAreaXPosition": 1500,
+            "Nikon:AFAreaYPosition": 1000,
+            "Nikon:AFAreaWidth": 300,
+            "Nikon:AFAreaHeight": 200,
+            "Nikon:AFAreaMode": 3,
+        });
+        let area = parse(&record, (6000, 4000), 1).expect("an AF area");
+        // The centre is the tag's own, top-left origin: no half-frame offset.
+        assert!(near((area.x1 + area.x2) / 2.0, 1500.0 / 6000.0), "{area:?}");
+        assert!(near((area.y1 + area.y2) / 2.0, 1000.0 / 4000.0), "{area:?}");
+        assert!(near(area.x2 - area.x1, 300.0 / 6000.0), "{area:?}");
+        assert!(near(area.y2 - area.y1, 200.0 / 4000.0), "{area:?}");
+        assert_eq!(area.mode, Some(3));
+    }
+
+    #[test]
+    fn nikon_plural_arrays_keep_the_centre_origin() {
+        let record = json!({
+            "IFD0:Make": "NIKON",
+            "IFD0:ImageWidth": 6000,
+            "IFD0:ImageHeight": 4000,
+            "Nikon:AFAreaXPositions": "500",
+            "Nikon:AFAreaYPositions": "-250",
+            "Nikon:AFAreaWidths": "200",
+            "Nikon:AFAreaHeights": "100",
+        });
+        let area = parse(&record, (6000, 4000), 1).expect("an AF area");
+        assert!(near((area.x1 + area.x2) / 2.0, 3500.0 / 6000.0), "{area:?}");
+        assert!(near((area.y1 + area.y2) / 2.0, 2250.0 / 4000.0), "{area:?}");
+    }
+
+    #[test]
+    fn sony_focus_frame_size_sizes_the_point() {
+        let record = json!({
+            "IFD0:Make": "SONY",
+            "IFD0:ImageWidth": 6000,
+            "IFD0:ImageHeight": 4000,
+            "Sony:FocusLocation": "6000 4000 1500 3000",
+            "Sony:FocusFrameSize": "240 160 1",
+        });
+        let area = parse(&record, (6000, 4000), 1).expect("an AF area");
+        assert!(near((area.x1 + area.x2) / 2.0, 0.25), "{area:?}");
+        assert!(near((area.y1 + area.y2) / 2.0, 0.75), "{area:?}");
+        assert!(near(area.x2 - area.x1, 240.0 / 6000.0), "{area:?}");
+        assert!(near(area.y2 - area.y1, 160.0 / 4000.0), "{area:?}");
+        // A zero flag means the size is not known: back to the 2% default.
+        let mut no_size = record.clone();
+        no_size["Sony:FocusFrameSize"] = json!("0 0 0");
+        let area = parse(&no_size, (6000, 4000), 1).expect("an AF area");
+        assert!(near(area.x2 - area.x1, 80.0 / 6000.0), "{area:?}");
+    }
+
+    #[test]
+    fn olympus_af_point_selected_is_a_box_in_fractions() {
+        let record = json!({
+            "IFD0:Make": "OLYMPUS IMAGING CORP.",
+            "IFD0:ImageWidth": 4000,
+            "IFD0:ImageHeight": 3000,
+            "Olympus:AFPointSelected": "0.1 0.2 0.25 0.5",
+        });
+        let area = parse(&record, (4000, 3000), 1).expect("an AF area");
+        assert!(near(area.x1, 0.1), "{area:?}");
+        assert!(near(area.y1, 0.2), "{area:?}");
+        assert!(near(area.x2, 0.25), "{area:?}");
+        assert!(near(area.y2, 0.5), "{area:?}");
+        // exiftool drops a leading undefined value for its display conversion;
+        // a raw record may still carry it.
+        let mut raw = record.clone();
+        raw["Olympus:AFPointSelected"] = json!("4294967295 0.1 0.2 0.25 0.5");
+        assert_eq!(parse(&raw, (4000, 3000), 1), Some(area));
+        // Sony's AFPointSelected is a point index, not four fractions.
+        let sony = json!({
+            "IFD0:Make": "SONY",
+            "IFD0:ImageWidth": 4000,
+            "IFD0:ImageHeight": 3000,
+            "Sony:AFPointSelected": 4,
+        });
+        assert!(parse(&sony, (4000, 3000), 1).is_none());
+    }
+
+    #[test]
+    fn panasonic_af_point_position_is_a_fraction_of_the_image() {
+        let record = json!({
+            "IFD0:Make": "Panasonic",
+            "IFD0:ImageWidth": 4000,
+            "IFD0:ImageHeight": 3000,
+            "Panasonic:AFPointPosition": "0.75 0.25",
+        });
+        let area = parse(&record, (4000, 3000), 1).expect("an AF area");
+        assert!(near((area.x1 + area.x2) / 2.0, 0.75), "{area:?}");
+        assert!(near((area.y1 + area.y2) / 2.0, 0.25), "{area:?}");
+        // 2% of the short side: 60 of 3000 pixels.
+        assert!(near((area.x2 - area.x1) * 4000.0, 60.0), "{area:?}");
     }
 
     #[test]
