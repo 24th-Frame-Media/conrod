@@ -7,14 +7,16 @@ type Props = {
   /** The album's own switches; a missing key follows the shoot type. */
   overrides: Overrides;
   onChange: (next: Overrides) => void;
+  /** An album's own copy of the photographer's defaults for this type; without it the saved profile applies. */
+  user?: Overrides;
   disabled?: boolean;
   /** Called with each new summary, for callers that react to it (the entry list shows when numbers are read). */
   onSummary?: (summary: PolicySummary) => void;
 };
 
 /** "What Conrod will do" for the picked shoot type: what it looks for and reads, each switchable, plus the settings that are not switches. */
-export function PresetPolicy({ preset, overrides, onChange, disabled, onSummary }: Props) {
-  const summary = usePresetPolicy(preset, overrides);
+export function PresetPolicy({ preset, overrides, onChange, user, disabled, onSummary }: Props) {
+  const summary = usePresetPolicy(preset, overrides, user);
   useEffect(() => { onSummary?.(summary); }, [summary]); // eslint-disable-line react-hooks/exhaustive-deps -- report each new answer
   const list = (title: string, rows: PolicyRow[]) => (
     <>

@@ -4,6 +4,7 @@ import { FilePick, Icon, Portal, useBackdropClose } from '../components/basics';
 import { ShootTypeSelect } from '../components/ShootTypeSelect';
 import { PresetPolicy } from '../components/PresetPolicy';
 import { isOn, type Overrides, type PolicySummary } from '../lib/presetPolicy.mjs';
+import { profileOf } from '../lib/wizard.mjs';
 import { StrictnessSlider } from '../components/StrictnessSlider';
 import { GroupingFields, groupingOf, type GroupingValues } from '../components/GroupingFields';
 import { call, chooseFolder } from '../lib/api';
@@ -48,7 +49,9 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   const [entries, setEntries] = useState('');
   useEffect(() => {
     if (!visible) return;
-    setStrictness(typeof settings.blur_strictness === 'string' ? settings.blur_strictness : 'moderate');
+    // The photographer's own level from setup, when they chose one; otherwise the usual default. The engine applies it to the album either way.
+    const mine = profileOf(settings).blur;
+    setStrictness(mine ?? (typeof settings.blur_strictness === 'string' ? settings.blur_strictness : 'moderate'));
     setStrictnessTouched(false);
     setBurstGap(String(Number(settings.burst_gap) > 0 ? settings.burst_gap : DEFAULT_GAP));
     setGrouping(groupingOf(settings));

@@ -57,6 +57,12 @@ pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Val
             if k == "scan_profile" {
                 if let Some(s) = v.as_str() {
                     let preset = conrod_core::profile::ShootPreset::parse(s);
+                    // A new shoot type takes the photographer's defaults for
+                    // that type; the album's own overrides stay as sent.
+                    if map.get("scan_profile").and_then(Value::as_str) != Some(preset.name()) {
+                        let defaults = lock(&d.settings).profile().defaults_for(preset);
+                        map.insert("user_defaults".into(), Value::Object(defaults.to_map()));
+                    }
                     map.insert(k.clone(), Value::String(preset.name().into()));
                     continue;
                 }

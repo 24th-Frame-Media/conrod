@@ -2,16 +2,16 @@
 
 Generated from the policy table in `crates/conrod-core/src/profile.rs` (`ShootPreset::policy`) and the moment vocabularies in `crates/conrod-core/src/moments.rs`. The summary the app shows when you pick a type comes from the same table (`preset_policy`), so this page cannot drift from it: `presets_match_the_frontend_copy` fails when the table changes.
 
-Every detector and reader below is a per-album switch in **both** directions (import sheet, album *Shoot settings*). A switch sets an override in the album's `overrides`; clearing it follows the type again. A reader needs its detector: numbers, plates, make/model and livery need *cars & bikes*; names need *faces & eyes*; *let moments lift ranking* needs *spot moments*.
+Every detector and reader below is a per-album switch in **both** directions (import sheet, album *Shoot settings*). A switch sets an override in the album's `overrides`; clearing it follows the type again. A reader needs its detector: numbers, plates, make/model and livery need *cars & bikes* (jersey numbers on field and court sport need *people*); names need *faces & eyes*; *let moments lift ranking* needs *spot moments*.
 
 ## The table
 
 | Type | Looks for | Reads | Moments | Other | Why |
 |---|---|---|---|---|---|
 | **Motorsport** (`motorsport`) | cars & bikes, people | race numbers, make & model, sponsors & livery | tyre smoke, flames, sparks, kerb strike, wheel lift, close racing, contact, crash or spin, chequered flag, podium | pan forgiven, blur critical | Circuit racing: the car decides the frame. Numbers and livery identify it; race cars carry no plates; drivers sit behind helmets, so faces are off until you ask (`include_people`). |
-| **Burnouts** (`motorsport-burnouts`) | cars & bikes, people, faces & eyes | race numbers, number plates, make & model | smoke cloud, flames, tyre burst, sparks, crowd reaction | pan forgiven, blur lenient | Burnout comps run numbered street cars, so numbers and plates both; the driver, the crowd and the smoke are part of the shot, so people and faces stay on. |
-| **Track days** (`motorsport-track`) | cars & bikes, people, faces & eyes | race numbers, number plates, make & model, sponsors & livery, names (from faces) | tyre smoke, sparks, kerb strike, wheel lift, close racing, contact, crash or spin, pit lane work | pan forgiven, blur critical | Track days are road cars with taped numbers, so plates and numbers. Paddock, pit lane, crew, owners and kids at the fence are normal, so people and faces are on; the car still decides action frames. |
-| **Rallies** (`motorsport-rally`) | cars & bikes, people, faces & eyes | race numbers, number plates, make & model, sponsors & livery, names (from faces) | airborne, dust, water splash, sideways, wheel lift, crash or spin, crowd reaction | pan forgiven, blur lenient | Door numbers and plated cars; crews, service park and spectators are common, so people and faces on. |
+| **Burnouts** (`motorsport-burnouts`) | cars & bikes, people | race numbers, number plates, make & model | smoke cloud, flames, tyre burst, sparks, crowd reaction | pan forgiven, blur lenient | Burnout comps run numbered street cars, so numbers and plates both; the crowd and the smoke are part of the shot, so people stay on. Faces are the photographer's choice: off until switched on (or chosen in setup). |
+| **Track days** (`motorsport-track`) | cars & bikes, people | race numbers, number plates, make & model, sponsors & livery | tyre smoke, sparks, kerb strike, wheel lift, close racing, contact, crash or spin, pit lane work | pan forgiven, blur critical | Track days are road cars with taped numbers, so plates and numbers. Paddock, pit lane, crew, owners and kids at the fence are normal, so people stay on; the car still decides action frames. Faces (and the names that ride on them) are the photographer's choice: off until switched on or chosen in setup. |
+| **Rallies** (`motorsport-rally`) | cars & bikes, people | race numbers, number plates, make & model, sponsors & livery | airborne, dust, water splash, sideways, wheel lift, crash or spin, crowd reaction | pan forgiven, blur lenient | Door numbers and plated cars; crews, service park and spectators are common, so people stay on. Faces (and names) are the photographer's choice: off until switched on or chosen in setup. |
 | **Car meets** (`motorsport-meet`) | cars & bikes, people, faces & eyes | number plates, make & model | owner with car, badge detail, engine bay, interior, wheel detail | no pan forgiveness, blur moderate | Meets and shows are parked cars with owners: plates and make/model, never race numbers, no sponsor-livery reading; owners and detail shots keep people on. |
 | **Cycling** (`sport-cycling`) | bicycles, people | race numbers | airborne, sprint finish, crash or spin, peloton, climbing effort | pan forgiven, blur moderate | The bicycle (COCO class 1) is the subject, never a car. Bib numbers are read; helmets hide faces. |
 | **Action sports** (`sport-action`) | bikes, people | race numbers | airborne, trick at its peak, spray or dust, crash or spin, grab | pan forgiven, blur moderate | Bikes (bicycle and motorcycle classes) and riders; numbers on bibs and boards; faces off (helmets, goggles). |
@@ -26,8 +26,8 @@ Every detector and reader below is a per-album switch in **both** directions (im
 | **Parties** (`event-parties`) | people, faces & eyes | names (from faces) | laughter, toast, dancing, hug, candid moment, cake and candles | no pan forgiveness, blur moderate | People and faces, names. No vehicles, no animals by default. |
 | **Weddings** (`wedding`) | people, faces & eyes | names (from faces) | first kiss, ring exchange, vows, first dance, confetti, tears or laughter, bouquet toss, walk down the aisle | no pan forgiveness, blur moderate | Couple, guests, expressions: people and faces, names; no vehicles. |
 | **Concerts** (`concert`) | people, faces & eyes | names (from faces) | jump, crowd surfing, pyro, guitar raised, singer and crowd | pan forgiven, blur lenient, dark ok | Performers in blackout and stage light: people and faces, dark frames fine, lenient blur. |
-| **Field sports** (`sport-field`) | people | nothing | ball contact, goal or try, celebration, tackle, peak of a jump | no pan forgiveness, blur moderate | Players and the ball; faces off at field distance; numbers are not read (jersey numbers on a moving player are unreliable); names off. |
-| **Court sports** (`sport-court`) | people, faces & eyes | names (from faces) | shot release, dunk or spike, celebration, block, peak of a jump | pan forgiven, blur strict | Players and the ball, closer in: faces on; names on. |
+| **Field sports** (`sport-field`) | people | jersey numbers | ball contact, goal or try, celebration, tackle, peak of a jump | no pan forgiveness, blur moderate | Players and the ball; faces off at field distance; jersey numbers are read off the people (they identify a player when the face is too small; a moving player makes it hit and miss, so a number below the confidence bar stays unread); names off. |
+| **Court sports** (`sport-court`) | people, faces & eyes | jersey numbers, names (from faces) | shot release, dunk or spike, celebration, block, peak of a jump | pan forgiven, blur strict | Players and the ball, closer in: faces on; jersey numbers read off the people; names on. |
 | **Rodeo** (`sport-rodeo`) | people, faces & eyes, animals | names (from faces) | rider airborne, bucking peak, dismount or fall, rodeo clown | no pan forgiveness, blur moderate | Rider and animal; no numbers; names off faces. |
 | **Equestrian** (`sport-equestrian`) | people, faces & eyes, animals | names (from faces) | jump apex, all hooves off ground, landing, rider focus | pan forgiven, blur moderate | Horse and rider; pans forgiven; no numbers (saddle cloths are a gap). |
 | **Mixed** (`mix`) | cars & bikes, people, faces & eyes, animals | race numbers, number plates, make & model, sponsors & livery, names (from faces) | airborne, tyre smoke, flames, laughter, celebration, crowd reaction | pan forgiven, blur moderate | Unknown shoot: look for everything, read everything. |
@@ -38,6 +38,8 @@ Every detector and reader below is a per-album switch in **both** directions (im
 | **Astro** (`astro`) | nothing (whole frame) | nothing | milky way core, meteor, aurora | no pan forgiveness, blur lenient, dark ok | Nothing to detect; dark frames are the subject; lenient blur. |
 
 Cars are an option on every type but on by default only where vehicles are the subject or common: motorsport (all), meets, cycling and action sports (their own bike classes), dealerships, aviation (aircraft), mixed. They are off for shows, events, parties, portraits, weddings, concerts, field/court sport, rodeo, equestrian, wildlife, property, landscape and astro.
+
+Faces are off at circuit racing, track days, rallies and burnouts (people stay on at the last three), cycling, action sports and field sports; the photographer can switch them on per album or, in setup, for every album of a type.
 
 ## What changed
 
@@ -54,7 +56,43 @@ Cars are an option on every type but on by default only where vehicles are the s
 | Court sports | N -> - | same | same |
 | Mixed | - -> N | - -> P | same |
 
-`N` numbers on, `P` plates on, `V` vehicles on, `-` off. Other changes: *sport-field* and *sport-court* no longer read numbers (jersey numbers on moving players are unreliable) and read names only on court; *aviation* reads registration, type and operator but no race numbers; track days, rallies and burnouts look at people and faces; the model is never asked about a car when the crop is an aircraft or a bicycle.
+`N` numbers on, `P` plates on, `V` vehicles on, `-` off. Other changes: *aviation* reads registration, type and operator but no race numbers; the model is never asked about a car when the crop is an aircraft or a bicycle.
+
+### Defaults decided after that table (setup wizard release)
+
+| Type | Faces & eyes | People | Numbers | Moments |
+|---|---|---|---|---|
+| Track days | on -> off | on | same | on |
+| Rallies | on -> off | on | same | on |
+| Burnouts | on -> off | on | same | on |
+| Field sports | off | on | off -> on (jersey numbers) | on |
+| Court sports | on | on | off -> on (jersey numbers) | on |
+
+- **Faces at motorsport are the photographer's choice.** Helmets hide drivers, so face and eye work at a track day, rally or burnout comp mostly finds nothing and costs a pass over every frame. People stay on, though: a rally has crowds, a track day has a pit lane and a paddock, a burnout comp has spectators. The faces switch stays in the *Look for* list on every one of these types, and the setup wizard asks "who is in your pictures?" for each motorsport type the photographer shoots. Names ride on faces, so they are idle until faces are switched on (the *Names* row shows *needs Faces & eyes*). Turning faces on also turns the portrait-style judging of person frames back on. Car meets keep faces on: owners with their cars are the point.
+- **Field and court sports read jersey numbers.** The number reader needs a vehicle everywhere else; on these two types it works on the *people* instead (`PresetPolicy::players`, `Lanes::reads_players`). The identification lane runs on person boxes, with its own prompt (`prompts/player.txt`): jersey number only, no make, model, plate or livery. Switch *People* off and the number reader has nothing to read (*needs People*). Names stay court-only.
+- **Moments are on for every type that has a vocabulary** (`moments_detect` and `moments_rank`). They were already on by default in the policy table; this release pins that with a test and puts the two switches in the wizard's "How picky" screen.
+
+## Your defaults (setup wizard)
+
+The first-run wizard (also *Settings > Set up Conrod again*) stores the photographer's answers in the **global** setting `user_profile` (`crates/conrod-core/src/user_profile.rs`):
+
+```json
+{
+  "done": true,
+  "default_preset": "motorsport-track",
+  "shoots": ["motorsport-track", "wedding"],
+  "blur": "strict",
+  "all": { "moments_rank": false },
+  "presets": { "motorsport-track": { "faces": true } }
+}
+```
+
+- `default_preset` is the shoot type new imports start on (the first one chosen). `blur` is an optional level for new albums; without it each type keeps its own.
+- `all` is a switch for every type, `presets` a switch for one type; a type's own entry wins.
+- **Resolution order for any one switch, first present wins:** the album's own override (`overrides`), then the photographer's default for the album's type (`user_defaults`), then the type's policy. `Lanes::resolve_with` is the one place that does it; the older `include_people` switch still sets faces and ranks just below the album override.
+- **An album takes a copy.** When an album is created (or its shoot type changes) the engine copies the profile's defaults for that type into the album's own `user_defaults`. Changing the profile later moves no existing album; an album saved before the wizard existed has none and behaves exactly as before. The global file never carries `user_defaults`.
+- Clearing an album's switch goes back to the photographer's default, not the policy: the *default* the UI shows on each row is that value.
+- A skipped wizard writes `{"done": true}` and nothing else, so it never opens again by itself and changes no default.
 
 ## Sources
 

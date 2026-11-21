@@ -453,7 +453,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
     let settings = settings(d, job)?;
     let lanes = settings.lanes();
     let finds_faces = lanes.names;
-    if !lanes.identifies_vehicles() && !finds_faces && !lanes.moments_detect {
+    if !lanes.identifies() && !finds_faces && !lanes.moments_detect {
         return Err("There are no identifiable subjects in this shoot preset".into());
     }
     // The command's scope overrides the album's setting for this run only;
@@ -464,7 +464,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
         if !wait_for_cull(d, stop, task) {
             return Ok(());
         }
-        if !lanes.identifies_vehicles() {
+        if !lanes.identifies() {
             if lanes.names {
                 let faces = crate::passes::embed_faces_missing(d, job, stop, task)?;
                 task.detail(format!("Prepared {faces} faces for name suggestions"));
@@ -475,7 +475,14 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             }
             return Ok(());
         }
-        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
+        // Field and court sport read jerseys off the people; everything else
+        // reads vehicles.
+        let region = if lanes.reads_players() {
+            "person"
+        } else {
+            "vehicle"
+        };
+        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='{region}' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
         // The live feed the identify screen draws, replaced by the next run and
         // kept after this one so its summary stays on screen. The guard ends an
         // early return (`?`) as an error rather than leaving the feed running.
@@ -809,7 +816,12 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
                 .filter(|v| {
                     !culled
                         && v["rejected"].as_i64() != Some(1)
-                        && v["region_type"].as_str().unwrap_or("vehicle") == "vehicle"
+                        && match v["region_type"].as_str().unwrap_or("vehicle") {
+                            "vehicle" => true,
+                            // A jersey read off a player.
+                            "person" => v["number"].as_str().is_some(),
+                            _ => false,
+                        }
                 })
                 .map(|v| {
                     let mut a = VehicleAnalysis::from_json(v["attributes"].as_str());

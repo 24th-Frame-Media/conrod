@@ -732,8 +732,8 @@ export default {
       {
         "key": "faces",
         "label": "Faces & eyes",
-        "on": true,
-        "default": true,
+        "on": false,
+        "default": false,
         "overridden": false,
         "requires": null,
         "blocked": false
@@ -792,7 +792,7 @@ export default {
         "default": false,
         "overridden": false,
         "requires": "faces",
-        "blocked": false
+        "blocked": true
       }
     ],
     "moments": {
@@ -874,8 +874,8 @@ export default {
       {
         "key": "faces",
         "label": "Faces & eyes",
-        "on": true,
-        "default": true,
+        "on": false,
+        "default": false,
         "overridden": false,
         "requires": null,
         "blocked": false
@@ -930,11 +930,11 @@ export default {
       {
         "key": "names",
         "label": "Names (from faces)",
-        "on": true,
+        "on": false,
         "default": true,
         "overridden": false,
         "requires": "faces",
-        "blocked": false
+        "blocked": true
       }
     ],
     "moments": {
@@ -1031,8 +1031,8 @@ export default {
       {
         "key": "faces",
         "label": "Faces & eyes",
-        "on": true,
-        "default": true,
+        "on": false,
+        "default": false,
         "overridden": false,
         "requires": null,
         "blocked": false
@@ -1087,11 +1087,11 @@ export default {
       {
         "key": "names",
         "label": "Names (from faces)",
-        "on": true,
+        "on": false,
         "default": true,
         "overridden": false,
         "requires": "faces",
-        "blocked": false
+        "blocked": true
       }
     ],
     "moments": {
@@ -1917,12 +1917,12 @@ export default {
     "reads": [
       {
         "key": "numbers",
-        "label": "Race numbers",
-        "on": false,
-        "default": false,
+        "label": "Jersey numbers",
+        "on": true,
+        "default": true,
         "overridden": false,
-        "requires": "vehicles",
-        "blocked": true
+        "requires": "people",
+        "blocked": false
       },
       {
         "key": "plates",
@@ -2059,12 +2059,12 @@ export default {
     "reads": [
       {
         "key": "numbers",
-        "label": "Race numbers",
-        "on": false,
-        "default": false,
+        "label": "Jersey numbers",
+        "on": true,
+        "default": true,
         "overridden": false,
-        "requires": "vehicles",
-        "blocked": true
+        "requires": "people",
+        "blocked": false
       },
       {
         "key": "plates",
