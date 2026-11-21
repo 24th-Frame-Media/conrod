@@ -58,6 +58,17 @@ export const FIELDS = {
   },
 
   // ── identification ──
+  moments_backend: {
+    label: 'Judge moments with', kind: 'segmented',
+    hint: 'The vision model names tags it is sure of but has no real probability, so its readings are marked unverified. The decision model answers calibrated probabilities: on this PC when Use the decision model is on (below), else through OpenRouter if you add a key.',
+    options: [{ id: 'vlm', name: 'Vision model' }, { id: 'decider', name: 'Decision model' }],
+  },
+  moments_threshold: {
+    label: 'Moment confidence', kind: 'number', album: true,
+    hint: 'A moment must be this likely (0.5 to 1) before it is shown as sure or can lift a frame. Below it, down to 0.5, it shows as maybe and never changes ranking.',
+  },
+  moments_openrouter_model: { label: 'Decision model (OpenRouter id)', kind: 'text', hint: 'Used when judging with the decision model through OpenRouter.' },
+  moments_openrouter_key: { label: 'OpenRouter key', kind: 'text', hint: 'Stored in your settings file; never written to logs.' },
   read_plates: {
     label: 'Read licence plates', kind: 'toggle', album: true,
     hint: 'OCR registration plates.',
@@ -94,6 +105,15 @@ export const FIELDS = {
   use_vlm: {
     label: 'Use a vision model', kind: 'toggle',
     hint: 'Ask a vision model for make, model, colour and team.',
+  },
+  use_decider: {
+    label: 'Use the decision model', kind: 'toggle',
+    hint: "Runs the Perplexity decision model on this PC's graphics card to answer yes/no questions about a frame. Off, or not enough video memory: every scan behaves exactly as without it.",
+  },
+  decider_quant: {
+    label: 'Precision', kind: 'segmented',
+    hint: 'Auto picks the largest that fits your free video memory: int8 is closest to the reference, int4 needs about 2 GB less.',
+    options: [{ id: 'auto', name: 'Auto' }, { id: 'int8', name: 'int8' }, { id: 'int4', name: 'int4' }],
   },
   vlm_timeout: { label: 'Timeout', kind: 'number', unit: 's', hint: 'Give up on one request after this long.' },
   vlm_max_retries: { label: 'Retries', kind: 'number', hint: 'How many times to retry a failed request.' },
@@ -145,6 +165,11 @@ for (const [key, field] of Object.entries(FIELDS)) field.key = key;
     keys: ['read_plates', 'read_numbers', 'read_text', 'read_action'],
   },
   {
+    id: 'moments', tab: 'identification', title: 'Moments',
+    hint: 'What makes a keeper at each kind of shoot (a kiss, tyre smoke, a jump). Which moments, and whether they lift ranking, are set per album from its shoot settings.',
+    keys: ['moments_backend', 'moments_threshold', 'moments_openrouter_model', 'moments_openrouter_key'],
+  },
+  {
     id: 'known-fill', tab: 'identification', title: 'Known vehicles and names',
     hint: 'Fill in what the model misses, without guessing over a fresh reading.',
     keys: ['use_known_vehicles', 'normalise_names', 'entry_list'],
@@ -158,6 +183,12 @@ for (const [key, field] of Object.entries(FIELDS)) field.key = key;
     id: 'vision-model', tab: 'identification', title: 'Vision model',
     keys: ['use_vlm'],
   },
+  {
+    id: 'decision-model', tab: 'identification', title: 'Decision model',
+    hint: 'An optional on-device model that answers many yes/no questions about a frame at once.',
+    keys: ['use_decider', 'decider_quant'],
+  },
+
   {
     id: 'vision-limits', tab: 'identification', title: 'Vision limits', advanced: true,
     hint: 'Only worth changing when a host is slow or rejects large images.',
@@ -187,6 +218,7 @@ export const OVERRIDABLE = [
   { key: 'read_plates', label: 'Licence plates' },
   { key: 'read_numbers', label: 'Race numbers' },
   { key: 'read_action', label: 'Action effects' },
+  { key: 'moments_threshold', label: 'Moment confidence' },
 ];
 
 /** Whole objects that behave like one field on the page, and the tab they dirty. */

@@ -1,4 +1,4 @@
-{
+﻿{
   "release": "https://github.com/kapsikkum/conrod/releases/download/assets-v1",
   "assets": [
     {
@@ -126,6 +126,42 @@
       "sha256": "170f5c0b791daf6ae089670e12f266cd13d120eec66d6e34cfa72b7e0e6ab5a0",
       "size": 12740327,
       "sources": []
+    },
+    {
+      "name": "decider-flash-v1.2-q8_0.gguf",
+      "dest": "models",
+      "extract": false,
+      "optional": true,
+      "licence": "Apache-2.0 (Perplexity pplx-decider-flash-v1.2, official GGUF; opt-in decision model, 5.2 GB)",
+      "sha256": "ffb27ade8976765b0e6943a0b7f5f3fd0f7042d45ad90256a76d608bcd3942c2",
+      "size": 5157837472,
+      "sources": [
+        "https://huggingface.co/perplexity-ai/pplx-decider-flash-gguf-v1.2/resolve/main/decider-flash-v1.2-q8_0.gguf"
+      ]
+    },
+    {
+      "name": "mmproj-decider-flash-v1.2-f16.gguf",
+      "dest": "models",
+      "extract": false,
+      "optional": true,
+      "licence": "Apache-2.0 (Perplexity pplx-decider-flash-v1.2 vision projector, official GGUF)",
+      "sha256": "b2459e42a5f12c9ecbc81742a91cb93b6bbe5082297b4aa9578d453ddcbecfab",
+      "size": 672423040,
+      "sources": [
+        "https://huggingface.co/perplexity-ai/pplx-decider-flash-gguf-v1.2/resolve/main/mmproj-decider-flash-v1.2-f16.gguf"
+      ]
+    },
+    {
+      "name": "llama-b12359-bin-win-vulkan-x64.zip",
+      "dest": "decider-runtime",
+      "extract": true,
+      "optional": true,
+      "licence": "MIT (llama.cpp b12359, Windows Vulkan build; runs the decision model)",
+      "sha256": "e8d18c6e4210cca87e7307c2ea78363ac8d158e4e1397358ec96ab70b53a0d5e",
+      "size": 38090643,
+      "sources": [
+        "https://github.com/ggml-org/llama.cpp/releases/download/b12359/llama-b12359-bin-win-vulkan-x64.zip"
+      ]
     }
   ]
 }

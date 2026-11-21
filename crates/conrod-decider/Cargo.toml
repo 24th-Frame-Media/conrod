@@ -1,0 +1,23 @@
+[package]
+name = "conrod-decider"
+description = "Perplexity's decision model (pplx-decider-flash) run in-process through llama.cpp: joint questions in, calibrated answers out."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The request/response schema lives in conrod-core (one set of types for every
+# transport); this crate only turns a request into a prompt and logits into answers.
+conrod-core = { path = "../conrod-core" }
+base64 = "0.22"
+# The llama.cpp runtime (llama, mtmd, ggml DLLs) is loaded at run time from a
+# pinned, hash-verified download; nothing links against it, so a machine
+# without the optional model never needs the DLLs.
+libloading = "0.8"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Graphics_Dxgi"] }

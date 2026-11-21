@@ -2341,7 +2341,10 @@ dialog.viewer {
 .id-lane-open { justify-self: start; }
 .id-left { display: grid; gap: 12px; min-width: 0; }
 .id-view {
-  position: relative; aspect-ratio: 16 / 10; max-height: min(40vh, 420px); overflow: hidden; display: grid; place-items: center;
+  /* Full width of its column: when max-height caps a wide stage, aspect-ratio
+     would otherwise shrink the width and leave the stage hugging the left. The
+     picture is contained and centred inside, with its blurred fill behind it. */
+  position: relative; width: 100%; aspect-ratio: 16 / 10; max-height: min(40vh, 420px); overflow: hidden; display: grid; place-items: center;
   border: 1px solid var(--line); border-radius: var(--radius-lg); background-color: #0a0b0c;
   background-image: linear-gradient(rgba(255, 255, 255, .045) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, .045) 1px, transparent 1px);
   background-size: 34px 34px;
@@ -2635,3 +2638,22 @@ dialog.viewer {
 .whatsnew-earlier > summary { cursor: pointer; color: var(--text-dim); font-size: 13px; padding: 2px 0; width: fit-content; }
 .whatsnew-earlier[open] > summary { margin-bottom: 14px; }
 .whatsnew-earlier .whatsnew-list { gap: 18px; }
+
+/* "What Conrod will do" list under the shoot-type picker. */
+.policy { display: grid; gap: 4px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: 12.5px; }
+.policy-title { margin: 0; color: var(--text-dim); font-weight: 500; }
+.policy h4 { margin: 6px 0 0; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-mute); }
+.policy-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 2px 14px; }
+.policy-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.policy-row label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-mute); }
+.policy-row.on label { color: var(--text); }
+.policy-row input { flex: none; }
+.policy-tag { color: var(--accent, var(--text-dim)); font-size: 11px; }
+.policy-notes { margin: 6px 0 0; font-size: 12px; line-height: 1.4; }
+
+/* Moment tags: sure ones in the accent, maybes dimmed and dashed. */
+.moment-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+.tag.moment.sure { border-color: var(--accent, var(--line)); color: var(--text); }
+.tag.moment.maybe { border-style: dashed; color: var(--text-mute); }
+.moment-lift { flex-basis: 100%; }
+.policy-moments { margin: 2px 0 0; font-size: 12px; line-height: 1.4; }

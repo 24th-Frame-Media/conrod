@@ -400,7 +400,7 @@ pub fn rows_compact(
 /// embedding are matched against the known vehicles and people here, and the
 /// embedding itself never leaves this function.
 pub fn review_payload(db: &Connection, job: i64) -> Result<Value> {
-    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path",[job])?;
+    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.moments,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path",[job])?;
     let mut detections = rows_compact(db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY d.image_id,d.id",[job])?;
     let known: Vec<(Value, Vec<f32>)> = rows(db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
         .into_iter()
@@ -458,6 +458,7 @@ impl Desktop {
         let db = conrod_store::connect(Some(&root.join("conrod.db"))).map_err(err)?;
         let reader = conrod_store::connect(Some(&root.join("conrod.db"))).map_err(err)?;
         let settings = Settings::load(&root.join("settings.json"));
+        crate::decider::service().configure(&settings);
         task.finish();
         let desktop = Arc::new(Self {
             hub,
@@ -594,6 +595,7 @@ impl Desktop {
             read_plates: None,
             read_numbers: None,
             include_people: None,
+            overrides: None,
             scan_profile: None,
             blur_strictness: None,
             burst_gap: None,
@@ -683,6 +685,8 @@ impl Desktop {
                 Ok(Value::Null)
             }
             Command::InstallModels {} => crate::setup::install_missing(self),
+            Command::DeciderStatus {} => Ok(crate::decider::service().status()),
+            Command::InstallDecider {} => crate::decider::install_in_background(self),
             Command::SaveSettings(updates) => self.save_settings(&updates),
             Command::Mark(a) => self.mark(&a),
             Command::EditDetection(a) => crate::edits::edit_detection(self, &a),
@@ -738,6 +742,15 @@ impl Desktop {
             }
             Command::SetIncludePeople(a) => {
                 crate::passes::set_include_people(self, a.job_id, a.value)
+            }
+            Command::PresetPolicy(a) => Ok(conrod_core::profile::Lanes::resolve(
+                ShootPreset::parse(&a.preset),
+                a.include_people,
+                &conrod_core::profile::Overrides::from_map(&a.overrides),
+            )
+            .summary()),
+            Command::SetFeature(a) => {
+                crate::passes::set_feature(self, a.job_id, &a.feature, a.value)
             }
             Command::Summary(a) => crate::library::summary(self, a.job_id),
             Command::ShootStats(a) => self.shoot_stats(a.job_id),
@@ -800,6 +813,7 @@ impl Desktop {
         }
         let task = self.hub.start("Saving settings", 0);
         next.save(&self.root.join("settings.json")).map_err(err)?;
+        crate::decider::service().configure(&next);
         *stored = next;
         task.finish();
         Ok(json!(*stored))
@@ -861,7 +875,11 @@ impl Desktop {
     }
 
     fn models(&self) -> Value {
-        crate::setup::rows()
+        let mut rows = crate::setup::rows();
+        if let Some(list) = rows.as_array_mut() {
+            list.push(crate::decider::service().model_row());
+        }
+        rows
     }
 
     /// The worker count of every pool, its cap and whether a change applies
@@ -1175,6 +1193,10 @@ impl Desktop {
                 if let Some(people) = a.include_people {
                     settings.include_people = people;
                 }
+                if let Some(map) = &a.overrides {
+                    // Only known features, only booleans.
+                    settings.overrides = conrod_core::profile::Overrides::from_map(map).to_map();
+                }
                 if let Some(strictness) = a.blur_strictness.as_deref() {
                     if !["critical", "strict", "moderate", "lenient"].contains(&strictness) {
                         return Err(
@@ -1271,8 +1293,7 @@ impl Desktop {
         let eligibility = self.clone();
         // One progress object per scan: the pools write to it and the app
         // emits its snapshot as `scan-progress`.
-        let faces_on =
-            ShootPreset::parse(&settings.scan_profile).wants_faces(settings.include_people);
+        let faces_on = settings.lanes().faces;
         let progress = crate::progress::for_scan(job, &settings, faces_on);
         // Frames an earlier run of this album already read count as done, so a
         // resume reads `500 / 1000` and the counters add up to the album.
@@ -1397,8 +1418,13 @@ impl Desktop {
                         && crate::operations::settings(&desktop, job).is_ok_and(|cfg| {
                             wants_identify(
                                 cfg.workflow(),
-                                ScanProfile::parse(&cfg.scan_profile).identifies_vehicles(),
-                                cfg.read_plates || cfg.read_numbers,
+                                cfg.lanes().identifies_vehicles()
+                                    || cfg.lanes().names
+                                    || cfg.lanes().moments_detect,
+                                cfg.read_plates
+                                    || cfg.read_numbers
+                                    || cfg.lanes().names
+                                    || cfg.lanes().moments_detect,
                             )
                         });
                     if wants_identify {
@@ -2296,7 +2322,6 @@ impl Desktop {
         let task = self.hub.start("Grouping bursts", 0);
         // Settings before the write lock: reading them takes it too.
         let cfg = crate::operations::settings(self, job)?;
-        let profile = ScanProfile::parse(&cfg.scan_profile);
         let gap = burst_gap(cfg.burst_gap);
         // What this album's stacking rules are: the sensitivity ladder plus its
         // own pause and pan choices.
@@ -2537,13 +2562,7 @@ impl Desktop {
         let keepers = if cfg.grouping_stacks {
             // The same rule the identify stage uses, so the keeper regroup
             // leaves is the one a later pick would choose anyway.
-            let picks = crate::passes::pick_of_pass(
-                &db,
-                job,
-                profile,
-                cfg.include_people,
-                cfg.use_quality_score,
-            )?;
+            let picks = crate::passes::pick_of_pass(&db, job, &cfg.lanes(), cfg.use_quality_score)?;
             picks["picks"].as_u64().unwrap_or_default()
         } else {
             // Stacking is off: every frame is its own stack, so "best of the
@@ -3407,8 +3426,8 @@ mod tests {
             None
         );
         // A later pick by the identify rule keeps exactly that frame.
-        let profile = ScanProfile::parse(&Settings::default().scan_profile);
-        crate::passes::pick_of_pass(&lock(&lib.d().db), lib.job, profile, false, false).unwrap();
+        let lanes = Settings::default().lanes();
+        crate::passes::pick_of_pass(&lock(&lib.d().db), lib.job, &lanes, false).unwrap();
         assert_eq!(
             lib.one::<i64>("SELECT id FROM detections WHERE burst_pick=1", []),
             strong
@@ -3909,7 +3928,7 @@ mod tests {
             .unwrap_or(106);
         let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .expect("open the album read-only");
-        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path";
+        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.moments,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path";
         const DET_SQL: &str = "SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY d.image_id,d.id";
 
         let mut sql = f64::MAX;

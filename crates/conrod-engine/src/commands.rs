@@ -131,6 +131,10 @@ pub struct ScanArgs {
     /// keeps the saved default.
     #[serde(default)]
     pub identify_scope: Option<String>,
+    /// Detector and reader switches for the *new* album (`profile::Feature`
+    /// keys to booleans); a missing key follows the shoot type.
+    #[serde(default)]
+    pub overrides: Option<Map<String, Value>>,
 }
 
 /// Identify an album. `scope` overrides the album's `identify_scope` for this
@@ -235,6 +239,30 @@ pub struct IncludePeopleArgs {
     #[serde(deserialize_with = "positive")]
     pub job_id: i64,
     pub value: bool,
+}
+
+/// What Conrod will do for a shoot type: the summary the type picker shows.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PresetPolicyArgs {
+    pub preset: String,
+    /// The album's (or sheet's) own switches, by feature key.
+    #[serde(default)]
+    pub overrides: Map<String, Value>,
+    #[serde(default)]
+    pub include_people: bool,
+}
+
+/// Switch one detector or reader on or off for an album; `value: null`
+/// goes back to the shoot type's default.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    pub feature: String,
+    #[serde(default)]
+    pub value: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -389,6 +417,9 @@ pub enum Command {
     Write(WriteArgs),
     CancelOperation(KeyArgs),
     InstallModels {},
+    /// The decision model card: install state, VRAM, quantization.
+    DeciderStatus {},
+    InstallDecider {},
     SaveSettings(Map<String, Value>),
     Mark(MarkArgs),
     EditDetection(EditArgs),
@@ -430,6 +461,10 @@ pub enum Command {
     RenameJob(RenameArgs),
     UpdateJobSettings(UpdateJobSettingsArgs),
     SetIncludePeople(IncludePeopleArgs),
+    /// What Conrod will do for a shoot type, with the given overrides.
+    PresetPolicy(PresetPolicyArgs),
+    /// Per-album detector / reader switch.
+    SetFeature(FeatureArgs),
     Summary(JobArgs),
     /// The shoot's own statistics card: what was used, how it was exposed,
     /// what the cull measured. Backfills an old album's shot columns first.
