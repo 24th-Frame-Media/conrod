@@ -51,7 +51,7 @@ pub(crate) fn present(asset: &Asset) -> bool {
 }
 
 /// Whether `exiftool` runs from PATH (a dev machine; a release bundles its own).
-fn exiftool_on_path() -> bool {
+pub(crate) fn exiftool_on_path() -> bool {
     std::process::Command::new("exiftool")
         .arg("-ver")
         .stdout(std::process::Stdio::null())
@@ -60,7 +60,7 @@ fn exiftool_on_path() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-fn name_of(id: &str) -> &str {
+pub(crate) fn name_of(id: &str) -> &str {
     GROUPS
         .iter()
         .find(|(_, ids)| ids.contains(&id))
