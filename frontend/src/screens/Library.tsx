@@ -118,7 +118,7 @@ export function Library({ jobs, models, scanning, live, activeJob, onOpen, onNew
             <button onClick={() => void run(async () => { await call('install_models'); })} disabled={ready === models.length}>Install missing</button>
             <ul className="model-list">
               {models.map((m) => (
-                <li key={m.file}><span className={`dot ${m.ready ? 'ok' : 'no'}`} />{m.name}<small>{m.ready ? 'Available' : 'Not installed'}</small></li>
+                <li key={m.file ?? m.name}><span className={`dot ${m.ready ? 'ok' : 'no'}`} />{m.name}<small>{m.ready ? 'Available' : 'Not installed'}</small></li>
               ))}
             </ul>
           </div>

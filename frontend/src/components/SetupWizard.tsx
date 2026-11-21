@@ -285,7 +285,7 @@ export function SetupWizard({ visible, settings, onSaved, onClose, onOpenSetting
                   <ul className="wizard-summary">
                     {lines.map((line, i) => (
                       <li key={line.preset}>
-                        <b>{line.title}</b>{i === 0 && <span className="wizard-tag">new imports</span>}
+                        <b>{line.title}</b>{i === 0 && <> <span className="wizard-tag">new imports</span></>}
                         <p>
                           Looks for {listWords(line.looks) || 'nothing in particular'}.
                           {line.reads.length > 0 ? ` Reads ${listWords(line.reads)}.` : ' Reads no text.'}
