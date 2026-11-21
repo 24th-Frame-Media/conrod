@@ -327,6 +327,8 @@ pub struct Desktop {
     pub(crate) identify: Mutex<Option<Arc<crate::identify_live::IdentifyLive>>>,
     pub(crate) operations:
         Mutex<std::collections::BTreeMap<String, Arc<std::sync::atomic::AtomicBool>>>,
+    /// What start-up is doing, for the splash (`startup-progress`, `startup_status`).
+    pub startup: crate::startup::Tracker,
 }
 
 pub fn rows(conn: &Connection, sql: &str, args: impl rusqlite::Params) -> Result<Vec<Value>> {
@@ -454,12 +456,26 @@ impl Desktop {
     pub fn open(root: PathBuf) -> Result<Arc<Self>> {
         let hub = TaskHub::new();
         let task = hub.start("Opening library", 0);
+        let startup = crate::startup::Tracker::new(crate::startup::TOTAL);
+        startup.begin("library", "Opening your library", None);
         std::fs::create_dir_all(root.join("cache/native")).map_err(err)?;
         let db = conrod_store::connect(Some(&root.join("conrod.db"))).map_err(err)?;
         let reader = conrod_store::connect(Some(&root.join("conrod.db"))).map_err(err)?;
         let settings = Settings::load(&root.join("settings.json"));
         crate::decider::service().configure(&settings);
         task.finish();
+        let albums: i64 = db
+            .query_row("SELECT count(*) FROM jobs", [], |r| r.get(0))
+            .unwrap_or(0);
+        startup.finish(
+            None,
+            Some(match albums {
+                0 => "No albums yet".to_string(),
+                1 => "1 album".to_string(),
+                n => format!("{n} albums"),
+            }),
+            None,
+        );
         let desktop = Arc::new(Self {
             hub,
             root,
@@ -473,15 +489,33 @@ impl Desktop {
             progress: Mutex::new(None),
             identify: Mutex::new(None),
             operations: Mutex::new(std::collections::BTreeMap::new()),
+            startup,
         });
         crate::watching::restore(&desktop);
         // Before anything can offer to resume: an album a crash left mid-scan
         // still says `scanning`, which hides Resume. Mark it stopped instead;
         // every finished frame and its results are kept.
-        if let Err(e) = desktop.reconcile_interrupted() {
-            desktop
-                .hub
-                .note(format!("Could not reconcile interrupted albums: {e}"));
+        desktop
+            .startup
+            .begin("albums", "Checking for albums a crash left open", None);
+        match desktop.reconcile_interrupted() {
+            Ok(0) => desktop
+                .startup
+                .finish(None, Some("None found".into()), None),
+            Ok(n) => desktop.startup.finish(
+                Some("Tidying albums a crash left open"),
+                Some(format!(
+                    "{n} {} marked stopped, ready to resume",
+                    if n == 1 { "album" } else { "albums" }
+                )),
+                None,
+            ),
+            Err(e) => {
+                desktop.startup.fail(format!("Could not check: {e}"));
+                desktop
+                    .hub
+                    .note(format!("Could not reconcile interrupted albums: {e}"));
+            }
         }
         Ok(desktop)
     }
@@ -653,6 +687,7 @@ impl Desktop {
                 Ok(models)
             }
             Command::Status {} => Ok(self.status()),
+            Command::StartupStatus {} => Ok(self.startup.snapshot()),
             Command::Jobs {} => Ok(json!(self.jobs()?)),
             Command::Review(a) => self.review(a.job_id),
             Command::Scan(a) => self.start_scan(&a),

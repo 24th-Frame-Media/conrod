@@ -206,9 +206,6 @@ fn main() {
                 Desktop::open(conrod_core::settings::data_root()).map_err(std::io::Error::other)?;
             app.asset_protocol_scope()
                 .allow_directory(desktop.root.join("cache"), true)?;
-            // Models are not bundled with the installer; fetch whatever is missing
-            // now, in the background, so the app is usable without waiting on first use.
-            let _ = conrod_engine::setup::install_missing(&desktop);
             app.manage(desktop);
             app.manage(Remembered(Mutex::new(None)));
             if let Some(window) = app.get_webview_window("main") {
@@ -222,6 +219,19 @@ fn main() {
                 app.handle().clone(),
                 app.state::<Arc<Desktop>>().inner().clone(),
             );
+            // Start-up steps for the splash. The first two ran inside Desktop::open, before
+            // the window could listen, so the splash also reads them from `startup_status`.
+            // The rest run here, off the UI thread. Models are not bundled with the
+            // installer: the model check also fetches whatever is missing, in the background.
+            {
+                use tauri::Emitter;
+                let events = handle.clone();
+                worker.startup.set_sink(move |status| {
+                    let _ = events.emit("startup-progress", status);
+                });
+                let worker = worker.clone();
+                std::thread::spawn(move || conrod_engine::startup::run(&worker, true));
+            }
             // Push the status to the window when (and only when) a task changes, and
             // mirror it onto the taskbar button. The frontend used to poll for this.
             std::thread::spawn(move || {
