@@ -951,15 +951,20 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                 <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue} />
               ))}
 
-              {activeTab === 'lightroom' && (
-                <LightroomBridge
-                  value={draft.lightroom_bridge ?? true}
-                  changed={draft.lightroom_bridge !== settings.lightroom_bridge}
-                  onChange={(value) => setValue('lightroom_bridge', value)}
-                  run={run}
-                  toast={toast}
-                />
-              )}
+              {activeTab === 'lightroom' && SECTIONS.filter((section) => section.tab === 'lightroom').map((section) => (
+                section.id === 'lightroom' ? (
+                  <LightroomBridge
+                    key={section.id}
+                    value={draft.lightroom_bridge ?? false}
+                    changed={draft.lightroom_bridge !== settings.lightroom_bridge}
+                    onChange={(value) => setValue('lightroom_bridge', value)}
+                    run={run}
+                    toast={toast}
+                  />
+                ) : (
+                  <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue} />
+                )
+              ))}
 
               {activeTab === 'system' && (
                 <section className="settings-section settings-system" aria-labelledby="settings-system-head">

@@ -280,8 +280,10 @@ pub struct Settings {
     pub keyword_prefix: String,
     pub write_plate_keyword: bool,
     pub write_caption: bool,
-    /// Keep the Conrod Bridge plug-in installed in Lightroom Classic and let
-    /// Conrod's verdicts reach the catalog. Off removes the plug-in.
+    /// Optional extra: keep the Conrod Bridge plug-in installed in Lightroom
+    /// Classic and let Conrod's verdicts reach the catalog live. Off by
+    /// default; Conrod writes stars, picks and colour labels to the files
+    /// without it.
     pub lightroom_bridge: bool,
     /// When an album finishes, write its stars and suggested picks (the pick
     /// colour label, because Lightroom keeps pick flags catalog-only) and hand
@@ -438,7 +440,7 @@ impl Default for Settings {
             keyword_prefix: String::new(),
             write_plate_keyword: true,
             write_caption: false,
-            lightroom_bridge: true,
+            lightroom_bridge: false,
             auto_apply: true,
             analysis_workers: 3,
             preview_workers: 4,

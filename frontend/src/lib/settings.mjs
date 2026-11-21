@@ -6,7 +6,7 @@ export const TABS = [
   { id: 'culling', label: 'Culling', hint: 'What counts as a keeper' },
   { id: 'identification', label: 'Identification', hint: 'Plates, numbers and vision models' },
   { id: 'metadata', label: 'Metadata', hint: 'What is written next to your files' },
-  { id: 'lightroom', label: 'Lightroom', hint: 'The Conrod Bridge plug-in' },
+  { id: 'lightroom', label: 'Lightroom', hint: 'Stars, picks and labels in your files' },
   { id: 'system', label: 'System', hint: 'Models, cache and library data' },
 ];
 
@@ -151,7 +151,7 @@ export const FIELDS = {
   // ── applied automatically ──
   auto_apply: {
     label: 'Apply stars and picks automatically', kind: 'toggle',
-    hint: 'When an album finishes, write its stars and its suggested picks to the files. A pick flag cannot live in an XMP file, so the pick is written as a colour label (Blue by default) that Lightroom reads on Metadata → Read Metadata from File, or when the photos are imported. Verdicts also wait for the Lightroom plug-in.',
+    hint: 'When an album finishes, write its stars and its suggested picks to the files. A pick flag cannot live in an XMP file, so the pick is written as a colour label (Blue by default) that Lightroom reads on Metadata → Read Metadata from File, or when the photos are imported.',
   },
   pick_label: {
     label: 'Colour for suggested picks', kind: 'segmented',
@@ -164,8 +164,8 @@ export const FIELDS = {
 
   // ── lightroom ──
   lightroom_bridge: {
-    label: 'Lightroom Classic bridge', kind: 'toggle',
-    hint: 'Installs the Conrod Bridge plug-in in Lightroom Classic, so verdicts move both ways without adding it by hand.',
+    label: 'Install the Conrod Bridge plug-in', kind: 'toggle',
+    hint: 'Copies the plug-in into Lightroom Classic and keeps it current. Optional: Conrod reads and writes the files without it.',
   },
 };
 
@@ -350,13 +350,13 @@ export function aiModelStatusLabel(state) {
     keys: ['close_to_tray'],
   },
   {
-    id: 'auto-apply', tab: 'metadata', title: 'Applied automatically',
-    hint: 'What Conrod writes without being asked, once an album finishes. Never over your own stars or labels.',
+    id: 'auto-apply', tab: 'lightroom', title: 'Write stars, picks and colour labels to your photos',
+    hint: 'Conrod writes its stars and its suggested picks into the files you already have, so Lightroom sees them with or without the plug-in. Never over your own stars or labels.',
     keys: ['auto_apply', 'pick_label'],
   },
   {
-    id: 'lightroom', tab: 'lightroom', title: 'Lightroom Classic',
-    hint: 'The Conrod Bridge plug-in connects this library with your Lightroom catalog. Conrod installs it for you and keeps it current.',
+    id: 'lightroom', tab: 'lightroom', title: 'Optional: Lightroom plug-in',
+    hint: 'Adds live flags and labels inside Lightroom without re-reading metadata. Conrod reads and writes the files fine without it.',
     keys: ['lightroom_bridge'],
   },
 ];

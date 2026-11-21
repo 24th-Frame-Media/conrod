@@ -26,7 +26,8 @@
     "Unreleased": {
       "highlights": "Culling works with the camera's own focus point, Conrod talks to Lightroom, ingest is one live screen, and a crash no longer loses your place.",
       "add": [
-        { "section": "New", "text": "An optional decision model, switched on in Settings, answers yes/no questions about your frames on your own graphics card. It is a large one-time download and stays off until you choose it; with it off, or on a card without enough video memory, nothing changes." }
+        { "section": "New", "text": "An optional decision model, switched on in Settings, answers yes/no questions about your frames on your own graphics card. It is a large one-time download and stays off until you choose it; with it off, or on a card without enough video memory, nothing changes." },
+        { "section": "Improved", "text": "The Lightroom plug-in is now optional; Conrod writes stars, picks and colour labels to your photos by default." }
       ]
     }
   },

@@ -14,7 +14,7 @@ type Props = {
   toast: Toaster;
 };
 
-/** The Lightroom Classic tab: the bridge switch, the plug-in's state, and its two buttons. */
+/** The optional plug-in card on the Lightroom tab: the bridge switch, the plug-in's state, and its two buttons. */
 export function LightroomBridge({ value, changed, onChange, run, toast }: Props) {
   const [status, setStatus] = useState<LightroomPluginStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,10 +69,10 @@ export function LightroomBridge({ value, changed, onChange, run, toast }: Props)
   return (
     <section className="settings-section" aria-labelledby="settings-section-lightroom">
       <header className="settings-section-head">
-        <h3 id="settings-section-lightroom">Lightroom Classic</h3>
+        <h3 id="settings-section-lightroom">Optional: Lightroom plug-in</h3>
         <p className="section-hint">
-          The Conrod Bridge plug-in carries your stars and picks both ways. Conrod installs it and keeps it current;
-          restart Lightroom after an update so it loads.
+          Adds live flags and labels inside Lightroom without re-reading metadata. Conrod reads and writes the files
+          fine without it; restart Lightroom after installing so it loads.
         </p>
       </header>
       <SettingRow
