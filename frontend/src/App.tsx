@@ -7,6 +7,8 @@ import { WhatsNewSheet } from './components/WhatsNewSheet';
 import { call, engine, inTauri, mocked } from './lib/api';
 import { filename } from './lib/review';
 import { queueLabel } from './lib/format';
+import { healthStatus } from './lib/health.mjs';
+import { classifyScanError, type ScanFailure } from './lib/scanError.mjs';
 import { subjectExcluded } from './review.mjs';
 import { vlmModelLabel } from './lib/vlm';
 import type { DevStart } from './lib/mock';
@@ -40,6 +42,8 @@ export function App() {
   const [draft, setDraft] = useState<ScanDraft>({ root: '', label: '' });
   const [starting, setStarting] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  /** A `scan` call that threw before an album existed; the scan screen keeps its plain reason in view. */
+  const [scanError, setScanError] = useState<ScanFailure | null>(null);
   // A Settings tab another screen asked for; the nonce lets the same tab be asked for twice.
   const [settingsTab, setSettingsTab] = useState<{ id: SettingsTabId; nonce: number } | undefined>();
   // Best-effort mirror of Review's loupe/compare state, only for the Enter-key open-guard and dev-start below;
@@ -61,10 +65,11 @@ export function App() {
   const scanLive = useScanProgress();
   const identifyLive = useIdentifyProgress();
   const identifyPaused = status.tasks.some((task) => task.state === 'paused' && /^Identifying\b/.test(task.label));
-  // Review is locked for an album until its scan finishes: asking for it shows the scan instead.
-  // The scan's own final snapshot unlocks it a beat before the pushed status catches up.
-  const locked = jobId != null && status.activeJob === jobId && (scanLive[jobId]?.progress.state ?? 'running') === 'running';
-  const view: Page = page === 'Review' && locked ? 'Scan' : page;
+  // Review stays open while its album scans: it shows the frames already measured, and the
+  // pipeline actions (cull, identify, write) stay disabled by Review's own `busy` rule.
+  const view: Page = page;
+  const running = jobId != null && status.activeJob === jobId && (scanLive[jobId]?.progress.state ?? 'running') === 'running';
+  const health = healthStatus({ tasks: status.tasks, models: eng.models });
   const goPage = (next: Page) => {
     if (next === 'Scan' && status.activeJob != null) setJobId(status.activeJob);
     if (next === 'Identify') {
@@ -73,7 +78,7 @@ export function App() {
       const id = key ? Number(key.slice('Identifying:'.length)) : NaN;
       if (Number.isFinite(id)) setJobId(id);
     }
-    setPage(next === 'Review' && locked ? 'Scan' : next);
+    setPage(next);
   };
   // The request is for one visit: leaving Settings forgets it, so the next visit opens on the first tab.
   useEffect(() => { if (page !== 'Settings') setSettingsTab(undefined); }, [page]);
@@ -117,18 +122,19 @@ export function App() {
 
   const startScan = async (args: ScanArgs, defaults?: ImportDefaults) => {
     setStarting(true);
-    await run(async () => {
-      // The sheet's choices belong to this album: they travel with the scan and
-      // land in its job settings. Global defaults are only changed from Settings.
-      const scan: ScanArgs = defaults
-        ? {
-            ...args, scanProfile: defaults.scan_profile, blurStrictness: defaults.blur_strictness, burstGap: defaults.burst_gap,
-            groupingStacks: defaults.grouping_stacks, groupingSensitivity: defaults.grouping_sensitivity, groupingPause: defaults.grouping_pause,
-            groupingKeepPans: defaults.grouping_keep_pans, groupingFocusAnchor: defaults.grouping_focus_anchor,
-            groupingMerge: defaults.grouping_merge,
-            workflowMode: defaults.workflow_mode, identifyScope: defaults.identify_scope,
-          }
-        : args;
+    setScanError(null);
+    // The sheet's choices belong to this album: they travel with the scan and
+    // land in its job settings. Global defaults are only changed from Settings.
+    const scan: ScanArgs = defaults
+      ? {
+          ...args, scanProfile: defaults.scan_profile, blurStrictness: defaults.blur_strictness, burstGap: defaults.burst_gap,
+          groupingStacks: defaults.grouping_stacks, groupingSensitivity: defaults.grouping_sensitivity, groupingPause: defaults.grouping_pause,
+          groupingKeepPans: defaults.grouping_keep_pans, groupingFocusAnchor: defaults.grouping_focus_anchor,
+          groupingMerge: defaults.grouping_merge,
+          workflowMode: defaults.workflow_mode, identifyScope: defaults.identify_scope,
+        }
+      : args;
+    try {
       const { jobId: id, duplicates = 0, added = 0, scanning: started = true, queued = false, queuePosition = 0 } = await engine.scan(scan);
       await eng.refreshJobs();
       if (id != null) setJobId(id);
@@ -153,8 +159,17 @@ export function App() {
       }
       setPage('Scan');
       if (inTauri) void getCurrentWindow().requestUserAttention(UserAttentionType.Informational);
-    });
-    setStarting(false);
+    } catch (e) {
+      // A scan that never started gets one plain reason on the Ingest screen, not a raw toast.
+      const jobId = 'jobId' in scan ? scan.jobId : null;
+      const root = 'root' in scan ? scan.root : draft.root;
+      const label = 'label' in scan ? scan.label : (jobId != null ? eng.jobs.find((j) => j.id === jobId)?.label ?? draft.label : draft.label);
+      setScanError({ ...classifyScanError(String(e), { root, label }), jobId: jobId ?? undefined, label, raw: String(e), args: scan });
+      if (jobId != null) setJobId(jobId);
+      setPage('Scan');
+    } finally {
+      setStarting(false);
+    }
   };
   /** `scope` is the run's override; absent, the engine reads the album's own `identify_scope`. `onlyNew` reads just the subjects nobody has read yet. */
   const identify = (id: number, scope?: Scope, onlyNew = false) => void run(async () => {
@@ -203,10 +218,10 @@ export function App() {
 
   return (
     <div className="app">
-      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} actions={actions} popoverOpen={dev?.popover ?? false} />
+      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} health={health} actions={actions} popoverOpen={dev?.popover ?? false} />
       <main className="stage" key={view}>
         {view === 'Library' && (
-          <Library jobs={eng.jobs} models={eng.models} scanning={scanning} live={scanLive} activeJob={status.activeJob} queue={status.queue ?? []} onOpen={(j) => openJob(j.id)} onNewScan={() => setShowImport(true)}
+          <Library jobs={eng.jobs} models={eng.models} health={health} scanning={scanning} live={scanLive} activeJob={status.activeJob} queue={status.queue ?? []} onOpen={(j) => openJob(j.id)} onNewScan={() => setShowImport(true)}
             onIdentify={(j) => identify(j.id)} onResume={(j) => void startScan({ jobId: j.id })}
             onUnqueue={(j) => void run(async () => {
               await engine.unqueue(j.id);
@@ -227,10 +242,11 @@ export function App() {
             })} />
         )}
         {view === 'Scan' && (
-          <ScanScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? scanLive[jobId] : undefined} running={locked}
+          <ScanScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? scanLive[jobId] : undefined} running={running}
             paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={eng.setSettings}
             identify={jobId != null ? identifyLive[jobId] : undefined} status={status} identifyPaused={identifyPaused}
-            model={vlmModelLabel(eng.settings)}
+            model={vlmModelLabel(eng.settings)} scanError={scanError}
+            onRetryScan={() => { if (scanError?.args) void startScan(scanError.args); else if (jobId != null) void startScan({ jobId }); else actions.resume(); }}
             onPause={actions.pause} onResume={actions.resume} onCancel={actions.stop} onCancelOperation={actions.cancel} onVisionAction={visionAction}
             onReview={() => setPage('Review')} onLibrary={() => setPage('Library')} />
         )}
@@ -243,7 +259,7 @@ export function App() {
           <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} status={status} settings={eng.settings}
             showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} verbs={reviewVerbs}
             onJobsChanged={eng.refreshJobs} onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={(scope) => jobId != null && identify(jobId, scope)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
-              onLibrary={() => setPage('Library')} onWatchIdentify={() => jobId != null && setPage('Identify')}
+              onLibrary={() => setPage('Library')} onWatchIdentify={() => jobId != null && setPage('Identify')} onWatchScan={() => setPage('Scan')}
               onAcceptAll={() => void run(async () => {
                 const ids = rv.review.detections.filter((d) => !d.reviewed && rv.review.frames.some((f) => f.id === d.image_id && !subjectExcluded(f, d))).map((d) => d.id);
                 if (ids.length) await call('bulk_edit', { ids, reviewed: true });

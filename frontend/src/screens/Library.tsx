@@ -7,11 +7,12 @@ import { coverTint, etaText, hiddenCopies, jobState, pct, plural, queueLabel, sh
 import { overallEta, overallFraction } from '../lib/scan.mjs';
 import { albumSetting } from '../lib/album.mjs';
 import { identifyScopeOf } from '../lib/identify.mjs';
+import { installableModels, modelGroups, modelWord, type HealthStatus } from '../lib/health.mjs';
 import type { ScanLive } from '../state/useScanProgress';
 import { profileParent, type Job, type ModelInfo } from '../lib/types';
 
 type Props = {
-  jobs: Job[]; models: ModelInfo[]; scanning: boolean; live: Record<number, ScanLive>; activeJob: number | null;
+  jobs: Job[]; models: ModelInfo[]; health: HealthStatus; scanning: boolean; live: Record<number, ScanLive>; activeJob: number | null;
   /** Albums waiting their turn, first to run first. */
   queue: number[];
   onOpen: (job: Job) => void; onNewScan: () => void; onIdentify: (job: Job) => void;
@@ -75,12 +76,14 @@ function JobCard({ job, scanning, active, live, queuePosition, onOpen, onIdentif
 }
 
 /** Home: the albums as cover cards, with totals and model setup in the rail, as on the Python home screen. */
-export function Library({ jobs, models, scanning, live, activeJob, queue, onOpen, onNewScan, onIdentify, onResume, onDelete, onToggleIncludePeople, onUnqueue }: Props) {
+export function Library({ jobs, models, health, scanning, live, activeJob, queue, onOpen, onNewScan, onIdentify, onResume, onDelete, onToggleIncludePeople, onUnqueue }: Props) {
   const run = useRun();
   const [doomed, setDoomed] = useState<Job | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
   const scanned = jobs.reduce((n, j) => n + j.done, 0);
-  const ready = models.filter((m) => m.ready).length;
+  const { local, optional, vision } = modelGroups(models);
+  const ready = local.filter((m) => m.ready).length;
+  const missing = installableModels(models);
   return (
     <div className="screen">
       <div className="home">
@@ -129,11 +132,23 @@ export function Library({ jobs, models, scanning, live, activeJob, queue, onOpen
           </div>
           <div className="rail-card">
             <h4>Setup</h4>
-            <p>{models.length ? `${ready} of ${models.length} models ready` : 'Checking…'}</p>
-            <button onClick={() => void run(async () => { await call('install_models'); })} disabled={ready === models.length}>Install missing</button>
+            <p>{health.label} · {ready} of {local.length} models ready</p>
+            <button
+              title="Installs Conrod's own models only. A vision model (Ollama, OpenRouter) is set up in Settings, not here."
+              onClick={() => void run(async () => { await call('install_models'); })}
+              disabled={missing.length === 0}
+            >
+              Install missing
+            </button>
             <ul className="model-list">
-              {models.map((m) => (
-                <li key={m.file ?? m.name}><span className={`dot ${m.ready ? 'ok' : 'no'}`} />{m.name}<small>{m.ready ? 'Available' : 'Not installed'}</small></li>
+              {local.map((m) => (
+                <li key={m.file ?? m.name}><span className={`dot ${m.ready ? 'ok' : 'no'}`} />{m.name}<small>{modelWord(m)}</small></li>
+              ))}
+              {vision.map((m) => (
+                <li key={m.id ?? m.name}><span className={`dot ${m.ready ? 'ok' : 'no'}`} />{m.name}<small title={m.detail}>{modelWord(m)} · set up in Settings</small></li>
+              ))}
+              {optional.map((m) => (
+                <li key={m.file ?? m.name}><span className={`dot ${m.ready ? 'ok' : 'no'}`} />{m.name}<small>{modelWord(m)}</small></li>
               ))}
             </ul>
           </div>

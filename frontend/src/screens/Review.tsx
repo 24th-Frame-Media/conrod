@@ -15,6 +15,7 @@ import { WORKFLOW_OPTIONS, pipelineSteps, workflowIncludesCull, workflowIncludes
 import { everythingCount, hasReadings, identifyActionLabel, identifyNewLabel, identifyScopeOf, keeperCount } from '../lib/identify.mjs';
 import { call, engine } from '../lib/api';
 import { applyLine } from '../lib/apply.mjs';
+import { etaText, pct } from '../lib/format';
 import { useLocalFlag, useRun } from '../state/hooks';
 import { useToast } from '../state/toast';
 import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
@@ -123,6 +124,8 @@ type Props = {
   onWrite: (dryRun: boolean) => void;
   /** Reopen the live identification flow from the stepper while a run is going. */
   onWatchIdentify: () => void;
+  /** Reopen the scan while it is still running, from the "frames already measured" banner. */
+  onWatchScan: () => void;
   /** Album settings changed (preset, toggles): reload the job list so the new values show. */
   onJobsChanged: () => Promise<unknown> | void;
   /** Dev start only (`?mock=1&lightroom=…`): open the sheet or dialog a screenshot needs. */
@@ -184,7 +187,7 @@ function ResetAlbumDialog({ onCancel, onConfirm }: { onCancel: () => void; onCon
 }
 
 /** Toolbar (album, view, search, stars, sort, actions), facets, the card grid and the inspector. */
-export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onSkipAlbumIdentify, onWrite, onJobsChanged, onWatchIdentify, lightroomDev }: Props) {
+export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onSkipAlbumIdentify, onWrite, onJobsChanged, onWatchIdentify, onWatchScan, lightroomDev }: Props) {
   const [known, setKnown] = useState<KnownVehicle[]>([]);
   const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'reset_album' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
@@ -205,7 +208,10 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     if (lightroomDev === 'import' || lightroomDev === 'imported') { setLightroomOpen(true); return; }
     setExportOpen(true);
   }, [lightroomDev]);
-  const { filters, patchFilters, frames, review, facts, keepers, selected, frame, grouping, expanded } = rv;
+  const { filters, patchFilters, frames: allFrames, review, facts, keepers, selected, frame, grouping, expanded } = rv;
+  // While the scan runs, Review shows only the frames whose measurement has finished; the rest
+  // arrive through the usual 4 s refresh. Bursts that are ready keep their normal actions.
+  const frames = useMemo(() => (scanning ? allFrames.filter((f) => f.status === 'done') : allFrames), [allFrames, scanning]);
   const currentJob = jobs.find((j) => j.id === jobId);
   const currentProfile = String(currentJob?.scan_profile || settings.scan_profile || 'motorsport');
   // Vehicle-only controls (by-vehicle grouping, "needs a look" for unread numbers and plates) go away for shoots with no vehicles to read.
@@ -216,6 +222,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const groupingNow = grouping === 'vehicles' && !vehicleBrowse ? 'bursts' : grouping;
   const identifyTask = jobId == null ? undefined : status.tasks.find((task) => (task.state === 'running' || task.state === 'paused') && /^Identifying\b/.test(task.label) && task.label.includes(`album ${jobId}`));
   const identifying = Boolean(identifyTask || (jobId != null && status.operations.some((key) => key === `Identifying:${jobId}`)));
+  const scanTask = scanning ? status.tasks.find((task) => (task.state === 'running' || task.state === 'paused') && /^Scanning\b/.test(task.label)) : undefined;
 
   // The one filtered model: every stack below is built from `frames`, the list the toolbar already narrowed.
   const ranks = useMemo(() => burstRankMap(review.frames, keepers), [review.frames, keepers]);
@@ -997,6 +1004,20 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
             if (done) setConfirmReset(null);
           }}
         />
+      )}
+      {scanning && (
+        <section className="identify-banner scan-running" aria-live="polite">
+          <div className="identify-copy">
+            <div className="identify-title">
+              <Icon name="eye" size={16} />
+              <div>
+                <b>Scan in progress{scanTask && scanTask.total > 0 ? ` — ${pct(scanTask.done, scanTask.total)}% of this stage` : ''}</b>
+                <span>Review is showing the frames already measured. Verdicts on finished bursts can still change; more frames arrive as the scan runs.{scanTask?.eta != null ? ` About ${etaText(scanTask.eta)} left in this stage.` : ''}</span>
+              </div>
+              <button className="ghost small" onClick={onWatchScan}>Watch scan</button>
+            </div>
+          </div>
+        </section>
       )}
       {identifyTask && <IdentificationBanner task={identifyTask} settings={albumSettings} onSkip={onSkipIdentify} />}
       {hasRead && !identifying && (scopeEligible > 0 || identifyStale) && (
