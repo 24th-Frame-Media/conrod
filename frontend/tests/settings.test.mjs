@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FIELDS, OVERRIDABLE, SECTIONS, TABS, albumOverrideCounts, dirtyKeys, dirtyTabs, fieldsOf, keyTab, searchFields, tabById,
+  AI_MODELS, FIELDS, OVERRIDABLE, SECTIONS, TABS, aiModelStatus, aiModelWhere,
+  albumOverrideCounts, dirtyKeys, dirtyTabs, fieldsOf, keyTab, searchFields, tabById,
 } from '../src/lib/settings.mjs';
 
 const LEGACY_GROUPS = [
@@ -26,7 +27,7 @@ test('every setting keeps its engine key and appears in exactly one section', ()
     if (key === 'vlm_services') continue; // a whole list, rendered by the providers section
     assert.ok(seen.has(key), `${key} is still on the page`);
   }
-  assert.equal(SECTIONS.length, 14); // incl. the opt-in decision model
+  assert.equal(SECTIONS.length, 10); // one AI models card, not four scattered sections
   assert.deepEqual(TABS.map((t) => t.label), ['Culling', 'Identification', 'Metadata', 'System']);
 });
 
@@ -65,9 +66,67 @@ test('search matches labels, keys and hints, ignoring case and padding', () => {
   const plate = searchFields('plate').map((m) => m.key);
   assert.ok(plate.includes('read_plates') && plate.includes('write_plate_keyword'));
   const vision = searchFields('vision');
-  assert.ok(vision.some((m) => m.tab === 'identification' && m.section === 'vision-providers'));
+  assert.ok(vision.some((m) => m.tab === 'identification' && m.section === 'ai-models'));
   assert.equal(searchFields('zzzz').length, 0);
   assert.equal(searchFields('burst')[0].sectionTitle, 'Culling');
+});
+
+test('the AI models card lists every model once and owns every switch it shows', () => {
+  assert.deepEqual(
+    AI_MODELS.map((model) => model.id),
+    ['detector', 'plates', 'text', 'faces', 'quality', 'vision', 'decision'],
+  );
+  const section = SECTIONS.find((s) => s.id === 'ai-models');
+  assert.ok(section && section.tab === 'identification');
+  const owned = new Set(section.keys);
+  for (const model of AI_MODELS) {
+    assert.ok(model.does.length > 20, `${model.id} says what it does`);
+    assert.ok(model.switches.length > 0, `${model.id} has a switch`);
+    for (const key of [...model.keys, ...model.switches]) {
+      assert.ok(FIELDS[key], `${model.id}: ${key} is a real setting`);
+      assert.ok(owned.has(key), `${model.id}: ${key} is in the AI models section`);
+      assert.ok(!SECTIONS.some((s) => s.id !== 'ai-models' && s.keys.includes(key)), `${key} is not duplicated`);
+    }
+  }
+  // The OCR row explains that it only fills a number the vision model missed.
+  assert.match(AI_MODELS.find((m) => m.id === 'text').does, /only fills in a number when the vision model saw none/);
+});
+
+test('a model row says where it runs and whether it is ready', () => {
+  const detector = AI_MODELS.find((m) => m.id === 'detector');
+  const vision = AI_MODELS.find((m) => m.id === 'vision');
+  const decision = AI_MODELS.find((m) => m.id === 'decision');
+  assert.equal(aiModelWhere(detector, {}), 'This PC');
+  assert.equal(aiModelWhere(decision, { moments_transport: 'in_process' }), "This PC's graphics card");
+  assert.equal(aiModelWhere(decision, { moments_transport: 'openrouter' }), 'Cloud (OpenRouter)');
+  assert.equal(aiModelWhere(vision, { vlm_services: [{ enabled: true, provider: 'ollama' }] }), 'This PC');
+  assert.equal(aiModelWhere(vision, { vlm_services: [{ enabled: true, provider: 'openrouter' }] }), 'Cloud');
+
+  const rows = [
+    { name: 'Detector', file: 'd.onnx', ready: true },
+    { name: 'Quality', file: 'q.onnx', ready: false, detail: 'Not installed' },
+    { name: 'Decision model', file: 'x', ready: false, detail: 'Installing 42%' },
+    { name: 'vlm', file: 'vlm', id: 'vlm-1', ready: true },
+  ];
+  assert.equal(aiModelStatus(detector, { settings: { include_cars: true }, models: rows }), 'ready');
+  assert.equal(aiModelStatus(detector, { settings: { include_cars: false }, models: rows }), 'ready', 'always on');
+  assert.equal(aiModelStatus(vision, { settings: { use_vlm: false }, models: rows }), 'off');
+  assert.equal(aiModelStatus(vision, { settings: { use_vlm: true, vlm_services: [] }, models: rows }), 'not set up');
+  assert.equal(
+    aiModelStatus(vision, { settings: { use_vlm: true, vlm_services: [{ id: 'vlm-1', enabled: true }] }, models: rows }),
+    'ready',
+  );
+  assert.equal(aiModelStatus(decision, { settings: { use_decider: true }, models: rows }), 'downloading');
+  assert.equal(aiModelStatus(decision, { settings: { use_decider: false }, models: rows }), 'off');
+  assert.equal(
+    aiModelStatus(decision, { settings: { moments_backend: 'decider', moments_transport: 'openrouter', moments_openrouter_key: 'sk-or-x' }, models: [] }),
+    'ready',
+    'a moments decision model over OpenRouter is on and configured',
+  );
+  assert.equal(
+    aiModelStatus(decision, { settings: { moments_backend: 'decider', moments_transport: 'openrouter' }, models: [] }),
+    'not set up',
+  );
 });
 
 test('dirty state is per key, per tab and compares lists deeply', () => {

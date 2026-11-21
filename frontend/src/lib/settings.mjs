@@ -44,6 +44,10 @@ export const FIELDS = {
   include_cars: { label: 'Cars', kind: 'toggle' },
   include_bikes: { label: 'Bikes', kind: 'toggle' },
   include_trucks: { label: 'Trucks', kind: 'toggle' },
+  include_people: {
+    label: 'People', kind: 'toggle',
+    hint: 'Find people for culling, faces and crowds.',
+  },
   detect_conf: {
     label: 'Detection confidence', kind: 'number',
     hint: 'Lower finds more vehicles, and more false ones.',
@@ -60,15 +64,20 @@ export const FIELDS = {
   // ── identification ──
   moments_backend: {
     label: 'Judge moments with', kind: 'segmented',
-    hint: 'The vision model names tags it is sure of but has no real probability, so its readings are marked unverified. The decision model answers calibrated probabilities: on this PC when Use the decision model is on (below), else through OpenRouter if you add a key.',
+    hint: 'The vision model names tags it is sure of but has no real probability, so its readings are marked unverified. The decision model answers calibrated probabilities: on this PC or through OpenRouter, as chosen under AI models below.',
     options: [{ id: 'vlm', name: 'Vision model' }, { id: 'decider', name: 'Decision model' }],
   },
   moments_threshold: {
     label: 'Moment confidence', kind: 'number', album: true,
     hint: 'A moment must be this likely (0.5 to 1) before it is shown as sure or can lift a frame. Below it, down to 0.5, it shows as maybe and never changes ranking.',
   },
-  moments_openrouter_model: { label: 'Decision model (OpenRouter id)', kind: 'text', hint: 'Used when judging with the decision model through OpenRouter.' },
-  moments_openrouter_key: { label: 'OpenRouter key', kind: 'text', hint: 'Stored in your settings file; never written to logs.' },
+  moments_transport: {
+    label: 'Where it runs', kind: 'segmented',
+    hint: 'Local uses this PC’s graphics card, with no account or internet. OpenRouter sends each question to the cloud with your key.',
+    options: [{ id: 'auto', name: 'Auto' }, { id: 'in_process', name: 'Local (this PC)' }, { id: 'openrouter', name: 'OpenRouter' }],
+  },
+  moments_openrouter_model: { label: 'OpenRouter model', kind: 'text', hint: 'Model id used for the decision model through OpenRouter, e.g. perplexity/pplx-decider-flash-v1.3:free.' },
+  moments_openrouter_key: { label: 'OpenRouter key', kind: 'text', hint: 'Shared with an OpenRouter vision service if you add one. Stored in your settings file; never written to logs.' },
   read_plates: {
     label: 'Read licence plates', kind: 'toggle', album: true,
     hint: 'OCR registration plates.',
@@ -108,7 +117,11 @@ export const FIELDS = {
   },
   use_decider: {
     label: 'Use the decision model', kind: 'toggle',
-    hint: "Runs the Perplexity decision model on this PC's graphics card to answer yes/no questions about a frame. Off, or not enough video memory: every scan behaves exactly as without it.",
+    hint: "Runs the Perplexity decision model to answer yes/no questions about a frame. Off, or not enough video memory: every scan behaves exactly as without it.",
+  },
+  use_quality_score: {
+    label: 'Score sharpness/quality', kind: 'toggle',
+    hint: 'Scores each subject for technical quality and uses it only to break a tie between equally sharp frames. Opt-in: it needs its own small model download.',
   },
   decider_quant: {
     label: 'Precision', kind: 'segmented',
@@ -138,6 +151,127 @@ export const FIELDS = {
 // Each definition carries its own key, so rows and search results are self-describing.
 for (const [key, field] of Object.entries(FIELDS)) field.key = key;
 
+/**
+ * The AI models card's rows, in page order. `keys` lists every setting the row
+ * owns (all of them live in the `ai-models` section); `switches` are the ones
+ * drawn as an on/off switch in the row itself. `modelNames` matches rows of the
+ * engine's `health` list by display name.
+ */
+export const AI_MODELS = [
+  {
+    id: 'detector', title: 'Car & person detector (YOLO)',
+    does: 'Finds the cars, bikes, trucks and people in every frame before anything is read.',
+    where: 'pc', modelNames: ['Detector'],
+    keys: ['include_cars', 'include_bikes', 'include_trucks'],
+    switches: ['include_cars', 'include_bikes', 'include_trucks'],
+  },
+  {
+    id: 'plates', title: 'Plate finder + plate reader',
+    does: 'Finds the number plate and reads its characters.',
+    where: 'pc', modelNames: ['Plates'],
+    keys: ['read_plates'], switches: ['read_plates'],
+  },
+  {
+    id: 'text', title: 'Number/text reader (OCR)',
+    does: 'Reads race numbers, signage and sponsor boards. It only fills in a number when the vision model saw none.',
+    where: 'pc', modelNames: ['Text (OCR)'],
+    keys: ['read_numbers', 'read_text'], switches: ['read_numbers', 'read_text'],
+  },
+  {
+    id: 'faces', title: 'Faces/eyes',
+    does: 'Finds faces and checks whether eyes are open, so a shut eye can lower a frame.',
+    where: 'pc', modelNames: ['Faces'],
+    keys: ['include_people'], switches: ['include_people'],
+  },
+  {
+    id: 'quality', title: 'Sharpness/quality',
+    does: 'Scores each subject for technical quality and uses it only to break a tie between equally sharp frames.',
+    where: 'pc', modelNames: ['Quality'],
+    keys: ['use_quality_score'], switches: ['use_quality_score'],
+  },
+  {
+    id: 'vision', title: 'Vision model',
+    does: 'Reads make, model, colour, team and race number by looking at the car.',
+    where: 'dynamic',
+    keys: ['use_vlm', 'read_action'], switches: ['use_vlm', 'read_action'],
+  },
+  {
+    id: 'decision', title: 'Decision model',
+    does: 'Judges moments and answers many yes/no questions about a frame, on your graphics card or through OpenRouter.',
+    where: 'dynamic',
+    keys: ['use_decider', 'decider_quant', 'moments_transport', 'moments_openrouter_model', 'moments_openrouter_key'],
+    switches: ['use_decider'],
+  },
+];
+
+const enabledServices = (settings) => (Array.isArray(settings?.vlm_services) ? settings.vlm_services.filter((s) => s.enabled) : []);
+
+/** The row's primary switch: the detector is always on; text needs either reader. */
+function modelOn(model, settings) {
+  switch (model.id) {
+    case 'detector': return true;
+    case 'text': return Boolean(settings?.read_numbers || settings?.read_text);
+    case 'decision': return Boolean(settings?.use_decider || settings?.moments_backend === 'decider');
+    case 'vision': return Boolean(settings?.use_vlm);
+    case 'faces': return Boolean(settings?.include_people);
+    case 'quality': return Boolean(settings?.use_quality_score);
+    case 'plates': return Boolean(settings?.read_plates);
+    default: return false;
+  }
+}
+
+/** Where a row runs, in plain words: this PC, its graphics card, or the cloud. */
+export function aiModelWhere(model, settings = {}) {
+  if (model.id === 'vision') {
+    const services = enabledServices(settings);
+    if (services.length === 0) return 'This PC or cloud';
+    if (services.every((s) => s.provider === 'ollama')) return 'This PC';
+    if (services.every((s) => s.provider !== 'ollama')) return 'Cloud';
+    return 'This PC and cloud';
+  }
+  if (model.id === 'decision') {
+    if (settings.moments_transport === 'in_process') return "This PC's graphics card";
+    if (settings.moments_transport === 'openrouter') return 'Cloud (OpenRouter)';
+    return "This PC's graphics card or OpenRouter";
+  }
+  return 'This PC';
+}
+
+/**
+ * `ready`, `downloading`, `off` or `not set up`. Pure: the caller passes the
+ * engine's health rows (`models`) and the current settings draft.
+ */
+export function aiModelStatus(model, { settings = {}, models = [] } = {}) {
+  if (!modelOn(model, settings)) return 'off';
+  const rows = Array.isArray(models) ? models : [];
+  if (model.id === 'vision') {
+    const services = enabledServices(settings);
+    if (services.length === 0) return 'not set up';
+    return services.some((s) => rows.some((m) => m.file === 'vlm' && m.id === s.id && m.ready))
+      ? 'ready'
+      : 'not set up';
+  }
+  const row = model.id === 'decision'
+    ? rows.find((m) => m.name === 'Decision model')
+    : rows.find((m) => (model.modelNames ?? []).includes(m.name));
+  if (model.id === 'decision') {
+    const transport = settings.moments_transport ?? 'auto';
+    const key = String(settings.moments_openrouter_key ?? '').trim();
+    // A cloud key is configured, not tested: the settings' own test button
+    // checks it when the photographer asks.
+    if (transport === 'openrouter') return key ? 'ready' : 'not set up';
+    if (transport === 'auto' && key) return 'ready';
+  }
+  if (!row) return 'not set up';
+  if (row.ready) return 'ready';
+  if (/install|download/i.test(String(row.detail ?? ''))) return 'downloading';
+  return 'not set up';
+}
+
+export function aiModelStatusLabel(state) {
+  return { ready: 'Ready', downloading: 'Downloading', off: 'Off', 'not set up': 'Not set up' }[state] ?? state;
+}
+
 /** Page order. `advanced` sections are folded until opened. */export const SECTIONS = [
   {
     id: 'culling', tab: 'culling', title: 'Culling',
@@ -150,45 +284,31 @@ for (const [key, field] of Object.entries(FIELDS)) field.key = key;
     keys: ['scan_profile'],
   },
   {
-    id: 'subjects', tab: 'culling', title: 'What to detect',
-    hint: 'The subjects Conrod looks for in every frame.',
-    keys: ['include_cars', 'include_bikes', 'include_trucks'],
-  },
-  {
     id: 'detection-tuning', tab: 'culling', title: 'Detection tuning', advanced: true,
     hint: 'Rarely worth changing unless a shoot is being missed or over-detected.',
     keys: ['detect_conf', 'min_box_fraction', 'max_vehicles_per_frame'],
   },
   {
-    id: 'reading', tab: 'identification', title: 'What to read',
-    hint: 'Identification runs after sharpness, so culling is never held up by OCR.',
-    keys: ['read_plates', 'read_numbers', 'read_text', 'read_action'],
+    id: 'ai-models', tab: 'identification', title: 'AI models',
+    hint: 'Every model Conrod can use, what each does, where it runs and whether it is ready. A switch turns each one on or off.',
+    keys: [
+      'include_cars', 'include_bikes', 'include_trucks',
+      'read_plates', 'read_numbers', 'read_text', 'include_people',
+      'use_quality_score', 'use_vlm', 'read_action', 'vlm_strategy',
+      'use_decider', 'decider_quant', 'moments_transport',
+      'moments_openrouter_model', 'moments_openrouter_key',
+    ],
   },
   {
     id: 'moments', tab: 'identification', title: 'Moments',
     hint: 'What makes a keeper at each kind of shoot (a kiss, tyre smoke, a jump). Which moments, and whether they lift ranking, are set per album from its shoot settings.',
-    keys: ['moments_backend', 'moments_threshold', 'moments_openrouter_model', 'moments_openrouter_key'],
+    keys: ['moments_backend', 'moments_threshold'],
   },
   {
     id: 'known-fill', tab: 'identification', title: 'Known vehicles and names',
     hint: 'Fill in what the model misses, without guessing over a fresh reading.',
     keys: ['use_known_vehicles', 'normalise_names', 'entry_list'],
   },
-  {
-    id: 'vision-providers', tab: 'identification', title: 'Vision providers',
-    hint: 'One or more servers that read make, model, colour and team.',
-    keys: ['vlm_strategy'],
-  },
-  {
-    id: 'vision-model', tab: 'identification', title: 'Vision model',
-    keys: ['use_vlm'],
-  },
-  {
-    id: 'decision-model', tab: 'identification', title: 'Decision model',
-    hint: 'An optional on-device model that answers many yes/no questions about a frame at once.',
-    keys: ['use_decider', 'decider_quant'],
-  },
-
   {
     id: 'vision-limits', tab: 'identification', title: 'Vision limits', advanced: true,
     hint: 'Only worth changing when a host is slow or rejects large images.',

@@ -521,9 +521,11 @@ export type OllamaModelsResponse = {
   error?: string;
 };
 
-export type VlmProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'opencode' | 'opencode-go';
+export type VlmProvider = 'ollama' | 'openrouter' | 'openai' | 'anthropic' | 'gemini' | 'opencode' | 'opencode-go';
 /** `provider_models`: the models a provider key can call. */
 export type ProviderModelsResponse = { models: { id: string; name: string }[]; error?: string };
+/** `openrouter_check`: who an OpenRouter key belongs to, without a model call. */
+export type OpenRouterCheck = { ok: boolean; label?: string; limit?: number | null; usage?: number | null; error?: string };
 export type VlmService = {
   id: string;
   provider: VlmProvider;

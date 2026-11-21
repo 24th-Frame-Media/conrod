@@ -31,6 +31,12 @@
     }
   },
   "commits": {
+    "5130167": [
+      { "section": "New", "text": "Settings has one AI models page: every model Conrod can use, in plain words, with where it runs, whether it is ready and a switch to turn it on or off." },
+      { "section": "New", "text": "The decision model can run on your graphics card or through OpenRouter, with a key field and a test button; OpenRouter can also read cars as a vision service and share that key." },
+      { "section": "Improved", "text": "The separate vision and decision sections, and the duplicate model list in the side panel, are gone, so there is one place to see and switch each model." }
+    ],
+    "1ae40f2": { "section": "New", "text": "OpenRouter is available as a vision service, so a cloud model can read make, model, colour and team, with its key checked without spending a request." },
     "91d27b3": [
       { "section": "Fixed", "text": "The live import screen keeps its header and pipeline in place: the worker cards scroll in their own panel instead of the whole page moving." },
       { "section": "Fixed", "text": "The list of detections in Review's side panel scrolls again when a frame has more than fit." }

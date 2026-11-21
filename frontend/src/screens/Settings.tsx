@@ -7,7 +7,8 @@ import { relaunch } from '@tauri-apps/plugin-process';
 import { engine, inTauri } from '../lib/api';
 import { plural } from '../lib/format';
 import {
-  FIELDS, SECTIONS, TABS, albumOverrideCounts, dirtyKeys, dirtyTabs, searchFields, tabById,
+  AI_MODELS, FIELDS, SECTIONS, TABS, aiModelStatus, aiModelStatusLabel, aiModelWhere,
+  albumOverrideCounts, dirtyKeys, dirtyTabs, searchFields, tabById,
   type SettingsTabId,
 } from '../lib/settings.mjs';
 import { SettingsSection, SettingRow } from '../components/SettingsFields';
@@ -32,6 +33,7 @@ export const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
 
 const VLM_PROVIDERS: { id: VlmProvider; name: string; defaultModel: string }[] = [
   { id: 'ollama', name: 'Ollama (local or self-hosted)', defaultModel: 'qwen2.5vl:7b' },
+  { id: 'openrouter', name: 'OpenRouter', defaultModel: 'qwen/qwen2.5-vl-72b-instruct' },
   { id: 'openai', name: 'OpenAI (GPT-4o and newer)', defaultModel: 'gpt-4o' },
   { id: 'anthropic', name: 'Anthropic (Claude 3.5 / 3.7)', defaultModel: 'claude-3-7-sonnet-20250219' },
   { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini-1.5-flash' },
@@ -58,7 +60,7 @@ function serverTitle(service: VlmService): string {
 }
 
 /** The cloud providers whose key can list its models. The others only take a typed name. */
-const LISTABLE_PROVIDERS: VlmProvider[] = ['openai', 'opencode', 'opencode-go'];
+const LISTABLE_PROVIDERS: VlmProvider[] = ['openai', 'openrouter', 'opencode', 'opencode-go'];
 /** Sentinel for the "Other…" choice in a model select; never a real model id. */
 const CUSTOM_MODEL = '__other__';
 
@@ -250,8 +252,14 @@ function VlmServerCard({ service, status, onChangeModel, onToggleEnabled, onRemo
   );
 }
 
+type VlmAddFormProps = {
+  onAdd: (service: VlmService) => void;
+  /** The decision model's OpenRouter key, offered for reuse here. */
+  sharedKey?: string;
+};
+
 /** The add-a-provider form; local state so typing here never disturbs the saved settings. */
-function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
+function VlmAddForm({ onAdd, sharedKey = '' }: VlmAddFormProps) {
   const [open, setOpen] = useState(false);
   const [provider, setProvider] = useState<VlmProvider>('ollama');
   const [host, setHost] = useState(DEFAULT_OLLAMA_HOST);
@@ -349,6 +357,11 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
             <span className="label">API key</span>
             <input type="password" value={apiKey} spellCheck={false} onChange={(e) => setApiKey(e.target.value)} />
           </label>
+          {provider === 'openrouter' && sharedKey.trim() && apiKey !== sharedKey && (
+            <button type="button" className="ghost small" onClick={() => setApiKey(sharedKey)}>
+              Use the decision model's OpenRouter key
+            </button>
+          )}
           {provider === 'anthropic' && (
             <label className="setting">
               <span className="label">Key kind</span>
@@ -383,6 +396,172 @@ function VlmAddForm({ onAdd }: { onAdd: (service: VlmService) => void }) {
         <button type="button" className="ghost small" onClick={() => setOpen(false)}>Cancel</button>
       </div>
     </div>
+  );
+}
+
+type ModelSwitchProps = {
+  fieldKey: string;
+  value: SettingValue;
+  onChange: (value: SettingValue) => void;
+};
+
+/** A compact on/off control inside an AI model row; the label is the field's own. */
+function ModelSwitch({ fieldKey, value, onChange }: ModelSwitchProps) {
+  const field = FIELDS[fieldKey];
+  if (!field) return null;
+  return (
+    <label className="ai-model-switch">
+      <input
+        type="checkbox"
+        role="switch"
+        checked={Boolean(value)}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span>{field.label}</span>
+    </label>
+  );
+}
+
+type AiModelsCardProps = {
+  draft: SettingsMap;
+  saved: SettingsMap;
+  models: ModelInfo[];
+  services: VlmService[];
+  onChange: (key: string, value: SettingValue) => void;
+  setServices: (next: VlmService[]) => void;
+  toast: Toaster;
+  onModelsChanged?: () => void;
+};
+
+/**
+ * The one AI models card: every model Conrod can use, what it does, where it
+ * runs, whether it is ready, and its switch. The vision servers and the
+ * decision model's transport live here rather than in their own sections.
+ */
+function AiModelsCard({ draft, saved, models, services, onChange, setServices, toast, onModelsChanged }: AiModelsCardProps) {
+  const [testing, setTesting] = useState(false);
+  const openRouterKey = String(draft.moments_openrouter_key ?? '');
+
+  const testOpenRouter = async () => {
+    if (testing) return;
+    setTesting(true);
+    try {
+      const res = await engine.openRouterCheck(openRouterKey);
+      if (res.ok) toast(`OpenRouter key works${res.label ? ` (${res.label})` : ''}.`, { tone: 'ok' });
+      else toast(`OpenRouter: ${res.error ?? 'the key was refused'}`, { tone: 'error' });
+    } catch (e) {
+      toast(String(e), { tone: 'error' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <section className="settings-section ai-models" aria-labelledby="settings-section-ai-models">
+      <header className="settings-section-head">
+        <h3 id="settings-section-ai-models">AI models</h3>
+        <p className="section-hint">Every model Conrod can use, what it does, where it runs and whether it is ready.</p>
+      </header>
+
+      <div className="ai-model-list">
+        {AI_MODELS.map((model) => {
+          const state = aiModelStatus(model, { settings: draft, models });
+          return (
+            <div className={`ai-model-row is-${state.replace(' ', '-')}`} key={model.id} data-model={model.id}>
+              <div className="ai-model-copy">
+                <strong>{model.title}</strong>
+                <p>{model.does}</p>
+                <p className="muted small">
+                  Runs on {aiModelWhere(model, draft)} ·{' '}
+                  <span className={`ai-model-status is-${state.replace(' ', '-')}`}>
+                    <span className={`dot ${state === 'ready' ? 'ok' : state === 'off' ? '' : 'no'}`} aria-hidden="true" />
+                    {' '}{aiModelStatusLabel(state)}
+                  </span>
+                </p>
+              </div>
+              <div className="ai-model-controls">
+                {model.switches.map((key) => (
+                  <ModelSwitch
+                    key={key}
+                    fieldKey={key}
+                    value={draft[key]}
+                    onChange={(value) => onChange(key, value)}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="ai-model-detail">
+        <h4>Vision servers</h4>
+        <p className="section-hint">One or more servers that read make, model, colour and team. Work is spread across the ones that are on.</p>
+        <SettingRow
+          field={FIELDS.vlm_strategy}
+          value={draft.vlm_strategy ?? 'least_busy'}
+          changed={draft.vlm_strategy !== saved.vlm_strategy}
+          onChange={(value) => onChange('vlm_strategy', value)}
+        />
+        <div className="vlm-server-grid">
+          {services.map((service) => {
+            const serviceStatus = models.find((model) => model.file === 'vlm' && model.id === service.id);
+            return (
+              <VlmServerCard
+                key={service.id}
+                service={service}
+                status={serviceStatus}
+                onChangeModel={(model) => setServices(services.map((item) => (item.id === service.id ? { ...item, model } : item)))}
+                onToggleEnabled={() => setServices(services.map((item) => (item.id === service.id ? { ...item, enabled: !item.enabled } : item)))}
+                onRemove={() => setServices(services.filter((item) => item.id !== service.id))}
+              />
+            );
+          })}
+          {services.length === 0 && <p className="vlm-empty muted">No vision servers yet. Add a local Ollama server or a cloud key below.</p>}
+        </div>
+        <VlmAddForm sharedKey={openRouterKey} onAdd={(service) => setServices([...services, service])} />
+      </div>
+
+      <div className="ai-model-detail">
+        <h4>Decision model</h4>
+        <DeciderCard toast={toast} onChanged={onModelsChanged} />
+        <SettingRow
+          field={FIELDS.decider_quant}
+          value={draft.decider_quant ?? 'auto'}
+          changed={draft.decider_quant !== saved.decider_quant}
+          onChange={(value) => onChange('decider_quant', value)}
+        />
+        <SettingRow
+          field={FIELDS.moments_transport}
+          value={draft.moments_transport ?? 'auto'}
+          changed={draft.moments_transport !== saved.moments_transport}
+          onChange={(value) => onChange('moments_transport', value)}
+        />
+        <p className="section-hint">
+          {String(draft.moments_transport ?? 'auto') === 'openrouter'
+            ? 'Questions go to OpenRouter. Add a key below; the vision model can share it.'
+            : "Local runs on this PC's graphics card. OpenRouter sends the questions to the cloud."}
+        </p>
+        <SettingRow
+          field={FIELDS.moments_openrouter_model}
+          value={draft.moments_openrouter_model ?? ''}
+          changed={draft.moments_openrouter_model !== saved.moments_openrouter_model}
+          onChange={(value) => onChange('moments_openrouter_model', value)}
+        />
+        <SettingRow
+          field={FIELDS.moments_openrouter_key}
+          value={draft.moments_openrouter_key ?? ''}
+          changed={draft.moments_openrouter_key !== saved.moments_openrouter_key}
+          onChange={(value) => onChange('moments_openrouter_key', value)}
+        />
+        <div className="actions-row">
+          <button type="button" className="ghost small" disabled={testing || !openRouterKey.trim()} onClick={() => void testOpenRouter()}>
+            {testing ? 'Testing…' : 'Test OpenRouter key'}
+          </button>
+          <span className="muted small">Checks the key with OpenRouter without spending a model call.</span>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -571,8 +750,6 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
     .filter((group) => group.matches.length > 0);
 
   const services = getVlmServices(draft);
-  const enabledServices = services.filter((service) => service.enabled).length;
-  const strategyName = FIELDS.vlm_strategy.options?.find((option) => option.id === String(draft.vlm_strategy ?? 'least_busy'))?.name ?? 'Least busy';
   const overrides = useMemo(() => albumOverrideCounts(jobs, settings), [jobs, settings]);
   const totalPhotos = jobs.reduce((sum, job) => sum + job.total, 0);
 
@@ -740,41 +917,18 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
               {activeTab === 'identification' && (
                 <>
                   {SECTIONS.filter((section) => section.tab === 'identification').map((section) => (
-                    section.id === 'decision-model' ? (
-              <div key={section.id} className="decider-section">
-                <SettingsSection section={section} draft={draft} saved={settings} onChange={setValue} />
-                <DeciderCard toast={toast} onChanged={onModelsChanged} />
-              </div>
-            ) : section.id === 'vision-providers' ? (
-                      <section key={section.id} className="settings-section" aria-labelledby="settings-section-vision-providers">
-                        <header className="settings-section-head">
-                          <h3 id="settings-section-vision-providers">Vision providers</h3>
-                          <p className="section-hint">One or more servers that read make, model, colour and team. Work is spread across the ones that are on.</p>
-                        </header>
-                        <SettingRow
-                          field={FIELDS.vlm_strategy}
-                          value={draft.vlm_strategy ?? 'least_busy'}
-                          changed={draft.vlm_strategy !== settings.vlm_strategy}
-                          onChange={(value) => setValue('vlm_strategy', value)}
-                        />
-                        <div className="vlm-server-grid">
-                          {services.map((service) => {
-                            const serviceStatus = models.find((model) => model.file === 'vlm' && model.id === service.id);
-                            return (
-                              <VlmServerCard
-                                key={service.id}
-                                service={service}
-                                status={serviceStatus}
-                                onChangeModel={(model) => setServices(services.map((item) => (item.id === service.id ? { ...item, model } : item)))}
-                                onToggleEnabled={() => setServices(services.map((item) => (item.id === service.id ? { ...item, enabled: !item.enabled } : item)))}
-                                onRemove={() => setServices(services.filter((item) => item.id !== service.id))}
-                              />
-                            );
-                          })}
-                          {services.length === 0 && <p className="vlm-empty muted">No vision providers yet. Add a local Ollama server or a cloud key below.</p>}
-                        </div>
-                        <VlmAddForm onAdd={(service) => setServices([...services, service])} />
-                      </section>
+                    section.id === 'ai-models' ? (
+                      <AiModelsCard
+                        key={section.id}
+                        draft={draft}
+                        saved={settings}
+                        models={models}
+                        services={services}
+                        onChange={setValue}
+                        setServices={setServices}
+                        toast={toast}
+                        onModelsChanged={onModelsChanged}
+                      />
                     ) : (
                       <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue} />
                     )
@@ -865,36 +1019,6 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                 </li>
               ))}
             </ul>
-          </section>
-
-          <section className="sidebar-card" aria-labelledby="settings-models">
-            <h4 id="settings-models">Models</h4>
-            <div className="sidebar-meta-list">
-              <div className="sidebar-meta-row">
-                <span className="meta-key">Vision providers</span>
-                <span className="meta-val">{enabledServices} of {services.length} on</span>
-              </div>
-              <div className="sidebar-meta-row">
-                <span className="meta-key">Load balancing</span>
-                <span className="meta-val">{strategyName}</span>
-              </div>
-            </div>
-            {models.length > 0 && (
-              <>
-                <h5 className="sidebar-subhead">On this machine</h5>
-                <div className="sidebar-meta-list">
-                  {models.map((model) => (
-                    <div className="sidebar-meta-row" key={model.name}>
-                      <span className="meta-key truncate" title={model.name}>
-                        <span className={`dot ${model.ready ? 'ok' : 'no'}`} aria-hidden="true" />
-                        {model.name}
-                      </span>
-                      <span className="meta-val small">{model.ready ? 'Ready' : model.optional ? 'Optional' : 'Unavailable'}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
           </section>
         </aside>
       </div>
