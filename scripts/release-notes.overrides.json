@@ -234,6 +234,11 @@
     "6c73e5a": { "section": "New", "text": "Review shows each moment on the frame, marks the less certain ones as maybe, tells you when a moment decided a pick, and lets you filter by moment. Moments have their own switches and a confidence setting." },
     "e91848b": { "section": "New", "text": "Moments can be judged by the decision model running on your own graphics card, with no account or internet. Its questions and answers show live in the import flowchart, and on a smaller card it waits for the cull to finish rather than running out of video memory." },
     "8558e23": { "section": "New", "text": "Conrod now keeps track of what it is doing as it starts up, such as opening your library, checking your models and looking for ExifTool." },
-    "e66496c": { "section": "New", "text": "The opening screen shows what Conrod is really doing while it starts, with the model it is checking, a progress bar and the steps already done. If a step has a problem it says so and the app still opens." }
+    "e66496c": { "section": "New", "text": "The opening screen shows what Conrod is really doing while it starts, with the model it is checking, a progress bar and the steps already done. If a step has a problem it says so and the app still opens." },
+    "df01a8c": { "section": "Fixed", "text": "The decision model now looks at the whole photo as well as the car close-up, so it can spot a wheel off the ground instead of only seeing the car." },
+    "d7e4704": [
+      { "section": "New", "text": "The decision model now works from the start of identification: its question and answer appear in the identifying screen along with the frames it has judged and the time each takes, instead of staying quiet until the end." },
+      { "section": "Improved", "text": "Waiting for the decision model no longer delays the end of identification, because it judges frames while the cars are being read." }
+    ]
   }
 }
