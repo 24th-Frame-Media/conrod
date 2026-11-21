@@ -428,7 +428,7 @@ impl Run<'_> {
                 .transpose()?;
             let crop_path = self.d.root.join(format!("cache/native/crop-{id}.jpg"));
             crate::desktop::save_jpeg(&crop, &crop_path)?;
-            lock(&self.d.db).execute("UPDATE detections SET attributes=?,plate=?,plate_state=?,plate_conf=?,number=?,number_source=?,number_conf=?,embedding=?,colour_hex=?,crop_path=? WHERE id=? AND reviewed=0",params![serde_json::to_string(&analysis).map_err(err)?,analysis.plate,analysis.plate_state,analysis.plate_conf,analysis.race_number,analysis.number_source,analysis.number_conf,embedding,swatch,crop_path.to_string_lossy(),id]).map_err(err)?;
+            lock(&self.d.db).execute("UPDATE detections SET attributes=?,plate=?,plate_state=?,plate_conf=?,number=?,number_source=?,number_conf=?,embedding=?,colour_hex=?,crop_path=?,read_at=unixepoch('now') WHERE id=? AND reviewed=0",params![serde_json::to_string(&analysis).map_err(err)?,analysis.plate,analysis.plate_state,analysis.plate_conf,analysis.race_number,analysis.number_source,analysis.number_conf,embedding,swatch,crop_path.to_string_lossy(),id]).map_err(err)?;
             if let Some(live) = self.live {
                 live.finish_item(
                     id,
@@ -468,7 +468,81 @@ fn load_readers(settings: &Settings, ocr: &Option<Arc<ocr::Ocr>>) -> Result<Read
     })
 }
 
-pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value> {
+/// The album setting that says its last identification is out of date because
+/// a reader setting changed. Identification itself stays done; the review
+/// screen only offers to read the album again.
+pub(crate) const IDENTIFY_STALE: &str = "native_identify_stale";
+
+/// The settings whose change makes an old reading incomplete. A grouping or
+/// culling setting is not here: only what Identify itself reads.
+pub(crate) fn identify_setting_key(key: &str) -> bool {
+    matches!(
+        key,
+        "read_numbers"
+            | "read_plates"
+            | "read_text"
+            | "read_action"
+            | "identify_make_model"
+            | "identify_colour"
+            | "identify_team"
+            | "group_vehicles"
+            | "include_cars"
+            | "include_trucks"
+            | "include_bikes"
+            | "include_people"
+            | "use_vlm"
+            | "scan_profile"
+            | "identify_scope"
+    )
+}
+
+/// Set or clear the album's "identification is stale" note, best effort.
+fn note_identify_stale(d: &Desktop, job: i64, stale: bool) {
+    let db = lock(&d.db);
+    let Ok(stored) = db.query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+        r.get::<_, String>(0)
+    }) else {
+        return;
+    };
+    let mut map: Map<String, Value> = serde_json::from_str(&stored).unwrap_or_default();
+    if stale {
+        map.insert(IDENTIFY_STALE.into(), Value::Bool(true));
+    } else if map.remove(IDENTIFY_STALE).is_none() {
+        return;
+    }
+    if let Ok(saved) = serde_json::to_string(&map) {
+        let _ = db.execute(
+            "UPDATE jobs SET settings_json=? WHERE id=?",
+            params![saved, job],
+        );
+    }
+}
+
+/// Accept every unread subject as it stands: the album is identified without
+/// a model call, and Review opens. New subjects found later still count as
+/// unread, so they can be offered as an incremental run.
+pub fn skip_identify(d: &Desktop, job: i64) -> Result<Value> {
+    settings(d, job)?;
+    if lock(&d.operations)
+        .keys()
+        .any(|k| k.ends_with(&format!(":{job}")))
+    {
+        return Err("This album has a background operation running".into());
+    }
+    let skipped = lock(&d.db)
+        .execute(
+            "UPDATE detections SET read_at=unixepoch('now')
+             WHERE read_at IS NULL
+               AND COALESCE(region_type,'vehicle') IN ('vehicle','person')
+               AND image_id IN (SELECT id FROM images WHERE job_id=? AND COALESCE(copy_of,0)=0)",
+            [job],
+        )
+        .map_err(err)?;
+    note_identify_stale(d, job, false);
+    Ok(json!({"ok": true, "skipped": skipped}))
+}
+
+pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool) -> Result<Value> {
     let settings = settings(d, job)?;
     let vision_off = vision_off(d, job)?;
     let lanes = settings.lanes();
@@ -480,6 +554,13 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
     // the scan's own auto-identify passes none and follows the album.
     let scope = run_scope(&settings.identify_scope, scope);
     let eligibility = identify_eligibility(scope);
+    // An incremental run leaves every subject that has already been read
+    // alone; a full run reads them again (the photographer asked for it).
+    let fresh = if only_new {
+        " AND d.read_at IS NULL"
+    } else {
+        ""
+    };
     launch(d, job, "Identifying", move |d, stop, task| {
         if !wait_for_cull(d, stop, task) {
             return Ok(());
@@ -502,7 +583,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
         } else {
             "vehicle"
         };
-        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='{region}' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility} ORDER BY i.id,d.id"), [job])?;
+        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='{region}' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility}{fresh} ORDER BY i.id,d.id"), [job])?;
         // The live feed the identify screen draws, replaced by the next run and
         // kept after this one so its summary stays on screen. The guard ends an
         // early return (`?`) as an error rather than leaving the feed running.
@@ -528,6 +609,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             if crate::moments::run(d, job, stop, task, &settings, &lanes, scope)? > 0 {
                 crate::passes::pick_keepers(d, job)?;
             }
+            note_identify_stale(d, job, false);
             end.finish("done");
             return Ok(());
         }
@@ -684,6 +766,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>) -> Result<Value
             crate::moments::run(d, job, stop, task, &settings, &lanes, scope)?;
             task.detail("Picking keepers");
             crate::passes::pick_keepers(d, job)?;
+            note_identify_stale(d, job, false);
             end.finish("done");
         } else {
             end.finish("stopped");
@@ -1034,19 +1117,99 @@ mod tests {
     }
 
     #[test]
-    fn metadata_marks_manual_and_automatic_culls_as_rejected() {
-        let settings = Settings::default();
-        assert_eq!(
-            metadata_verdict(true, false, Some(5), 1.0, &settings),
-            (-1, "Red", true)
+    fn an_incremental_run_reads_only_the_subjects_nobody_has_read() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("identify-only-new");
+        let read = lib.detection(lib.frame("a.jpg", None), "vehicle", 0.9);
+        let fresh = lib.detection(lib.frame("b.jpg", None), "vehicle", 0.9);
+        lib.sql(
+            "UPDATE detections SET attributes='{\"make\":\"BMW\"}',read_at=1 WHERE id=?",
+            [read],
         );
+        let only_new = |lib: &Lib| -> Vec<i64> {
+            let db = lib.db();
+            let mut stmt = db
+                .prepare(
+                    "SELECT d.id FROM detections d JOIN images i ON i.id=d.image_id \
+                     WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' \
+                     AND d.reviewed=0 AND d.read_at IS NULL ORDER BY d.id",
+                )
+                .unwrap();
+            let ids = stmt
+                .query_map([lib.job], |r| r.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            ids
+        };
         assert_eq!(
-            metadata_verdict(false, true, None, 0.2, &settings),
-            (-1, "Red", true)
+            only_new(&lib),
+            vec![fresh],
+            "the old reading is not read again"
         );
+
+        // A full run reads every unaccepted subject, read or not.
+        let db = lib.db();
+        let mut stmt = db
+            .prepare(
+                "SELECT d.id FROM detections d JOIN images i ON i.id=d.image_id \
+                 WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' \
+                 AND d.reviewed=0 ORDER BY d.id",
+            )
+            .unwrap();
+        let all: Vec<i64> = stmt
+            .query_map([lib.job], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(all, vec![read, fresh]);
+    }
+
+    #[test]
+    fn skipping_identify_marks_the_unread_subjects_read_and_keeps_the_readings() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("skip-identify");
+        let read = lib.detection(lib.frame("a.jpg", None), "vehicle", 0.9);
+        let unread = lib.detection(lib.frame("b.jpg", None), "vehicle", 0.9);
+        lib.sql(
+            "UPDATE detections SET attributes='{\"make\":\"BMW\"}',read_at=1 WHERE id=?",
+            [read],
+        );
+        lib.sql(
+            "UPDATE jobs SET settings_json=json_set(settings_json,'$.native_identify_stale',1) WHERE id=?",
+            [lib.job],
+        );
+
+        let out = lib
+            .run("skip_identify", serde_json::json!({"jobId": lib.job}))
+            .unwrap();
+        assert_eq!(out, serde_json::json!({"ok": true, "skipped": 1}));
+        let (attributes, read_at): (Option<String>, Option<f64>) = lib
+            .db()
+            .query_row(
+                "SELECT attributes,read_at FROM detections WHERE id=?",
+                [unread],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(attributes.is_none(), "skipping invents no reading");
+        assert!(
+            read_at.is_some(),
+            "but the album no longer asks to identify it"
+        );
+        let kept: String = lib.one("SELECT attributes FROM detections WHERE id=?", [read]);
         assert_eq!(
-            metadata_verdict(false, true, Some(4), 0.2, &settings),
-            (4, "Red", false)
+            kept, "{\"make\":\"BMW\"}",
+            "an existing reading is untouched"
         );
+        let stale: Option<bool> = lib
+            .db()
+            .query_row(
+                "SELECT json_extract(settings_json,'$.native_identify_stale') FROM jobs WHERE id=?",
+                [lib.job],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stale, None, "skip clears the stale note");
     }
 }

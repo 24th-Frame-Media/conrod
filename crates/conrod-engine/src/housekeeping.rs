@@ -239,7 +239,7 @@ pub fn reset_identifications(d: &Desktop, job: Option<i64>) -> Result<Value> {
         |sql: String| -> Result<usize> { tx.execute(&sql, params_from_iter(&args)).map_err(err) };
     run(format!("UPDATE detections SET group_key=NULL,group_size=NULL,group_agreement=NULL,group_colour_hex=NULL WHERE {inside}"))?;
     let cleared = run(format!(
-        "UPDATE detections SET attributes=NULL WHERE reviewed=0 AND {inside}"
+        "UPDATE detections SET attributes=NULL,read_at=NULL WHERE reviewed=0 AND {inside}"
     ))?;
     // A number the vision model read goes with it; one the OCR or a person
     // found does not.
