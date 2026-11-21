@@ -60,14 +60,16 @@ pub fn remeasure(s: &Stored, model: Option<&SharpModel>, cfg: &Settings) -> Outc
         .and_then(|m| sharpness::learned_score(m, s.features));
     let score = learned.unwrap_or(s.heuristic);
     let small = matches!(s.region, "face" | "eye");
-    // Only vehicles take the edge penalty; faces and people/animals often touch
-    // the frame edge intentionally.
     let edges = if s.region == "vehicle" {
         framing::assess(Some(s.bbox), s.frame.0, s.frame.1)
     } else {
         framing::Framing::default()
     };
-    let rating = score * edges.factor;
+    // Composition orders sharp frames, it never marks one down: a sharp car
+    // that touches the frame edge keeps its focus rating (0944: 0.763 sharp,
+    // one edge cut, read 2 stars and was culled). The cut sides stay in the
+    // stored framing and rank the burst instead.
+    let rating = score;
     let verdict = sharpness::rating_for(rating, cfg.sharp_at, cfg.blurred_below);
     let stars = sharpness::stars_for(rating);
     let floor = cfg.auto_reject_below_stars as u8;
@@ -959,7 +961,7 @@ mod tests {
     }
 
     #[test]
-    fn without_a_model_the_hand_built_score_stands_and_the_frame_edge_costs_rating() {
+    fn without_a_model_the_hand_built_score_stands_and_the_frame_edge_never_lowers_it() {
         let inside = remeasure(&stored("vehicle", 0.9, &[]), None, &cfg());
         assert_eq!((inside.sharpness, inside.rating), (0.9, 0.9));
         assert_eq!(inside.rating_verdict, "good");
@@ -967,8 +969,22 @@ mod tests {
         let mut clipped = stored("vehicle", 0.9, &[]);
         clipped.bbox = [0.0, 1000.0, 3000.0, 2000.0];
         let clipped = remeasure(&clipped, None, &cfg());
-        assert!((clipped.rating - 0.9 * 0.85).abs() < 1e-12);
-        assert_eq!(clipped.sharpness, 0.9, "the focus score is not marked down");
+        assert_eq!(
+            clipped.rating, 0.9,
+            "a cut edge only orders frames, it never lowers the rating"
+        );
+        assert_eq!(clipped.sharpness, 0.9);
+        // 0944: sharp 0.763, one edge cut, on an album that culls below three
+        // stars. It is three stars and kept, not two stars and culled.
+        let mut edge = stored("vehicle", 0.763, &[]);
+        edge.bbox = [6164.0, 1613.0, 6960.0, 3444.0];
+        edge.frame = (6960, 4640);
+        let mut strict = cfg();
+        strict.auto_reject_below_stars = 3;
+        let kept = remeasure(&edge, None, &strict);
+        assert_eq!(kept.rating, 0.763);
+        assert_eq!(sharpness::stars_for(kept.rating), 3);
+        assert_eq!(kept.cull_reason, "");
     }
 
     #[test]

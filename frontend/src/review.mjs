@@ -1,8 +1,12 @@
 export const filename = path => path.split(/[\\/]/).pop() || path;
+/** The keeper floor, mirrored from `conrod_vision::sharpness::KEEPER_MIN_RATING` (three stars). */
+export const KEEPER_MIN_RATING = .728;
+/** The camera's focus area reads sharp enough to keep: its AF box is the subject. */
+export const focusSharp = frame => Number.isFinite(frame.af_sharpness) && frame.af_sharpness >= KEEPER_MIN_RATING;
 export const starsFor = rating => rating == null ? 0 : rating >= .958 ? 5 : rating >= .825 ? 4 : rating >= .728 ? 3 : rating >= .606 ? 2 : 1;
 export const frameStars = frame => frame.manual_stars ?? starsFor(frame.rating);
 export const subjectExcluded = (frame, d) => Boolean(frame.rejected || d.rejected || d.bystander || (d.cull_reason && d.stars == null && frame.manual_stars == null));
-export const frameExcluded = (frame, detections) => Boolean(frame.rejected || (detections.length && detections.every(d => subjectExcluded(frame, d))));
+export const frameExcluded = (frame, detections) => Boolean(frame.rejected || (detections.length && detections.every(d => subjectExcluded(frame, d)) && !focusSharp(frame)));
 // Burst candidates: manual stars first, then not rejected, then rating, then the engine's pick on ties.
 // The engine's pick always takes rank 1; the rest of the top `top` follow the ordering.
 // Rejected frames are not candidates unless the photographer rated them by hand; a missing or NaN rating sorts last.

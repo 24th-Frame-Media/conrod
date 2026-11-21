@@ -155,6 +155,10 @@ struct Candidate {
     /// A detection id, or the image id when the candidate is the frame itself.
     row: i64,
     on_frame: bool,
+    /// A frame the detector missed (or found only bystanders in) whose camera
+    /// focus area is sharp: the AF box is its subject, so it competes for the
+    /// keeper instead of being dropped as a missed shot.
+    af_subject: bool,
     by_hand: i64,
     culled: bool,
     score: f64,
@@ -530,6 +534,7 @@ pub fn pick_of_pass(
                 frame: image,
                 row: r["id"].as_i64().unwrap_or_default(),
                 on_frame: false,
+                af_subject: false,
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
                 // An eye inside a face whose eyes are shut is not an open eye,
                 // so it never wins a pass while an open-eyed frame competes.
@@ -566,7 +571,7 @@ pub fn pick_of_pass(
     // burst's ungrouped unit, rated by the frame.
     let spare = rows(
         conn,
-        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness,set_id,dark_frame,exposure_verdict,eye_open_min,smile_max,buck_score,moments FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 ORDER BY id",
+        "SELECT id,burst_key,COALESCE(stars,rating_in_file,0) AS by_hand,rating,sharpness,af_sharpness,af_x1,af_y1,af_x2,af_y2,width,height,set_id,dark_frame,exposure_verdict,eye_open_min,smile_max,buck_score,moments FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 ORDER BY id",
         [job],
     )?;
     for r in &spare {
@@ -574,27 +579,54 @@ pub fn pick_of_pass(
         if marked.contains(&image) {
             continue;
         }
-        let Some(score) = r["rating"].as_f64().or_else(|| r["sharpness"].as_f64()) else {
+        let Some(mut score) = r["rating"].as_f64().or_else(|| r["sharpness"].as_f64()) else {
             continue;
         };
+        // A frame the detector missed, or found only bystanders in, whose
+        // camera focus area is sharp: the AF box is its subject. It competes
+        // for the keeper instead of being dropped as a missed shot, so a sharp
+        // frame is never demoted by the detector's miss (the same third-of-a-
+        // star bar the rest of the pick uses).
+        let af_subject = r["af_sharpness"]
+            .as_f64()
+            .filter(|s| *s >= conrod_vision::sharpness::KEEPER_MIN_RATING);
+        if let Some(af) = af_subject {
+            score = score.max(af);
+        }
         let set_member = r["set_id"].as_i64().is_some();
         let dark = r["dark_frame"].as_i64().unwrap_or(0) != 0;
+        let (width, height) = (
+            r["width"].as_i64().unwrap_or_default(),
+            r["height"].as_i64().unwrap_or_default(),
+        );
+        let area = match (
+            r["af_x1"].as_f64(),
+            r["af_y1"].as_f64(),
+            r["af_x2"].as_f64(),
+            r["af_y2"].as_f64(),
+        ) {
+            (Some(x1), Some(y1), Some(x2), Some(y2)) if width > 0 && height > 0 => {
+                (x2 - x1) * (y2 - y1) / (width as f64 * height as f64)
+            }
+            _ => 0.0,
+        };
         units.push((
             (r["burst_key"].as_i64().unwrap_or_default(), None),
             Candidate {
                 frame: image,
                 row: image,
-                on_frame: true,
+                on_frame: af_subject.is_none(),
+                af_subject: af_subject.is_some(),
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
                 culled: !set_member && !keeps_dark && dark,
                 bright: set_member || keeps_dark || r["exposure_verdict"].as_str() != Some("dark"),
                 moment: moment_signal(r["moments"].as_str(), lanes).0,
                 peak: moment_signal(r["moments"].as_str(), lanes).1,
                 score,
-                sharpness: r["sharpness"].as_f64().unwrap_or(score),
+                sharpness: af_subject.unwrap_or_else(|| r["sharpness"].as_f64().unwrap_or(score)),
                 quality: None,
                 sides: 0,
-                area: 0.0,
+                area,
                 framing: None,
                 eyes: r["eye_open_min"].as_f64(),
                 smile: r["smile_max"].as_f64(),
@@ -670,8 +702,8 @@ pub fn pick_of_pass(
     let passes = seen.len().saturating_sub(missed.len());
     let (mut picks, mut frame_picks): (Vec<i64>, Vec<i64>) = (Vec::new(), Vec::new());
     for candidate in best.values() {
-        if candidate.on_frame {
-            frame_picks.push(candidate.row);
+        if candidate.on_frame || candidate.af_subject {
+            frame_picks.push(candidate.frame);
         } else {
             picks.push(candidate.row);
         }
@@ -2064,6 +2096,7 @@ mod tests {
             frame,
             row: frame,
             on_frame: false,
+            af_subject: false,
             by_hand: 0,
             culled: false,
             score: 0.80,
@@ -3318,6 +3351,50 @@ mod tests {
         assert_eq!(
             lib.one::<f64>("SELECT rating FROM images WHERE id=?", [bare]),
             1.0
+        );
+    }
+
+    #[test]
+    fn a_sharp_focus_area_keeps_a_missed_frame_as_a_keeper() {
+        let lib = Lib::new("af-keep");
+        let car = lib.frame("car.jpg", Some(1));
+        let missed = lib.frame("missed.jpg", Some(1));
+        let det = lib.detection(car, "vehicle", 0.90);
+        // The detector's car is a real subject and the burst's grouped unit.
+        lib.sql("UPDATE detections SET group_key=7 WHERE id=?", [det]);
+        // The missed frame: the detector found only a bystander person, while
+        // the camera focused on the car and its AF area rates 0.90.
+        let person = lib.detection(missed, "person", 0.80);
+        lib.sql(
+            "UPDATE detections SET bystander=1,af_bystander=1 WHERE id=?",
+            [person],
+        );
+        lib.sql(
+            "UPDATE images SET af_x1=0.3,af_y1=0.3,af_x2=0.6,af_y2=0.6,af_sharpness=0.90,rating=0.90 WHERE id=?",
+            [missed],
+        );
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(
+            lib.one::<i64>("SELECT burst_pick FROM detections WHERE id=?", [det]),
+            1,
+            "the car is still the keeper of its grouped unit"
+        );
+        assert_eq!(
+            lib.one::<Option<i64>>("SELECT burst_pick FROM images WHERE id=?", [missed]),
+            Some(1),
+            "the sharp AF frame is kept, not dropped as a shot the detector missed"
+        );
+
+        // Below the keeper bar the AF box is not a subject: the frame is the
+        // missed shot it always was and gets no pick.
+        lib.sql(
+            "UPDATE images SET af_sharpness=0.50,rating=0.50 WHERE id=?",
+            [missed],
+        );
+        lib.run("pick_keepers", json!({"jobId": lib.job})).unwrap();
+        assert_eq!(
+            lib.one::<Option<i64>>("SELECT burst_pick FROM images WHERE id=?", [missed]),
+            None
         );
     }
 

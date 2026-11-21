@@ -1,6 +1,9 @@
 import type { Frame, Detection } from './lib/types';
 export function subjectExcluded(frame: Frame, detection: Detection): boolean;
 export function frameExcluded(frame: Frame, detections: Detection[]): boolean;
+/** The keeper floor (three stars) and whether the camera's focus area clears it. */
+export const KEEPER_MIN_RATING: number;
+export function focusSharp(frame: Pick<Frame, 'af_sharpness'>): boolean;
 type Rated = Pick<Frame, 'manual_stars' | 'rating'>;
 export function filename(path: string): string;
 export function starsFor(rating: number | null | undefined): number;

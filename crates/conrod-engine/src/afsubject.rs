@@ -213,10 +213,71 @@ pub(crate) fn apply(
     if call.subject().is_some() {
         for s in subjects {
             s.bystander = true;
+            s.af_bystander = true;
             s.cull_reason.clear();
         }
     }
     call
+}
+
+/// Mark every vehicle but the main subject a background car.
+///
+/// The main subject is the vehicle whose box best overlaps the camera's focus
+/// area (coverage of the AF box first, then IoU, then size); without a usable
+/// AF area it is the sharpest vehicle, ties to the larger box. Every other
+/// vehicle is a background car: it drives no rating, pick, cull or identify.
+///
+/// The AF area outranks even the overlap when it lands on no vehicle at all:
+/// [`apply`] then makes the AF box the subject and every detection a bystander,
+/// so an intentionally focused empty patch is not overruled by a car elsewhere.
+/// Returns the index of the main vehicle, `None` on a frame with no vehicle.
+pub fn main_vehicle(subjects: &mut [crate::Subject], af: Option<FocusArea>) -> Option<usize> {
+    let vehicles: Vec<usize> = (0..subjects.len())
+        .filter(|&i| subjects[i].region_type == "vehicle")
+        .collect();
+    if vehicles.is_empty() {
+        return None;
+    }
+    let overlap = |a: [f64; 4], b: [f64; 4]| -> f64 {
+        let (ix1, iy1) = (a[0].max(b[0]), a[1].max(b[1]));
+        let (ix2, iy2) = (a[2].min(b[2]), a[3].min(b[3]));
+        if ix2 <= ix1 || iy2 <= iy1 {
+            0.0
+        } else {
+            (ix2 - ix1) * (iy2 - iy1)
+        }
+    };
+    let area = |b: [f64; 4]| (b[2] - b[0]).max(0.0) * (b[3] - b[1]).max(0.0);
+    let mut best: Option<(usize, (f64, f64, f64))> = None;
+    for &i in &vehicles {
+        let bbox = subjects[i].bbox;
+        let score = match af {
+            // Coverage of the AF box, then IoU, then the car's own size.
+            Some(af) => {
+                let inter = overlap(bbox, af.area);
+                let af_area = area(af.area);
+                let union = af_area + area(bbox) - inter;
+                (
+                    if af_area > 0.0 { inter / af_area } else { 0.0 },
+                    if union > 0.0 { inter / union } else { 0.0 },
+                    area(bbox),
+                )
+            }
+            // No AF: the sharpest car, ties to the larger box.
+            None => (subjects[i].sharpness, 0.0, area(bbox)),
+        };
+        if best.is_none_or(|(_, held)| score > held) {
+            best = Some((i, score));
+        }
+    }
+    let main = best.map(|(i, _)| i)?;
+    for &i in &vehicles {
+        if i != main {
+            subjects[i].bystander = true;
+            subjects[i].cull_reason.clear();
+        }
+    }
+    Some(main)
 }
 
 #[cfg(test)]
@@ -466,6 +527,7 @@ mod tests {
             lead_room: None,
             framing_score: None,
             bystander: false,
+            af_bystander: false,
         }
     }
 
@@ -560,6 +622,67 @@ mod tests {
         );
         assert!(!flat_subjects[0].bystander);
         assert_eq!(flat_subjects[0].cull_reason, "2 stars");
+    }
+
+    #[test]
+    fn the_car_under_the_focus_area_is_the_main_subject() {
+        let mut subjects = vec![
+            subject("vehicle", [1000.0, 700.0, 2400.0, 1500.0], "2 stars"),
+            subject("vehicle", [4000.0, 700.0, 5600.0, 1500.0], "2 stars"),
+        ];
+        subjects[1].sharpness = 0.95;
+        subjects[0].rating = 0.70;
+        subjects[1].rating = 0.95;
+        // The camera focused on the first car, not the sharper second one.
+        let af = [1200.0, 800.0, 1800.0, 1200.0];
+        assert_eq!(main_vehicle(&mut subjects, Some(point(af))), Some(0));
+        assert!(!subjects[0].bystander);
+        assert!(subjects[1].bystander, "the other car is background");
+        assert!(subjects[1].cull_reason.is_empty(), "background never culls");
+        assert_eq!(
+            subjects[0].cull_reason, "2 stars",
+            "the main subject keeps its own cull"
+        );
+        // The frame is rated on the main subject, never the sharper background.
+        let lanes =
+            conrod_core::profile::Lanes::defaults(conrod_core::profile::ShootPreset::Motorsport);
+        let rated: Vec<_> = subjects
+            .iter()
+            .filter(|s| !s.bystander)
+            .map(|s| (s.region_type, s.bbox, s.rating))
+            .collect();
+        assert_eq!(crate::frame_rating(&lanes, &rated, None), 0.70);
+    }
+
+    #[test]
+    fn without_focus_data_the_sharpest_car_is_the_main_subject() {
+        let mut subjects = vec![
+            subject("vehicle", [1000.0, 700.0, 1400.0, 1100.0], ""),
+            subject("vehicle", [4000.0, 700.0, 5600.0, 1500.0], ""),
+        ];
+        subjects[0].sharpness = 0.60;
+        subjects[1].sharpness = 0.91;
+        assert_eq!(main_vehicle(&mut subjects, None), Some(1));
+        assert!(subjects[0].bystander);
+        assert!(!subjects[1].bystander);
+
+        // A tie goes to the larger box.
+        subjects[0].sharpness = 0.91;
+        assert_eq!(main_vehicle(&mut subjects, None), Some(1));
+    }
+
+    #[test]
+    fn a_focus_area_on_empty_space_still_outranks_a_car_elsewhere() {
+        let grey = textured();
+        let mut subjects = vec![subject("vehicle", [1900.0, 700.0, 2400.0, 1100.0], "")];
+        // The camera focused on an empty patch, not the car: the AF box is the
+        // subject and the car becomes a bystander (apply's existing rule).
+        let af = [300.0, 600.0, 700.0, 900.0];
+        main_vehicle(&mut subjects, Some(point(af)));
+        let call = apply(&mut subjects, &grey, Some(point(af)), "moderate");
+        assert!(call.subject().is_some());
+        assert!(subjects[0].bystander);
+        assert!(subjects[0].af_bystander, "the AF rule made it a bystander");
     }
 
     #[test]

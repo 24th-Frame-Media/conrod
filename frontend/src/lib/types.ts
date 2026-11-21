@@ -27,6 +27,8 @@ export type Frame = {
   af_y1?: number | null;
   af_x2?: number | null;
   af_y2?: number | null;
+  /** The edge-blur rating inside that area, 0..1: the subject the camera focused on. */
+  af_sharpness?: number | null;
   /** Expression across the frame's faces, 0..1; null without the models. */
   eye_open_min?: number | null;
   smile_max?: number | null;

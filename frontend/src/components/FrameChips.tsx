@@ -10,6 +10,7 @@ export function FrameChips({ facts }: { facts?: FrameFacts }) {
       {facts?.vehicle && <span className="tag">{facts.vehicle}</span>}
       {facts?.colour && <span className="tag"><i className="swatch" style={{ background: swatch }} />{facts.colour}</span>}
       {facts?.team && <span className="fact team">{facts.team}</span>}
+      {facts?.keepNote && <span className="tag" title={facts.keepNote}>{facts.keepNote}</span>}
     </div>
   );
 }

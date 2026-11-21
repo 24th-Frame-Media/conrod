@@ -732,6 +732,10 @@ dialog.viewer {
 .det-badge.badge-panned { background: var(--surface-3); color: var(--text-dim); border: 1px solid var(--line); }
 .det-badge.badge-culled { background: rgba(229, 87, 92, 0.14); color: var(--bad); border: 1px solid rgba(229, 87, 92, 0.3); }
 .det-badge.badge-ocr { background: rgba(207, 174, 90, 0.14); color: var(--warn2); border: 1px solid rgba(207, 174, 90, 0.3); }
+.det-badge.badge-background { background: var(--surface-3); color: var(--text-dim); border: 1px solid var(--line); }
+/* A background car is real but not what the frame is of: dim it, never hide it. */
+.det-card.background { opacity: .5; }
+.det-card.background.hovered, .det-card.background.selected { opacity: .85; }
 
 .det-drawer {
   padding: 8px 10px;

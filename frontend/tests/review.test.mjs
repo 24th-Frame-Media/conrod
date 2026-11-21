@@ -18,3 +18,14 @@ test('manual ratings rescue automatic culls but never deliberate rejects',()=>{
  assert.equal(frameExcluded(frame,[automatic,{...automatic,stars:3}]),false);
  assert.equal(frameExcluded({...frame,rejected:1},[{...automatic,stars:3}]),true);
 });
+test('a sharp focus area keeps a frame the detector found only bystanders in',()=>{
+ const frame={rejected:0,manual_stars:null,af_sharpness:.90};
+ const bystander={rejected:0,bystander:1,cull_reason:null,stars:null};
+ // The detector found no vehicle and parked its person; the camera focused
+ // sharp, so the frame is not culled.
+ assert.equal(frameExcluded(frame,[bystander]),false);
+ // Below the keeper bar the AF area is no rescue: the frame is culled as before.
+ assert.equal(frameExcluded({...frame,af_sharpness:.50},[bystander]),true);
+ // A deliberate reject still wins, whatever the focus area says.
+ assert.equal(frameExcluded({...frame,rejected:1},[bystander]),true);
+});

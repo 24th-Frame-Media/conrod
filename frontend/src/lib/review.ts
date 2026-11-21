@@ -1,4 +1,4 @@
-import { burstTopRanks, filename, filterFrames, frameStars, frameExcluded } from '../review.mjs';
+import { burstTopRanks, filename, filterFrames, focusSharp, frameStars, frameExcluded, subjectExcluded } from '../review.mjs';
 import { decisionOf, groupKeyOf, keeperIds } from './stacks.mjs';
 import { tasteOrder } from './taste.mjs';
 import { sureTags } from './moments.mjs';
@@ -17,7 +17,10 @@ export type FrameFacts = {
   people: string[];
   plate: string | null; number: string | null; vehicle: string | null;
   colour: string | null; colourCss: string | null; team: string | null;
-  panned: boolean; pick: boolean; cull: string | null; cullDetail: string | null; text: string;
+  panned: boolean; pick: boolean; cull: string | null; cullDetail: string | null;
+  /** A frame the detector found no vehicle in that the camera's sharp focus area keeps. */
+  keepNote: string | null;
+  text: string;
   reviewed: boolean;
 };
 export type FacetItem = { value: string; count: number; who: string; thumb?: string | null };
@@ -54,7 +57,7 @@ function needsLook(x: FrameFacts | undefined): boolean {
   if (!x) return false;
   return x.dets.some((d) => {
     const isVehicle = (d.region_type ?? 'vehicle') === 'vehicle';
-    if (!isVehicle) return false;
+    if (!isVehicle || d.bystander) return false;
     const unread = !d.number && !d.plate;
     const shaky = d.group_agreement != null && d.group_agreement < GROUP_AGREEMENT_LOW;
     return unread || shaky;
@@ -75,13 +78,16 @@ function factsFor(frame: Frame, dets: Detection[]): FrameFacts {
   const makes = unique(attrs.map((a) => [a.make, a.model].filter(Boolean).join(' ')));
   const teams = unique(attrs.map((a) => a.team));
   const subjects = unique(dets.filter((d) => !NOT_SUBJECT.has((d.cls || '').toLowerCase()) && d.region_type !== 'face' && d.region_type !== 'eye').map((d) => (d.cls || '').toLowerCase()));
+  const active = dets.filter((d) => !d.bystander);
+  const keptByFocus = !frame.rejected && focusSharp(frame) && dets.length > 0 && dets.every((d) => subjectExcluded(frame, d));
   return {
     dets, plates, numbers, makes, teams, subjects, people, moments: sureTags(frame.moments), plate: plates[0] ?? null, number: numbers[0] ?? null, vehicle, colour,
     colourCss: first(attrs.map((a) => a.colour_hex)) ?? colour, team,
     panned: dets.some((d) => d.panning), pick: dets.some((d) => Boolean(d.burst_pick)) || Boolean(frame.burst_pick),
-    reviewed: dets.length > 0 && dets.every((d) => Boolean(d.reviewed)),
+    reviewed: active.length > 0 && active.every((d) => Boolean(d.reviewed)),
     cull: frameExcluded(frame, dets) ? (frame.rejected ? 'Rejected · excluded from ML' : 'Culled · excluded from ML') : null,
     cullDetail: cullDetail(frame, dets),
+    keepNote: keptByFocus ? 'No car found — kept because focus is sharp' : null,
     text: [frame.path, ...plates, ...numbers, vehicle, colour, team, ...attrs.map((a) => a.driver), ...attrs.map((a) => a.country), ...attrs.map((a) => a.person_name)].join(' ').toLowerCase(),
   };
 }
