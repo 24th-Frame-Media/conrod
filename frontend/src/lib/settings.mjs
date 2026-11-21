@@ -6,6 +6,7 @@ export const TABS = [
   { id: 'culling', label: 'Culling', hint: 'What counts as a keeper' },
   { id: 'identification', label: 'Identification', hint: 'Plates, numbers and vision models' },
   { id: 'metadata', label: 'Metadata', hint: 'What is written next to your files' },
+  { id: 'lightroom', label: 'Lightroom', hint: 'The Conrod Bridge plug-in' },
   { id: 'system', label: 'System', hint: 'Models, cache and library data' },
 ];
 
@@ -133,6 +134,12 @@ export const FIELDS = {
   overwrite_label: { label: 'Overwrite existing colour labels', kind: 'toggle' },
   overwrite_caption: { label: 'Overwrite existing captions', kind: 'toggle' },
   close_to_tray: { label: 'Keep running in the tray when closed', kind: 'toggle' },
+
+  // ── lightroom ──
+  lightroom_bridge: {
+    label: 'Lightroom Classic bridge', kind: 'toggle',
+    hint: 'Installs the Conrod Bridge plug-in in Lightroom Classic, so verdicts move both ways without adding it by hand.',
+  },
 };
 
 // Each definition carries its own key, so rows and search results are self-describing.
@@ -207,6 +214,11 @@ for (const [key, field] of Object.entries(FIELDS)) field.key = key;
   {
     id: 'desktop', tab: 'metadata', title: 'Desktop',
     keys: ['close_to_tray'],
+  },
+  {
+    id: 'lightroom', tab: 'lightroom', title: 'Lightroom Classic',
+    hint: 'The Conrod Bridge plug-in connects this library with your Lightroom catalog. Conrod installs it for you and keeps it current.',
+    keys: ['lightroom_bridge'],
   },
 ];
 

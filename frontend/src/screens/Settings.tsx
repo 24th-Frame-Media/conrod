@@ -13,6 +13,7 @@ import {
 import { SettingsSection, SettingRow } from '../components/SettingsFields';
 import { Maintenance } from '../components/Maintenance';
 import { DeciderCard } from '../components/DeciderCard';
+import { LightroomBridge } from '../components/LightroomBridge';
 import { Benchmark } from './Benchmark';
 import { Known } from './Known';
 import type {
@@ -795,6 +796,16 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
               {activeTab === 'metadata' && SECTIONS.filter((section) => section.tab === 'metadata').map((section) => (
                 <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue} />
               ))}
+
+              {activeTab === 'lightroom' && (
+                <LightroomBridge
+                  value={draft.lightroom_bridge ?? true}
+                  changed={draft.lightroom_bridge !== settings.lightroom_bridge}
+                  onChange={(value) => setValue('lightroom_bridge', value)}
+                  run={run}
+                  toast={toast}
+                />
+              )}
 
               {activeTab === 'system' && (
                 <section className="settings-section settings-system" aria-labelledby="settings-system-head">

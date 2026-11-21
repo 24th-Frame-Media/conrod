@@ -180,6 +180,26 @@ fn selftest() -> ! {
     std::process::exit(code);
 }
 
+/// Where the bundled Conrod Bridge plug-in is: the installer's resources, an
+/// explicit `CONROD_LIGHTROOM_PLUGIN`, or the checkout in a development build.
+fn lightroom_plugin_dir(app: &tauri::App) -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("CONROD_LIGHTROOM_PLUGIN")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_dir())
+    {
+        return dir;
+    }
+    if let Ok(resources) = app.path().resource_dir() {
+        let bundled = resources
+            .join("lightroom-plugin")
+            .join("ConrodBridge.lrplugin");
+        if bundled.is_dir() {
+            return bundled;
+        }
+    }
+    conrod_engine::lightroom::default_plugin_source().join("ConrodBridge.lrplugin")
+}
+
 fn main() {
     if std::env::args().any(|a| a == "--selftest") {
         selftest();
@@ -204,6 +224,8 @@ fn main() {
         .setup(|app| {
             let desktop =
                 Desktop::open(conrod_core::settings::data_root()).map_err(std::io::Error::other)?;
+            conrod_engine::lightroom::set_plugin_source(lightroom_plugin_dir(app));
+            conrod_engine::lightroom::sync_on_start(&desktop);
             app.asset_protocol_scope()
                 .allow_directory(desktop.root.join("cache"), true)?;
             app.manage(desktop);

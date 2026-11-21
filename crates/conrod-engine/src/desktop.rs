@@ -947,6 +947,9 @@ impl Desktop {
             Command::LightroomImport(a) => {
                 crate::lightroom::import(self, a.job_id, a.catalog.as_deref())
             }
+            Command::LightroomPluginStatus {} => crate::lightroom::status(self, None, None),
+            Command::InstallLightroomPlugin {} => crate::lightroom::install(None, None),
+            Command::RemoveLightroomPlugin {} => crate::lightroom::remove(None),
         }
     }
 
@@ -980,8 +983,11 @@ impl Desktop {
         next.save(&self.root.join("settings.json")).map_err(err)?;
         crate::decider::service().configure(&next);
         *stored = next;
+        let saved = stored.clone();
+        drop(stored);
         task.finish();
-        Ok(json!(*stored))
+        crate::lightroom::sync(self);
+        Ok(json!(saved))
     }
 
     fn delete_job(&self, job: i64) -> Result<Value> {

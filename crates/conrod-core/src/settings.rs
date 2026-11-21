@@ -280,6 +280,9 @@ pub struct Settings {
     pub keyword_prefix: String,
     pub write_plate_keyword: bool,
     pub write_caption: bool,
+    /// Keep the Conrod Bridge plug-in installed in Lightroom Classic and let
+    /// Conrod's verdicts reach the catalog. Off removes the plug-in.
+    pub lightroom_bridge: bool,
     pub analysis_workers: i64,
     pub preview_workers: i64,
     pub detect_workers: i64,
@@ -430,6 +433,7 @@ impl Default for Settings {
             keyword_prefix: String::new(),
             write_plate_keyword: true,
             write_caption: false,
+            lightroom_bridge: true,
             analysis_workers: 3,
             preview_workers: 4,
             detect_workers: 2,

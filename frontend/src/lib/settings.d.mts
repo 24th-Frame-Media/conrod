@@ -1,4 +1,4 @@
-export type SettingsTabId = 'culling' | 'identification' | 'metadata' | 'system';
+export type SettingsTabId = 'culling' | 'identification' | 'metadata' | 'lightroom' | 'system';
 export type SettingsFieldKind = 'toggle' | 'number' | 'text' | 'segmented' | 'profile';
 export type SettingsFieldOption = { id: string; name: string };
 export type SettingsField = {

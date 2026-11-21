@@ -1228,6 +1228,7 @@ fn settings_match_snapshot() {
         // Rust-only: the preset's default strictness applies until an album
         // chooses one.
         m.remove("blur_explicit");
+        m.remove("lightroom_bridge"); // Rust-only: the plug-in installer
         v
     };
     let as_map = |s: &Settings| prune(serde_json::to_value(s).unwrap());

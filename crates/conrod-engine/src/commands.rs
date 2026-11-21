@@ -511,6 +511,12 @@ pub enum Command {
     LightroomPending(LightroomPendingArgs),
     /// Apply Lightroom's flags from `bridge\in`, or from a `.lrcat` when given.
     LightroomImport(LightroomImportArgs),
+    /// Is the Conrod Bridge plug-in installed, current, and is Lightroom open?
+    LightroomPluginStatus {},
+    /// Copy the bundled plug-in into Lightroom Classic's Modules folder.
+    InstallLightroomPlugin {},
+    /// Remove only Conrod's plug-in folder from Lightroom's Modules folder.
+    RemoveLightroomPlugin {},
 }
 
 impl Command {
@@ -568,6 +574,19 @@ mod tests {
         };
         assert_eq!(a.catalog.as_deref(), Some("C:\\Photos\\Lightroom.lrcat"));
         assert!(Command::parse("lightroom_import", json!({"jobId": 0})).is_err());
+
+        assert!(matches!(
+            Command::parse("lightroom_plugin_status", json!({})),
+            Ok(Command::LightroomPluginStatus {})
+        ));
+        assert!(matches!(
+            Command::parse("install_lightroom_plugin", Value::Null),
+            Ok(Command::InstallLightroomPlugin {})
+        ));
+        assert!(matches!(
+            Command::parse("remove_lightroom_plugin", json!({})),
+            Ok(Command::RemoveLightroomPlugin {})
+        ));
     }
 
     #[test]

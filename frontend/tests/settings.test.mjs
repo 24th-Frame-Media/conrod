@@ -26,8 +26,8 @@ test('every setting keeps its engine key and appears in exactly one section', ()
     if (key === 'vlm_services') continue; // a whole list, rendered by the providers section
     assert.ok(seen.has(key), `${key} is still on the page`);
   }
-  assert.equal(SECTIONS.length, 14); // incl. the opt-in decision model
-  assert.deepEqual(TABS.map((t) => t.label), ['Culling', 'Identification', 'Metadata', 'System']);
+  assert.equal(SECTIONS.length, 15); // incl. the opt-in decision model and Lightroom
+  assert.deepEqual(TABS.map((t) => t.label), ['Culling', 'Identification', 'Metadata', 'Lightroom', 'System']);
 });
 
 test('blur strictness offers critical as the strictest stop', () => {
@@ -75,10 +75,10 @@ test('dirty state is per key, per tab and compares lists deeply', () => {
   assert.deepEqual(dirtyKeys(saved, saved), []);
   const draft = { ...saved, blur_strictness: 'strict', burst_gap: 2, include_cars: true };
   assert.deepEqual(dirtyKeys(draft, saved).sort(), ['blur_strictness', 'burst_gap']);
-  assert.deepEqual(dirtyTabs(draft, saved), { culling: 2, identification: 0, metadata: 0, system: 0 });
+  assert.deepEqual(dirtyTabs(draft, saved), { culling: 2, identification: 0, metadata: 0, lightroom: 0, system: 0 });
   const services = { ...saved, vlm_services: [{ id: 'a' }, { id: 'b' }] };
-  assert.deepEqual(dirtyTabs(services, saved), { culling: 0, identification: 1, metadata: 0, system: 0 });
-  assert.deepEqual(dirtyTabs({ ...draft, close_to_tray: true, odd_key: 1 }, saved), { culling: 2, identification: 0, metadata: 1, system: 0 });
+  assert.deepEqual(dirtyTabs(services, saved), { culling: 0, identification: 1, metadata: 0, lightroom: 0, system: 0 });
+  assert.deepEqual(dirtyTabs({ ...draft, close_to_tray: true, odd_key: 1 }, saved), { culling: 2, identification: 0, metadata: 1, lightroom: 0, system: 0 });
   assert.deepEqual(dirtyKeys({}, saved).sort(), Object.keys(saved).sort());
 });
 
