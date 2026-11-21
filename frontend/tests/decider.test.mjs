@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   barTone, canInstall, deciderActive, deciderNode, deciderWord, msWords, percent, sizeWords, statusLine,
 } from '../src/lib/decider.mjs';
-import { ingestNodes } from '../src/lib/ingest.mjs';
+import { identifyNodes, ingestNodes } from '../src/lib/ingest.mjs';
 import { FIELDS, SECTIONS } from '../src/lib/settings.mjs';
 
 const live = (extra = {}) => ({
@@ -45,6 +45,37 @@ test('the DECIDER node sits after VISION and before DONE, and only when the engi
   assert.deepEqual(ids.slice(-3), ['vision', 'decider', 'done']);
   assert.equal(nodes.find((n) => n.id === 'decider').filter, 'decider');
   assert.deepEqual(nodes.map((n) => n.number), nodes.map((_, i) => String(i + 1).padStart(2, '0')));
+});
+
+test('the identify flow shows the decision model beside vision, with its question and answer', () => {
+  const asking = live({
+    state: 'running', busy: 1, done: 12, avg_ms: 340,
+    current: { label: 'a.CR3', thumb: null, queued: false, elapsed_ms: 10, asking: [{ id: 'm_wheel_lift', kind: 'noul', text: 'Is a wheel off the ground?', options: 2 }] },
+  });
+  const nodes = identifyNodes({ stage: 'vision', state: 'running' }, 'qwen', asking);
+  assert.equal(nodes.length, 7);
+  assert.equal(nodes[3].label, 'VISION');
+  const node = nodes[4];
+  assert.equal(node.label, 'DECIDER');
+  assert.equal(node.sub, 'Is a wheel off the ground?');
+  assert.equal(node.state, 'active');
+  assert.match(node.meta, /12 frames/);
+  assert.match(node.meta, /340 ms\/frame/);
+  assert.deepEqual(nodes.map((n) => n.number), ['01', '02', '03', '04', '05', '06', '07']);
+  // Once it has answered, the node keeps the frame count and adds its pick.
+  const answered = identifyNodes({ stage: 'vision' }, 'qwen', live({
+    done: 30, avg_ms: 900,
+    recent: [{ label: 'a.CR3', thumb: null, ms: 900, tokens: 900, ok: true, says: [{ id: 'm_wheel_lift', kind: 'noul', text: 'Is a wheel off the ground?', label: 'yes', p: 0.91, bars: [] }] }],
+  }))[4];
+  assert.equal(answered.state, 'done');
+  assert.match(answered.meta, /30 frames/);
+  assert.match(answered.meta, /yes 91%/);
+  // Off: the node is dimmed and says why, never empty.
+  const off = identifyNodes({ stage: 'vision' }, 'qwen', live({ state: 'off' }))[4];
+  assert.equal(off.off, true);
+  assert.equal(off.sub, 'off');
+  // No decider in the snapshot: the original six nodes are unchanged.
+  assert.equal(identifyNodes({ stage: 'vision' }, 'qwen').length, 6);
 });
 
 test('the lane shows once the model is awake or has answered something', () => {

@@ -108,7 +108,7 @@ fn pending(d: &Desktop, job: i64, everything: bool) -> Result<Vec<Value>> {
     };
     rows(
         &lock(&d.reader),
-        &format!("SELECT i.id,i.path,i.preview_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 AND i.moments IS NULL {keepers} ORDER BY i.id"),
+        &format!("SELECT i.id,i.path,i.preview_path,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 AND i.moments IS NULL {keepers} ORDER BY i.id"),
         [job],
     )
 }
@@ -179,7 +179,17 @@ pub(crate) fn run(
                 };
                 // A failed answer leaves the frame unjudged; a retry judges it later.
                 let url = data_url(&image, FRAME_EDGE);
-                let verdict = shown_as(&label, thumb, || judge.judge(context, vocab, &url));
+                // The car up close rides second: the whole frame must stay first so the
+                // ground line (and a wheel off it) is visible.
+                let crop = frame["crop_path"]
+                    .as_str()
+                    .filter(|path| Path::new(path).is_file())
+                    .and_then(|path| std::fs::read(path).ok())
+                    .and_then(|bytes| Rgb::decode_jpeg(&bytes, 1).ok())
+                    .map(|image| data_url(&image, FRAME_EDGE));
+                let verdict = shown_as(&label, thumb, || {
+                    judge.judge_pair(context, vocab, &url, crop.as_deref())
+                });
                 if let Ok(verdict) = verdict {
                     if store(d, id, &verdict).is_ok() {
                         judged.fetch_add(1, Ordering::Relaxed);

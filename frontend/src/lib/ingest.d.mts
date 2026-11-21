@@ -1,4 +1,4 @@
-import type { IdentifyItem, IdentifyLive, LaneBox, LaneStep, PipelineStage, PipelineWorker, ScanRecentFrame } from './types';
+import type { DeciderLive, IdentifyItem, IdentifyLive, LaneBox, LaneStep, PipelineStage, PipelineWorker, ScanRecentFrame } from './types';
 
 export type NodeState = 'done' | 'active' | 'pending';
 export type IngestNode = {
@@ -40,7 +40,7 @@ export function stageOfStep(step: string | null | undefined, fallback?: string):
 export function stepIndex(step: string | null | undefined): number;
 export function visionExpected(stages: PipelineStage[] | null | undefined, identify?: IdentifyLive | null): boolean;
 export function ingestNodes(input?: { stages?: PipelineStage[] | null; identify?: IdentifyLive | null; model?: string; finished?: boolean; decider?: import('./types').DeciderLive | null }): IngestNode[];
-export function identifyNodes(live: IdentifyLive | null | undefined, model?: string | null): IngestNode[];
+export function identifyNodes(live: IdentifyLive | null | undefined, model?: string | null, decider?: DeciderLive | null): IngestNode[];
 export function ingestPhase(input?: {
   mode?: 'ingest' | 'identify';
   scan?: { state: string; stage?: string } | null;

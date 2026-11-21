@@ -33,6 +33,20 @@ pub trait MomentJudge: Send + Sync {
     /// One photograph, as a `data:image/jpeg;base64,...` URL.
     fn judge(&self, context: &str, vocab: &[Moment], image: &str) -> Result<MomentVerdict, String>;
 
+    /// One photograph plus a detail crop of the subject. The whole frame comes first, so a
+    /// judge that can only take one image (the vision model) sees the ground and the scene;
+    /// a judge that can take several (the decision model) also sees the car up close.
+    fn judge_pair(
+        &self,
+        context: &str,
+        vocab: &[Moment],
+        frame: &str,
+        crop: Option<&str>,
+    ) -> Result<MomentVerdict, String> {
+        let _ = crop;
+        self.judge(context, vocab, frame)
+    }
+
     /// Which frame of a burst shows the peak: P per frame, in order. A backend
     /// that cannot say answers `Ok(None)`.
     fn peak(&self, _context: &str, _images: &[String]) -> Result<Option<Vec<f64>>, String> {
@@ -150,6 +164,24 @@ impl MomentJudge for DeciderJudge {
 
     fn judge(&self, context: &str, vocab: &[Moment], image: &str) -> Result<MomentVerdict, String> {
         let request = decision::moment_request(context, vocab, vec![image.to_string()]);
+        let response = self.transport.decide(&request)?;
+        Ok(decision::read_moments(&response, vocab))
+    }
+
+    fn judge_pair(
+        &self,
+        context: &str,
+        vocab: &[Moment],
+        frame: &str,
+        crop: Option<&str>,
+    ) -> Result<MomentVerdict, String> {
+        // The llama.cpp multimodal path takes any number of images in one request, so the
+        // model can see the whole frame (and the ground under the wheels) as well as the car.
+        let mut images = vec![frame.to_string()];
+        if let Some(crop) = crop {
+            images.push(crop.to_string());
+        }
+        let request = decision::moment_request(context, vocab, images);
         let response = self.transport.decide(&request)?;
         Ok(decision::read_moments(&response, vocab))
     }
@@ -436,6 +468,36 @@ mod tests {
         assert_eq!(sure.len(), 1);
         assert_eq!(sure[0].tag, "first_kiss");
         assert!(sure[0].calibrated);
+    }
+
+    #[test]
+    fn the_decider_sees_the_whole_frame_first_and_the_car_crop_second() {
+        let vocab = vocabulary(ShootPreset::MotorsportTrack);
+        let (judge, mock) = decider(|_| Ok(Response::default()));
+        judge
+            .judge_pair(
+                "Track day.",
+                vocab,
+                "data:image/jpeg;base64,FRAME",
+                Some("data:image/jpeg;base64,CROP"),
+            )
+            .unwrap();
+        // With no crop it stays one image: a judge that has only the frame still works.
+        judge
+            .judge_pair("Track day.", vocab, "data:image/jpeg;base64,FRAME", None)
+            .unwrap();
+        let seen = mock.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(
+            seen[0].images,
+            [
+                "data:image/jpeg;base64,FRAME",
+                "data:image/jpeg;base64,CROP"
+            ],
+            "the whole frame must come first so the ground stays visible"
+        );
+        assert!(seen[0].state.as_str().unwrap().contains("whole photograph"));
+        assert_eq!(seen[1].images, ["data:image/jpeg;base64,FRAME"]);
     }
 
     #[test]

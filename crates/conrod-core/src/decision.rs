@@ -381,9 +381,16 @@ pub fn moment_request(context: &str, vocab: &[Moment], images: Vec<String>) -> R
             &STRENGTH_LEVELS,
         ),
     );
+    // With more than one image, say what they are: the whole frame comes first, the car crop
+    // second, so the model keeps the ground (and a wheel off it) in view.
+    let what = if images.len() > 1 {
+        " The first image is the whole photograph; the next are close crops of the subject."
+    } else {
+        ""
+    };
     Request {
         state: json!(format!(
-            "{context} Answer only from what is clearly visible in the photograph."
+            "{context}{what} Answer only from what is clearly visible in the photograph."
         )),
         questions,
         images,

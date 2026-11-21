@@ -247,6 +247,11 @@
       { "section": "Fixed", "text": "Race numbers come from the vision model; text reading only fills in when it saw nothing, so far fewer wrong numbers." },
       { "section": "Fixed", "text": "When a car shows several numbers, Conrod picks the race number using your entry list, the door or bonnet panel, and the rest of the burst." }
     ],
-    "9323bb6": { "section": "Fixed", "text": "A vision service you switched off no longer shows up by name." }
+    "9323bb6": { "section": "Fixed", "text": "A vision service you switched off no longer shows up by name." },
+    "df01a8c": { "section": "Fixed", "text": "The decision model now looks at the whole photo as well as the car close-up, so it can spot a wheel off the ground instead of only seeing the car." },
+    "d7e4704": [
+      { "section": "New", "text": "The decision model now works from the start of identification: its question and answer appear in the identifying screen along with the frames it has judged and the time each takes, instead of staying quiet until the end." },
+      { "section": "Improved", "text": "Waiting for the decision model no longer delays the end of identification, because it judges frames while the cars are being read." }
+    ]
   }
 }

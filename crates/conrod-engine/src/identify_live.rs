@@ -405,6 +405,9 @@ impl IdentifyLive {
             "model": state.model,
             "vision_off_reason": state.vision_off_reason,
             "workers": state.workers,
+            // The decision model runs while the cars are being read, so this screen shows its
+            // question and answer beside the vision workers instead of waiting for the end.
+            "decider": crate::decider::service().live_json(),
             "current": current,
             // Every car a worker is inside right now, including `current`:
             // identify runs several workers, and the screen shows them all.
@@ -726,6 +729,7 @@ mod tests {
             [
                 "active",
                 "current",
+                "decider",
                 "done",
                 "elapsed_ms",
                 "errors",
@@ -853,6 +857,18 @@ mod tests {
             "a finished item, with no prompt"
         );
         println!("{}", serde_json::to_string_pretty(&snapshot).unwrap());
+    }
+
+    #[test]
+    fn the_snapshot_carries_the_decision_models_live_feed() {
+        // The identify screen shows the decision model while the cars are read, so the same
+        // event carries its state, frames, per-frame time and current question/answer.
+        let live = IdentifyLive::new(1, 2);
+        let decider = live.snapshot()["decider"].clone();
+        assert!(decider.is_object(), "{decider}");
+        for key in ["state", "done", "avg_ms", "current", "recent"] {
+            assert!(decider.get(key).is_some(), "decider.{key}");
+        }
     }
 
     #[test]

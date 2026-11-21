@@ -463,6 +463,8 @@ export type IdentifyLive = {
   vision_off_reason?: 'album' | 'settings' | 'no_service' | 'lanes' | null;
   /** How many identify workers run at once: one panel per worker. */
   workers?: number;
+  /** The decision model's live feed while it judges frames beside the vision workers. */
+  decider?: DeciderLive | null;
   /** Null before the first car is read. */
   current: IdentifyItem | null;
   /** Every car a worker is inside right now, one per identify worker, newest first. */
