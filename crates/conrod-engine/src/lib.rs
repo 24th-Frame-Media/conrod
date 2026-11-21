@@ -238,6 +238,9 @@ pub struct Subject {
     /// The camera's focus area is elsewhere, so this is not what the frame is
     /// of (see `afsubject`): it is stored as a bystander and drives nothing.
     pub bystander: bool,
+    /// This bystander was made one by the camera's focus area being the
+    /// subject (rather than by another car being the main subject).
+    pub af_bystander: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -644,6 +647,7 @@ pub(crate) fn face_subjects(
                     lead_room: None,
                     framing_score: None,
                     bystander: false,
+                    af_bystander: false,
                 });
             }
         }
@@ -1095,6 +1099,7 @@ pub fn cull_frame_live(
             lead_room: measured.lead_room,
             framing_score,
             bystander: false,
+            af_bystander: false,
         });
     }
     live(Live::Stage("sharpness"));
@@ -1192,6 +1197,7 @@ pub fn cull_frame_live(
                     lead_room: None,
                     framing_score: None,
                     bystander: false,
+                    af_bystander: false,
                 });
             }
         }
@@ -1208,17 +1214,24 @@ pub fn cull_frame_live(
             focus.measured.then_some(focus.score)
         }
     };
-    // The frame as the detector and the whole-frame path read it, measured
-    // before the camera's word can park any detection, so a rescue below has a
-    // real floor to stand on.
+    // Only the vehicle the camera focused on is the frame's subject; every
+    // other car in the picture is a background car the photographer did not
+    // point at. Without a usable AF area the sharpest car is the subject.
+    afsubject::main_vehicle(&mut subjects, af);
+    // Where the camera focused outside every detection, the focus area is the
+    // subject: the detections are bystanders and the frame is rescued to its
+    // score, never dragged down by it (see `afsubject::rescue`).
+    let af_sharpness = afsubject::apply(&mut subjects, &grey, af, &strictness).subject();
+    // The frame as its main subject reads it; background cars never rate it.
     let detected_panning = subjects
         .iter()
-        .any(|s| matches!(s.region_type, "vehicle" | "person") && s.panning);
+        .any(|s| !s.bystander && matches!(s.region_type, "vehicle" | "person") && s.panning);
     let share_measured = detected_panning
         .then(|| sharpness::frame_sharp_share(&grey))
         .flatten();
     let rated: Vec<_> = subjects
         .iter()
+        .filter(|s| !s.bystander)
         .map(|s| (s.region_type, s.bbox, s.rating))
         .collect();
     let detected = pan_capped(
@@ -1226,10 +1239,6 @@ pub fn cull_frame_live(
         detected_panning,
         share_measured,
     );
-    // Where the camera focused outside every detection, the focus area is the
-    // subject: the detections are bystanders and the frame is rescued to its
-    // score, never dragged down by it (see `afsubject::rescue`).
-    let af_sharpness = afsubject::apply(&mut subjects, &grey, af, &strictness).subject();
     let rating = afsubject::rescue(detected, af_sharpness);
     // A pan's frame rating reads the picture, not the car; the subjects keep
     // their own ratings, which is what picks the keeper of a burst. A frame the
@@ -1256,7 +1265,7 @@ pub fn cull_frame_live(
         ]),
         _ => subjects
             .iter()
-            .filter(|s| s.region_type != "face" && s.region_type != "eye")
+            .filter(|s| !s.bystander && s.region_type != "face" && s.region_type != "eye")
             .max_by(|a, b| {
                 let area = |s: &Subject| (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1]);
                 area(a).total_cmp(&area(b))

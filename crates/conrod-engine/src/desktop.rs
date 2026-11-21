@@ -2676,7 +2676,7 @@ pub(crate) fn insert_subject(
     image: i64,
     s: &crate::Subject,
 ) -> Result<()> {
-    db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,rating_verdict,panning,sharp_end,cull_reason,features,heuristic,region_type,quality,attributes,cut_sides,subject_frac,lead_room,framing_score,bystander,af_bystander) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![image,s.bbox[0],s.bbox[1],s.bbox[2],s.bbox[3],s.class,s.conf,s.sharpness,s.rating,conrod_vision::sharpness::rating_for(s.rating,0.825,0.606),s.panning,s.sharp_end,s.cull_reason,serde_json::to_string(&s.features).map_err(err)?,s.heuristic,s.region_type,s.quality,eyes_json(s.eyes_open),s.cut_sides,s.subject_frac,s.lead_room,s.framing_score,s.bystander.then_some(1),s.bystander.then_some(1)]).map_err(err)?;
+    db.execute("INSERT INTO detections(image_id,x1,y1,x2,y2,cls,conf,sharpness,rating,rating_verdict,panning,sharp_end,cull_reason,features,heuristic,region_type,quality,attributes,cut_sides,subject_frac,lead_room,framing_score,bystander,af_bystander) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",params![image,s.bbox[0],s.bbox[1],s.bbox[2],s.bbox[3],s.class,s.conf,s.sharpness,s.rating,conrod_vision::sharpness::rating_for(s.rating,0.825,0.606),s.panning,s.sharp_end,s.cull_reason,serde_json::to_string(&s.features).map_err(err)?,s.heuristic,s.region_type,s.quality,eyes_json(s.eyes_open),s.cut_sides,s.subject_frac,s.lead_room,s.framing_score,s.bystander.then_some(1),s.af_bystander.then_some(1)]).map_err(err)?;
     Ok(())
 }
 
