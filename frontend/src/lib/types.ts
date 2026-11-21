@@ -74,6 +74,8 @@ export type Detection = {
   crop_path?: string | null;
   rating?: number | null; rating_verdict?: string | null; sharp_end?: string | null;
   cull_reason: string | null; attributes: string | null; burst_pick: number; region_type: string | null;
+  /** When Identify read this subject, or Skip accepted it unread; null means nobody has read it yet. */
+  read_at?: number | null;
   /** NIMA technical quality, 0..1; null when the model is off or absent. */
   quality?: number | null;
   /** Framing of this subject's box; `framing_score` ranks the keeper where the preset applies. */

@@ -774,6 +774,7 @@ impl Desktop {
                 "reset_detections",
                 "reset_identifications",
                 "reset_ratings",
+                "skip_identify",
                 "save_settings",
                 "delete_job",
             ]
@@ -814,8 +815,11 @@ impl Desktop {
             }
             Command::Unqueue(a) => self.unqueue(a.job_id),
             Command::DeleteJob(a) => self.delete_job(a.job_id),
-            Command::Identify(a) => crate::operations::identify(self, a.job_id, a.scope.as_deref()),
+            Command::Identify(a) => {
+                crate::operations::identify(self, a.job_id, a.scope.as_deref(), a.only_new)
+            }
             Command::Identified(a) => self.identified(a.job_id),
+            Command::SkipIdentify(a) => crate::operations::skip_identify(self, a.job_id),
             Command::ProviderModels(a) => Ok(
                 match conrod_io::vlm::list_models(&a.provider, &a.host, &a.api_key) {
                     Ok(models) => json!({
@@ -1250,6 +1254,7 @@ impl Desktop {
                 self,
                 a.job_id.ok_or("Identify requires an existing album")?,
                 None,
+                false,
             );
         }
         let mut settings = lock(&self.settings).clone();
@@ -1637,7 +1642,7 @@ impl Desktop {
                         desktop.note_resume_stage(job, Tail::Identify);
                         // No scope argument: the album's own setting applies
                         // (keepers unless it chose everything).
-                        if let Err(e) = crate::operations::identify(&desktop, job, None) {
+                        if let Err(e) = crate::operations::identify(&desktop, job, None, true) {
                             desktop.hub.start("Identification", 0).fail(e);
                         } else {
                             // `identify` runs as its own operation; hold the scan

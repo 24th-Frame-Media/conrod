@@ -32,6 +32,8 @@ export function identifyActionLabel(value, n) {
 
 const detsOf = (facts, id) => facts?.get?.(id)?.dets ?? [];
 const isVehicle = (d) => (d.region_type ?? 'vehicle') === 'vehicle';
+/** Has Identify read this subject? `read_at` is set by a read run and by Skip; `reviewed` is the photographer's acceptance. */
+const isRead = (d) => d?.read_at != null;
 
 /**
  * How many subjects identification would read on the album's effective keepers.
@@ -41,7 +43,7 @@ const isVehicle = (d) => (d.region_type ?? 'vehicle') === 'vehicle';
  * the suggestion it replaced does not, and a hand star that lost the pick counts nothing. This is never re-derived
  * from `burst_pick` here: the grid, the toolbar and the engine all answer the same question the same way.
  *
- * Only unreviewed vehicle rows on a keeper frame count, and rows the cull excluded (rejected, bystander, an
+ * Only unread vehicle rows on a keeper frame count, and rows the cull excluded (rejected, bystander, an
  * automatic cull nobody starred) are skipped like the engine's query.
  */
 export function keeperCount(frames, facts, keepers) {
@@ -49,7 +51,7 @@ export function keeperCount(frames, facts, keepers) {
   for (const frame of frames ?? []) {
     if (!keepers?.has?.(frame.id)) continue;
     for (const d of detsOf(facts, frame.id)) {
-      if (d.reviewed || subjectExcluded(frame, d)) continue;
+      if (isRead(d) || subjectExcluded(frame, d)) continue;
       if (isVehicle(d)) count += 1;
     }
   }
@@ -57,16 +59,30 @@ export function keeperCount(frames, facts, keepers) {
 }
 
 /**
- * Every subject the everything scope could still read: unreviewed vehicle rows, bystanders skipped, automatic
+ * Every subject the everything scope could still read: unread vehicle rows, bystanders skipped, automatic
  * culls and manual rejects included. The engine filters the final rows; this is only the label's count.
  */
 export function everythingCount(frames, facts) {
   let count = 0;
   for (const frame of frames ?? []) {
     for (const d of detsOf(facts, frame.id)) {
-      if (d.reviewed || d.bystander) continue;
+      if (isRead(d) || d.bystander) continue;
       if (isVehicle(d)) count += 1;
     }
   }
   return count;
+}
+
+/** True when Identify has read at least one subject here: the album has been identified. */
+export function hasReadings(frames, facts) {
+  for (const frame of frames ?? []) {
+    if (detsOf(facts, frame.id).some(isRead)) return true;
+  }
+  return false;
+}
+
+/** The primary action once the album has a reading: it only reads what is new. */
+export function identifyNewLabel(n) {
+  const count = Number.isFinite(n) ? Number(n) : 0;
+  return `Identify ${count.toLocaleString()} new ${count === 1 ? 'car' : 'cars'}`;
 }

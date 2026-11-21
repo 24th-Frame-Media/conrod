@@ -13,3 +13,5 @@ export function identifyScopeLabel(value: unknown): string;
 export function identifyActionLabel(scope: unknown, n: number): string;
 export function keeperCount(frames: readonly ScopeFrame[], facts: ReadonlyMap<number, ScopeFacts>, keepers: ReadonlySet<number>): number;
 export function everythingCount(frames: readonly ScopeFrame[], facts: ReadonlyMap<number, ScopeFacts>): number;
+export function hasReadings(frames: readonly ScopeFrame[], facts: ReadonlyMap<number, ScopeFacts>): boolean;
+export function identifyNewLabel(n: number): string;

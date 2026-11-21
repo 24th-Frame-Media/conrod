@@ -54,7 +54,10 @@ export const engine = {
   mark: (imageId: number, values: MarkValues) => call('mark', { imageId, ...values }),
   editDetection: (detectionId: number, updates: Record<string, string | string[] | null>) => call('edit_detection', { detectionId, ...updates }),
   preview: (imageId: number) => call<string>('preview', { imageId }),
-  identify: (jobId: number, scope?: import('./types').Scope) => call('identify', scope ? { jobId, scope } : { jobId }),
+  identify: (jobId: number, scope?: import('./types').Scope, onlyNew = false) =>
+    call('identify', { jobId, ...(scope ? { scope } : {}), ...(onlyNew ? { onlyNew: true } : {}) }),
+  /** Accept the album's readings as they stand, so Review opens without a model run. */
+  skipIdentify: (jobId: number) => call<{ ok: boolean; skipped: number }>('skip_identify', { jobId }),
   identified: (jobId: number) => call<import('./types').Identified>('identified', { jobId }),
   acceptIdentifications: (ids: number[]) => call('bulk_edit', { ids, reviewed: true }),
   write: (jobId: number, dryRun = false) => call('write', { jobId, dryRun }),

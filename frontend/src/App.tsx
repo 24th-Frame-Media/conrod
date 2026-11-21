@@ -156,11 +156,11 @@ export function App() {
     });
     setStarting(false);
   };
-  /** `scope` is the run's override; absent, the engine reads the album's own `identify_scope`. */
-  const identify = (id: number, scope?: Scope) => void run(async () => {
+  /** `scope` is the run's override; absent, the engine reads the album's own `identify_scope`. `onlyNew` reads just the subjects nobody has read yet. */
+  const identify = (id: number, scope?: Scope, onlyNew = false) => void run(async () => {
     setJobId(id);
     setPage('Identify');
-    await engine.identify(id, scope);
+    await engine.identify(id, scope, onlyNew);
     toast('Identification started. The live trace is open.');
   });
   const write = (id: number, dryRun: boolean) => void run(async () => {
@@ -259,6 +259,12 @@ export function App() {
                 if (ids.length) await call('bulk_edit', { ids, reviewed: true });
                 await rv.refresh();
                 toast('Identification skipped. Write XMP when you\'re ready.', { tone: 'ok' });
+              })}
+              onSkipAlbumIdentify={() => void run(async () => {
+                if (jobId == null) return;
+                const r = await engine.skipIdentify(jobId);
+                await rv.refresh();
+                toast(`Skipped. ${r.skipped.toLocaleString()} subjects accepted as they stand.`, { tone: 'ok' });
               })}
               onWrite={(dryRun) => jobId != null && write(jobId, dryRun)}
               lightroomDev={dev?.lightroom}

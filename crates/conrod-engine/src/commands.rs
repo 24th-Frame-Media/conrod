@@ -146,7 +146,16 @@ pub struct IdentifyArgs {
     pub job_id: i64,
     #[serde(default)]
     pub scope: Option<String>,
+    /// Read only the subjects nobody has read yet. The incremental run the
+    /// review screen offers after a redetect or a re-import; absent reads every
+    /// unaccepted subject again.
+    #[serde(default)]
+    pub only_new: bool,
 }
+
+/// Mark every unread subject in an album as read without asking a model to
+/// read it: the album counts as identified as it stands.
+pub type SkipIdentifyArgs = JobArgs;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -429,6 +438,9 @@ pub enum Command {
     DeleteJob(JobArgs),
     Identify(IdentifyArgs),
     Identified(JobArgs),
+    /// Accept the album's identifications as they stand: every unread subject
+    /// is marked read without a model call, so Review opens instead.
+    SkipIdentify(JobArgs),
     ProviderModels(ProviderModelsArgs),
     OpenRouterCheck(OpenRouterCheckArgs),
     Write(WriteArgs),

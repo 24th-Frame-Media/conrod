@@ -89,6 +89,14 @@ pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Val
         if a.patch.contains_key("blur_strictness") {
             map.insert("blur_explicit".into(), Value::Bool(true));
         }
+        // A reader changed: the readings on disk are still there, but the next
+        // review says why the album may be worth reading again.
+        if a.patch
+            .keys()
+            .any(|key| crate::operations::identify_setting_key(key))
+        {
+            map.insert(crate::operations::IDENTIFY_STALE.into(), Value::Bool(true));
+        }
 
         let updated_json = serde_json::to_string(&map).map_err(err)?;
         db.execute(
@@ -562,5 +570,24 @@ mod tests {
         assert_eq!(settings.scan_profile, "motorsport-track");
         assert!(!settings.read_numbers);
         assert!(!settings.read_plates);
+        assert_eq!(
+            res["settings"]["native_identify_stale"], true,
+            "a changed reader says why the album may be worth reading again"
+        );
+    }
+
+    #[test]
+    fn a_setting_identification_does_not_read_leaves_it_not_stale() {
+        let lib = Lib::new("update_settings_group");
+        let res = lib
+            .run(
+                "update_job_settings",
+                json!({"jobId": lib.job, "patch": {"burst_gap": 2.0}}),
+            )
+            .unwrap();
+        assert_eq!(
+            res["settings"]["native_identify_stale"],
+            serde_json::Value::Null
+        );
     }
 }

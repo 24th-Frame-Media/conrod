@@ -131,6 +131,10 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("detections", "plate_state", "TEXT"),
     ("detections", "plate_conf", "REAL"),
     ("detections", "attributes", "TEXT"),
+    // When Identify last read this subject. NULL means nobody has read it yet,
+    // which is what the album's "Needs identify" state turns on. Kept apart
+    // from `reviewed`, which records the photographer accepting the reading.
+    ("detections", "read_at", "REAL"),
     ("detections", "signature", "TEXT"),
     ("detections", "group_key", "INTEGER"),
     ("detections", "group_size", "INTEGER"),
@@ -385,6 +389,13 @@ fn migrate(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_images_hand_pick ON images(job_id, burst_key)
              WHERE COALESCE(picked,0)=1;",
+    )?;
+    // Albums identified before `read_at` existed already carry the reading in
+    // `attributes`; backfill it once so they do not ask to identify again.
+    conn.execute_batch(
+        "UPDATE detections SET read_at=unixepoch('now')
+             WHERE read_at IS NULL AND attributes IS NOT NULL
+               AND COALESCE(region_type,'vehicle')='vehicle';",
     )?;
     Ok(())
 }

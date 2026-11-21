@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_IDENTIFY_SCOPE, IDENTIFY_SCOPES, IDENTIFY_SCOPE_OPTIONS, everythingCount,
-  identifyActionLabel, identifyScopeLabel, identifyScopeOf, keeperCount,
+  DEFAULT_IDENTIFY_SCOPE, IDENTIFY_SCOPES, IDENTIFY_SCOPE_OPTIONS, everythingCount, hasReadings,
+  identifyActionLabel, identifyNewLabel, identifyScopeLabel, identifyScopeOf, keeperCount,
 } from '../src/lib/identify.mjs';
 import { keeperIds } from '../src/lib/stacks.mjs';
 import { frameExcluded } from '../src/review.mjs';
@@ -18,7 +18,7 @@ const factsOf = (frames, rows) => new Map(frames.map((f) => {
 }));
 const frame = (id, extra = {}) => ({ id, burst_key: null, burst_pick: null, rejected: 0, picked: 0, manual_stars: null, ...extra });
 const det = (extra = {}) => ({
-  id: Math.random(), image_id: 0, cls: 'car', region_type: 'vehicle', reviewed: 0, burst_pick: 0,
+  id: Math.random(), image_id: 0, cls: 'car', region_type: 'vehicle', reviewed: 0, read_at: null, burst_pick: 0,
   bystander: 0, rejected: 0, cull_reason: null, stars: null, ...extra,
 });
 /** `rv.keepers`: the effective keeper of each burst, which is what Review hands the count. */
@@ -89,12 +89,12 @@ test('a frame-level pick keeps its whole frame; a subject-less frame has nothing
   assert.equal(keeperCount(frames, facts, keepers), 2, 'both subjects of the picked frame');
 });
 
-test('a reviewed or excluded subject on a keeper frame is not pending', () => {
+test('a read or excluded subject on a keeper frame is not pending', () => {
   const frames = [frame(1), frame(2, { rejected: 1 })];
   const facts = factsOf(frames, {
     1: [
       det({ burst_pick: 1 }), // the one subject left to read
-      det({ burst_pick: 1, reviewed: 1 }),
+      det({ burst_pick: 1, read_at: 1 }), // Identify already read it
       det({ burst_pick: 1, bystander: 1 }),
       det({ burst_pick: 1, rejected: 1 }),
       det({ burst_pick: 1, cull_reason: 'blurred' }),
@@ -115,13 +115,13 @@ test('a frame whose whole burst was soft has no keeper to read', () => {
   assert.equal(keeperCount(frames, facts, keepers), 0);
 });
 
-test('everything counts every unreviewed vehicle subject, culls and rejects included', () => {
+test('everything counts every unread vehicle subject, culls and rejects included', () => {
   const frames = [frame(1), frame(2, { rejected: 1 })];
   const facts = factsOf(frames, {
     1: [
       det(), // plain
       det({ cull_reason: 'blurred' }), // an automatic cull the engine still reads
-      det({ reviewed: 1 }), // already read
+      det({ read_at: 1 }), // already read
       det({ bystander: 1 }), // a bystander is skipped
       det({ region_type: 'person' }), // not a subject
     ],
@@ -157,6 +157,19 @@ test('an explicit keeper set overrides the suggestion: every unreviewed subject 
   const facts = factsOf(frames, { 1: [det({ burst_pick: 1 })], 2: [det(), det()] });
   assert.equal(keeperCount(frames, facts, new Set([1])), 1, 'the suggested frame only');
   assert.equal(keeperCount(frames, facts, new Set([2])), 2, 'a caller-supplied set reads all of frame 2');
+});
+
+test('an identified album with new subjects stays identified and reads only the new cars', () => {
+  const frames = [frame(1), frame(2)];
+  const facts = factsOf(frames, {
+    1: [det({ burst_pick: 1, read_at: 1700000000, reviewed: 1 })], // read and accepted long ago
+    2: [det({ burst_pick: 1 }), det({ burst_pick: 1 })], // new subjects nobody has read
+  });
+  const keepers = keepersOf(frames, facts);
+
+  assert.equal(hasReadings(frames, facts), true, 'accepting the album does not unidentify it');
+  assert.equal(keeperCount(frames, facts, keepers), 2, 'only the new subjects are pending');
+  assert.equal(identifyNewLabel(keeperCount(frames, facts, keepers)), 'Identify 2 new cars');
 });
 
 test('an empty album counts zero in either scope', () => {

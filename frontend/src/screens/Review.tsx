@@ -12,7 +12,7 @@ import { tasteStacks } from '../lib/taste.mjs';
 import { albumSetting } from '../lib/album.mjs';
 import { albumVisionChoice, albumVisionOn } from '../lib/vision.mjs';
 import { WORKFLOW_OPTIONS, pipelineSteps, workflowIncludesCull, workflowIncludesIdentify, workflowLabel, workflowModeOf, type PipelineStep } from '../lib/workflow.mjs';
-import { everythingCount, identifyActionLabel, identifyScopeOf, keeperCount } from '../lib/identify.mjs';
+import { everythingCount, hasReadings, identifyActionLabel, identifyNewLabel, identifyScopeOf, keeperCount } from '../lib/identify.mjs';
 import { call, engine } from '../lib/api';
 import { useLocalFlag, useRun } from '../state/hooks';
 import { useToast } from '../state/toast';
@@ -113,10 +113,13 @@ function PipelineStepper({ steps }: { steps: PipelineStep[] }) {
 type Props = {
   rv: ReviewModel; jobs: Job[]; jobId: number | null; scanning: boolean; status: Status; settings: Settings;
   showBoxes: boolean; onToggleBoxes: () => void; verbs: MutableRefObject<ReviewVerbs>;
-  onPickJob: (id: number) => void; onIdentify: (scope?: Scope) => void; onCull: () => void;
+  onPickJob: (id: number) => void; onIdentify: (scope?: Scope, onlyNew?: boolean) => void; onCull: () => void;
   onHelp: () => void; onOpenViewer: () => void; onLibrary: () => void;
   onEdit: (detectionId: number, updates: Record<string, string | string[] | null>) => unknown;
-  onAcceptAll: () => void; onSkipIdentify: () => void; onWrite: (dryRun: boolean) => void;
+  onAcceptAll: () => void; onSkipIdentify: () => void;
+  /** Accept the album's readings as they stand: no model run, Review opens. */
+  onSkipAlbumIdentify: () => void;
+  onWrite: (dryRun: boolean) => void;
   /** Reopen the live identification flow from the stepper while a run is going. */
   onWatchIdentify: () => void;
   /** Album settings changed (preset, toggles): reload the job list so the new values show. */
@@ -180,7 +183,7 @@ function ResetAlbumDialog({ onCancel, onConfirm }: { onCancel: () => void; onCon
 }
 
 /** Toolbar (album, view, search, stars, sort, actions), facets, the card grid and the inspector. */
-export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onWrite, onJobsChanged, onWatchIdentify, lightroomDev }: Props) {
+export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onSkipAlbumIdentify, onWrite, onJobsChanged, onWatchIdentify, lightroomDev }: Props) {
   const [known, setKnown] = useState<KnownVehicle[]>([]);
   const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'reset_album' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
@@ -497,7 +500,10 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const workflow = workflowModeOf(albumSetting(currentJob, 'workflow_mode', settings));
   // The stepper reads the album's own data, not `job.status`: a long-finished album can still say "scanning".
   const scanned = Boolean(currentJob && currentJob.total > 0 && currentJob.done >= currentJob.total) && !scanning;
+  // `read_at` marks what Identify actually read; `reviewed` is only acceptance, so an accepted album stays identified.
+  const hasRead = hasReadings(review.frames, facts);
   const identified = scopeEligible === 0 && review.detections.length > 0;
+  const identifyStale = Boolean(albumSetting(currentJob, 'native_identify_stale', settings));
   const steps = pipelineSteps(workflow, { scanned, identified, identifying, scanning });
   const pickWorkflow = (value: string) => {
     void run(async () => {
@@ -530,9 +536,11 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       }
     : !busy && scopeEligible > 0 && workflowIncludesIdentify(workflow)
     ? {
-        label: identifyActionLabel(identifyScope, scopeEligible),
-        onClick: () => onIdentify(identifyScope),
-        title: identifyTitle,
+        label: hasRead ? identifyNewLabel(scopeEligible) : identifyActionLabel(identifyScope, scopeEligible),
+        onClick: () => onIdentify(identifyScope, true),
+        title: hasRead
+          ? `${scopeEligible.toLocaleString()} subject${scopeEligible === 1 ? '' : 's'} found since this album was identified; read only those`
+          : identifyTitle,
       }
     : !identifying && workflowIncludesIdentify(workflow) && review.detections.some((d) => !d.reviewed)
     ? {
@@ -562,7 +570,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         hint: 'Read plates, numbers, and VLM on your keeper, or the suggested one',
         badge: keeperEligible > 0 ? keeperEligible.toLocaleString() : undefined,
         disabled: busy || identifying || keeperEligible === 0,
-        onClick: () => onIdentify('keepers'),
+        onClick: () => onIdentify('keepers', true),
       },
       {
         id: 'identify_everything',
@@ -570,7 +578,15 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         hint: 'Read every subject, culled frames included; bystanders skipped',
         badge: everythingEligible > 0 ? everythingEligible.toLocaleString() : undefined,
         disabled: busy || identifying || everythingEligible === 0,
-        onClick: () => onIdentify('everything'),
+        onClick: () => onIdentify('everything', true),
+      },
+      {
+        id: 'skip_identify',
+        label: 'Skip identify',
+        hint: 'Accept what is on disk as it stands and go to Review; nothing is read',
+        badge: scopeEligible > 0 ? scopeEligible.toLocaleString() : undefined,
+        disabled: busy || identifying || !hasRead || scopeEligible === 0,
+        onClick: onSkipAlbumIdentify,
       },
       {
         id: 'identified',
@@ -976,6 +992,35 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         />
       )}
       {identifyTask && <IdentificationBanner task={identifyTask} settings={albumSettings} onSkip={onSkipIdentify} />}
+      {hasRead && !identifying && (scopeEligible > 0 || identifyStale) && (
+        <section className="identify-banner identify-again" aria-live="polite">
+          <div className="identify-copy">
+            <div className="identify-title">
+              <Icon name="check" size={16} />
+              <div>
+                <b>This album is identified</b>
+                <span>
+                  {[
+                    scopeEligible > 0 ? `${scopeEligible.toLocaleString()} new ${scopeEligible === 1 ? 'car' : 'cars'} to read` : null,
+                    identifyStale ? 'the reader settings changed since it was read' : null,
+                  ].filter(Boolean).join(' · ')}
+                </span>
+              </div>
+            </div>
+            <p className="muted">
+              What is on disk stays as it is unless you ask to read it again.
+            </p>
+            <div className="identify-footer">
+              {scopeEligible > 0 && (
+                <button type="button" className="primary" onClick={() => onIdentify(identifyScope, true)}>
+                  Identify new only
+                </button>
+              )}
+              <button type="button" className="ghost" onClick={onSkipAlbumIdentify}>Skip</button>
+            </div>
+          </div>
+        </section>
+      )}
       <div className="review-main">
         <Facets preset={currentProfile} overrides={{ ...userDefaults, ...albumOverrides }} facets={rv.facets} facet={filters.facet} onPick={(facet) => patchFilters({ facet })} />
         {stacked
