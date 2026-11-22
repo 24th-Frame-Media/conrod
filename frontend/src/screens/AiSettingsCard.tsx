@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { engine, mocked } from '../lib/api';
 import * as ai from '../lib/aiCard.mjs';
 import type { ModelInfo, SettingValue, Settings as SettingsMap, Toaster } from '../lib/types';
+import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
 import '../styles/aiSettings.css';
 
 // The pure services-plan model is a plain .mjs module; keep one `any` handle so
@@ -74,6 +75,31 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     }
     return init;
   });
+
+  // Anchors for the two viewport-clamped menus (see placeAnchoredMenu).
+  const addAnchorRef = useRef<HTMLSpanElement | null>(null);
+  const addMenuRef = useRef<HTMLDivElement | null>(null);
+  const helperPopRef = useRef<HTMLSpanElement | null>(null);
+
+  /* Re-place every open anchored menu when one opens, on window resize, and on
+     any scroll (the Settings pane scrolls in its own container, so capture). */
+  useLayoutEffect(() => {
+    if (!openPopup && !addMenuOpen) return;
+    const helperAnchor = openPopup
+      ? document.querySelector<HTMLElement>(`.ai-settings .helper[data-h="${openPopup}"] .hm-more-wrap`)
+      : null;
+    const place = () => {
+      if (openPopup && helperAnchor && helperPopRef.current) placeAnchoredMenu(helperAnchor, helperPopRef.current, 'left');
+      if (addMenuOpen && addAnchorRef.current && addMenuRef.current) placeAnchoredMenu(addAnchorRef.current, addMenuRef.current, 'center');
+    };
+    place();
+    window.addEventListener('resize', place);
+    document.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      document.removeEventListener('scroll', place, true);
+    };
+  }, [openPopup, addMenuOpen]);
 
   /* Non-AI helpers run on Conrod's own bundled models, read from the app's
      model manifest/status (the `models` prop). No cloud provider is involved. */
@@ -235,8 +261,10 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     if (card.reasoning && m.efforts && m.efforts.length) {
       const key = base + ':thinking';
       const cur = optVal(key, m.def || m.efforts[0]);
+      // The card already has a "Thinking" toggle; this per-model row is its
+      // effort level, so name it that instead of doubling the word.
       bits.push(
-        <label key="thinking">Thinking
+        <label key="thinking">Effort
           <select aria-label={`Thinking level for ${selId}`} value={cur} onChange={(e) => setOpts((s) => ({ ...s, [key]: e.target.value }))}>
             {m.efforts.map((e) => <option key={e} value={e}>{e.charAt(0).toUpperCase() + e.slice(1)}</option>)}
           </select>
@@ -398,9 +426,9 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
       onClick={() => setAddMenuOpen((o) => !o)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAddMenuOpen((o) => !o); } }}>
       <span className="plus">+</span>
-      <span className="add-label">Add service</span>
+      <span className="add-label" ref={addAnchorRef}>Add service</span>
       <span className="add-hint">OpenCode, OpenRouter, Local Ollama (one card per host), Gemini, Anthropic or OpenAI</span>
-      <div className="add-menu" hidden={!addMenuOpen} onClick={(e) => e.stopPropagation()}>
+      {addMenuOpen && <div className="add-menu" ref={addMenuRef} onClick={(e) => e.stopPropagation()}>
         {A.ADD_ORDER.map((type: string) => {
           const added = type !== 'ollama' && cards.some((c) => c.type === type);
           return (
@@ -412,7 +440,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
             </button>
           );
         })}
-      </div>
+      </div>}
     </div>
   );
 
@@ -444,10 +472,10 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
                       onClick={(e) => { e.stopPropagation(); setOpenPopup((cur) => cur === h.id ? null : h.id); }}>
                       +{line.rest.length} more <svg width="9" height="9" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     </button>
-                    <span className="hm-pop" hidden={!open}>
+                    {open && <span className="hm-pop" ref={helperPopRef}>
                       <span className="hm-pop-title">Models in use</span>
                       {line.all.map((id) => <span key={id}>{id}</span>)}
-                    </span>
+                    </span>}
                   </span>
                 )}
               </>
