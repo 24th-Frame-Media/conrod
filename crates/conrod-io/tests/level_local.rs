@@ -18,14 +18,14 @@ use std::time::Instant;
 const PER_SHOOT: usize = 20;
 
 const SHOOTS: [&str; 2] = [
-    r"D:\24th Frame Media\01_Clients\Client A\2026-10-12_24-Sample-Ave-Sampletown-Condition-Report\01_RAW",
-    r"P:\Client Work\Client A\2026\09\30",
+    r"D:\Photo Archive\Clients\Client Property\2026-01-12_12-Sample-Street-Sampletown-Condition-Report\01_RAW",
+    r"P:\Client Work\Client Property\2026\09\30",
 ];
 
 fn out_dir() -> PathBuf {
     std::env::var_os("CONROD_LEVEL_OUT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"E:\code\photo\conrod\target"))
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target"))
 }
 
 /// Every RAW in a shoot, evenly thinned to `PER_SHOOT`: neighbours in a shoot

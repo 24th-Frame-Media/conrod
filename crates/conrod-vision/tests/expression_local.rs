@@ -23,20 +23,15 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-const OUT: &str = r"E:\code\photo\conrod\target\expression";
-const LABELS: &str = r"E:\code\photo\conrod\target\groundtruth\labels.json";
-/// Clients whose shoots are people, not cars.
+const OUT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/expression");
+const LABELS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/groundtruth/labels.json"
+);
+/// Shoots whose subjects are people, not cars.
 const PEOPLE: [&str; 10] = [
-    "gracie",
-    "mum",
-    "natasha william",
-    "jasmeen kaur",
-    "mandy godwin",
-    "mads bruun",
-    "aaron boss",
-    "victor jorgensen",
-    "byron shaw",
-    "variety backyard bash",
+    "person a", "person b", "person c", "person d", "person e", "person f", "person g", "person h",
+    "person i", "event a",
 ];
 /// Frames wanted, and the most to decode chasing them.
 const WANT: usize = 40;

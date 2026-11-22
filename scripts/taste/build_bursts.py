@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-ROOT = r'E:\code\photo\conrod'
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TASTE = os.path.join(ROOT, 'target', 'taste')
 LABELS = os.path.join(ROOT, 'target', 'groundtruth', 'labels.json')
 TIMEDIR = os.path.join(TASTE, 'times')
@@ -29,60 +29,63 @@ GAP = 1.5
 MINB, MAXB = 2, 30
 WINDOW = 34
 
+# Illustrative shoot-type map: generic client and event labels, so the
+# mapping logic is documented without naming a real job register.
 GENRE = {
-    'Bathurst 1000': 'motorsport',
-    '2026-10-06_Bathurst-1000': 'motorsport',
-    'BLCC Conrod Flyer': 'motorsport',
+    'Race Weekend A': 'motorsport',
+    '2026-01-01_Race-Weekend-A': 'motorsport',
+    'Client A': 'motorsport',
     'Race Week': 'motorsport',
-    'Bathurst Burn': 'motorsport',
-    'Ford Falcon Tribute Cruise': 'car_meet',
-    'SAU Cruise Mount Panorama': 'car_meet',
-    'ROADSTER BROS & Client E2 + Fathers day laps Motorsport Museum': 'car_meet',
-    'Bathurst Historic Car Club Swap Meet': 'car_meet',
-    'Client G Car Cruises': 'car_meet',
-    'Client H': 'car_meet',
-    'AMW Wheels Meet': 'car_meet',
-    'RPM Meets': 'car_meet',
+    'Race Weekend B': 'motorsport',
+    'Client B': 'car_meet',
+    'Client C': 'car_meet',
+    'Client D': 'car_meet',
+    'Car Club Swap Meet': 'car_meet',
+    'Client E': 'car_meet',
     'Client F': 'car_meet',
-    'Client A': 'property',
-    'Variety Backyard Bash': 'event',
-    'Jasmeen Kaur': 'portrait',
-    'Natasha William': 'portrait',
-    'Mum': 'portrait',
-    'Aaron Boss': 'portrait',
-    'Mandy Godwin': 'portrait',
-    'Victor Jorgensen': 'portrait',
-    'Client B': 'portrait',
-    'Byron Shaw': 'portrait',
-    'Client D': 'portrait',
+    'Client G': 'car_meet',
+    'RPM Meets': 'car_meet',
+    'Client H': 'car_meet',
+    'Client Property': 'property',
+    'Event A': 'event',
+    'Portrait A': 'portrait',
+    'Portrait B': 'portrait',
+    'Portrait C': 'portrait',
+    'Portrait D': 'portrait',
+    'Portrait E': 'portrait',
+    'Portrait F': 'portrait',
+    'Portrait G': 'portrait',
+    'Portrait H': 'portrait',
+    'Portrait I': 'portrait',
     'Personal Work': 'wildlife_personal',
-    '2026-10-30_Sydney-Weekend': 'wildlife_personal',
+    '2026-01-01_Personal-Trip': 'wildlife_personal',
 }
 
-# chosen shoots: xmp coverage >= 85% (times are cheap) and a usable keep-ratio
+# Chosen shoots, generic: xmp coverage >= 85% (times are cheap) and a usable
+# keep-ratio; replace with the real roots for a local run.
 SHOOTS = [
-    r'P:\Client Work\Ford Falcon Tribute Cruise\2026\08\22',
-    r'P:\Client Work\BLCC Conrod Flyer\2026\09\05',
-    r'P:\Client Work\BLCC Conrod Flyer\2026\09\06',
-    r'P:\Client Work\SAU Cruise Mount Panorama\2026\08\29',
-    r'P:\Client Work\ROADSTER BROS & Client E2 + Fathers day laps Motorsport Museum\2026\09\13',
-    r'P:\Client Work\Variety Backyard Bash\2026\08\14',
-    r'P:\Client Work\Natasha William\2026\08\14',
-    r'P:\Client Work\Jasmeen Kaur\2026\09\24',
-    r'P:\Client Work\Client F\2026\08\15',
-    r'P:\Client Work\Mum\2026\08\06',
-    r'P:\Client Work\AMW Wheels Meet\2026\08\09',
-    r'P:\Client Work\Bathurst 1000\2026\10\08',
-    r'D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-08_Thursday',
-    r'D:\Personal Work\2026\08\02',
-    r'D:\Personal Work\2026\08\11',
-    r'D:\Personal Work\2026\08\01',
-    r'D:\Personal Work\2026\08\28',
-    r'D:\Personal Work\2026\08\19',
-    r'D:\Personal Work\2026\08\13',
-    r'D:\Personal Work\2026\08\31',
-    r'D:\Personal Work\2026\08\17',
-    r'D:\24th Frame Media\01_Clients\Client A\2026-10-12_24-Sample-Ave-Sampletown-Condition-Report\01_RAW',
+    r'P:\Client Work\Client-B\2026\01\22',
+    r'P:\Client Work\Client-A\2026\02\05',
+    r'P:\Client Work\Client-A\2026\02\06',
+    r'P:\Client Work\Client-C\2026\01\29',
+    r'P:\Client Work\Client-D\2026\02\13',
+    r'P:\Client Work\Event-A\2026\01\14',
+    r'P:\Client Work\Portrait-B\2026\01\14',
+    r'P:\Client Work\Portrait-A\2026\02\24',
+    r'P:\Client Work\Client-H\2026\01\15',
+    r'P:\Client Work\Portrait-C\2026\01\06',
+    r'P:\Client Work\Client-E\2026\01\09',
+    r'P:\Client Work\Race Weekend A\2026\03\08',
+    r'D:\Photo Archive\Projects\2026-01-01_Race-Weekend-A\01_RAW\2026-01-02_Day-1',
+    r'D:\Photo Archive\Personal\2026\01\02',
+    r'D:\Photo Archive\Personal\2026\01\11',
+    r'D:\Photo Archive\Personal\2026\01\01',
+    r'D:\Photo Archive\Personal\2026\01\28',
+    r'D:\Photo Archive\Personal\2026\01\19',
+    r'D:\Photo Archive\Personal\2026\01\13',
+    r'D:\Photo Archive\Personal\2026\01\31',
+    r'D:\Photo Archive\Personal\2026\01\17',
+    r'D:\Photo Archive\Clients\Client Property\2026-01-12_12-Sample-Street-Sampletown-Condition-Report\01_RAW',
 ]
 
 import rawlib

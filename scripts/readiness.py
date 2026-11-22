@@ -29,8 +29,8 @@ SUITE = [
     {"name": "Birds / wildlife", "shoot": "Personal Work\\2026\\08\\02", "max": 24, "neighbours": 6},
     {"name": "Car meet + detail shots", "shoot": "Ford Falcon Tribute", "max": 18, "neighbours": 6},
     {"name": "Cruise", "shoot": "SAU Cruise", "max": 12, "neighbours": 6},
-    {"name": "Interiors / property", "shoot": "Sample-Ave-Sampletown-Condition-Report", "max": 20, "neighbours": 2},
-    {"name": "Portrait", "shoot": "Jasmeen Kaur", "max": 15, "neighbours": 4, "profile": "portrait"},
+    {"name": "Interiors / property", "shoot": "property-report-a", "max": 20, "neighbours": 2},
+    {"name": "Portrait", "shoot": "Portrait A", "max": 15, "neighbours": 4, "profile": "portrait"},
 ]
 
 

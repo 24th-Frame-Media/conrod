@@ -804,7 +804,7 @@ mod canon_af_tests {
     #[ignore = "reads a real CR3 from the read-only D: originals"]
     fn real_r7_frame_matches_exiftool() {
         let file = Path::new(
-            r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-08_Thursday\20261008-IMGC2130.CR3",
+            r"D:\Photo Archive\Projects\2026-01-01_Race-Weekend-A\01_RAW\2026-01-02_Day-1\20260102_RACE_2130.CR3",
         );
         if !file.exists() {
             eprintln!("skipping: {} is missing", file.display());

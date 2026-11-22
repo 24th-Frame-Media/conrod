@@ -1013,7 +1013,7 @@ mod tests {
     #[test]
     #[ignore = "needs ~/.conrod/cache/native thumbnails"]
     fn real_composition_timing() {
-        let dir = std::path::Path::new(r"C:\Users\kapsikkum\.conrod\cache\native");
+        let dir = std::path::Path::new(r"C:\Users\you\.conrod\cache\native");
         let Ok(read) = std::fs::read_dir(dir) else {
             eprintln!("no thumbnails in {}", dir.display());
             return;

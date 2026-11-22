@@ -11,7 +11,7 @@
 //! what this is measuring, so neither is applied -- the question is which
 //! class the animal arrives as, and no rule of the app may answer it.
 //!
-//! Writes, under `CONROD_RODEO_OUT` (default `E:\code\photo\conrod\target\rodeo`):
+//! Writes, under `CONROD_RODEO_OUT` (default `target/rodeo`):
 //! `rodeo.csv`, one row per sampled frame, and `frames/<stem>.jpg`, the same
 //! preview with the orientation baked in, so the contact sheets a script makes
 //! from them and this CSV draw boxes in the same coordinates. The originals
@@ -25,7 +25,7 @@ use std::io::Write;
 use std::time::Instant;
 
 const SHOOT: &str =
-    r"D:\24th Frame Media\01_Clients\Riverside Show Society\2026-11-14_Neville-Show-Bull-Ride\01_RAW";
+    r"D:\Photo Archive\Clients\Riverside Show Society\2026-01-14_Riverside-Show-Bull-Ride\01_RAW";
 /// The bull riding, by frame number: the show content before 1300 is skipped.
 const FIRST: usize = 1300;
 const LAST: usize = 3061;
@@ -34,7 +34,7 @@ const STEP: usize = 15;
 const CONF: f32 = 0.25;
 
 fn frame_path(n: usize) -> PathBuf {
-    Path::new(SHOOT).join(format!("20261114_NEVSHOW-BULLRIDE_{n:04}.CR3"))
+    Path::new(SHOOT).join(format!("20260114_SHOW-BULLRIDE_{n:04}.CR3"))
 }
 
 /// Names and sizes of everything in the folder: equal before and after means
@@ -142,10 +142,9 @@ impl Rec {
 #[test]
 #[ignore]
 fn rodeo_probe() {
-    let out_dir = PathBuf::from(
-        std::env::var("CONROD_RODEO_OUT")
-            .unwrap_or_else(|_| String::from(r"E:\code\photo\conrod\target\rodeo")),
-    );
+    let out_dir = PathBuf::from(std::env::var("CONROD_RODEO_OUT").unwrap_or_else(|_| {
+        String::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/rodeo"))
+    }));
     // The guard: everything this test writes goes to a folder called rodeo.
     assert!(
         out_dir
@@ -438,10 +437,9 @@ fn rodeo_probe() {
 #[test]
 #[ignore]
 fn rodeo_notes() {
-    let out = PathBuf::from(
-        std::env::var("CONROD_RODEO_OUT")
-            .unwrap_or_else(|_| String::from(r"E:\code\photo\conrod\target\rodeo")),
-    );
+    let out = PathBuf::from(std::env::var("CONROD_RODEO_OUT").unwrap_or_else(|_| {
+        String::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/rodeo"))
+    }));
     assert!(
         out.to_string_lossy().replace('\\', "/").contains("/rodeo"),
         "refusing to write to {}",

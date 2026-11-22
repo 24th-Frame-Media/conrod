@@ -288,7 +288,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       return out({
         package: name,
         photos: db.frames.length,
-        path: `C:\\Users\\kapsikkum\\.conrod\\bridge\\out\\${name}.json`,
+        path: `C:\\Users\\you\\.conrod\\bridge\\out\\${name}.json`,
       });
     }
     case 'lightroom_pending': {

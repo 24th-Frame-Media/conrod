@@ -14,12 +14,15 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-const INTERIORS: &str = r"D:\24th Frame Media\01_Clients\Client A\2026-10-12_24-Sample-Ave-Sampletown-Condition-Report\01_RAW";
+const INTERIORS: &str = r"D:\Photo Archive\Clients\Client Property\2026-01-12_12-Sample-Street-Sampletown-Condition-Report\01_RAW";
 const EXTERIORS: &str =
-    r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-08_Thursday";
-const SHEET_JSON: &str = r"E:\code\photo\conrod\target\exposure_check.json";
+    r"D:\Photo Archive\Projects\2026-01-01_Race-Weekend-A\01_RAW\2026-01-02_Day-1";
+const SHEET_JSON: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/exposure_check.json"
+);
 /// Where the six worst previews, and the manifest the contact sheet reads, go.
-const SHEET_DIR: &str = r"E:\code\photo\conrod\target\exposure_check";
+const SHEET_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/exposure_check");
 
 /// Frames of a directory, sorted, taken evenly across it: a job's first thirty
 /// frames are one room, the spread is what matters.
