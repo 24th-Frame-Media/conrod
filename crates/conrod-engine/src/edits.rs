@@ -188,7 +188,10 @@ pub fn edit_detection(d: &Desktop, a: &EditArgs) -> Result<Value> {
         Some(Some(n)) => Some(n),
     };
     db.execute(
-        "UPDATE detections SET number=?,number_source=?,number_conf=?,plate=?,plate_state=?,attributes=?,rejected=?,reviewed=?,stars=?,bystander=? WHERE id=?",
+        // A hand edit settles the box: `read_at` says Identify has nothing
+        // left to offer here, and `reviewed` keeps a full identify run from
+        // writing over what the person typed.
+        "UPDATE detections SET number=?,number_source=?,number_conf=?,plate=?,plate_state=?,attributes=?,rejected=?,reviewed=?,stars=?,bystander=?,read_at=unixepoch('now') WHERE id=?",
         params![number, source, conf, plate, plate_state, Value::Object(attrs.clone()).to_string(), rejected, a.reviewed, stars, bystander, a.detection_id],
     )
     .map_err(err)?;
@@ -262,7 +265,7 @@ pub fn bulk_edit(d: &Desktop, a: &BulkArgs) -> Result<Value> {
             let mut attrs = attributes_of(raw.as_deref());
             manual_number(&mut attrs, number);
             tx.execute(
-                "UPDATE detections SET number=?,number_source='manual',number_conf=1.0,reviewed=1,attributes=? WHERE id=?",
+                "UPDATE detections SET number=?,number_source='manual',number_conf=1.0,reviewed=1,read_at=unixepoch('now'),attributes=? WHERE id=?",
                 params![number, Value::Object(attrs).to_string(), id],
             )
             .map_err(err)?;

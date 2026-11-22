@@ -1012,6 +1012,9 @@ impl Desktop {
         // else. An album's copy never lives in the global file.
         next.user_profile = conrod_core::user_profile::UserProfile::sanitize(&next.user_profile);
         next.user_defaults = Map::new();
+        // A save writes a clean file, so the "settings were unreadable" warning
+        // is over: the caller has just replaced what was there.
+        next.corrupt = None;
         // The Settings screen saves the whole object, so only a changed value
         // is a choice.
         if next.blur_strictness != stored.blur_strictness {
