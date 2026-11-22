@@ -7,8 +7,8 @@ import {
 } from '../src/lib/aiCard.mjs';
 import {
   ADD_ORDER, BUILTIN, IN_TOK, OUT_TOK, SERVICE_TYPES, SHARING, THINK_HINT,
-  addService, cardsFromDraft, checkOutcome, costLine, decisionCandidates, defaultThinking,
-  fmtUsd, helperStatus, makeCard, modelLine, momentsStatus, patchService, photoCost, poolCount,
+  addService, builtinRowStates, cardsFromDraft, checkOutcome, costLine, decisionCandidates, defaultThinking,
+  fmtUsd, helperStatus, isPicked, makeCard, modelLine, momentsStatus, patchService, photoCost, poolCount,
   providerToType, removeService, servingFor, setCapModel, setSharing, sharingValue, summaryText,
   visionCandidates,
 } from '../src/lib/aiCard.mjs';
@@ -417,4 +417,70 @@ test('a real check failure is surfaced; only a clean reply is ready', () => {
     assert.equal(checkOutcome(good).ready, true);
     assert.equal(checkOutcome(good).reason, '');
   }
+});
+
+/* ── built-in rows read the real manifest + use_decider ─────────────────── */
+test('built-in rows: downloaded/on come from the manifest and use_decider, never invented flags', () => {
+  const missing = builtinRowStates([
+    { name: 'Detector', file: 'det.onnx', ready: true },
+    { name: 'Vision model', file: 'qwen', ready: false },
+    { name: 'Decision model', file: 'decider-int8.onnx', ready: false, optional: true },
+  ], false);
+  assert.deepEqual(missing['qwen3-vl:8b'], { downloaded: false, on: false }, 'qwen3-vl:8b reflects the manifest');
+  assert.deepEqual(missing['pplx-decider-local'], { downloaded: false, on: false });
+
+  // Installed AND active: the switch is on, not a "not downloaded" Download button.
+  const installed = builtinRowStates([
+    { name: 'Vision model', file: 'qwen', ready: true },
+    { name: 'Decision model', file: 'decider-int8.onnx', ready: true, optional: true },
+  ], true);
+  assert.deepEqual(installed['qwen3-vl:8b'], { downloaded: true, on: true });
+  assert.deepEqual(installed['pplx-decider-local'], { downloaded: true, on: true });
+
+  // Installed but use_decider off: still a switch (downloaded), just off.
+  const off = builtinRowStates([
+    { name: 'Vision model', ready: true }, { name: 'Decision model', ready: true },
+  ], false);
+  assert.deepEqual(off['pplx-decider-local'], { downloaded: true, on: false });
+  assert.equal(builtinRowStates([], false)['qwen3-vl:8b'].downloaded, false);
+});
+
+/* ── "None — skip" is excluded from cost and pool counts ────────────────── */
+test('"None — skip" is never billed or counted in the pool or cost', () => {
+  assert.equal(isPicked('none'), false);
+  assert.equal(isPicked(''), false);
+  assert.equal(isPicked('glm-5.3-flash'), true);
+  // A stray "none" in picked is not a model (it used to be billed as "varies").
+  assert.equal(costLine([{ id: 'none', local: false }]), 'No models picked yet — no cost.');
+  assert.equal(costLine([{ id: '', local: false }]), 'No models picked yet — no cost.');
+  assert.equal(
+    costLine([{ id: 'none', local: false }, { id: 'glm-5.3-flash', local: false }]),
+    costLine([{ id: 'glm-5.3-flash', local: false }]),
+  );
+  const base = { builtinVision: [], builtinDecisions: [], routing: 'round_robin',
+    cards: [{ enabled: true, visionSel: 'none', decisionSel: 'none' }] };
+  assert.deepEqual(poolCount(base), { n: 0, svc: 0 }, 'a card with both None joins nothing');
+  assert.deepEqual(poolCount({ ...base, cards: [{ enabled: true, visionSel: 'glm-5.3-flash', decisionSel: 'none' }] }),
+    { n: 1, svc: 1 }, 'None is excluded while the picked model is counted');
+  assert.deepEqual(poolCount({ ...base, builtinVision: ['none'] }), { n: 0, svc: 0 });
+});
+
+/* ── a download completes only when the model appears in the manifest ────── */
+test('a download completes only when the model appears in the real manifest', () => {
+  // The card polls health/onModelsChanged. While no ready row exists, the
+  // built-in row must stay in its running/Download state, not flip to a switch.
+  const before = [
+    { name: 'Vision model', file: 'qwen', ready: false },
+    { name: 'Decision model', file: 'decider-int8.onnx', ready: false },
+  ];
+  assert.equal(builtinRowStates(before, false)['qwen3-vl:8b'].downloaded, false);
+  assert.equal(builtinRowStates(before, false)['pplx-decider-local'].downloaded, false);
+  // Once the installer lands and health reports the row ready, only then does
+  // the row flip to its switch (the real completion condition).
+  const after = [
+    { name: 'Vision model', file: 'qwen', ready: true },
+    { name: 'Decision model', file: 'decider-int8.onnx', ready: true },
+  ];
+  assert.equal(builtinRowStates(after, true)['qwen3-vl:8b'].downloaded, true);
+  assert.equal(builtinRowStates(after, true)['pplx-decider-local'].downloaded, true);
 });

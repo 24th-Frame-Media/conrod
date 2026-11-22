@@ -18,6 +18,13 @@ const params = () => new URLSearchParams(location.search);
  *  the key/host with a plain reason, so the Test button's failure state can be
  *  screenshotted without an interactive click (pair with `&aitest=1`). */
 const keyFails = () => params().get('aikeytest') === 'fail';
+/** Dev QA: `&aidl=installed` seeds the built-in models as present in the
+ *  manifest, so an installed, active model shows its switch on instead of a
+ *  fake Download button. install_models / install_decider flip these flags, so
+ *  a real Download can be watched polling the health list until it appears. */
+const seededInstalled = params().get('aidl') === 'installed';
+let visionInstalled = seededInstalled;
+let decisionInstalled = seededInstalled || mockDeciderStatus().state === 'ready';
 
 /** `?mock=1&page=ingest` (or `page=scan`) plays a ~80 s ingest of album 3: scan lanes, group, pick, vision, done. `page=identify` plays only the vision phase.
     Tuning: `&speed=4` hurries it, `&at=30` starts 30 s in (scan 0-61, group 61-64, pick 64-67, vision 67-89, done after 90), `&paused` starts it paused, `&frames=` `&cars=` size it, `&theme=light`. */
@@ -147,6 +154,9 @@ function makeDb(): Db {
     sharp_at: 0.8, blurred_below: 0.5, blur_strictness: 'moderate', entry_list: '', auto_reject_below_stars: 0, cull_blurred: true, burst_gap: 1.5, read_plates: true, read_numbers: true, read_text: true,
     use_vlm: true, vlm_provider: 'ollama', vlm_model: 'qwen2.5vl:7b', vlm_host: 'http://localhost:11434', vlm_extra_hosts: '', vlm_api_key: '', vlm_timeout: 120,
     ...(servicesForAi() as unknown as Settings),
+    // `&aidl=installed` switches the local decision model on, so an installed
+    // and active model shows its switch on (the seeded, downloaded state).
+    ...(seededInstalled ? { use_decider: true } : {}),
     // Moment + vision wiring the two-zone card writes back to the engine.
     moments_strategy: 'round_robin', moments_vlm_fallback: true, moments_threshold: 0.85,
     vlm_strategy: 'round_robin', vlm_reasoning: false, use_quality_score: true, include_people: true,
@@ -276,11 +286,18 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
         { name: 'Decision model', file: 'decider-int8.onnx', ready: true, optional: true, detail: 'Ready' },
         { name: 'Quality', file: 'quality.onnx', ready: false, optional: true, detail: 'Opt-in sharpness tiebreak' },
       ]);
-      return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}, {name: 'Decision model', ready: mockDeciderStatus().state === 'ready', optional: true, detail: mockDeciderStatus().message}]);
+      // The built-in card reads this real manifest list. `install_models` /
+      // `install_decider` flip the flags, so a Download is only "done" once a
+      // row actually shows up here as ready.
+      return out([
+        { name: 'Detector', file: 'det.onnx', ready: true },
+        { name: 'Vision model', file: 'qwen', ready: visionInstalled, detail: visionInstalled ? 'Ready' : 'Ollama is not running' },
+        { name: 'Decision model', file: 'decider-int8.onnx', ready: decisionInstalled, optional: true, detail: decisionInstalled ? 'Ready' : mockDeciderStatus().message },
+      ]);
     }
     case 'decider_status': return out(mockDeciderStatus());
-    case 'install_decider': return out({operation: 'Installing decision model'});
-    case 'install_models': return out({operation: 'Installing models'});
+    case 'install_decider': decisionInstalled = true; return out({operation: 'Installing decision model'});
+    case 'install_models': visionInstalled = true; return out({operation: 'Installing models'});
     case 'cache_info': return out({total: {files: 64, bytes: 3200000}});
     case 'check_update': return out({ok: true, current: '0.0.0-mock', latest: '0.0.1-mock', newer: true, installable: true});
     case 'ollama_models': return out(keyFails()
@@ -395,7 +412,12 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'bootstrap':
       if (['scan', 'ingest'].includes(params().get('page') ?? '')) startSim(db, 3);
       if (params().get('page') === 'identify') startIdentifySim(1);
-      return out({ jobs: db.jobs, settings: db.settings, status: status(db), models: [{ name: 'Vehicle detector', file: 'yolo.onnx', ready: true }, { name: 'Plate reader', file: 'plates.onnx', ready: true }, { name: 'Vision model', file: 'qwen', ready: false }] } satisfies Bootstrap);
+      return out({ jobs: db.jobs, settings: db.settings, status: status(db), models: [
+        { name: 'Vehicle detector', file: 'yolo.onnx', ready: true },
+        { name: 'Plate reader', file: 'plates.onnx', ready: true },
+        { name: 'Vision model', file: 'qwen', ready: visionInstalled },
+        { name: 'Decision model', file: 'decider-int8.onnx', ready: decisionInstalled, optional: true },
+      ] } satisfies Bootstrap);
     case 'status': return out(status(db));
     case 'scan_status': {
       const id = Number(a.jobId) || 0;
