@@ -5,7 +5,7 @@ import { mockDeciderStatus, startDeciderSim } from './mockDecider';
 import type { ShootStats } from './shot.mjs';
 import { applyOverrides, defaultSummary, overridesOf } from './presetPolicy.mjs';
 import { profileDefaults } from './wizard.mjs';
-import type { Bootstrap, DeciderLive, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, Settings, Status, WorkerLimits } from './types';
+import type { Bootstrap, DeciderLive, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, ScanStatus, Settings, Status, WorkerLimits } from './types';
 import * as aiCard from './aiCard.mjs';
 
 export type DevStart = {
@@ -364,6 +364,26 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       if (params().get('page') === 'identify') startIdentifySim(1);
       return out({ jobs: db.jobs, settings: db.settings, status: status(db), models: [{ name: 'Vehicle detector', file: 'yolo.onnx', ready: true }, { name: 'Plate reader', file: 'plates.onnx', ready: true }, { name: 'Vision model', file: 'qwen', ready: false }] } satisfies Bootstrap);
     case 'status': return out(status(db));
+    case 'scan_status': {
+      const id = Number(a.jobId) || 0;
+      const job = db.jobs.find((j) => j.id === id);
+      const st = status(db);
+      const waiting = (st.queue ?? []).indexOf(id);
+      const pausedScan = Boolean(ingest && !ingest.finished && st.tasks.some((t) => t.state === 'paused'));
+      if (st.activeJob === id) {
+        return out({ state: 'running', paused: pausedScan, progress: lastProgress?.job_id === id ? lastProgress : null, queue_position: null, errors: 0, error_samples: [], resume_stage: null } satisfies ScanStatus);
+      }
+      if (waiting >= 0 || job?.status === 'queued') {
+        return out({ state: 'queued', paused: false, progress: null, queue_position: waiting >= 0 ? waiting + 1 : null, errors: 0, error_samples: [], resume_stage: null } satisfies ScanStatus);
+      }
+      if (job?.status === 'scanning') {
+        return out({ state: 'running', paused: false, progress: lastProgress?.job_id === id ? lastProgress : null, queue_position: null, errors: 0, error_samples: [], resume_stage: null } satisfies ScanStatus);
+      }
+      const state = !job ? 'done'
+        : job.status === 'done_errors' || job.status === 'error' ? job.status
+          : job.status === 'stopped' || job.status === 'incomplete' || job.status === 'indexed' ? 'stopped' : 'done';
+      return out({ state, paused: false, progress: null, queue_position: null, errors: job?.errors ?? 0, error_samples: job?.error_samples ?? [], resume_stage: state === 'done' ? 'done' : 'scan' } satisfies ScanStatus);
+    }
     case 'jobs': return out(db.jobs);
     case 'global_stats': {
       const albums = db.jobs.length;

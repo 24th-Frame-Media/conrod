@@ -1,4 +1,8 @@
+import type { Job, Page } from './types';
 import type { Stack } from './stacks.mjs';
+
+/** The page a Library card opens on: the worker screen while its scan is live, waiting, stopped or failed; Review otherwise. */
+export function openJobPage(job: Job | null | undefined, activeJob?: number | null): Page;
 
 /** Where one arrow press went: a frame inside the stack, or the neighbouring stack to enter. */
 export type StackStep = { id: number; expanded: true } | { stackIndex: number };
