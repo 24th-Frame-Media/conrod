@@ -323,6 +323,11 @@ export function setService(settings, id, patch = {}) {
 export function setCapModel(settings, cap, id, model) {
   const key = cap === 'vision' ? 'vlm_services' : 'moments_services';
   const list = arr(settings[key]).map((s) => ({ ...s }));
+  // The built-in reader is not a service row. Writing it into vlm_services once
+  // put `in_process` there and made every car read fail with "unknown vision
+  // provider 'in_process'". The decider's seat is a moments row, so only the
+  // vision lane refuses it.
+  if (cap === 'vision' && id === 'local') return { [key]: list };
   let done = false;
   const next = list.map((s) => {
     if (providerGroup(s.provider) === id && !done) { done = true; return { ...s, model: String(model) }; }

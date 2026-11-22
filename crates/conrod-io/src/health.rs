@@ -67,7 +67,11 @@ pub fn service_label(provider: &str, host: &str) -> String {
 /// the server's selected model ("qwen2.5vl:7b: qwen2.5vl:7b available").
 /// The legacy row has no `id`.
 pub fn services(settings: &Settings, enabled: bool) -> Vec<Value> {
-    let active: Vec<_> = settings.vlm_services.iter().filter(|s| s.enabled).collect();
+    let active: Vec<_> = settings
+        .vlm_services
+        .iter()
+        .filter(|s| s.enabled && conrod_core::settings::is_vision_provider(&s.provider))
+        .collect();
     if !enabled {
         return vec![vision(settings, enabled)];
     }

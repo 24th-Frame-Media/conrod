@@ -523,6 +523,19 @@ impl HostPools {
     }
 }
 
+/// One note per process when the vision list holds the moments lane's own seat
+/// (`in_process`). It is ignored rather than asked -- asking would fail every
+/// crop with "unknown vision provider" -- but the user should still learn their
+/// settings file needs a clean, so it is said once at debug level.
+fn note_moments_seat(provider: &str) {
+    static NOTE: std::sync::Once = std::sync::Once::new();
+    NOTE.call_once(|| {
+        eprintln!(
+            "vlm: ignoring a '{provider}' entry in vlm_services (a moments service, not a vision provider)"
+        );
+    });
+}
+
 /// Where to start among `ids`: the id a `least_busy` token handed out, the
 /// next turn for `round_robin`, or clock nanos for `random`.
 pub fn pick_service(
@@ -1690,7 +1703,18 @@ impl VlmClient {
         num_predict: i64,
         repeat_penalty: Option<f64>,
     ) -> Result<Value, VlmError> {
-        let enabled: Vec<_> = settings.vlm_services.iter().filter(|s| s.enabled).collect();
+        let enabled: Vec<_> = settings
+            .vlm_services
+            .iter()
+            .filter(|s| s.enabled)
+            .filter(|s| {
+                if conrod_core::settings::is_vision_provider(&s.provider) {
+                    return true;
+                }
+                note_moments_seat(&s.provider);
+                false
+            })
+            .collect();
         if enabled.is_empty() {
             // A configured list whose every row is off means the model is not
             // asked; the legacy single-provider fields must not resurrect a
@@ -1753,6 +1777,15 @@ impl VlmClient {
         } else {
             settings.vlm_provider.to_lowercase()
         };
+        if !conrod_core::settings::is_vision_provider(&provider) {
+            // The legacy single-provider field can only be the moments seat if
+            // nothing was migrated; there is no vision service to ask, and
+            // naming it an unknown provider would blame the wrong thing.
+            note_moments_seat(&provider);
+            return Err(VlmError::Misconfigured(
+                "No vision service is enabled".into(),
+            ));
+        }
         let resp = if provider == "ollama" {
             // Deliberately not through the rate gate: nothing meters a
             // program talking to itself, and Ollama blocks while it loads a
@@ -2613,6 +2646,52 @@ mod tests {
         assert!(
             matches!(answer, Err(VlmError::Misconfigured(_))),
             "{answer:?}"
+        );
+    }
+
+    #[test]
+    fn a_moments_local_service_is_never_asked_for_a_car_read() {
+        // The built-in reader's seat belongs to the moments lane; an early AI
+        // card wrote it into vlm_services too, and every car read then failed
+        // with "unknown vision provider 'in_process'".
+        let seat = VlmService {
+            id: "vision-local-1".into(),
+            provider: "in_process".into(),
+            model: "Built-in car reader".into(),
+            enabled: true,
+            ..VlmService::default()
+        };
+        let live = VlmService {
+            id: "live".into(),
+            provider: "ollama".into(),
+            model: "m".into(),
+            host: ollama_once(),
+            enabled: true,
+            ..VlmService::default()
+        };
+        let settings = Settings {
+            vlm_services: vec![seat.clone(), live],
+            vlm_strategy: "round_robin".into(),
+            vlm_timeout: 5.0,
+            ..Settings::default()
+        };
+        let client = VlmClient::new(Arc::new(RealClock::default()));
+        let answer = client.call(&settings, "p", &[], &json!({}), 8);
+        assert_eq!(
+            answer.expect("the live vision service answers"),
+            json!({"ok": true}),
+            "the seat is skipped, not asked"
+        );
+        // Alone it is not a vision service at all: the read says so plainly
+        // instead of naming an unknown provider.
+        let only = Settings {
+            vlm_services: vec![seat],
+            ..settings
+        };
+        let err = client.call(&only, "p", &[], &json!({}), 8).unwrap_err();
+        assert!(
+            matches!(err, VlmError::Misconfigured(_)),
+            "not UnknownProvider: {err:?}"
         );
     }
 
