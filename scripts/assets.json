@@ -1,5 +1,5 @@
 ﻿{
-  "release": "https://github.com/kapsikkum/conrod/releases/download/assets-v1",
+  "release": "https://github.com/24th-Frame-Media/conrod/releases/download/assets-v1",
   "assets": [
     {
       "name": "yolo26m-960.onnx",

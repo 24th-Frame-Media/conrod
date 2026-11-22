@@ -7,6 +7,9 @@ on:
   push:
     tags:
       - "v*"
+  # workflow_dispatch has no branch filter of its own: the "Run workflow" button
+  # is offered from the default branch, but the API can dispatch any branch that
+  # has this file. The jobs below refuse any ref that is not main or a v* tag.
   workflow_dispatch:
     inputs:
       version:
@@ -17,9 +20,57 @@ permissions:
   contents: read
 
 jobs:
+  # What a release must pass before anything is built for it. Mirrors
+  # .github/workflows/check.yml, but in release mode because that is what ships.
+  # The frontend is built first: conrod-app's build script needs frontend/dist.
+  test:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build the frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Test the frontend
+        working-directory: frontend
+        run: npm test
+      # Cargo 1.90+ nests a build script's OUT_DIR one level deeper
+      # (build/<crate>/<hash>/out). ort-sys still walks up three ancestors when
+      # it copies DirectML.dll, so it writes to target/<profile>/build and then
+      # expects build/examples and build/deps beside it. A cold cargo build
+      # never creates those, and the copy panics with "The system cannot find
+      # the path specified". Create them for both profiles used here.
+      - name: Prepare the build directories for ort-sys
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force target/debug/build/examples | Out-Null
+          New-Item -ItemType Directory -Force target/debug/build/deps | Out-Null
+          New-Item -ItemType Directory -Force target/release/build/examples | Out-Null
+          New-Item -ItemType Directory -Force target/release/build/deps | Out-Null
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # conrod-app has no test targets of its own (the shipped exe is exercised
+      # by --selftest below), so it is left out here; clippy still compiles it.
+      - run: cargo test --release --workspace --exclude conrod-app
+
   # Builds and publishes in one job: contents: write is needed for the two
   # softprops/action-gh-release steps at the end, so it is granted here.
   build-windows:
+    needs: [test]
+    # An if: on a job replaces the implicit success() check, so ask for it.
+    if: needs.test.result == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: windows-latest
     permissions:
       contents: write

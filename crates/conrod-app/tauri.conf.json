@@ -35,7 +35,7 @@
       "active": true,
       "dialog": false,
       "endpoints": [
-        "https://github.com/kapsikkum/conrod/releases/download/updater/latest.json"
+        "https://github.com/24th-Frame-Media/conrod/releases/download/updater/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRGRTE4NDhFRkNFQkM3MTgKUldRWXgrdjhqb1RoVDc1QmRmeG9aMjBxNHVqbDd1UFZ4eHNCcW1CQ2N2ZkRUUGpteWxOanpHVnEK"
     }

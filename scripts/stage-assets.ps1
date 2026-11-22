@@ -22,7 +22,7 @@ $out = Join-Path $root 'dist\assets-v1'
 $res = Join-Path $root 'crates\conrod-app\resources'
 $models = Join-Path $env:USERPROFILE '.conrod\models'
 $cache = Join-Path $env:USERPROFILE '.cache'
-$releaseUrl = 'https://github.com/kapsikkum/conrod/releases/download/assets-v1'
+$releaseUrl = 'https://github.com/24th-Frame-Media/conrod/releases/download/assets-v1'
 New-Item -ItemType Directory -Force $out, (Join-Path $res 'models'), (Join-Path $res 'exiftool') | Out-Null
 
 # The detector Conrod ships with. The previous one (yolo11s-960.onnx) is not
