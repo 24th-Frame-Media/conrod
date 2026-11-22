@@ -348,8 +348,13 @@ fn image_columns(d: &Desktop) -> Result<Vec<String>> {
 /// The freshly-imported values of the columns a reset keeps or must not null:
 /// `add_images` writes only the job, the path and the default status, and
 /// `rejected`/`picked` are NOT NULL with a default of 0.
-const FRESH_IMAGES: [(&str, &str); 3] =
-    [("status", "'pending'"), ("rejected", "0"), ("picked", "0")];
+const FRESH_IMAGES: [(&str, &str); 4] = [
+    ("status", "'pending'"),
+    ("rejected", "0"),
+    ("picked", "0"),
+    // NOT NULL, and a reset album is an ordinary visible one.
+    ("visible", "1"),
+];
 
 /// Return one album to the state it had just after import, in one transaction:
 /// every detection goes, every frame goes back to pending and keeps only its
@@ -845,6 +850,8 @@ mod tests {
                     "path" => assert!(value.as_str().is_some_and(|p| p.ends_with(name)), "{value}"),
                     "status" => assert_eq!(value, &json!("pending")),
                     "rejected" | "picked" => assert_eq!(value, &json!(0)),
+                    "visible" => assert_eq!(value, &json!(1), "a reset album is visible"),
+                    "unit_id" => assert!(value.is_null(), "the next scan reseeds units"),
                     other => assert!(value.is_null(), "{other} was left as {value}"),
                 }
             }

@@ -295,6 +295,11 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("images", "catalog_pick", "INTEGER"),
     ("images", "catalog_label", "TEXT"),
     ("images", "catalog_at", "REAL"),
+    // The seeded work unit (frames within MERGE_GAP of each other, per camera),
+    // and whether its last stage has finished. Legacy albums have no unit and
+    // every frame visible, so nothing changes until they are scanned again.
+    ("images", "unit_id", "INTEGER"),
+    ("images", "visible", "INTEGER NOT NULL DEFAULT 1"),
 ];
 
 fn now_unix() -> f64 {
@@ -388,7 +393,8 @@ fn migrate(conn: &Connection) -> Result<()> {
     // or library-stats query would otherwise scan the album once per frame.
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_images_hand_pick ON images(job_id, burst_key)
-             WHERE COALESCE(picked,0)=1;",
+             WHERE COALESCE(picked,0)=1;
+         CREATE INDEX IF NOT EXISTS idx_images_job_visible ON images(job_id, visible);",
     )?;
     // Albums identified before `read_at` existed already carry the reading in
     // `attributes`; backfill it once so they do not ask to identify again.
@@ -1474,17 +1480,20 @@ mod tests {
             "catalog_pick",
             "catalog_label",
             "catalog_at",
+            "unit_id",
+            "visible",
         ] {
             assert!(columns.contains(column), "{column} is missing: {columns:?}");
         }
-        // Additive only: the frame the photographer already rated is intact.
-        let (stars, catalog): (i64, Option<i64>) = conn
+        // Additive only: the frame the photographer already rated is intact,
+        // and an album from before units existed stays visible.
+        let (stars, catalog, visible): (i64, Option<i64>, i64) = conn
             .query_row(
-                "SELECT stars,catalog_pick FROM images WHERE id=1",
+                "SELECT stars,catalog_pick,visible FROM images WHERE id=1",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!((stars, catalog), (4, None));
+        assert_eq!((stars, catalog, visible), (4, None, 1));
     }
 }

@@ -39,6 +39,9 @@ pub struct Frame {
     /// formatted back as UTC.
     pub taken: Option<f64>,
     pub burst: u32,
+    /// The seeded unit (`cut_units`): a run of frames no more than [`MERGE_GAP`]
+    /// apart, per camera, that one final stack can never cross. 0 until cut.
+    pub unit: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -178,6 +181,7 @@ pub fn describe(rows: &[Tags], fallback: &str, gap: f64) -> Vec<Frame> {
             camera: camera_of(row, fallback),
             taken: taken_at(row),
             burst: 0,
+            unit: 0,
         })
         .collect();
     assign_bursts(&mut frames, gap);
@@ -219,6 +223,90 @@ pub fn assign_bursts(frames: &mut [Frame], gap: f64) {
             frames[i].burst = key;
         }
     }
+}
+
+/// The longest a seeded unit may run before it is cut again at its largest
+/// internal gap: three times [`MERGE_SPAN`], so a continuous sequence still
+/// becomes several work units.
+pub const UNIT_MAX_SPAN: f64 = 90.0;
+/// And the most frames one unit may hold, for the same reason.
+pub const UNIT_MAX_FRAMES: usize = 150;
+
+/// Cut [`Frame::unit`] into seeded work units: a run of frames of one camera no
+/// more than `gap` seconds apart, then bounded by [`UNIT_MAX_SPAN`] and
+/// [`UNIT_MAX_FRAMES`] by splitting at the largest internal gap (the later one
+/// wins a tie). A frame with no time is a unit of its own. Returns the unit
+/// count; units are numbered from 1 in time, then camera and path order, so a
+/// shuffled input cuts the same units.
+pub fn cut_units(frames: &mut [Frame], gap: f64) -> usize {
+    assign_bursts(frames, gap);
+    let mut groups: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for (i, frame) in frames.iter().enumerate() {
+        groups.entry(frame.burst).or_default().push(i);
+    }
+    let mut units: Vec<Vec<usize>> = Vec::new();
+    for mut group in groups.into_values() {
+        group.sort_by(|&a, &b| {
+            frames[a]
+                .taken
+                .unwrap_or(f64::INFINITY)
+                .total_cmp(&frames[b].taken.unwrap_or(f64::INFINITY))
+                .then_with(|| frames[a].path.cmp(&frames[b].path))
+        });
+        let mut pending = vec![group];
+        while let Some(mut group) = pending.pop() {
+            match forced_cut(frames, &group) {
+                Some(at) => {
+                    let right = group.split_off(at);
+                    pending.push(group);
+                    pending.push(right);
+                }
+                None => units.push(group),
+            }
+        }
+    }
+    units.sort_by(|a, b| {
+        let first = |unit: &[usize]| frames[unit[0]].taken.unwrap_or(f64::INFINITY);
+        first(a)
+            .total_cmp(&first(b))
+            .then_with(|| frames[a[0]].camera.cmp(&frames[b[0]].camera))
+            .then_with(|| frames[a[0]].path.cmp(&frames[b[0]].path))
+    });
+    for (n, unit) in units.iter().enumerate() {
+        for &i in unit {
+            frames[i].unit = n as u32 + 1;
+        }
+    }
+    units.len()
+}
+
+/// Where to split `unit` to keep it inside the bounds, or `None` when it fits.
+fn forced_cut(frames: &[Frame], unit: &[usize]) -> Option<usize> {
+    let first = unit.first().and_then(|&i| frames[i].taken);
+    let last = unit.last().and_then(|&i| frames[i].taken);
+    let span = match (first, last) {
+        (Some(first), Some(last)) => last - first,
+        _ => 0.0,
+    };
+    if unit.len() <= UNIT_MAX_FRAMES && span <= UNIT_MAX_SPAN {
+        return None;
+    }
+    if unit.len() < 2 {
+        return None;
+    }
+    let mut at = None;
+    let mut widest = -1.0;
+    for n in 1..unit.len() {
+        if let (Some(a), Some(b)) = (frames[unit[n - 1]].taken, frames[unit[n]].taken) {
+            let gap = b - a;
+            // `>=` makes the later gap win a tie, as the plan says.
+            if gap >= widest {
+                at = Some(n);
+                widest = gap;
+            }
+        }
+    }
+    Some(at.unwrap_or(unit.len() / 2))
 }
 
 /// The bursts themselves, in the order they were shot.
@@ -940,6 +1028,116 @@ mod dupe_tests {
         let took = started.elapsed();
         assert!(got.is_empty(), "{got:?}");
         assert!(took < std::time::Duration::from_secs(2), "took {took:?}");
+    }
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    fn frame(path: &str, taken: Option<f64>, camera: &str) -> Frame {
+        Frame {
+            path: path.into(),
+            camera: camera.into(),
+            taken,
+            burst: 0,
+            unit: 0,
+        }
+    }
+
+    fn units(frames: &[Frame]) -> Vec<u32> {
+        frames.iter().map(|frame| frame.unit).collect()
+    }
+
+    #[test]
+    fn a_unit_cuts_only_at_a_gap_over_ten_seconds_and_untimed_frames_stand_alone() {
+        let mut frames = vec![
+            frame("a.jpg", Some(0.0), "cam"),
+            frame("b.jpg", Some(5.0), "cam"),
+            frame("c.jpg", Some(9.0), "cam"),
+            frame("d.jpg", Some(19.0), "cam"),
+            frame("e.jpg", Some(30.0), "cam"),
+            frame("f.jpg", None, "cam"),
+        ];
+        assert_eq!(cut_units(&mut frames, MERGE_GAP), 3);
+        assert_eq!(
+            units(&frames),
+            vec![1, 1, 1, 1, 2, 3],
+            "10 s joins, 10.1 s cuts, no clock is its own unit"
+        );
+    }
+
+    #[test]
+    fn separate_bodies_never_share_a_unit_even_at_the_same_moment() {
+        let mut frames = vec![
+            frame("a.jpg", Some(10.0), "body-a"),
+            frame("b.jpg", Some(10.0), "body-b"),
+            frame("c.jpg", Some(10.2), "body-a"),
+        ];
+        assert_eq!(cut_units(&mut frames, MERGE_GAP), 2);
+        assert_eq!(units(&frames), vec![1, 2, 1]);
+    }
+
+    #[test]
+    fn a_long_sequence_is_bounded_at_its_largest_internal_gap() {
+        let mut frames: Vec<_> = (0..200)
+            .map(|i| frame(&format!("{i}.jpg"), Some(i as f64), "cam"))
+            .collect();
+        cut_units(&mut frames, MERGE_GAP);
+        let mut by_unit: BTreeMap<u32, Vec<&Frame>> = BTreeMap::new();
+        for frame in &frames {
+            by_unit.entry(frame.unit).or_default().push(frame);
+        }
+        assert!(by_unit.len() > 1, "200 s and 200 frames exceed the bounds");
+        for unit in by_unit.values() {
+            assert!(unit.len() <= UNIT_MAX_FRAMES, "{} frames", unit.len());
+            let span = unit.last().unwrap().taken.unwrap() - unit[0].taken.unwrap();
+            assert!(span <= UNIT_MAX_SPAN, "{span} s");
+        }
+    }
+
+    #[test]
+    fn a_forced_cut_takes_the_widest_gap_so_the_join_it_costs_is_the_least_likely() {
+        // Every gap is under MERGE_GAP, so only the span forces a cut: one gap
+        // is 10 s and the rest are 5 s, so the 10 s gap is where it goes.
+        let mut frames: Vec<_> = (0..=9)
+            .map(|i| frame(&format!("{i:02}.jpg"), Some(i as f64 * 5.0), "cam"))
+            .chain((11..=19).map(|i| frame(&format!("{i:02}.jpg"), Some(i as f64 * 5.0), "cam")))
+            .collect();
+        cut_units(&mut frames, MERGE_GAP);
+        let split = frames
+            .iter()
+            .position(|frame| frame.taken == Some(55.0))
+            .unwrap();
+        assert!(
+            frames[..split].iter().all(|frame| frame.unit == 1),
+            "the left side of the widest gap is one unit"
+        );
+        assert!(
+            frames[split..].iter().all(|frame| frame.unit == 2),
+            "the 10 s gap is the one cut, not a tighter one"
+        );
+    }
+
+    #[test]
+    fn the_cut_is_the_same_whatever_order_the_rows_arrive_in() {
+        let mut frames: Vec<_> = (0..40)
+            .map(|i| frame(&format!("{i:02}.jpg"), Some(i as f64 * 0.5), "cam"))
+            .collect();
+        frames.push(frame("untimed.jpg", None, "cam"));
+        cut_units(&mut frames, MERGE_GAP);
+        let expected: BTreeMap<String, u32> = frames
+            .iter()
+            .map(|frame| (frame.path.clone(), frame.unit))
+            .collect();
+        frames.reverse();
+        frames.rotate_left(7);
+        cut_units(&mut frames, MERGE_GAP);
+        let got: BTreeMap<String, u32> = frames
+            .iter()
+            .map(|frame| (frame.path.clone(), frame.unit))
+            .collect();
+        assert_eq!(got, expected);
     }
 }
 

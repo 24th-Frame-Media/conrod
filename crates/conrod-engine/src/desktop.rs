@@ -1505,6 +1505,22 @@ impl Desktop {
         // only continues a stage keeps the stage it already recorded.
         if from == Tail::Scan {
             self.note_resume_stage(job, Tail::Scan);
+            // Capture times and seeded units before the cull lane reads a
+            // pixel: frames carry a burst identity and a resume boundary. A
+            // header that cannot be read only costs that frame its early time,
+            // never the scan.
+            let seeding = self.hub.start("Reading capture times", 0);
+            match crate::seed::seed(self, job) {
+                Ok(units) => {
+                    seeding.detail(format!("{units} bursts"));
+                    seeding.finish();
+                }
+                Err(e) => {
+                    seeding.fail(e.clone());
+                    self.hub
+                        .note(format!("Could not seed bursts from capture time: {e}"));
+                }
+            }
         }
         task.finish();
         let desktop = self.clone();
