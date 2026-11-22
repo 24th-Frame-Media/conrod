@@ -73,7 +73,7 @@ jobs:
             echo "ExifTool is bundled; the AI models (~97 MB) download and verify themselves on first"
             echo "run. An existing \`~/.conrod\` library, settings and trained models are used as they are."
             echo
-            echo "Optional: **Ollama** plus \`ollama pull qwen2.5vl:7b\` (~6 GB) names make, model,"
+            echo "Optional: **Ollama** plus \`ollama pull qwen3-vl:8b-instruct-q4_K_M\` (~6 GB) names make, model,"
             echo "colour and team. Without it Conrod still culls, reads plates, numbers and livery text."
             echo
             echo "The installer is not code-signed, so Windows SmartScreen will ask you to confirm."

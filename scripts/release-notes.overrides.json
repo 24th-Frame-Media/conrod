@@ -31,6 +31,7 @@
     }
   },
   "commits": {
+    "92b6f0d": { "section": "Improved", "text": "Conrod now recommends qwen3-vl 8B for local car reading — it beat every cloud model on accuracy in our latest test." },
     "181257d": { "section": "Improved", "text": "The Library is now a wall of your albums' covers, grouped into Needs attention and Ready to review, with one clear action on every album and a strip that keeps a running scan in view." },
     "de9ac90": { "section": "Fixed", "text": "Zooming a tall photo now shows the whole photo: it keeps its own shape instead of being cropped to a wide box." },
     "66dd39d": { "section": "New", "text": "Every stage of a scan can be run again by hand: find cars again, check sharpness again, read cars again, judge moments again, pick the best of each burst again — one stage at a time, never touching your own picks or ratings." },

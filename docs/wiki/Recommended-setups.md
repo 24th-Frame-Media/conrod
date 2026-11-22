@@ -10,9 +10,9 @@ For prices and limits, see [AI models in Conrod](../user/ai-models.md). Checked 
 
 For **12 GB of video memory or more**. Free to run; nothing leaves the PC.
 
-1. Use **Ollama** with `qwen2.5vl:7b` as the vision server. The built-in vision model is planned; until it ships, Ollama is the local route.
+1. Use **Ollama** with `qwen3-vl:8b-instruct-q4_K_M` as the vision server. It is Conrod's local recommendation: in our 22 November 2026 test it got every door number right and the best free score, ahead of every cloud model on accuracy. The older `qwen2.5vl:7b` is still fine on small GPUs. The built-in vision model is planned; until it ships, Ollama is the local route.
 2. With **16 GB or more**, also turn on **Use the decision model** and let it download. With 12–16 GB you can skip it and let the vision model judge moments.
-3. Expect a local vision read around 10 seconds per car. A big shoot takes a long time; leave it running.
+3. Expect a local vision read around 9 seconds per car. A big shoot takes a long time; leave it running.
 
 ## (b) A laptop or a weak card: use the cloud
 

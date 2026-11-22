@@ -396,7 +396,7 @@ impl Default for Settings {
             max_text_items: 12,
             use_vlm: true,
             vlm_provider: "ollama".into(),
-            vlm_model: "qwen2.5vl:7b".into(),
+            vlm_model: "qwen3-vl:8b-instruct-q4_K_M".into(),
             vlm_host: DEFAULT_VLM_HOST.into(),
             vlm_extra_hosts: String::new(),
             vlm_api_key: String::new(),

@@ -35,7 +35,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             vlm_provider: "ollama".into(),
-            vlm_model: "qwen2.5vl:7b".into(),
+            vlm_model: "qwen3-vl:8b-instruct-q4_K_M".into(),
             vlm_host: conrod_core::settings::DEFAULT_VLM_HOST.into(),
             vlm_extra_hosts: String::new(),
             vlm_api_key: String::new(),

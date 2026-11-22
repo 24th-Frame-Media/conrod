@@ -78,12 +78,12 @@ off.
 For a card with 12 GB of video memory or more. No usage fees; photos stay on the PC.
 
 1. (coming) In Conrod, Settings, **AI models**, press **Download the built-in vision model** (about 5.2 GB). Nothing else
-   to install. (Today: install **Ollama**, ollama.com, free, let it download `qwen2.5vl:7b`, and add it as your vision
-   server, section 7.)
+   to install. (Today: install **Ollama**, ollama.com, free, let it download `qwen3-vl:8b-instruct-q4_K_M`, and add it as
+   your vision server, section 7.)
 2. With a 16 GB card or more, also turn on **Use the decision model** and let it download (about 5.5 GB). With 12 to 16 GB
    you can skip it: the vision model answers the moment questions too (see section 1).
 
-A local vision read takes about 10 seconds per car. The built-in model aims for 5 to 8 seconds, but has not been measured.
+A local vision read takes about 9 seconds per car. The built-in model aims for 5 to 8 seconds, but has not been measured.
 Large shoots take time; leave Conrod running.
 
 ### (b) A laptop or a weak graphics card: use the cloud
@@ -156,7 +156,7 @@ copy of the whole photo plus the crop, about 1,100 tokens in and 60 out). Readin
 | `anthropic/claude-haiku-5.5` | $0.10 / $0.50 | about 4 cents | about 8 cents | about 12 cents | Untested by us. |
 | `qwen/qwen3-vl-8b-instruct` | $0.25 / $0.75 | about 9 cents | about 18 cents | about 27 cents | Same family as the local model. Untested by us. |
 | `google/gemini-3.1-flash-lite` | $0.25 / $1.50 | about 11 cents | about 21 cents | about 32 cents | Untested by us. |
-| `qwen/qwen2.5-vl-72b-instruct` | $0.80 / $1.00 | about 27 cents | about 50 cents | about 78 cents | The bigger sibling of the local model, and Conrod's suggested starting model in the list. About 20 times the cost of the cheapest. Untested by us. |
+| `qwen/qwen2.5-vl-72b-instruct` | $0.80 / $1.00 | about 27 cents | about 50 cents | about 78 cents | The bigger sibling of the older local model, and Conrod's suggested starting model in the list. About 20 times the cost of the cheapest. Untested by us. |
 
 Real bills can be **two or three times higher**: some models turn one photo into many tokens, and some "think" out loud
 before answering and charge for it. Watch the **Activity** page on openrouter.ai after your first scan. Prices are from
@@ -258,9 +258,11 @@ The key test loads OpenCode's model list and spends no model credit.
 
 ## 6. What has been tried
 
-- **Local, on a laptop with an 8 GB graphics card:** `qwen2.5vl:7b` through Ollama, about 10 seconds per car, the best of the
-  local models we tested.
-- **Built-in vision model:** (coming) the same model, Qwen2.5-VL 7B, built into Conrod. It has not been measured yet: we
+- **Local, on your own graphics card:** `qwen3-vl:8b-instruct-q4_K_M` through Ollama is Conrod's recommendation. In our
+  22 November 2026 test it got 2 of 3 cars and all 3 door numbers right and found 11 of 16 sponsors: the best free score,
+  ahead of every cloud model on accuracy, at about 9 seconds per car and no cost. The older `qwen2.5vl:7b` is still fine on
+  small GPUs, but it got only 1 of 3 cars right.
+- **Built-in vision model:** (coming) a Qwen2.5-VL 7B model built into Conrod. It has not been measured yet: we
   expect 5 to 8 seconds per car and about 6 GB of video memory, and we will only make it the default once its readings match
   Ollama's.
 - **Cloud:** only `glm-5.3-flash` through OpenCode credits has been tried, on one car. Everything else in the tables is a
@@ -305,7 +307,7 @@ The key test loads OpenCode's model list and spends no model credit.
 | "No graphics card was found" | Detection runs on the processor | Fine, just slower. Cloud vision still works |
 | Moments such as "tyre smoke" never appear | No decision model on your PC and no working vision model, or the moment threshold is not reached | Check the Moments row in AI models; the scan screen says who is judging moments. Many moments show as "maybe" when the vision model judges them |
 | The bill is bigger than expected | A "thinking" model, a big model, or "read everything" | Check **Activity** on openrouter.ai; set a **credit limit** on the key; switch to `z-ai/glm-5.3-flash`; read keepers only |
-| A scan is slow | Local vision is about 10 seconds per car | Use a cloud server for the vision model, or leave it running |
+| A scan is slow | Local vision is about 9 seconds per car | Use a cloud server for the vision model, or leave it running |
 
 Your key is saved in Conrod's settings file on your PC without encryption. Use a key with a **credit limit** or a
 workspace **budget**, and delete the key on the provider's website if you ever share the file or the PC.
@@ -322,4 +324,4 @@ workspace **budget**, and delete the key on the provider's website if you ever s
 - OpenCode Console plans, credits, fees and privacy: opencode.ai/docs/console/billing, opencode.ai/docs/console/models
 - OpenCode credits vs Go: the Console inference base charges the balance (`billing_source: "balance"`); `/inference/go` draws the Go coding subscription: opencode.ai/docs/console/api/inference, opencode.ai/docs/console/go
 - OpenCode model list and JEV endpoint (which accept pictures, prices): opencode.ai/inference/v1/models and opencode.ai/docs/console/models
-- Conrod's own test numbers: the project's model notes (qwen2.5vl:7b rounds 1 and 2; GLM-5.3-Flash through OpenCode on 18 November 2026)
+- Conrod's own test numbers: the project's model notes (the 22 November 2026 benchmark, with qwen3-vl:8b as the winner and qwen2.5vl:7b rounds 1 and 2; GLM-5.3-Flash through OpenCode on 18 November 2026)

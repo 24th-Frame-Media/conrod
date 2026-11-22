@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  VISION_OFF_REASONS, albumVisionChoice, albumVisionHint, albumVisionOn, nextAlbumVision, visionHeader, visionLaneWords, visionNodeSub,
+  VISION_OFF_REASONS, albumVisionChoice, albumVisionHint, albumVisionOn, nextAlbumVision, visionHeader, visionLaneWords, visionModelWords, visionNodeSub,
   visionOffReason,
 } from '../src/lib/vision.mjs';
 import { flowNodes } from '../src/lib/identifyFlow.mjs';
@@ -40,6 +40,12 @@ test('the VISION node and the worker card never call "off" a model', () => {
     const words = visionLaneWords(reason);
     assert.doesNotMatch(`${words.title} ${words.why}`, /Make not read|No prompt/);
   }
+});
+
+test('the friendly model name reads Qwen3-VL for the local default', () => {
+  assert.equal(visionModelWords('qwen3-vl:8b-instruct-q4_K_M'), 'Qwen3-VL · this PC');
+  assert.equal(visionModelWords('qwen3-vl:8b-instruct-q4_K_M via ollama'), 'Qwen3-VL · this PC');
+  assert.equal(visionModelWords('qwen2.5vl:7b'), 'Qwen2.5-VL · this PC', 'the older tag keeps its old name');
 });
 
 test('the flow row and the ingest flowchart show the reason where the model name goes', () => {
