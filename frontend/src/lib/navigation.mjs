@@ -1,6 +1,17 @@
 /* ← / → across stack edges. Pure, so node --test can import it. */
 
 /**
+ * The page a Library card opens on. A scan that is live, waiting, stopped or
+ * failed opens its worker screen; everything else (including a finished scan
+ * with unreadable frames) opens Review, where the retry lives.
+ */
+export function openJobPage(job, activeJob = null) {
+  if (!job) return 'Review';
+  if (activeJob === job.id) return 'Scan';
+  return ['queued', 'scanning', 'stopped', 'error'].includes(job.status) ? 'Scan' : 'Review';
+}
+
+/**
  * The first stack after `from` in `direction` (+1 forward, -1 back) that holds at least one frame,
  * or null at the end of the album. Empty stacks are skipped; there is no wrap.
  */

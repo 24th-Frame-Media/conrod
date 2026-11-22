@@ -75,6 +75,8 @@
     }
   },
   "commits": {
+    "1c36879": "Open any album and see what Conrod is doing with it — the work screen is always there: scanning, waiting its turn, stopped, or finished with its summary.",
+    "44e0d40": "Open any album and see what Conrod is doing with it — the work screen is always there: scanning, waiting its turn, stopped, or finished with its summary.",
     "2156244": [
       {
         "section": "Fixed",

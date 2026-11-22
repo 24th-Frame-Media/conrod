@@ -466,6 +466,8 @@ pub enum Command {
     Status {},
     /// Where start-up is: the running step and the finished ones (the splash reads it).
     StartupStatus {},
+    /// What one album's scan is doing now: running, queued, or how it ended.
+    ScanStatus(JobArgs),
     Jobs {},
     Review(JobArgs),
     Scan(ScanArgs),

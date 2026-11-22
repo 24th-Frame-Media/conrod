@@ -8,6 +8,7 @@ import { call, engine, inTauri, mocked } from './lib/api';
 import { filename } from './lib/review';
 import { queueLabel } from './lib/format';
 import { healthStatus, modelGroups } from './lib/health.mjs';
+import { openJobPage } from './lib/navigation.mjs';
 import { classifyScanError, type ScanFailure } from './lib/scanError.mjs';
 import { subjectExcluded } from './review.mjs';
 import { vlmModelLabel } from './lib/vlm';
@@ -28,6 +29,7 @@ import { useHotkeys } from './state/useHotkeys';
 import { useIdentifyProgress } from './state/useIdentifyProgress';
 import { useReview } from './state/useReview';
 import { useScanProgress } from './state/useScanProgress';
+import { useScanStatus } from './state/useScanStatus';
 import { useStartup } from './state/useStartup';
 import { useWhatsNew } from './state/useWhatsNew';
 import { useWizard } from './state/useWizard';
@@ -63,6 +65,8 @@ export function App() {
   const { status } = eng;
   const scanning = status.activeJob !== null;
   const scanLive = useScanProgress();
+  /** The selected album's scan, read on entry, so the Scan screen is whole on re-entry, restart or a queued album. */
+  const scanStatus = useScanStatus(jobId, status.activeJob);
   const identifyLive = useIdentifyProgress();
   const identifyPaused = status.tasks.some((task) => task.state === 'paused' && /^Identifying\b/.test(task.label));
   // Review stays open while its album scans: it shows the frames already measured, and the
@@ -195,7 +199,11 @@ export function App() {
     await engine.write(id, dryRun);
     toast(dryRun ? 'Checking what would be written. The activity menu lists it and no file is touched.' : 'Writing started. Progress is in the activity menu.');
   });
-  const openJob = (id: number) => { setJobId(id); setPage(status.activeJob === id ? 'Scan' : 'Review'); };
+  const openJob = (id: number) => {
+    const job = eng.jobs.find((j) => j.id === id);
+    setJobId(id);
+    setPage(openJobPage(job, status.activeJob));
+  };
 
   const actions: StatusActions = {
     pause: () => void run(async () => { await engine.pause(); toast('Paused. Anything mid-analysis will still finish.'); }),
@@ -254,11 +262,12 @@ export function App() {
             })} />
         )}
         {view === 'Scan' && (
-          <ScanScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? scanLive[jobId] : undefined} running={running}
+          <ScanScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? scanLive[jobId] : undefined} scanStatus={scanStatus} running={running}
             queue={queueJobs} onUnqueue={actions.unqueue}
             paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={eng.setSettings}
             identify={jobId != null ? identifyLive[jobId] : undefined} status={status} identifyPaused={identifyPaused}
             model={vlmModelLabel(eng.settings)} scanError={scanError}
+            onResumeJob={() => { if (jobId != null) void startScan({ jobId }); }}
             onRetryScan={() => { if (scanError?.args) void startScan(scanError.args); else if (jobId != null) void startScan({ jobId }); else actions.resume(); }}
             onPause={actions.pause} onResume={actions.resume} onCancel={actions.stop} onCancelOperation={actions.cancel} onVisionAction={visionAction}
             onReview={() => setPage('Review')} onLibrary={() => setPage('Library')} />

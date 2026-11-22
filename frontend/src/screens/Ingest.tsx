@@ -71,7 +71,7 @@ function Found({ found, identify }: { found: ScanFound; identify: boolean }) {
   );
 }
 
-function ScanFailureBanner({ failure, onRetry, onLibrary }: { failure: ScanFailure; onRetry?: () => void; onLibrary?: () => void }) {
+export function ScanFailureBanner({ failure, onRetry, onLibrary }: { failure: ScanFailure; onRetry?: () => void; onLibrary?: () => void }) {
   return (
     <section className="scan-summary scan-failure" role="alert">
       <div className="ss-mark"><Icon name="x" size={20} /></div>

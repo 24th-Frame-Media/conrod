@@ -97,6 +97,20 @@ export type Status = {
   /** The scan that just ended: frames it could not read, with a few `name: reason` lines. */
   scan?: { job: number; errors: number; error_samples: string[] } | null;
 };
+
+/** The `scan_status` answer for one album: what its scan is doing now, snapshot or not. */
+export type ScanStatus = {
+  state: 'running' | 'queued' | 'done' | 'done_errors' | 'stopped' | 'error';
+  paused: boolean;
+  /** The live snapshot while the scan runs; null once it ended (the album record is then the summary). */
+  progress: ScanProgress | null;
+  /** Place in the one-scan line, counting from 1; null unless queued. */
+  queue_position: number | null;
+  errors: number;
+  error_samples: string[];
+  /** The stage a resume would continue at (`scan`, `group`, `pick`, `identify`, `taste` or `done`). */
+  resume_stage: string | null;
+};
 export type Review = { frames: Frame[]; detections: Detection[]; tasteHead?: boolean };
 
 /**

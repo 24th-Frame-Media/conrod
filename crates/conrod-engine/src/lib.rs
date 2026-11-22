@@ -1327,6 +1327,10 @@ impl Scan {
         *lock(&self.pause.0) = paused;
         self.pause.1.notify_all();
     }
+    /// Whether the scan is held at a pause point right now.
+    pub fn paused(&self) -> bool {
+        *lock(&self.pause.0)
+    }
     pub fn cancel(&self) {
         self.stop.store(true, Ordering::Relaxed);
         self.pause.1.notify_all();
