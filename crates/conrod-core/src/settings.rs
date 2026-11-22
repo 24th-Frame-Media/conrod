@@ -20,6 +20,9 @@ pub const FOCUS_SCALE: i64 = 3;
 /// Bumped by the burst-gap migration: a file without it predates per-album
 /// gaps. See [`migrate_burst_gap`].
 pub const BURST_GAP_SCALE: i64 = 1;
+/// Bumped by the moment-service migration: a file without it predates
+/// `moments_services`. See [`migrate_moments_services`].
+pub const MOMENTS_SERVICES_SCALE: i64 = 1;
 /// The old default for `burst_gap`. The engine used to ignore it as a sentinel
 /// (and grouped at 1.5 s), so stored files carrying it mean the old default,
 /// not four seconds. The migration rewrites it once.
@@ -65,6 +68,17 @@ pub fn workflow_mode_word(word: &str) -> &'static str {
     }
 }
 
+/// The one normaliser for `moments_strategy`, shared by the settings loader and
+/// every reader of the strategy: surrounding space and case are ignored, and a
+/// word this build does not know reads as `least_busy`.
+pub fn moments_strategy_word(word: &str) -> &'static str {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "round_robin" => "round_robin",
+        "random" => "random",
+        _ => "least_busy",
+    }
+}
+
 /// The gap to group with: a positive, finite setting is honoured as-is;
 /// anything else is [`crate::bursts::DEFAULT_BURST_GAP_SECONDS`].
 pub fn burst_gap_or_default(gap: f64) -> f64 {
@@ -92,6 +106,117 @@ pub fn migrate_burst_gap(map: &mut Map<String, Value>) -> bool {
         );
     }
     map.insert("burst_gap_scale".into(), Value::from(BURST_GAP_SCALE));
+    true
+}
+
+/// One-time migration of a stored settings map (the global file or an album's
+/// `settings_json`): before `moments_services`, the moments lane chose a
+/// transport and one cloud model per provider. Synthesise the service list the
+/// lane now reads, once, then retire the legacy fields so no second version is
+/// ever written. `moments_backend=vlm` is the car reader: it leaves the list
+/// off and turns the fallback on. The threshold is left alone (it is per
+/// album). Returns whether anything was rewritten.
+pub fn migrate_moments_services(map: &mut Map<String, Value>) -> bool {
+    if map.get("moments_services_scale").and_then(Value::as_i64) == Some(MOMENTS_SERVICES_SCALE) {
+        return false;
+    }
+    fn word(map: &Map<String, Value>, key: &str) -> String {
+        map.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    }
+    let stored_list = map
+        .get("moments_services")
+        .and_then(Value::as_array)
+        .is_some_and(|list| !list.is_empty());
+    if !stored_list {
+        let mut services: Vec<MomentsService> = Vec::new();
+        let backend = word(map, "moments_backend");
+        let backend = if backend.is_empty() {
+            "vlm"
+        } else {
+            backend.as_str()
+        };
+        if backend != "vlm" {
+            let mut transport = word(map, "moments_transport");
+            if transport.is_empty() {
+                transport = "auto".into();
+            }
+            let use_decider = map
+                .get("use_decider")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let local_wanted = matches!(transport.as_str(), "auto" | "in_process");
+            let openrouter_wanted = matches!(transport.as_str(), "auto" | "openrouter");
+            let opencode_wanted = matches!(transport.as_str(), "auto" | "opencode");
+            if use_decider && local_wanted {
+                services.push(MomentsService {
+                    id: "moments-local".into(),
+                    provider: "in_process".into(),
+                    ..MomentsService::default()
+                });
+            }
+            let openrouter_key = word(map, "moments_openrouter_key");
+            if openrouter_wanted && !openrouter_key.is_empty() {
+                let model = word(map, "moments_openrouter_model");
+                services.push(MomentsService {
+                    id: "moments-openrouter".into(),
+                    provider: "openrouter".into(),
+                    model: if model.is_empty() {
+                        "perplexity/pplx-decider-flash-v1.3:free".into()
+                    } else {
+                        model
+                    },
+                    api_key: openrouter_key,
+                    enabled: true,
+                    ..MomentsService::default()
+                });
+            }
+            let opencode_key = word(map, "moments_opencode_key");
+            if opencode_wanted && !opencode_key.is_empty() {
+                let model = word(map, "moments_opencode_model");
+                services.push(MomentsService {
+                    id: "moments-opencode".into(),
+                    provider: "opencode".into(),
+                    model: if model.is_empty() {
+                        "jev-1.13".into()
+                    } else {
+                        model
+                    },
+                    api_key: opencode_key,
+                    enabled: true,
+                    ..MomentsService::default()
+                });
+            }
+        }
+        map.insert(
+            "moments_services".into(),
+            serde_json::to_value(services).expect("a service list serialises"),
+        );
+    }
+    map.entry("moments_vlm_fallback")
+        .or_insert(Value::Bool(true));
+    let strategy = word(map, "moments_strategy");
+    map.insert(
+        "moments_strategy".into(),
+        Value::String(moments_strategy_word(&strategy).into()),
+    );
+    map.insert(
+        "moments_services_scale".into(),
+        Value::from(MOMENTS_SERVICES_SCALE),
+    );
+    for key in [
+        "moments_backend",
+        "moments_transport",
+        "moments_openrouter_model",
+        "moments_openrouter_key",
+        "moments_opencode_model",
+        "moments_opencode_key",
+    ] {
+        map.remove(key);
+    }
     true
 }
 
@@ -332,24 +457,42 @@ pub struct Settings {
     pub blur_explicit: bool,
     /// Path to a race entry list (CSV or JSON). Empty means none.
     pub entry_list: String,
-    /// Who judges a frame's moments: "vlm" (the vision model, no real
-    /// probabilities) or "decider" (calibrated probabilities).
-    pub moments_backend: String,
+    /// Which strategy shares work between moment services: "least_busy",
+    /// "round_robin" or "random". Missing or unknown reads as "least_busy"
+    /// (see [`moments_strategy_word`]).
+    pub moments_strategy: String,
+    /// When no moment service answers, let the car reader judge the frame
+    /// (uncalibrated readings, shown as "maybe"). On by default.
+    pub moments_vlm_fallback: bool,
+    /// Every moment service, in the same wire shape as `vlm_services`. Empty
+    /// on a file from before the list; `load` synthesises it once from the
+    /// retired fields below.
+    pub moments_services: Vec<MomentsService>,
+    /// Set by the one-time moment-service migration (see
+    /// [`migrate_moments_services`]): once present, a stored list is a choice
+    /// and is never synthesised again.
+    pub moments_services_scale: i64,
     /// A moment must reach this probability before it is shown as sure or
     /// can lift a frame's rank; below it (down to 0.5) it is a "maybe".
     pub moments_threshold: f64,
-    /// The decider's transport: "auto" (the in-process model when it is ready,
-    /// else OpenCode, else OpenRouter when a key is set), "in_process",
-    /// "opencode" or "openrouter".
+    /// Retired: the old single-decider transport, read only by the one-time
+    /// migration. Never written.
+    #[serde(skip_serializing, default)]
     pub moments_transport: String,
-    /// OpenRouter model id for the decider.
+    /// Retired: OpenRouter model id for the old single decider. Never written.
+    #[serde(skip_serializing, default)]
     pub moments_openrouter_model: String,
-    /// OpenRouter API key for the decider. Never logged.
+    /// Retired: OpenRouter API key for the old single decider. Never written.
+    /// Never logged.
+    #[serde(skip_serializing, default)]
     pub moments_openrouter_key: String,
-    /// OpenCode's decision model id for the decider: JEV.
+    /// Retired: OpenCode's JEV model id for the old single decider. Never
+    /// written.
+    #[serde(skip_serializing, default)]
     pub moments_opencode_model: String,
-    /// OpenCode API key for the decider. Empty reuses the key of an enabled
-    /// OpenCode vision service. Never logged.
+    /// Retired: OpenCode API key for the old single decider. Never written.
+    /// Never logged.
+    #[serde(skip_serializing, default)]
     pub moments_opencode_key: String,
 }
 
@@ -464,7 +607,10 @@ impl Default for Settings {
             blur_strictness: "moderate".into(),
             blur_explicit: false,
             entry_list: String::new(),
-            moments_backend: "vlm".into(),
+            moments_strategy: "least_busy".into(),
+            moments_vlm_fallback: true,
+            moments_services: Vec::new(),
+            moments_services_scale: MOMENTS_SERVICES_SCALE,
             moments_threshold: crate::moments::DEFAULT_THRESHOLD,
             moments_transport: "auto".into(),
             moments_openrouter_model: "perplexity/pplx-decider-flash-v1.3:free".into(),
@@ -557,6 +703,12 @@ impl Default for VlmService {
     }
 }
 
+/// A moment service has the vision service's wire shape; its `provider` names
+/// the decision transport ("in_process", "openrouter", "opencode" or
+/// "opencode-go"). Reused rather than duplicated so the settings screen can
+/// share one card component for both jobs.
+pub type MomentsService = VlmService;
+
 /// Same JSON kind, with ints and floats both counting as numbers -- a file
 /// on disk may store `1` where `1.0` is meant, or vice versa.
 fn same_kind(a: &Value, b: &Value) -> bool {
@@ -582,9 +734,18 @@ impl Settings {
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
         // A file written by an older build: its 4.0 burst gap meant the default
-        // (1.5 s), not four seconds. Rewrite it once, in place.
-        let migrated = !stored.is_empty() && migrate_burst_gap(&mut stored);
+        // (1.5 s), not four seconds. Rewrite it once, in place. A file from
+        // before moment services gets its list synthesised from the retired
+        // transport fields in the same pass.
+        let mut migrated = false;
+        if !stored.is_empty() {
+            migrated |= migrate_burst_gap(&mut stored);
+            migrated |= migrate_moments_services(&mut stored);
+        }
         let mut settings = Settings::default().apply(&stored);
+        // One spelling of the moment strategy, whatever the file holds: a
+        // missing or nonsense word is the default, least busy.
+        settings.moments_strategy = moments_strategy_word(&settings.moments_strategy).to_string();
         // One spelling of the workflow word, whatever the file holds: an album
         // saved before the field existed stays "both", a nonsense word too.
         settings.workflow_mode = settings.workflow().to_string();
@@ -774,7 +935,11 @@ impl Settings {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let text = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+        // One spelling of the strategy is written, even if a caller built the
+        // struct by hand.
+        let mut copy = self.clone();
+        copy.moments_strategy = moments_strategy_word(&copy.moments_strategy).to_string();
+        let text = serde_json::to_string_pretty(&copy).map_err(std::io::Error::other)?;
         std::fs::write(path, text)
     }
 
@@ -1130,5 +1295,121 @@ mod tests {
         });
         assert_eq!(settings.vision_model(), "glm-5.3-flash");
         assert!(settings.has_vision_service());
+    }
+
+    fn services_of(map: &Map<String, Value>) -> Vec<(String, String, String, bool)> {
+        serde_json::from_value::<Vec<MomentsService>>(map["moments_services"].clone())
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.provider, s.model, s.api_key, s.enabled))
+            .collect()
+    }
+
+    #[test]
+    fn an_old_in_process_moments_choice_becomes_the_local_service_once() {
+        let mut map = map(
+            r#"{"moments_backend":"decider","moments_transport":"in_process","use_decider":true}"#,
+        );
+        assert!(migrate_moments_services(&mut map));
+        assert_eq!(
+            services_of(&map),
+            [("in_process".into(), String::new(), String::new(), true)]
+        );
+        assert_eq!(map["moments_vlm_fallback"], true, "the fallback is on");
+        assert_eq!(map["moments_strategy"], "least_busy");
+        assert_eq!(map["moments_services_scale"], MOMENTS_SERVICES_SCALE);
+        assert!(!map.contains_key("moments_transport"));
+        assert!(!map.contains_key("moments_backend"));
+
+        // The marker makes it one-time: later legacy edits are never read.
+        map.insert("moments_transport".into(), Value::from("openrouter"));
+        map.insert("moments_openrouter_key".into(), Value::from("late"));
+        assert!(!migrate_moments_services(&mut map));
+        assert_eq!(services_of(&map).len(), 1);
+    }
+
+    #[test]
+    fn an_old_auto_moments_choice_becomes_local_plus_each_cloud_account() {
+        let mut map = map(
+            r#"{"moments_backend":"decider","moments_transport":"auto","use_decider":true,
+                "moments_openrouter_model":"or-model","moments_openrouter_key":"or-key",
+                "moments_opencode_model":"jev-1.13","moments_opencode_key":"oc-key"}"#,
+        );
+        assert!(migrate_moments_services(&mut map));
+        assert_eq!(
+            services_of(&map),
+            [
+                ("in_process".into(), String::new(), String::new(), true),
+                (
+                    "openrouter".into(),
+                    "or-model".into(),
+                    "or-key".into(),
+                    true
+                ),
+                ("opencode".into(), "jev-1.13".into(), "oc-key".into(), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_old_strict_cloud_choice_leaves_the_local_model_out() {
+        let mut openrouter = map(
+            r#"{"moments_backend":"decider","moments_transport":"openrouter","use_decider":true,
+                "moments_openrouter_model":"m","moments_openrouter_key":"k"}"#,
+        );
+        assert!(migrate_moments_services(&mut openrouter));
+        assert_eq!(
+            services_of(&openrouter),
+            [("openrouter".into(), "m".into(), "k".into(), true)],
+            "in_process is forced off by the transport word"
+        );
+
+        let mut opencode = map(
+            r#"{"moments_backend":"decider","moments_transport":"opencode","use_decider":true,
+                "moments_opencode_model":"","moments_opencode_key":"oc"}"#,
+        );
+        assert!(migrate_moments_services(&mut opencode));
+        assert_eq!(
+            services_of(&opencode),
+            [("opencode".into(), "jev-1.13".into(), "oc".into(), true)],
+            "an empty model falls back to JEV's id"
+        );
+    }
+
+    #[test]
+    fn an_old_car_reader_choice_leaves_the_services_off_and_the_fallback_on() {
+        let mut map = map(
+            r#"{"moments_backend":"vlm","moments_transport":"auto","use_decider":true,
+                "moments_openrouter_key":"k","moments_threshold":0.7}"#,
+        );
+        assert!(migrate_moments_services(&mut map));
+        assert!(
+            services_of(&map).is_empty(),
+            "the car reader, not a service"
+        );
+        assert_eq!(map["moments_vlm_fallback"], true);
+        assert_eq!(map["moments_threshold"], 0.7, "the threshold stays put");
+    }
+
+    #[test]
+    fn a_stored_moment_service_list_is_a_choice_the_migration_never_rewrites() {
+        let mut map = map(
+            r#"{"moments_services":[{"id":"mine","provider":"openrouter","model":"m","api_key":"k","enabled":true}],"moments_strategy":"round_robin"}"#,
+        );
+        assert!(migrate_moments_services(&mut map));
+        assert_eq!(services_of(&map).len(), 1);
+        assert_eq!(map["moments_strategy"], "round_robin", "kept as chosen");
+        assert!(!migrate_moments_services(&mut map));
+    }
+
+    #[test]
+    fn a_moment_strategy_is_least_busy_unless_it_says_otherwise() {
+        assert_eq!(moments_strategy_word("least_busy"), "least_busy");
+        assert_eq!(moments_strategy_word(" ROUND_ROBIN "), "round_robin");
+        assert_eq!(moments_strategy_word("random"), "random");
+        assert_eq!(moments_strategy_word("busiest"), "least_busy");
+        assert_eq!(moments_strategy_word(""), "least_busy");
+        assert_eq!(Settings::default().moments_strategy, "least_busy");
+        assert!(Settings::default().moments_vlm_fallback);
     }
 }
