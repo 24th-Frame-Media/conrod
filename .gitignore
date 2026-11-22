@@ -41,3 +41,5 @@ graphify-out/
 .venv/
 dist/
 .worktrees/
+.bench/
+brag-output/
