@@ -2,10 +2,21 @@
   "release": "https://github.com/kapsikkum/conrod/releases/download/assets-v1",
   "assets": [
     {
+      "name": "yolo26m-960.onnx",
+      "dest": "models",
+      "extract": false,
+      "licence": "AGPL-3.0 (Ultralytics YOLO26)",
+      "sha256": "002a5a71cb8892c7ccb85db776c9719d03cce7152b947bebe512f543344addf0",
+      "size": 81761459,
+      "sources": []
+    },
+    {
       "name": "yolo11s-960.onnx",
       "dest": "models",
       "extract": false,
+      "optional": true,
       "licence": "AGPL-3.0 (Ultralytics YOLO11)",
+      "note": "Fallback car/person detector; yolo26m-960.onnx is the default. Pinned and installable, but not part of a fresh install.",
       "sha256": "a7969b78bfd41783637faa406a9e6fff5caa61e5edea4a089446583f4d34943d",
       "size": 39425581,
       "sources": []

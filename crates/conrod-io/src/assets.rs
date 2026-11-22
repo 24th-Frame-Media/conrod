@@ -406,6 +406,25 @@ mod tests {
     }
 
     #[test]
+    fn the_default_detector_is_pinned_and_installed_by_default() {
+        let assets = manifest();
+        let detector = assets
+            .iter()
+            .find(|a| a.name == conrod_core::models::DETECTOR)
+            .expect("the default detector is pinned in the manifest");
+        assert!(!detector.optional, "{} is opt-in", detector.name);
+        assert_eq!(detector.dest, "models");
+        let (_, release) = parse(MANIFEST);
+        assert!(
+            urls(detector, &release)
+                .iter()
+                .any(|u| u.ends_with(detector.name.as_str())),
+            "{} has no source to install from",
+            detector.name
+        );
+    }
+
+    #[test]
     fn a_verified_download_is_installed_and_reports_progress() {
         let body = vec![7u8; 200_000];
         let base = serve(vec![("/model.onnx", body.clone())], 1);

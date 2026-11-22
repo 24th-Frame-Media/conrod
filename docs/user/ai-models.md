@@ -23,7 +23,7 @@ Prices and limits were checked on **22 November 2026**. Check the provider's pag
 
 | In Settings it is called | What it does for you | Where it runs | Needs |
 |---|---|---|---|
-| **Car & person detector (YOLO)** | Finds the cars, bikes, trucks and people in every photo. Everything else starts from here: it decides what the "subject" is, and which car is the main one (the one your camera focused on). | Your PC, using the graphics card if it has one (any recent card), otherwise the processor (slower). | About 40 MB, installed automatically. Always on. |
+| **Car & person detector (YOLO26)** | Finds the cars, bikes, trucks and people in every photo. Everything else starts from here: it decides what the "subject" is, and which car is the main one (the one your camera focused on). | Your PC, using the graphics card if it has one (any recent card), otherwise the processor (slower). | About 82 MB, installed automatically. Always on. |
 | **Plate finder + plate reader** | Finds a number plate on the car and reads its letters and digits. | Your PC | About 12 MB, installed automatically. |
 | **Number/text reader (OCR)** | Reads race numbers, signs and sponsor boards as text. It fills in a number only when the vision model did not see one. | Your PC | About 15 MB, installed automatically. |
 | **Faces/eyes** | Finds faces and checks whether eyes are open, so a shut eye can lower a portrait's rating. It can also help suggest names. Nothing leaves your PC. | Your PC | About 43 MB, installed automatically. Turn on with **People**. |

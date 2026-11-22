@@ -55,7 +55,7 @@ For step-by-step guides, see [Getting started](docs/wiki/Getting-started.md), [H
 
 | Task | Model | Purpose |
 |---|---|---|
-| Vehicles | YOLO11s (DirectML / GPU) | Fast bounding boxes (~17ms/frame) |
+| Vehicles | YOLO26m (DirectML / GPU) | Every car in our hardest 40-frame test set (40/40, up from 36/40); ~30% slower than YOLO11s |
 | Plates | open-image-models | License plates & number roundels |
 | Plate text | fast-plate-ocr | Dedicated plate character recognition |
 | Livery & numbers | PP-OCRv4 | Competition numbers and sponsor decals; fills a number only when the vision model missed one |

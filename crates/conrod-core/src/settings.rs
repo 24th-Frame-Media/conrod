@@ -357,7 +357,7 @@ impl Default for Settings {
     fn default() -> Self {
         let cpus = std::thread::available_parallelism().map_or(8, |n| n.get()) as i64;
         Settings {
-            detect_model: "yolo11s.pt".into(),
+            detect_model: "yolo26m-960.onnx".into(),
             detect_imgsz: 960,
             detect_conf: 0.25,
             min_box_fraction: 0.08,

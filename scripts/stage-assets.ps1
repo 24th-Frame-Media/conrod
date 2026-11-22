@@ -25,9 +25,11 @@ $cache = Join-Path $env:USERPROFILE '.cache'
 $releaseUrl = 'https://github.com/kapsikkum/conrod/releases/download/assets-v1'
 New-Item -ItemType Directory -Force $out, (Join-Path $res 'models'), (Join-Path $res 'exiftool') | Out-Null
 
+# The detector Conrod ships with. The previous one (yolo11s-960.onnx) is not
+# staged any more: it stays in the manifest as a pinned, optional fallback.
 # name, source path, licence
 $files = @(
-  @('yolo11s-960.onnx', "$models\yolo11s-960.onnx", 'AGPL-3.0 (Ultralytics YOLO11)'),
+  @('yolo26m-960.onnx', "$models\yolo26m-960.onnx", 'AGPL-3.0 (Ultralytics YOLO26)'),
   @('face_detection_yunet_2023mar.onnx', "$models\face_detection_yunet_2023mar.onnx", 'MIT (OpenCV Zoo YuNet)'),
   @('dinov2-small-quantized.onnx', "$models\dinov2-small-quantized.onnx", 'Apache-2.0 (Meta DINOv2)'),
   @('yolo-v9-t-640-license-plates-end2end.onnx', "$cache\open-image-models\yolo-v9-t-640-license-plate-end2end\yolo-v9-t-640-license-plates-end2end.onnx", 'MIT (open-image-models)'),
@@ -40,6 +42,7 @@ $files = @(
 # not as a standalone downloadable file). A download only counts if its SHA-256
 # equals the pin.
 $upstream = @{
+  'yolo26m-960.onnx' = @("$releaseUrl/yolo26m-960.onnx")
   'face_detection_yunet_2023mar.onnx' = @('https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx')
   'dinov2-small-quantized.onnx' = @('https://huggingface.co/Xenova/dinov2-small/resolve/main/onnx/model_quantized.onnx')
   'yolo-v9-t-640-license-plates-end2end.onnx' = @('https://github.com/ankandrew/open-image-models/releases/download/assets/yolo-v9-t-640-license-plates-end2end.onnx')
