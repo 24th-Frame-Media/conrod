@@ -1146,6 +1146,67 @@ fn merge_matches_snapshot() {
 }
 
 #[test]
+fn a_vision_list_holding_the_moments_seat_loads_cleaned() {
+    use conrod_core::settings::Settings;
+    // The exact shape the user's ~/.conrod/settings.json grew: the AI services
+    // card wrote its built-in "Built-in car reader" into vlm_services with the
+    // moments lane's own provider, so every car read failed with
+    // "unknown vision provider 'in_process'".
+    let dir = std::env::temp_dir().join(format!("conrod-vlm-leak-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("settings.json");
+    let stored = r#"{"use_vlm":true,"vlm_provider":"ollama","vlm_model":"qwen2.5vl:7b",
+        "vlm_host":"http://127.0.0.1:11434","vlm_extra_hosts":"http://172.26.18.230:11434",
+        "vlm_services":[
+          {"id":"vlm-1","provider":"ollama","model":"qwen2.5vl:7b","host":"http://127.0.0.1:11434","api_key":"","key_kind":"auto","enabled":false,"reasoning":false},
+          {"id":"vlm-2","provider":"ollama","model":"qwen2.5vl:7b","host":"http://172.26.18.230:11434","api_key":"","key_kind":"auto","enabled":false,"reasoning":false},
+          {"id":"vlm-1794961415023","provider":"opencode-go","model":"none","host":"","api_key":"oc_sk_x","key_kind":"auto","enabled":true,"reasoning":false},
+          {"id":"vision-local-1795340116685-1","provider":"in_process","model":"Built-in car reader","host":"","api_key":"","key_kind":"auto","enabled":true,"reasoning":false}
+        ],
+        "vlm_strategy":"least_busy",
+        "moments_services":[
+          {"id":"moments-local","provider":"in_process","model":"in_process","host":"","api_key":"","key_kind":"auto","enabled":true,"reasoning":false},
+          {"id":"decision-opencode-1795339804896-0","provider":"opencode","model":"jev-1.13","host":"","api_key":"","key_kind":"auto","enabled":true,"reasoning":false}
+        ],
+        "moments_services_scale":1,"use_decider":true}"#;
+    std::fs::write(&path, stored).unwrap();
+    let loaded = Settings::load(&path);
+    let ids: Vec<_> = loaded
+        .vlm_services
+        .iter()
+        .map(|s| (s.id.as_str(), s.provider.as_str()))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            ("vlm-1", "ollama"),
+            ("vlm-2", "ollama"),
+            ("vlm-1794961415023", "opencode-go")
+        ],
+        "the moments seat is not a vision service"
+    );
+    assert_eq!(
+        loaded.enabled_vlm_service().map(|s| s.provider.as_str()),
+        Some("opencode-go"),
+        "the real reader still answers"
+    );
+    assert_eq!(
+        loaded
+            .moments_services
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<Vec<_>>(),
+        ["moments-local", "decision-opencode-1795339804896-0"],
+        "the moments list keeps its own seat"
+    );
+    // The cleanup is written back once, so the next start reads a clean file.
+    let rewritten = std::fs::read_to_string(&path).unwrap();
+    assert!(!rewritten.contains("Built-in car reader"), "{rewritten}");
+    assert_eq!(Settings::load(&path).vlm_services, loaded.vlm_services);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn vlm_services_seed_from_legacy_fields() {
     use conrod_core::settings::Settings;
     let dir = std::env::temp_dir().join(format!("conrod-services-{}", std::process::id()));

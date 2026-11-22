@@ -9,7 +9,7 @@ import {
   ADD_ORDER, BUILTIN, IN_TOK, OUT_TOK, SERVICE_TYPES, SHARING, THINK_HINT,
   addService, cardsFromDraft, costLine, decisionCandidates, defaultThinking,
   fmtUsd, helperStatus, makeCard, modelLine, patchService, photoCost, poolCount,
-  providerToType, removeService, servingFor, setSharing, sharingValue, summaryText,
+  providerToType, removeService, servingFor, setCapModel, setSharing, sharingValue, summaryText,
   visionCandidates,
 } from '../src/lib/aiCard.mjs';
 
@@ -311,4 +311,17 @@ test('pool + summary strip follow enabled services and routing', () => {
   assert.match(summaryText(ctx).text, /2 models ready across 2 services, shared round robin/);
   assert.equal(poolCount({ ...ctx, cards: [], builtinVision: [] }).n, 0);
   assert.match(summaryText({ ...ctx, cards: [], builtinVision: [], builtinDecisions: [] }).text, /No models in the pool/);
+});
+
+test('the built-in reader never becomes a vision service row', () => {
+  // An early version of this card wrote the built-in reader into vlm_services
+  // with provider in_process, and every car read then failed with "unknown
+  // vision provider 'in_process'".
+  const before = settingsWith({ vlm_services: [svc('ollama', { host: 'http://h:1' })] });
+  const out = setCapModel(before, 'vision', 'local', 'Built-in car reader');
+  assert.deepEqual(out.vlm_services.map((s) => s.provider), ['ollama']);
+  assert.equal(out.vlm_services.some((s) => s.provider === 'in_process'), false);
+  // A real service still records its model.
+  const cloud = setCapModel(before, 'vision', 'opencode', 'glm-5.3-flash');
+  assert.equal(cloud.vlm_services.at(-1).provider, 'opencode');
 });

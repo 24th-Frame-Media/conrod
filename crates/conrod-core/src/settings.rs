@@ -255,6 +255,38 @@ pub fn migrate_service_reasoning(map: &mut Map<String, Value>) -> bool {
     true
 }
 
+/// Can this provider answer a vision ask? A vision provider is somewhere a
+/// crop can be POSTed to, so every cloud name and `ollama` qualify.
+/// `in_process` (and its old spelling `local`) is the moments lane's own seat:
+/// the decision model on this machine, with no HTTP transport at all, so it is
+/// never a vision provider. A vision list that holds one is the two service
+/// lists conflated, and asking it fails every crop with "unknown vision
+/// provider".
+pub fn is_vision_provider(provider: &str) -> bool {
+    !matches!(
+        provider.trim().to_ascii_lowercase().as_str(),
+        "in_process" | "local"
+    )
+}
+
+/// One-time cleanup of a stored settings map: drop any `vlm_services` entry
+/// whose provider is the moments lane's own seat (`in_process`). `moments_services`
+/// is left alone -- that is where such a row belongs -- and a clean list is not
+/// touched, so a re-run is free. Returns whether a row was dropped.
+pub fn drop_builtin_vision_services(map: &mut Map<String, Value>) -> bool {
+    let Some(list) = map.get_mut("vlm_services").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let before = list.len();
+    list.retain(
+        |entry| match entry.get("provider").and_then(Value::as_str) {
+            Some(provider) => is_vision_provider(provider),
+            None => true,
+        },
+    );
+    list.len() < before
+}
+
 /// The most workers each pool may use, by what it waits on. Documented so the
 /// Settings screen can show the cap rather than letting a user set 40.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -789,6 +821,10 @@ impl Settings {
             migrated |= migrate_burst_gap(&mut stored);
             migrated |= migrate_moments_services(&mut stored);
             migrated |= migrate_service_reasoning(&mut stored);
+            // A vision list holding the moments lane's own seat would fail
+            // every car read ("unknown vision provider 'in_process'"): drop it
+            // once and rewrite the file.
+            migrated |= drop_builtin_vision_services(&mut stored);
         }
         let mut settings = Settings::default().apply(&stored);
         // One spelling of the moment strategy, whatever the file holds: a
@@ -852,7 +888,9 @@ impl Settings {
     /// provider is then not a fallback: a disabled service means the model is
     /// not asked).
     pub fn enabled_vlm_service(&self) -> Option<&VlmService> {
-        self.vlm_services.iter().find(|service| service.enabled)
+        self.vlm_services
+            .iter()
+            .find(|service| service.enabled && is_vision_provider(&service.provider))
     }
 
     /// This album's workflow, normalised: [`WORKFLOW_BOTH`] unless the album
@@ -899,15 +937,17 @@ impl Settings {
     /// Is a vision service switched on? A settings file from before the
     /// service list has none and uses the single-provider fields instead.
     pub fn has_vision_service(&self) -> bool {
-        self.vlm_services.is_empty() || self.vlm_services.iter().any(|s| s.enabled)
+        self.vlm_services.is_empty()
+            || self
+                .vlm_services
+                .iter()
+                .any(|s| s.enabled && is_vision_provider(&s.provider))
     }
 
     /// The vision model a run would call: the first enabled service's, else
     /// the single-provider model.
     pub fn vision_model(&self) -> String {
-        self.vlm_services
-            .iter()
-            .find(|service| service.enabled)
+        self.enabled_vlm_service()
             .map(|service| service.model.clone())
             .unwrap_or_else(|| self.vlm_model.clone())
     }
@@ -978,7 +1018,14 @@ impl Settings {
                 }
             }
         }
-        serde_json::from_value(Value::Object(current)).unwrap_or(self)
+        let mut settings: Settings = serde_json::from_value(Value::Object(current)).unwrap_or(self);
+        // Whatever an older file, an album or a settings PATCH sent, the vision
+        // list only ever holds vision providers: the moments seat is masked
+        // here, the one place every read and every write passes through.
+        settings
+            .vlm_services
+            .retain(|service| is_vision_provider(&service.provider));
+        settings
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
@@ -1249,6 +1296,84 @@ mod tests {
             Settings::default().burst_gap,
             crate::bursts::DEFAULT_BURST_GAP_SECONDS,
             "the stored default is the one documented default"
+        );
+    }
+
+    #[test]
+    fn a_moments_seat_in_the_vision_list_is_dropped_and_the_moments_copy_stays() {
+        // The shape the AI services card wrote once: the built-in reader as a
+        // vision "service". Every car read then failed with "unknown vision
+        // provider 'in_process'".
+        let mut stored = map(r#"{"vlm_services":[
+                 {"id":"vlm-1","provider":"ollama","model":"qwen2.5vl:7b","enabled":false},
+                 {"id":"vision-local-1","provider":"in_process","model":"Built-in car reader","enabled":true}
+               ],
+               "moments_services":[{"id":"moments-local","provider":"in_process","enabled":true}]}"#);
+        assert!(drop_builtin_vision_services(&mut stored));
+        let vlm = stored["vlm_services"].as_array().unwrap();
+        assert_eq!(vlm.len(), 1, "{stored:?}");
+        assert_eq!(vlm[0]["id"], "vlm-1");
+        assert_eq!(
+            stored["moments_services"].as_array().unwrap().len(),
+            1,
+            "its own copy belongs there and stays"
+        );
+        assert!(
+            !drop_builtin_vision_services(&mut stored),
+            "a clean list is left alone, so a re-run is free"
+        );
+        // A row that is not an object at all is not a moments seat either.
+        let mut odd = map(r#"{"vlm_services":[7,{"provider":"local"}]}"#);
+        assert!(drop_builtin_vision_services(&mut odd));
+        assert_eq!(odd["vlm_services"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn apply_never_lets_the_vision_list_hold_a_moments_seat() {
+        // The settings screen PATCHes the whole list, so a stale row from an
+        // older card could be sent back in. `apply` is the one seam: mask it.
+        let patch = map(r#"{"vlm_services":[
+                 {"id":"vlm-1","provider":"ollama","enabled":true},
+                 {"id":"vision-local-9","provider":"in_process","model":"Built-in car reader","enabled":true}
+               ],
+               "moments_services":[{"id":"moments-local","provider":"in_process","enabled":true}]}"#);
+        let settings = Settings::default().apply(&patch);
+        assert_eq!(
+            settings
+                .vlm_services
+                .iter()
+                .map(|s| s.provider.as_str())
+                .collect::<Vec<_>>(),
+            ["ollama"]
+        );
+        assert_eq!(settings.enabled_vlm_service().unwrap().id, "vlm-1");
+        assert_eq!(
+            settings.moments_services.len(),
+            1,
+            "the moments list is untouched"
+        );
+    }
+
+    #[test]
+    fn a_vision_list_of_only_moments_seats_falls_back_to_the_single_provider() {
+        // Nothing but the seat means no vision service was ever listed, so the
+        // legacy single-provider fields answer (as they do for any empty list)
+        // rather than the seat being asked and failing.
+        let patch = map(
+            r#"{"vlm_services":[{"id":"vision-local-9","provider":"in_process","enabled":true}],
+                "vlm_provider":"ollama","vlm_model":"qwen2.5vl:7b"}"#,
+        );
+        let settings = Settings::default().apply(&patch);
+        assert!(settings.vlm_services.is_empty());
+        assert!(settings.enabled_vlm_service().is_none());
+        assert!(
+            settings.has_vision_service(),
+            "the empty list is the legacy row"
+        );
+        assert_eq!(settings.vision_model(), "qwen2.5vl:7b");
+        assert_ne!(
+            settings.enabled_vlm_service().map(|s| s.provider.as_str()),
+            Some("in_process")
         );
     }
 
