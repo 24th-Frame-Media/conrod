@@ -17,7 +17,7 @@ export type IngestNode = {
   /** What clicking the node filters the worker grid to; null when the node is not a filter. */
   filter: string | null;
 };
-export type IngestPhase = 'idle' | 'starting' | 'scan' | 'group' | 'pick' | 'vision' | 'done' | 'stopped' | 'error';
+export type IngestPhase = 'idle' | 'starting' | 'scan' | 'group' | 'pick' | 'vision' | 'peaks' | 'done' | 'stopped' | 'error';
 export type LaneUiState = 'busy' | 'waiting' | 'paused' | 'idle';
 export type LaneFrameView = {
   file: string;
@@ -48,6 +48,8 @@ export function ingestPhase(input?: {
   identifying?: boolean;
 }): IngestPhase;
 export function phaseRunning(phase: IngestPhase): boolean;
+/** Is the identify run past the cars, comparing each burst for its peak? */
+export function comparingBursts(identify: IdentifyLive | null | undefined): boolean;
 export function phaseWord(phase: IngestPhase, paused?: boolean): string;
 export function phaseTone(phase: IngestPhase, paused?: boolean): 'running' | 'done' | 'stopped' | 'error';
 export function ingestFraction(input?: { scanFraction?: number; identify?: IdentifyLive | null; vision?: boolean }): number;

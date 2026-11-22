@@ -7,7 +7,7 @@ import { deciderActive } from '../lib/decider.mjs';
 import { useDeciderProgress } from '../state/useDeciderProgress';
 import { Empty, Icon } from '../components/basics';
 import { asset } from '../lib/api';
-import { confidencePercent, confidenceTone, displayItem, elapsed, progressPercent, rateLabel, workerLanes } from '../lib/identifyFlow.mjs';
+import { confidencePercent, confidenceTone, displayItem, elapsed, phaseLabel, progressPercent, rateLabel, workerLanes } from '../lib/identifyFlow.mjs';
 import {
   etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneKey, laneState, leftLabel,
   phaseRunning, phaseTone, phaseWord, selectLanes, starsText, stripItems, verdictText, visionExpected,
@@ -153,8 +153,11 @@ export function IngestScreen({
   }
 
   const live = phaseRunning(phase);
+  // Both the car reads and the bursts compared after them are the identify run: the header,
+  // stats and stop button belong to it, and the count they show is its own.
+  const identifying = phase === 'vision' || phase === 'peaks';
   const vision = mode === 'identify' || visionExpected(stages, idLive);
-  const frozen = live && phase !== 'starting' && (phase === 'vision' ? identifyPaused : paused);
+  const frozen = live && phase !== 'starting' && (identifying ? identifyPaused : paused);
   const head = stages.find((s) => s.id === p?.stage);
   const scanFrac = p ? (scanState === 'done' ? 1 : overallFraction(stages, p.overall)) : 0;
   const frac = mode === 'identify' ? progressPercent(idLive?.done, idLive?.total) / 100
@@ -183,14 +186,15 @@ export function IngestScreen({
   // The bar already spans scan + identify; the time left must say both, not only the stage that happens to be running.
   const timeLeft = mode === 'identify'
     ? [leftLabel(etaLabel(identifyEta(idLive), done >= 3))]
-    : etaLines({ vision, scanDone: phase === 'vision' || phase === 'done', scanEta: smoothed ?? (p ? overallEta(stages, p.overall) : null), scanStable: Boolean(scan?.stable), identify: idLive });
-  const rate = phase === 'vision' ? (idLive ? rateLabel(idLive.done, idLive.elapsed_ms) : '') : frameRate(formatRate(p?.rate_per_s));
+    : etaLines({ vision, scanDone: identifying || phase === 'done', scanEta: smoothed ?? (p ? overallEta(stages, p.overall) : null), scanStable: Boolean(scan?.stable), identify: idLive });
+  const rate = identifying ? (idLive ? rateLabel(idLive.done, idLive.elapsed_ms) : '') : frameRate(formatRate(p?.rate_per_s));
   const stageTotal = nodes.filter((node) => node.id !== 'done').length;
   const stageAt = nodes.findIndex((node) => node.id === (head?.id ?? p?.stage)) + 1;
   const sub = phase === 'starting' ? (mode === 'identify' ? 'Waiting for the first car…' : 'Reading the folder…')
-    : phase === 'vision' ? (visionOff ? visionHeader(visionOff) : `Reading cars with ${visionModelWords(idLive?.model || model) || 'the vision model'}`)
-      : phase === 'scan' || phase === 'group' || phase === 'pick' ? `Stage ${Math.max(1, stageAt)} of ${stageTotal} · ${head?.label ?? p?.stage}`
-        : phase === 'done' ? (mode === 'identify' ? 'Identification complete' : 'Scan complete') : '';
+    : phase === 'peaks' ? (phaseLabel(idLive?.phase) || 'Comparing bursts')
+      : phase === 'vision' ? (visionOff ? visionHeader(visionOff) : `Reading cars with ${visionModelWords(idLive?.model || model) || 'the vision model'}`)
+        : phase === 'scan' || phase === 'group' || phase === 'pick' ? `Stage ${Math.max(1, stageAt)} of ${stageTotal} · ${head?.label ?? p?.stage}`
+          : phase === 'done' ? (mode === 'identify' ? 'Identification complete' : 'Scan complete') : '';
 
   const detailCar = picked?.kind === 'car' ? displayItem(idLive, picked.id) : null;
   const detailFrame = picked?.kind === 'frame' ? p?.recent.find((f) => f.image_id === picked.id) ?? null : null;
@@ -215,20 +219,20 @@ export function IngestScreen({
           </div>
           {live && phase !== 'starting' && (
             <dl className="id-stats">
-              {phase === 'vision'
+              {identifying
                 ? <div><dt>Cars</dt><dd className="mono">{idLive ? `${done.toLocaleString()} / ${idTotal.toLocaleString()}` : '–'}</dd></div>
                 : <div><dt>{head?.label ?? p?.stage ?? 'Frames'}</dt><dd className="mono">{p ? `${p.done.toLocaleString()} / ${p.total.toLocaleString()}` : '–'}</dd></div>}
               <div><dt>Rate</dt><dd className="mono">{rate || '–'}</dd></div>
               <div><dt>Time left</dt><dd className="mono ing-eta">{timeLeft.map((line, i) => <span key={`${i}:${line}`} className={i > 0 ? 'ing-eta-next' : ''}>{line}</span>)}</dd></div>
-              <div><dt>Workers</dt><dd className="mono">{phase === 'vision' ? visionLanes.length || '–' : allScan.length ? `${awake} / ${allScan.length}` : '–'}</dd></div>
+              <div><dt>Workers</dt><dd className="mono">{identifying ? visionLanes.length || '–' : allScan.length ? `${awake} / ${allScan.length}` : '–'}</dd></div>
             </dl>
           )}
-          {live && (mode === 'identify' || phase === 'vision') && (
+          {live && (mode === 'identify' || identifying) && (
             <div className="id-actions">
               <button className="ghost danger" onClick={() => onCancelOperation(operation ?? `Identifying:${job.id}`)}>Stop identification</button>
             </div>
           )}
-          {live && mode === 'ingest' && phase !== 'vision' && (
+          {live && mode === 'ingest' && !identifying && (
             <div className="id-actions">
               <button className="ghost" onClick={paused ? onResume : onPause}>{paused ? 'Resume' : 'Pause'}</button>
               <button className="ghost danger" onClick={onCancel}>Cancel scan</button>
@@ -340,7 +344,7 @@ export function IngestScreen({
                 </div>
               )}
               {detailCar ? (
-                <IdentifyDetail detail={detailCar} prompt={detailCar.prompt ?? prompts.current[detailCar.detection_id]} live={detailCar.stage !== 'done' && phase === 'vision'} visionOff={visionOff} onVisionAction={onVisionAction} />
+                <IdentifyDetail detail={detailCar} prompt={detailCar.prompt ?? prompts.current[detailCar.detection_id]} live={detailCar.stage !== 'done' && identifying} visionOff={visionOff} onVisionAction={onVisionAction} />
               ) : detailFrame ? (
                 <FrameDetail frame={detailFrame} />
               ) : (showScan && picks.lanes.length) || showVision || showDecider || barrier ? (

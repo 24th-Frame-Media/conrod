@@ -26,10 +26,16 @@ export function msWords(ms) {
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
-/** The DECIDER node of the flowchart, in the shape of the other nodes (see ingest.mjs `scanNode`).
- *  `serving` is the cloud decision service actually doing the moments job; when set, the node
- *  names it instead of the local model's install state (see identifyFlow.mjs `deciderStepNode`). */
-export function deciderNode(live, serving = null) {
+/**
+ * The DECIDER node of the flowchart, in the shape of the other nodes (see ingest.mjs `scanNode`).
+ *
+ * `serving` is the cloud decision service actually doing the moments job; when set, the node
+ * names it instead of the local model's install state (see identifyFlow.mjs `deciderStepNode`).
+ *
+ * `phase` is the identify run's run-level phase: the tick waits for it to finish, so a lane that is
+ * between frames — or still comparing bursts — never checks off early.
+ */
+export function deciderNode(live, serving = null, phase = null) {
   const cloud = Boolean(serving);
   const state = live?.state ?? 'off';
   const busy = (live?.busy ?? 0) > 0 || state === 'loading' || state === 'running';
@@ -41,9 +47,11 @@ export function deciderNode(live, serving = null) {
   const failed = live?.errors > 0 ? `${live.errors.toLocaleString('en-US')} failed` : '';
   const meta = off ? '' : [frames, failed, live?.quant, live?.avg_ms ? msWords(live.avg_ms) : ''].filter(Boolean).join(' · ');
   const title = cloud ? serving : [sub, live?.message, live?.device, live?.model].filter(Boolean).join(' · ');
+  const run = phase && typeof phase === 'object' ? phase : null;
+  const tick = run ? (run.state === 'done' ? 'done' : 'active') : busy ? 'active' : answered > 0 ? 'done' : 'pending';
   return {
     id: 'decider', number: '', label: 'DECIDER', sub, meta, title,
-    state: busy ? 'active' : answered > 0 ? 'done' : 'pending', off, filter: 'decider',
+    state: tick, off, filter: 'decider',
   };
 }
 

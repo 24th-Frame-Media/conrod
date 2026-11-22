@@ -8,10 +8,20 @@ export const IDENTIFY_STAGES: readonly IdentifyStage[];
 export const FLOW_NODES: readonly Omit<FlowNode, 'state'>[];
 export function activeStage(stage: string | null | undefined): number;
 export function flowNodes(live: IdentifyLive | null | undefined, model?: string | null, stage?: IdentifyStage | null): FlowNode[];
+export type IdentifyPhase = {
+  name: 'moments' | 'peaks' | string;
+  done: number;
+  total: number;
+  state: 'running' | 'done' | 'stopped';
+};
+
+/** A run-level phase as the header and the DECIDER node say it; empty for none. */
+export function phaseLabel(phase: IdentifyPhase | null | undefined): string;
 export type DeciderNode = { id: string; number: string; label: string; sub: string; meta: string; title: string; state: FlowState; off: boolean; filter: null };
 /** The decision model's node for the identify flow, or null before it reports anything.
- *  `serving` names the cloud decision service actually doing moments (e.g. "jev-1.13 via OpenCode"). */
-export function deciderStepNode(live: DeciderLive | null | undefined, serving?: string | null): DeciderNode | null;
+ *  `serving` names the cloud decision service actually doing moments (e.g. "jev-1.13 via OpenCode");
+ *  its tick still waits for `phase` to finish. */
+export function deciderStepNode(live: DeciderLive | null | undefined, serving?: string | null, phase?: IdentifyPhase | null): DeciderNode | null;
 export function displayPath(item: IdentifyItem | null | undefined): string;
 export function fileName(item: IdentifyItem | null | undefined): string;
 export function displayItem(live: IdentifyLive | null | undefined, selectedId?: number | null): IdentifyItem | null;

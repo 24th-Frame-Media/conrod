@@ -39,6 +39,20 @@ test('a node that worked is not dimmed after the model is turned off', () => {
   assert.equal(deciderNode(live({ state: 'off', done: 3 })).off, false);
 });
 
+test('the ingest DECIDER node waits for the bursts phase before it ticks', () => {
+  const phase = (state) => ({ name: 'peaks', done: state === 'done' ? 4 : 1, total: 4, state });
+  // Every frame answered, but the bursts are still being compared: active, not done.
+  assert.equal(deciderNode(live({ done: 40 }), null, phase('running')).state, 'active');
+  assert.equal(deciderNode(live({ done: 40 }), null, phase('done')).state, 'done');
+  // Older snapshots carry no phase: the old rule stands.
+  assert.equal(deciderNode(live({ done: 40 })).state, 'done');
+  // A cloud service names the node, and the tick still waits for the phase.
+  const cloud = 'jev-1.13 via OpenCode';
+  const serving = deciderNode(live({ state: 'not_installed', done: 40 }), cloud, phase('running'));
+  assert.deepEqual([serving.off, serving.sub, serving.state], [false, cloud, 'active']);
+  assert.equal(deciderNode(live({ done: 40 }), cloud, phase('done')).state, 'done');
+});
+
 test('the DECIDER node sits after VISION and before DONE, and only when the engine reports the model', () => {
   const stages = [{ id: 'read', label: 'Read', done: 5, total: 10, workers_total: 2, workers_busy: 1 }, { id: 'identify', label: 'Identify', done: 0, total: 3 }];
   const without = ingestNodes({ stages }).map((n) => n.id);
