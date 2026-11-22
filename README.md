@@ -61,17 +61,28 @@ Download the latest release from [Releases](../releases):
 | Livery & Numbers | PP-OCRv4 | Competition numbers and sponsor decals; fills a number only when the vision model missed one |
 | Burst Grouping | DINOv2 (quantized) | Visual similarity clustering |
 | Moments | Vision model or decision model | Tyre smoke, a kiss, a jump apex; same sharpness-band tie-break either way |
-| Make, Model, Livery | Qwen2.5-VL 7B (Ollama), or a cloud vision model (OpenRouter / OpenCode Go) | Vehicle visual identification |
+| Make, Model, Livery | Qwen3-VL 8B (Ollama), or a cloud vision model (OpenCode credits / OpenRouter) | Vehicle visual identification |
 
-Tested against real circuit photography using Conrod's structured extraction prompt and schema:
+Benchmarked 22 Nov 2026 on 3 Challenge Bathurst frames.
 
-| Target | Ground Truth | qwen2.5vl:7b (Local Ollama) | gpt-4o (OpenAI Cloud) |
-|---|---|---|---|
-| <img src="docs/images/benchmark_holden.jpg" width="180" alt="Holden HRT Commodore" /><br>*(Holden HRT)* | **Holden Commodore (VY/VZ)**<br>#R5, Saville<br>HRT / Mobil 1, HSV, Repco, NGK | **Make**: Holden, **Model**: HSV<br>**Number**: `R5` ✅<br>**Sponsors**: Mobil 1, NGK, Repco, HSV, Xbox ✅ | **Make**: Holden, **Model**: *null* ❌<br>**Number**: `05` ❌ *(hallucinated Brock)*<br>**Driver**: `Brock` ❌ *(hallucinated)* |
-| <img src="docs/images/benchmark_subaru.jpg" width="180" alt="Subaru Impreza WRX STI" /><br>*(Subaru WRX)* | **Subaru Impreza WRX STI (Blobeye)**<br>#71, T. Gough<br>Marvell | **Make**: Subaru ✅, **Model**: Impreza ✅<br>**Number**: `71` ✅<br>**Driver**: `T. Gough` ✅ | **Make**: *null* ❌, **Model**: *null* ❌<br>**Number**: `71` ✅<br>**Driver**: `T. Gough` ✅ |
-| <img src="docs/images/benchmark_lancer.jpg" width="180" alt="Mitsubishi Lancer Evolution X" /><br>*(Lancer Evo X)* | **Mitsubishi Lancer Evolution X**<br>#82<br>Intima, Motul, Shockworks, Tyrepower | **Make**: Mitsubishi ✅, **Model**: Lancer Evolution ✅<br>**Number**: `82` ✅<br>**Sponsors**: Intima, Motul ✅ | **Make**: *null* ❌, **Model**: *null* ❌<br>**Number**: `82` ✅<br>**Sponsors**: Intima, Motul, Yokohama ✅ |
+| Model | What it is | Where it runs | Cars right | Numbers right | Sponsors found | Speed | Cost per 1,000 cars | Verdict |
+|---|---|---|---|---|---|---|---|---|
+| qwen3-vl:8b-instruct-q4_K_M | Small open vision model (8B) | Your own PC | 2/3 | 3/3 | 11/16 | about 9 s | $0 (own hardware) | Winner |
+| glm-5.3-flash | Fast cloud model (current default) | Cloud (OpenCode credits) | 2/3 | 3/3 | 8/16 | about 6 s, one 52 s | $1.73 | Baseline |
+| gpt-6-luna | Cheap general-purpose GPT | Cloud (OpenCode credits) | 2/3 | 3/3 | 8/16 | about 8 s | $0.42 | Value |
+| minimax-m3.1-flash* | Cheapest very fast model | Cloud (OpenCode credits) | 2/3 | 3/3 | 5/16 | about 2 s | $0.41 | Unreliable |
+| claude-haiku-5-5 | Small Claude | Cloud (OpenCode credits) | 1/3 | 3/3 | 7/16 | about 4 s | $0.38 | Solid |
+| gemini-3.5-flash-lite | Cheapest Gemini | Cloud (OpenCode credits) | 2/3 | 3/3 | 12/16 | about 22 s, frequent retries | $0.88 | Bursty |
+| qwen2.5vl:7b | Older open vision model (7B) | Your own PC | 1/3 | 3/3 | 9/16 | about 5 s | $0 (own hardware) | Aging |
+| deepseek-v4.1-flash | Reasoning model | Cloud (OpenCode credits) | 2/3 | 2/3 | 6/16 | about 59 s | $3.59 | Overkill |
+| strata/qwen3.8-flash-next-coder-iq1_m | Self-hosted coder model | Strata box | 1/3 | 3/3 | 7/16 | about 92 s | $0 (self-hosted) | Slow |
+| mimo-iq4:latest | Small open model (4-bit) | Your own PC | 0/3 | 1/3 | 3/16 | about 15 s | $0 (own hardware) | Avoid |
 
-Other local models tested: `minicpm-v:8b` hallucinated a Mustang; `gemma3:4b` hallucinated a Mazda 323; `qwen3-vl:8b` failed JSON output. `qwen2.5vl:7b` runs locally in about 3.4 seconds on an RTX 3070 Ti.
+\* `minimax-m3.1-flash` was unavailable upstream; the row is its sibling `minimax-m3`.
+
+Cars right = make and model both correct. Numbers right = door number exact.
+Sponsors found = out of 16 across the three cars. Local rows use the reader's own GPU;
+cloud rows are OpenCode pay-as-you-go credits at list price, one image per car.
 
 ## Development & Build
 
