@@ -31,6 +31,9 @@
     }
   },
   "commits": {
+    "8b733a3": [
+      { "section": "New", "text": "Moments can be judged in the cloud by OpenCode's decision model JEV, which looks at the photo itself: add an OpenCode key or reuse the one a vision server already has. Settings offers JEV Free and the paid JEV, and a Test OpenCode key button checks the key without spending a request." }
+    ],
     "5130167": [
       { "section": "New", "text": "Settings has one AI models page: every model Conrod can use, in plain words, with where it runs, whether it is ready and a switch to turn it on or off." },
       { "section": "New", "text": "The decision model can run on your graphics card or through OpenRouter, with a key field and a test button; OpenRouter can also read cars as a vision service and share that key." },
