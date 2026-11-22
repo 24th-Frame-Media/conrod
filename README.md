@@ -73,21 +73,21 @@ Best paid value: **gpt-6-luna** at about **$0.42 per 1,000 cars**.
 | Model | What it is | Where it runs | Cars right | Numbers right | Sponsors found | Speed | Cost per 1,000 cars | Verdict |
 |---|---|---|---|---|---|---|---|---|
 | qwen3-vl:8b-instruct-q4_K_M | Small open vision model (8B) | Your own PC | 2/3 | 3/3 | 11/16 | about 9 s | $0 (own hardware) | Winner |
-| glm-5.3-flash | Fast cloud model (current default) | Cloud (OpenCode credits) | 2/3 | 3/3 | 8/16 | about 6 s, one 52 s | $1.73 | Baseline |
-| gpt-6-luna | Cheap general-purpose GPT | Cloud (OpenCode credits) | 2/3 | 3/3 | 8/16 | about 8 s | $0.42 | Value |
-| minimax-m3.1-flash* | Cheapest very fast model | Cloud (OpenCode credits) | 2/3 | 3/3 | 5/16 | about 2 s | $0.41 | Unreliable |
-| claude-haiku-5-5 | Small Claude | Cloud (OpenCode credits) | 1/3 | 3/3 | 7/16 | about 4 s | $0.38 | Solid |
-| gemini-3.5-flash-lite | Cheapest Gemini | Cloud (OpenCode credits) | 2/3 | 3/3 | 12/16 | about 22 s, frequent retries | $0.88 | Bursty |
+| glm-5.3-flash | Fast cloud model (current default) | Cloud | 2/3 | 3/3 | 8/16 | about 6 s, one 52 s | $1.73 | Baseline |
+| gpt-6-luna | Cheap general-purpose GPT | Cloud | 2/3 | 3/3 | 8/16 | about 8 s | $0.42 | Value |
+| minimax-m3.1-flash* | Cheapest very fast model | Cloud | 2/3 | 3/3 | 5/16 | about 2 s | $0.41 | Unreliable |
+| claude-haiku-5-5 | Small Claude | Cloud | 1/3 | 3/3 | 7/16 | about 4 s | $0.38 | Solid |
+| gemini-3.5-flash-lite | Cheapest Gemini | Cloud | 2/3 | 3/3 | 12/16 | about 22 s, frequent retries | $0.88 | Bursty |
 | qwen2.5vl:7b | Older open vision model (7B) | Your own PC | 1/3 | 3/3 | 9/16 | about 5 s | $0 (own hardware) | Aging |
-| deepseek-v4.1-flash | Reasoning model | Cloud (OpenCode credits) | 2/3 | 2/3 | 6/16 | about 59 s | $3.59 | Overkill |
-| strata/qwen3.8-flash-next-coder-iq1_m | Self-hosted coder model | Strata box | 1/3 | 3/3 | 7/16 | about 92 s | $0 (self-hosted) | Slow |
+| deepseek-v4.1-flash | Reasoning model | Cloud | 2/3 | 2/3 | 6/16 | about 59 s | $3.59 | Overkill |
+| strata/qwen3.8-flash-next-coder-iq1_m | Self-hosted model | Your own PC (self-hosted) | 1/3 | 3/3 | 7/16 | about 92 s | $0 (self-hosted) | Slow |
 | mimo-iq4:latest | Small open model (4-bit) | Your own PC | 0/3 | 1/3 | 3/16 | about 15 s | $0 (own hardware) | Avoid |
 
 \* `minimax-m3.1-flash` was unavailable upstream; the row is its sibling `minimax-m3`.
 
 Cars right = make and model both correct. Numbers right = door number exact.
 Sponsors found = out of 16 across the three cars. Local rows use the reader's own GPU;
-cloud rows are OpenCode pay-as-you-go credits at list price, one image per car.
+cloud rows are one provider's pay-as-you-go list rate, one image per car.
 </details>
 
 ## Development & Build
