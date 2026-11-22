@@ -31,6 +31,7 @@
     }
   },
   "commits": {
+    "84a91fa": { "section": "Improved", "text": "Model thinking is off by default when reading cars, so answers come back fast; a switch in Settings turns it back on." },
     "27b763b": { "section": "Improved", "text": "The car finder is the new YOLO26 model — it found every car in our hardest test set where the old one missed a few." },
     "92b6f0d": { "section": "Improved", "text": "Conrod now recommends qwen3-vl 8B for local car reading — it beat every cloud model on accuracy in our latest test." },
     "181257d": { "section": "Improved", "text": "The Library is now a wall of your albums' covers, grouped into Needs attention and Ready to review, with one clear action on every album and a strip that keeps a running scan in view." },
