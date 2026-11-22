@@ -55,6 +55,9 @@ pub fn update_job_settings(d: &Desktop, a: &UpdateJobSettingsArgs) -> Result<Val
         // Drop an old album's stale vision copy first, so a choice made now is
         // the first the album has ever had.
         conrod_core::settings::follow_global_vlm(&mut map);
+        // An album from before moment services: synthesise its list once and
+        // retire the transport fields, so this patch never resurrects them.
+        conrod_core::settings::migrate_moments_services(&mut map);
 
         for (k, v) in &a.patch {
             if k == "use_vlm" {

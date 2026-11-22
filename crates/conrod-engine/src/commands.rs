@@ -477,6 +477,9 @@ pub enum Command {
     /// is marked read without a model call, so Review opens instead.
     SkipIdentify(JobArgs),
     ProviderModels(ProviderModelsArgs),
+    /// The moment lane's model list: only decision-capable, photo-capable
+    /// models the service itself offers (OpenRouter keeps free text).
+    DecisionModels(ProviderModelsArgs),
     OpenRouterCheck(OpenRouterCheckArgs),
     OpenCodeCheck(OpenCodeCheckArgs),
     Write(WriteArgs),

@@ -798,25 +798,7 @@ pub fn list_models(
     api_key: &str,
 ) -> Result<Vec<(String, String)>, String> {
     let provider = provider.to_lowercase();
-    let (url, auth) = models_url(&provider, host)?;
-    let agent = models_agent();
-    let mut request = agent.get(&url);
-    if auth {
-        request = request.header("Authorization", &format!("Bearer {api_key}"));
-    }
-    if provider.starts_with("opencode") {
-        request = request.header("User-Agent", OPENCODE_USER_AGENT);
-    }
-    let response = request.call().map_err(|e| e.to_string())?;
-    let body: Value = response
-        .into_body()
-        .read_json()
-        .map_err(|e| format!("{url}: {e}"))?;
-    let list = body
-        .get("data")
-        .or_else(|| body.get("models"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| format!("{url} did not return a model list"))?;
+    let (_, list) = fetch_model_items(&provider, host, api_key)?;
     let mut models: Vec<(String, String)> = list
         .iter()
         .filter_map(|item| {
@@ -831,6 +813,180 @@ pub fn list_models(
     models.sort();
     models.dedup();
     Ok(models)
+}
+
+/// The raw entries of a provider's model list, and the URL they came from.
+fn fetch_model_items(
+    provider: &str,
+    host: &str,
+    api_key: &str,
+) -> Result<(String, Vec<Value>), String> {
+    let (url, auth) = models_url(provider, host)?;
+    let agent = models_agent();
+    let mut request = agent.get(&url);
+    if auth {
+        request = request.header("Authorization", &format!("Bearer {api_key}"));
+    }
+    if provider.starts_with("opencode") {
+        request = request.header("User-Agent", OPENCODE_USER_AGENT);
+    }
+    let response = request.call().map_err(|e| e.to_string())?;
+    let body: Value = response
+        .into_body()
+        .read_json()
+        .map_err(|e| format!("{url}: {e}"))?;
+    let list = model_items(&body)
+        .ok_or_else(|| format!("{url} did not return a model list"))?
+        .to_vec();
+    Ok((url, list))
+}
+
+/// The entries of an OpenAI-shaped model list, or `{"models":[…]}`.
+fn model_items(body: &Value) -> Option<&Vec<Value>> {
+    body.get("data")
+        .or_else(|| body.get("models"))
+        .and_then(Value::as_array)
+}
+
+/// A model a service offers for judging photographs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecisionModel {
+    pub id: String,
+    pub name: String,
+    /// `Some(true)` when the service's own metadata lists image input,
+    /// `Some(false)` when it lists only text, `None` when it says nothing about
+    /// input at all.
+    pub image: Option<bool>,
+    /// The metadata did not say whether it takes photos: offer it, but let the
+    /// Test button be the truth.
+    pub unverified: bool,
+}
+
+/// What a service offers the moment lane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecisionModels {
+    /// Decision-capable, photo-capable models, in the service's own list order.
+    /// A text-only decision model is never here.
+    pub models: Vec<DecisionModel>,
+    /// The service exposes no decision marker, so the screen keeps a free-text
+    /// model field (OpenRouter) instead of pretending to enumerate.
+    pub free_text: bool,
+}
+
+/// The input modalities a model's metadata lists, when it lists any.
+fn input_modalities(item: &Value) -> Option<Vec<String>> {
+    let candidates = [
+        item.get("input"),
+        item.get("input_modalities"),
+        item.pointer("/architecture/input_modalities"),
+        item.pointer("/architecture/input"),
+        item.pointer("/modalities/input"),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        let parts: Vec<String> = match candidate {
+            Value::Array(items) => items
+                .iter()
+                .filter_map(|part| {
+                    part.as_str()
+                        .or_else(|| part.get("type").and_then(Value::as_str))
+                })
+                .map(str::to_string)
+                .collect(),
+            Value::String(text) => text
+                .split([',', '+', ';', ' '])
+                .filter(|part| !part.is_empty())
+                .map(str::to_string)
+                .collect(),
+            _ => Vec::new(),
+        };
+        if !parts.is_empty() {
+            return Some(parts);
+        }
+    }
+    None
+}
+
+/// Whether a model's metadata says it takes photographs: `Some(false)` is a
+/// text-only model and is never offered.
+fn image_capability(item: &Value) -> Option<bool> {
+    input_modalities(item).map(|parts| {
+        parts
+            .iter()
+            .any(|part| part.to_ascii_lowercase().contains("image"))
+    })
+}
+
+/// One decision-typed entry as a moment model, or `None` when it is not a
+/// decision model or its own metadata says it takes no images.
+fn decision_entry(item: &Value) -> Option<DecisionModel> {
+    let kind = item
+        .get("type")
+        .or_else(|| item.get("model_type"))
+        .or_else(|| item.pointer("/metadata/type"))
+        .and_then(Value::as_str)?;
+    if !kind.to_ascii_lowercase().contains("decision") {
+        return None;
+    }
+    let image = image_capability(item);
+    if image == Some(false) {
+        return None;
+    }
+    let id = item
+        .get("id")
+        .or_else(|| item.get("name"))
+        .and_then(Value::as_str)?;
+    let name = item.get("name").and_then(Value::as_str).unwrap_or(id);
+    Some(DecisionModel {
+        id: id.to_string(),
+        name: name.to_string(),
+        image,
+        unverified: image.is_none(),
+    })
+}
+
+/// Parse a model-list reply for the moment lane. OpenCode marks each entry's
+/// type and input modalities, so only its `decision` models that take photos
+/// are offered. OpenRouter has no decision marker on its models (they describe
+/// chat models), so it keeps the free-text field and the known-good default
+/// rather than pretending to enumerate.
+pub fn decision_models_reply(provider: &str, body: &Value) -> Result<DecisionModels, String> {
+    match provider.to_lowercase().as_str() {
+        "openrouter" => Ok(DecisionModels {
+            models: Vec::new(),
+            free_text: true,
+        }),
+        "opencode" | "opencode-go" => {
+            let list = model_items(body).ok_or("OpenCode replied without a model list")?;
+            Ok(DecisionModels {
+                models: list.iter().filter_map(decision_entry).collect(),
+                free_text: false,
+            })
+        }
+        other => Err(format!(
+            "'{other}' does not list decision models; type the model name"
+        )),
+    }
+}
+
+/// Ask a service which of its models can judge photographs. Uses the same
+/// list request the Test button makes, so no extra cost beyond that one call.
+pub fn decision_models(
+    provider: &str,
+    host: &str,
+    api_key: &str,
+) -> Result<DecisionModels, String> {
+    let provider = provider.to_lowercase();
+    match provider.as_str() {
+        "openrouter" => decision_models_reply(&provider, &Value::Null),
+        "opencode" | "opencode-go" => {
+            let (_, list) = fetch_model_items(&provider, host, api_key)?;
+            let body = json!({ "data": list });
+            decision_models_reply(&provider, &body)
+        }
+        other => Err(format!(
+            "'{other}' does not list decision models; type the model name"
+        )),
+    }
 }
 
 /// Parse OpenRouter's key-info reply. A non-2xx is an error carrying the
@@ -2599,6 +2755,76 @@ mod tests {
         let timeouts = models_agent().config().timeouts();
         assert_eq!(timeouts.connect, Some(Duration::from_secs(10)));
         assert_eq!(timeouts.global, Some(Duration::from_secs(20)));
+    }
+
+    #[test]
+    fn opencode_decision_models_enumerate_every_image_capable_decision_entry() {
+        // OpenCode marks each entry's type and input; four decision models were
+        // live when this was written, and anything added later must appear
+        // without a code change.
+        let body = json!({"data": [
+            {"id": "jev-1.13", "name": "JEV", "type": "decision",
+             "input": ["text", "image/png", "image/jpeg"]},
+            {"id": "jev-1.13-free", "type": "decision",
+             "input": ["text", "image/png", "image/jpeg"]},
+            {"id": "gemini-decision-1", "type": "decision",
+             "input": ["text", "image/png", "image/jpeg"]},
+            {"id": "gpt-6-luna-decision", "type": "decision",
+             "input": ["text", "image/png", "image/jpeg"]},
+            {"id": "text-decider", "type": "decision", "input": ["text"]},
+            {"id": "mystery-decision", "type": "decision"},
+            {"id": "vision-model", "type": "vision",
+             "input": ["text", "image/png"]}
+        ]});
+        let list = decision_models_reply("opencode", &body).unwrap();
+        assert!(!list.free_text, "OpenCode enumerates");
+        let ids: Vec<&str> = list.models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "jev-1.13",
+                "jev-1.13-free",
+                "gemini-decision-1",
+                "gpt-6-luna-decision",
+                "mystery-decision"
+            ],
+            "every photo-capable decision model; a text-only one and a vision one are not offered"
+        );
+        assert!(list
+            .models
+            .iter()
+            .all(|m| m.unverified == (m.id == "mystery-decision")));
+        assert_eq!(
+            list.models
+                .iter()
+                .find(|m| m.id == "mystery-decision")
+                .unwrap()
+                .image,
+            None,
+            "no modality metadata: offered as unverified, not filtered silently"
+        );
+        assert!(list.models.iter().all(|m| m.id != "text-decider"));
+    }
+
+    #[test]
+    fn openrouter_has_no_decision_marker_so_the_model_field_stays_free_text() {
+        // Its entries describe chat models and expose input modalities but no
+        // decision type: no enumeration, and the known-good default stays in
+        // the free-text field instead of being presented as a listed model.
+        let body = json!({"data": [
+            {"id": "perplexity/pplx-decider-flash-v1.3:free", "name": "PPLX Decider",
+             "architecture": {"input_modalities": ["text"]}},
+            {"id": "google/gemini-4-neon",
+             "architecture": {"input_modalities": ["text", "image"]}}
+        ]});
+        let list = decision_models_reply("openrouter", &body).unwrap();
+        assert!(list.free_text, "keep the free-text field");
+        assert!(
+            list.models.is_empty(),
+            "never pretend a chat list is a decision list"
+        );
+        // A provider without any decision list says so rather than guessing.
+        assert!(decision_models_reply("ollama", &body).is_err());
     }
 
     #[test]

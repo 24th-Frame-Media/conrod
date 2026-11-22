@@ -278,6 +278,23 @@ fn forced_quant(word: &str) -> Option<Quant> {
     }
 }
 
+/// Whether the in-process model is wanted. A settings file with moment
+/// services says so through its local card; one from before the list (none at
+/// all) still follows the opt-in switch.
+fn wants_decider(settings: &Settings) -> bool {
+    let local: Vec<bool> = settings
+        .moments_services
+        .iter()
+        .filter(|service| service.provider == "in_process")
+        .map(|service| service.enabled)
+        .collect();
+    if local.is_empty() {
+        settings.use_decider
+    } else {
+        local.into_iter().any(|enabled| enabled)
+    }
+}
+
 fn summarize(question: &Question, answer: &Answer) -> (String, f64, Vec<(String, f64)>) {
     let top = || {
         let mut all = answer.bars();
@@ -325,12 +342,13 @@ impl Service {
 
     /// Apply the settings (at start-up and after every save). Turning it off frees the GPU now.
     pub fn configure(&self, settings: &Settings) {
+        let wanted = wants_decider(settings);
         {
             let mut cfg = lock(&self.cfg);
-            cfg.enabled = settings.use_decider;
+            cfg.enabled = wanted;
             cfg.forced = forced_quant(&settings.decider_quant);
         }
-        if !settings.use_decider {
+        if !wanted {
             self.unload();
         }
         self.bump();
