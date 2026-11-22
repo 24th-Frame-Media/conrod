@@ -70,6 +70,14 @@ Best paid value: **gpt-6-luna** at about **$0.42 per 1,000 cars**.
 <details id="benchmark-details">
 <summary>Benchmark details (22 Nov 2026, 3 frames, 10 models)</summary>
 
+<table>
+<tr>
+<td><img src="docs/images/benchmark_gemini.jpg" width="200" alt="Blue Holden Gemini, door 366"><br>Blue Holden Gemini · door 366</td>
+<td><img src="docs/images/benchmark_mustang.jpg" width="200" alt="Black and green Ford Mustang, door 43"><br>Black and green Ford Mustang · door 43</td>
+<td><img src="docs/images/benchmark_datsun.jpg" width="200" alt="Orange Datsun 240Z, door 374"><br>Orange Datsun 240Z · door 374</td>
+</tr>
+</table>
+
 | Model | What it is | Where it runs | Cars right | Numbers right | Sponsors found | Speed | Cost per 1,000 cars | Verdict |
 |---|---|---|---|---|---|---|---|---|
 | qwen3-vl:8b-instruct-q4_K_M | Small open vision model (8B) | Your own PC | 2/3 | 3/3 | 11/16 | about 9 s | $0 (own hardware) | Winner |
