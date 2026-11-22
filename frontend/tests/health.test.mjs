@@ -60,4 +60,6 @@ test('workLabel drops the album suffix and keeps the stage word', () => {
   assert.equal(workLabel('Scanning Bathurst 1000 · album 3'), 'Scanning Bathurst 1000');
   assert.equal(workLabel('Identifying · album 4'), 'Identifying');
   assert.equal(workLabel('Grouping Bathurst'), 'Grouping');
+  // A double-encoded middle dot (\u00c2\u00b7) must never leave a stray U+00C2 in the badge.
+  assert.equal(workLabel('Rerunning detect \u00c2\u00b7 album 5'), 'Rerunning detect');
 });

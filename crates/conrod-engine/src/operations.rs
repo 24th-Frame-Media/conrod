@@ -132,7 +132,7 @@ pub(crate) fn launch(
         }
         ops.insert(key.clone(), flag.clone());
     }
-    let task = d.hub.start(format!("{kind} Â· album {job}"), 0);
+    let task = d.hub.start(format!("{kind} · album {job}"), 0);
     let desktop = d.clone();
     let operation = key.clone();
     std::thread::spawn(move || {
@@ -380,7 +380,7 @@ impl Run<'_> {
                 .get(&burst)
                 .cloned()
                 .unwrap_or_default();
-            self.task.detail(format!("{filename} Â· {kind}"));
+            self.task.detail(format!("{filename} · {kind}"));
             self.busy(lane, &filename, "identify");
             if let Some(live) = self.live {
                 live.phase(id, identify_live::VISION);

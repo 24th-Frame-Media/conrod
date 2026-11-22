@@ -37,7 +37,9 @@ export function workLabel(label = '') {
   if (label.startsWith('Grouping')) return 'Grouping';
   if (label.startsWith('Culling')) return 'Culling';
   if (label.startsWith('Loading')) return 'Loading';
-  return label.replace(/\s*(?:\u00b7|\u2013|-)\s*album\s+\d+$/i, '');
+  // Tolerate a stray U+00C2 before the middle dot: a double-encoded separator
+  // (\u00c2\u00b7) once shipped in task labels and must not leak into the badge.
+  return label.replace(/\s*(?:\u00c2?\u00b7|\u2013|-)\s*album\s+\d+$/i, '');
 }
 
 const visionDetail = (rows) => {
