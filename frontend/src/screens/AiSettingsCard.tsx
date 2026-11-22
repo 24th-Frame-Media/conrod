@@ -133,6 +133,11 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
 
   const pool = A.poolCount(ctx) as { n: number; svc: number };
   const summary = A.summaryText(ctx) as { text: string; dot: string };
+  // One source of truth for "who is judging moments". `draft` is the live settings
+  // wire; `localInstalled` is the built-in local decider's own install state.
+  const momentSt = A.momentsStatus(draft, Boolean(builtinRows['pplx-decider-local']?.downloaded)) as {
+    path: string; service: string | null; model: string | null; label: string; status: string; ready: boolean; others: string[];
+  };
 
   /* Fill each card's Vision/Decisions dropdowns from the engine's live model
      lists. Unknown/failed lists fall back to the known capable models; an
@@ -363,6 +368,9 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
         <h3 className="mo-group">Reads photos</h3>
         {A.BUILTIN.models.filter((m: { role: string }) => m.role === 'vision').map(builtinRow)}
         <h3 className="mo-group">Makes decisions</h3>
+        {momentSt.path === 'cloud' && (
+          <p className="mo-served">Moments are judged by {momentSt.label}. The download below is only for this PC's local model.</p>
+        )}
         {A.BUILTIN.models.filter((m: { role: string }) => m.role === 'decisions').map(builtinRow)}
       </div>
       <div className="svc-foot">
@@ -453,6 +461,29 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
 
   const helperRow = (h: { id: string; title: string; desc: string }) => {
     const on = Boolean(helpersOn[h.id]);
+    // "Spots moments" names the service that is actually judging, not one bare
+    // model id: a cloud service (JEV via OpenCode) needs nothing installed locally.
+    if (h.id === A.DECISION_HELPER) {
+      const st = !on
+        ? { text: 'Off', cls: 'off', dot: 'off' }
+        : { text: momentSt.status, cls: momentSt.ready ? '' : 'locked', dot: momentSt.ready ? 'ok' : 'amber' };
+      return (
+        <div className="helper" key={h.id} data-h={h.id}>
+          <Switch mini on={on} ariaLabel={h.title} onChange={() => toggleHelper(h)} />
+          <div className="helper-main">
+            <h4 className="helper-title" title={h.desc}>{h.title}</h4>
+            <div className="hm-line">
+              {momentSt.path === 'cloud'
+                ? <span className="hm-model" title={momentSt.label}>{momentSt.label}{momentSt.others.length ? ` +${momentSt.others.length} more` : ''}</span>
+                : momentSt.ready
+                  ? <span className="hm-model">pplx-decider-local</span>
+                  : <span className="hm-none">local decision model</span>}
+            </div>
+          </div>
+          <div className="helper-status"><span className={`dot ${st.dot}`} /><span className={`ph-status${st.cls ? ' ' + st.cls : ''}`}>{st.text}</span></div>
+        </div>
+      );
+    }
     const list = A.servingFor(h.id, ctx) as { id: string; ready: boolean }[];
     const st = A.helperStatus(on, list) as { text: string; cls: string; dot: string };
     const line = A.modelLine(list) as { head: string | null; rest: string[]; all: string[]; noModel: boolean };

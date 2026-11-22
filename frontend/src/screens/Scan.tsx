@@ -16,6 +16,8 @@ type Props = {
   /** Albums waiting their turn, first to start first. */
   queue?: Job[];
   identify?: IdentifyLive; status: Status; model?: string; identifyPaused: boolean;
+  /** The cloud decision service actually serving moments (e.g. "jev-1.13 via OpenCode"), or null. */
+  decisionService?: string | null;
   run: Runner; onSettingsSaved: (s: Settings) => void;
   onPause: () => void; onResume: () => void; onCancel: () => void; onCancelOperation: (key: string) => void;
   onReview: () => void; onLibrary: () => void;

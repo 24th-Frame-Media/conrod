@@ -70,6 +70,10 @@
         {
           "section": "Improved",
           "text": "Each service gets its own card with a key or host field, a Test button and a cost estimate per photo. Vision and Decisions dropdowns are filled from that service's models, and a per-service Thinking switch keeps reads fast by default. One control shares work across every enabled service; switching a card off leaves the pool. Photo helpers are compact rows showing the model in use, with a small popup when several models serve one, and the built-in models download with one click."
+        },
+        {
+          "section": "Fixed",
+          "text": "The moments job says who is actually doing the work: when a cloud service like OpenCode JEV judges your photos, the AI services card and the live DECIDER step name that service and its model, instead of claiming the local decision model is not installed."
         }
       ]
     }

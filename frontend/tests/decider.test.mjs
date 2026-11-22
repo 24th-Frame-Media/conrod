@@ -4,6 +4,7 @@ import {
   barTone, canInstall, deciderActive, deciderNode, deciderWord, msWords, percent, sizeWords, statusLine,
 } from '../src/lib/decider.mjs';
 import { identifyNodes, ingestNodes } from '../src/lib/ingest.mjs';
+import { deciderStepNode } from '../src/lib/identifyFlow.mjs';
 import { FIELDS, SECTIONS } from '../src/lib/settings.mjs';
 
 const live = (extra = {}) => ({
@@ -78,6 +79,36 @@ test('the identify flow shows the decision model beside vision, with its questio
   assert.equal(off.sub, 'off');
   // No decider in the snapshot: the original six nodes are unchanged.
   assert.equal(identifyNodes({ stage: 'vision' }, 'qwen').length, 6);
+});
+
+test('DECIDER node names the serving cloud service, never the local "not installed" state', () => {
+  const serving = 'jev-1.13 via OpenCode';
+  const notInstalled = live({ state: 'not_installed', message: 'Not installed yet.' });
+
+  const node = deciderNode(notInstalled, serving);
+  assert.equal(node.off, false, 'a cloud service is never dimmed');
+  assert.equal(node.sub, serving);
+  assert.equal(node.title, serving);
+  assert.doesNotMatch(node.title, /not installed/i);
+  assert.doesNotMatch(node.title, /pplx-decider/i, 'never names the local model as the server');
+
+  const step = deciderStepNode(notInstalled, serving);
+  assert.equal(step.off, false);
+  assert.equal(step.sub, serving);
+  assert.equal(step.title, serving);
+  assert.doesNotMatch(step.title, /not installed/i);
+
+  // Both flowcharts thread the serving service to their DECIDER node too.
+  assert.equal(identifyNodes({ stage: 'vision' }, 'qwen', live({ state: 'not_installed' }), serving)[4].sub, serving);
+  assert.equal(ingestNodes({ decider: live({ state: 'not_installed' }), serving }).find((n) => n.id === 'decider').sub, serving);
+});
+
+test('without a cloud service the DECIDER node keeps the local install state', () => {
+  assert.equal(deciderNode(live({ state: 'not_installed' })).off, true);
+  assert.equal(deciderNode(live({ state: 'not_installed' })).sub, 'Decision model · not installed');
+  assert.equal(deciderStepNode(live({ state: 'not_installed' })).off, true);
+  assert.equal(deciderStepNode(live({ state: 'not_installed' })).sub, 'off');
+  assert.equal(identifyNodes({ stage: 'vision' }, 'qwen', live({ state: 'off' }), null)[4].off, true);
 });
 
 test('the lane shows once the model is awake or has answered something', () => {

@@ -8,7 +8,7 @@ import {
 import {
   ADD_ORDER, BUILTIN, IN_TOK, OUT_TOK, SERVICE_TYPES, SHARING, THINK_HINT,
   addService, cardsFromDraft, costLine, decisionCandidates, defaultThinking,
-  fmtUsd, helperStatus, makeCard, modelLine, patchService, photoCost, poolCount,
+  fmtUsd, helperStatus, makeCard, modelLine, momentsStatus, patchService, photoCost, poolCount,
   providerToType, removeService, servingFor, setCapModel, setSharing, sharingValue, summaryText,
   visionCandidates,
 } from '../src/lib/aiCard.mjs';
@@ -300,6 +300,71 @@ test('Ollama = one card per host; OpenRouter decisions render through decision_m
   assert.equal(decisionCandidates('openrouter', [], []).freeText, true, 'honest free-text when nothing matches');
   assert.equal(decisionCandidates('opencode', [], [{ id: 'jev-1.13' }]).models[0].id, 'jev-1.13');
   assert.equal(visionCandidates('openrouter', [{ id: 'typesafe/jev-router' }, { id: 'qwen/qwen2.5-vl-72b-instruct' }]).length, 1);
+});
+
+/* ── moments status: one source of truth for "who is doing the work" ────── */
+
+const jevSettings = () => ({
+  vlm_services: [{ provider: 'opencode', model: 'glm-5.3-flash', host: '', api_key: 'oc-key', enabled: true }],
+  moments_services: [{ provider: 'opencode', model: 'jev-1.13', host: '', api_key: 'oc-key', enabled: true }],
+  use_decider: false,
+});
+
+test('moments status: a cloud service active shows that service and model, not "not installed"', () => {
+  // The local model is NOT installed, yet a cloud service is judging moments.
+  const ms = momentsStatus(jevSettings(), false);
+  assert.equal(ms.path, 'cloud');
+  assert.equal(ms.service, 'OpenCode');
+  assert.equal(ms.model, 'jev-1.13');
+  assert.equal(ms.label, 'jev-1.13 via OpenCode');
+  assert.equal(ms.status, 'Ready');
+  assert.equal(ms.ready, true);
+  assert.doesNotMatch(`${ms.label} ${ms.status}`, /not installed|off/i);
+  // The picked decision model is read from the OpenCode service, not the local in-process seat.
+  assert.doesNotMatch(ms.label, /in_process/i);
+});
+
+test('moments status: local-only shows the local install state', () => {
+  const local = {
+    use_decider: true,
+    moments_services: [{ provider: 'in_process', model: 'in_process', host: '', api_key: '', enabled: true }],
+    vlm_services: [],
+  };
+  const missing = momentsStatus(local, false);
+  assert.equal(missing.path, 'local');
+  assert.equal(missing.label, 'On this PC');
+  assert.equal(missing.status, 'Not installed');
+  assert.equal(missing.ready, false);
+  const installed = momentsStatus(local, true);
+  assert.equal(installed.path, 'local');
+  assert.equal(installed.status, 'Ready');
+  assert.equal(installed.ready, true);
+  assert.equal(installed.model, 'pplx-decider-local');
+});
+
+test('moments status: a cloud service with no key is named but not ready', () => {
+  const settings = {
+    moments_services: [{ provider: 'opencode', model: 'jev-1.13', host: '', api_key: '', enabled: true }],
+    vlm_services: [],
+  };
+  const ms = momentsStatus(settings, false);
+  assert.equal(ms.path, 'cloud');
+  assert.equal(ms.label, 'jev-1.13 via OpenCode');
+  assert.equal(ms.status, 'Needs a key');
+  assert.equal(ms.ready, false);
+});
+
+test('moments status: every serving cloud service is named, first is the head', () => {
+  const settings = {
+    moments_services: [
+      { provider: 'opencode', model: 'jev-1.13', host: '', api_key: 'k', enabled: true },
+      { provider: 'gemini', model: 'gemini-4-hydrogen', host: '', api_key: 'k', enabled: true },
+    ],
+    vlm_services: [],
+  };
+  const ms = momentsStatus(settings);
+  assert.equal(ms.label, 'jev-1.13 via OpenCode');
+  assert.deepEqual(ms.others, ['gemini-4-hydrogen via Gemini']);
 });
 
 test('pool + summary strip follow enabled services and routing', () => {

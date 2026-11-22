@@ -28,6 +28,9 @@ export type IngestProps = {
   status: Status;
   /** The vision model this album would call, for the VISION node's subline. */
   model?: string;
+  /** The cloud decision service actually serving moments (e.g. "jev-1.13 via OpenCode"), or null
+   *  for the local path. Names the serving service on the DECIDER node and lane. */
+  decisionService?: string | null;
   /** The Vision off card's button: turn vision on for this album, or open Settings to set up a service. */
   onVisionAction?: (id: VisionAction['id']) => void;
   /** The album's scan is running right now (the engine says so; the last snapshot can lag). */
@@ -93,7 +96,7 @@ export function ScanFailureBanner({ failure, onRetry, onLibrary }: { failure: Sc
  * just finished. The same screen shows a standalone identification run with only the vision stages.
  */
 export function IngestScreen({
-  mode, job, scan, identify, status, model, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onCancel,
+  mode, job, scan, identify, status, model, decisionService = null, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onCancel,
   onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue, scanError, onRetryScan,
 }: IngestProps) {
   const [picked, setPicked] = useState<Pick | null>(null);
@@ -157,7 +160,7 @@ export function IngestScreen({
   const frac = mode === 'identify' ? progressPercent(idLive?.done, idLive?.total) / 100
     : phase === 'done' ? 1 : ingestFraction({ scanFraction: scanFrac, identify: idLive, vision });
   const pct = Math.round(frac * 100);
-  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive) : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive });
+  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive, decisionService) : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService });
 
   const visionLanes = workerLanes(idLive);
   const scanFilter = filter && filter !== 'vision' && filter !== 'decider' ? filter : null;
@@ -350,7 +353,7 @@ export function IngestScreen({
                     </div>
                   )}
                   <div className="id-lanes ing-lanes">
-              {showDecider && deciderLive && <DeciderLane live={deciderLive} />}
+              {showDecider && deciderLive && <DeciderLane live={deciderLive} serving={decisionService} />}
                     {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} />)}
                     {showVision && visionLanes.map((lane) => (
                       <IdentifyLane key={`vision:${lane.worker}`} name="VISION" worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction}

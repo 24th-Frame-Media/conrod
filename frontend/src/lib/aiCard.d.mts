@@ -120,6 +120,12 @@ export function patchService(settings: Record<string, unknown>, key: string, pat
 export function servingFor(helperId: string, ctx?: Record<string, unknown>): ServingModel[];
 export function modelLine(list: readonly ServingModel[]): ModelLine;
 export function helperStatus(on: boolean, list: readonly ServingModel[]): HelperStatus;
+/** Who actually serves the moments (decisions) job: a cloud service, else the local path. */
+export type MomentsStatus = {
+  path: 'cloud' | 'local'; service: string | null; model: string | null;
+  label: string; status: string; ready: boolean; others: string[];
+};
+export function momentsStatus(settings?: Record<string, unknown>, localInstalled?: boolean): MomentsStatus;
 export function poolCount(ctx?: Record<string, unknown>): { n: number; svc: number };
 export function poolLabel(p: { n: number; svc: number }): string;
 export function summaryText(ctx?: Record<string, unknown>): { text: string; dot: string };

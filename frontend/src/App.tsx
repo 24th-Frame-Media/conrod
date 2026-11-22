@@ -11,7 +11,7 @@ import { healthStatus, modelGroups } from './lib/health.mjs';
 import { openJobPage } from './lib/navigation.mjs';
 import { classifyScanError, type ScanFailure } from './lib/scanError.mjs';
 import { subjectExcluded } from './review.mjs';
-import { vlmModelLabel } from './lib/vlm';
+import { decisionServiceLabel, vlmModelLabel } from './lib/vlm';
 import type { DevStart } from './lib/mock';
 import type { Job, Page, ScanArgs, Scope, Status } from './lib/types';
 import type { SettingsTabId } from './lib/settings.mjs';
@@ -59,6 +59,8 @@ export function App() {
 
   const rv = useReview(jobId, run);
   const eng = useEngine(jobId, rv.refresh, run);
+  // Who actually serves the moments job, in plain words (a cloud service, else the local path).
+  const decisionService = decisionServiceLabel(eng.settings);
   const startup = useStartup();
   const appVersion = useAppVersion();
   const wizard = useWizard({ ready: eng.ready, settings: eng.settings, albums: eng.jobs.length, markSeen: whatsNew.markSeen });
@@ -266,7 +268,7 @@ export function App() {
             queue={queueJobs} onUnqueue={actions.unqueue}
             paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={eng.setSettings}
             identify={jobId != null ? identifyLive[jobId] : undefined} status={status} identifyPaused={identifyPaused}
-            model={vlmModelLabel(eng.settings)} scanError={scanError}
+            model={vlmModelLabel(eng.settings)} decisionService={decisionService} scanError={scanError}
             onResumeJob={() => { if (jobId != null) void startScan({ jobId }); }}
             onRetryScan={() => { if (scanError?.args) void startScan(scanError.args); else if (jobId != null) void startScan({ jobId }); else actions.resume(); }}
             onPause={actions.pause} onResume={actions.resume} onCancel={actions.stop} onCancelOperation={actions.cancel} onVisionAction={visionAction}
@@ -274,7 +276,7 @@ export function App() {
         )}
         {view === 'Identify' && (
           <IdentifyScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? identifyLive[jobId] : undefined}
-            status={status} model={vlmModelLabel(eng.settings)}
+            status={status} model={vlmModelLabel(eng.settings)} decisionService={decisionService}
             paused={identifyPaused} onCancel={actions.cancel} onVisionAction={visionAction} onReview={() => setPage('Review')} />
         )}
         {view === 'Review' && (
