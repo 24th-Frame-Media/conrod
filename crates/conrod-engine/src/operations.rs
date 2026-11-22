@@ -1291,6 +1291,66 @@ mod tests {
     }
 
     #[test]
+    fn an_identified_album_shows_its_readings_and_asks_only_for_new_cars() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("identify-no-reask");
+        // Two cars, both read long ago but not yet accepted: the album is identified.
+        let a = lib.detection(lib.frame("a.jpg", None), "vehicle", 0.9);
+        let b = lib.detection(lib.frame("b.jpg", None), "vehicle", 0.9);
+        for id in [a, b] {
+            lib.sql(
+                "UPDATE detections SET attributes='{\"make\":\"BMW\"}',read_at=1700000000,burst_pick=1 WHERE id=?",
+                [id],
+            );
+        }
+        // The review payload must carry `read_at`, or the screen cannot tell that
+        // these were read and keeps asking to identify them again.
+        let review = lib
+            .run("review", serde_json::json!({"jobId": lib.job}))
+            .unwrap();
+        for d in review["detections"].as_array().unwrap() {
+            assert!(
+                d["read_at"].as_f64().is_some(),
+                "a read subject carries read_at: {d}"
+            );
+        }
+        // Nothing is pending: an incremental run reads no subject again.
+        let pending = |lib: &Lib| -> Vec<i64> {
+            let db = lib.db();
+            let mut stmt = db
+                .prepare(
+                    "SELECT d.id FROM detections d JOIN images i ON i.id=d.image_id \
+                     WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' \
+                     AND d.reviewed=0 AND d.read_at IS NULL ORDER BY d.id",
+                )
+                .unwrap();
+            stmt.query_map([lib.job], |r| r.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        assert!(
+            pending(&lib).is_empty(),
+            "an identified album asks for nothing"
+        );
+
+        // A new car turns up: only it is offered, and the payload leaves it unread.
+        let fresh = lib.detection(lib.frame("c.jpg", None), "vehicle", 0.9);
+        lib.sql("UPDATE detections SET burst_pick=1 WHERE id=?", [fresh]);
+        assert_eq!(pending(&lib), vec![fresh], "only the new car is pending");
+        let review = lib
+            .run("review", serde_json::json!({"jobId": lib.job}))
+            .unwrap();
+        let new = review["detections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"].as_i64() == Some(fresh))
+            .unwrap();
+        assert!(new["read_at"].is_null(), "the new car has not been read");
+    }
+
+    #[test]
     fn skipping_identify_marks_the_unread_subjects_read_and_keeps_the_readings() {
         use crate::testkit::Lib;
         let lib = Lib::new("skip-identify");

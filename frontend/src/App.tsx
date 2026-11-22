@@ -262,7 +262,7 @@ export function App() {
         {view === 'Review' && (
           <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} status={status} settings={eng.settings}
             showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} verbs={reviewVerbs}
-            onJobsChanged={eng.refreshJobs} onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={(scope) => jobId != null && identify(jobId, scope)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
+            onJobsChanged={eng.refreshJobs} onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={(scope, onlyNew) => jobId != null && identify(jobId, scope, onlyNew)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
               onLibrary={() => setPage('Library')} onWatchIdentify={() => jobId != null && setPage('Identify')} onWatchScan={() => setPage('Scan')}
               onAcceptAll={() => void run(async () => {
                 const ids = rv.review.detections.filter((d) => !d.reviewed && rv.review.frames.some((f) => f.id === d.image_id && !subjectExcluded(f, d))).map((d) => d.id);

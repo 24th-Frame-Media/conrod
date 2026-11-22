@@ -80,6 +80,7 @@ function makeDb(): Db {
       sharpness: rating, panning: i % 3 === 0 ? 1 : 0, number: read ? no : null, plate: read ? plate : null,
       cull_reason: rating < 0.6 ? 'Motion blur' : null, rating, rating_verdict: rating >= 0.8 ? 'good' : rating >= 0.6 ? 'fair' : 'poor', sharp_end: i % 3 === 0 ? 'subject' : 'even',
       attributes: JSON.stringify(read ? { make, model, colour, team, race_number: no, plate } : {}), burst_pick: soft ? 0 : i % 5 === 0 ? 1 : 0, region_type: 'vehicle',
+      read_at: read ? 1789000000 : null, reviewed: 0,
     });
   }
   const jobs: Job[] = [
