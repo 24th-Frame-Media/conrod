@@ -176,3 +176,42 @@ test('an empty album counts zero in either scope', () => {
   assert.equal(keeperCount([], new Map(), new Set()), 0);
   assert.equal(everythingCount([], new Map()), 0);
 });
+
+test('an album whose every subject is read is identified and asks for nothing', () => {
+  const frames = [frame(1), frame(2, { burst_key: 1 })];
+  const facts = factsOf(frames, {
+    1: [det({ burst_pick: 1, read_at: 1700000000 })],
+    2: [det({ burst_pick: 1, read_at: 1700000001, reviewed: 1 })],
+  });
+  const keepers = keepersOf(frames, facts);
+
+  assert.equal(hasReadings(frames, facts), true);
+  assert.equal(keeperCount(frames, facts, keepers), 0, 'no keeper subject is pending');
+  assert.equal(everythingCount(frames, facts), 0, 'no subject at all is pending');
+  // Review's own verdict: nothing eligible plus detections present = identified,
+  // so the "identify again" banner (which needs eligible > 0) never shows.
+  const identified = keeperCount(frames, facts, keepers) === 0 && frames.length > 0;
+  assert.equal(identified, true);
+});
+
+test('new cars on an identified album are the only prompt, and Skip leaves the old readings', () => {
+  const frames = [frame(1), frame(2)];
+  const facts = factsOf(frames, {
+    1: [det({ burst_pick: 1, read_at: 1700000000 })], // old, read
+    2: [det({ burst_pick: 1 }), det({ burst_pick: 1 })], // two new cars
+  });
+  const keepers = keepersOf(frames, facts);
+  const eligible = keeperCount(frames, facts, keepers);
+
+  assert.equal(eligible, 2);
+  assert.equal(identifyNewLabel(eligible), 'Identify 2 new cars');
+  assert.equal(hasReadings(frames, facts), true, 'the album stays identified');
+  // Skip accepts the new cars as they stand without re-reading the old one: the
+  // old reading is untouched and the new ones simply count as read.
+  const skipped = factsOf(frames, {
+    1: [det({ burst_pick: 1, read_at: 1700000000, attributes: '{"make":"BMW"}' })],
+    2: [det({ burst_pick: 1, read_at: 1700000002 }), det({ burst_pick: 1, read_at: 1700000002 })],
+  });
+  assert.equal(keeperCount(frames, skipped, keepers), 0, 'after Skip nothing is pending');
+  assert.equal(skipped.get(1).dets[0].attributes, '{"make":"BMW"}', 'the old reading survives');
+});

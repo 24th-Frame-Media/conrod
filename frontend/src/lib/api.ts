@@ -58,6 +58,9 @@ export const engine = {
     call('identify', { jobId, ...(scope ? { scope } : {}), ...(onlyNew ? { onlyNew: true } : {}) }),
   /** Accept the album's readings as they stand, so Review opens without a model run. */
   skipIdentify: (jobId: number) => call<{ ok: boolean; skipped: number }>('skip_identify', { jobId }),
+  /** Run one pipeline stage again on a finished album. `full` and `scope` apply to identify only. */
+  rerunStage: (jobId: number, stage: import('./rerun.mjs').RerunStage, opts?: { full?: boolean; scope?: import('./types').Scope }) =>
+    call<{ operation: string }>('rerun_stage', { jobId, stage, ...(opts?.full ? { full: true } : {}), ...(opts?.scope ? { scope: opts.scope } : {}) }),
   identified: (jobId: number) => call<import('./types').Identified>('identified', { jobId }),
   acceptIdentifications: (ids: number[]) => call('bulk_edit', { ids, reviewed: true }),
   write: (jobId: number, dryRun = false) => call('write', { jobId, dryRun }),

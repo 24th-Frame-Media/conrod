@@ -406,7 +406,7 @@ pub fn rows_compact(
 /// embedding itself never leaves this function.
 pub fn review_payload(db: &Connection, job: i64) -> Result<Value> {
     let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.moments,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.af_sharpness,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 AND COALESCE(i.visible,1)=1 ORDER BY path",[job])?;
-    let mut detections = rows_compact(db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 AND COALESCE(i.visible,1)=1 ORDER BY d.image_id,d.id",[job])?;
+    let mut detections = rows_compact(db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.read_at,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 AND COALESCE(i.visible,1)=1 ORDER BY d.image_id,d.id",[job])?;
     let known: Vec<(Value, Vec<f32>)> = rows(db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
         .into_iter()
         .filter_map(|row| similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector)))
@@ -780,6 +780,7 @@ impl Desktop {
                 "rename_job",
                 "update_job_settings",
                 "regroup",
+                "rerun_stage",
                 "reset_all",
                 "reset_album",
                 "reset_detections",
@@ -888,6 +889,9 @@ impl Desktop {
             Command::TasteRank(a) => crate::taste::taste_rank(self, a.job_id, a.force),
             Command::Group(a) => crate::passes::group(self, a.job_id),
             Command::Regroup(a) => self.regroup(a.job_id),
+            Command::RerunStage(a) => {
+                crate::rerun::rerun_stage(self, a.job_id, a.stage, a.full, a.scope.as_deref())
+            }
             Command::BulkEdit(a) => crate::edits::bulk_edit(self, &a),
             Command::RenameJob(a) => crate::library::rename_job(self, &a),
             Command::UpdateJobSettings(a) => {
@@ -2521,8 +2525,7 @@ impl Desktop {
         for s in &f.subjects {
             insert_subject(&tx, image, s)?;
         }
-        let rating = f.rating;
-        tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=?,lens=?,iso=?,file_size=?,af_x1=COALESCE(?,af_x1),af_y1=COALESCE(?,af_y1),af_x2=COALESCE(?,af_x2),af_y2=COALESCE(?,af_y2),af_mode=CASE WHEN ? THEN ? ELSE af_mode END,af_sharpness=CASE WHEN ? THEN ? ELSE af_sharpness END WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,f.lens,f.exif.iso,f.file_size,f.af.map(|a| a.x1),f.af.map(|a| a.y1),f.af.map(|a| a.x2),f.af.map(|a| a.y2),f.af.is_some(),f.af.and_then(|a| a.mode).map(i64::from),f.af.is_some(),f.af_sharpness,image]).map_err(err)?;
+        write_frame_measurements(&tx, image, f, &thumb)?;
         tx.commit().map_err(err)?;
         if report {
             self.report_frame(image, &thumb, f, settings);
@@ -2920,6 +2923,21 @@ fn eyes_json(open: [Option<f32>; 2]) -> Option<String> {
     open.iter()
         .any(Option::is_some)
         .then(|| json!({"eyes_open": open, "eyes_closed": crate::eyes_closed(open)}).to_string())
+}
+
+/// Store one frame's measured columns (size, sharpness, rating, exposure, EXIF,
+/// focus area) without touching its detections or anything a person decided
+/// (stars, picked, rejected). The scan's `persist_frame` writes this after
+/// replacing the detections; a detect rerun writes it while merging the new
+/// boxes into the old rows, so the two cannot disagree about the frame itself.
+pub(crate) fn write_frame_measurements(
+    tx: &rusqlite::Connection,
+    image: i64,
+    f: &crate::FrameResult,
+    thumb: &Path,
+) -> Result<()> {
+    tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=?,lens=?,iso=?,file_size=?,af_x1=COALESCE(?,af_x1),af_y1=COALESCE(?,af_y1),af_x2=COALESCE(?,af_x2),af_y2=COALESCE(?,af_y2),af_mode=CASE WHEN ? THEN ? ELSE af_mode END,af_sharpness=CASE WHEN ? THEN ? ELSE af_sharpness END WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,f.rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,f.lens,f.exif.iso,f.file_size,f.af.map(|a| a.x1),f.af.map(|a| a.y1),f.af.map(|a| a.x2),f.af.map(|a| a.y2),f.af.is_some(),f.af.and_then(|a| a.mode).map(i64::from),f.af.is_some(),f.af_sharpness,image]).map_err(err)?;
+    Ok(())
 }
 
 pub(crate) fn insert_subject(
@@ -4541,7 +4559,7 @@ mod tests {
         let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .expect("open the album read-only");
         const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.moments,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 AND COALESCE(i.visible,1)=1 ORDER BY path";
-        const DET_SQL: &str = "SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 AND COALESCE(i.visible,1)=1 ORDER BY d.image_id,d.id";
+        const DET_SQL: &str = "SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.read_at,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 AND COALESCE(i.visible,1)=1 ORDER BY d.image_id,d.id";
 
         let mut sql = f64::MAX;
         let mut payload = f64::MAX;

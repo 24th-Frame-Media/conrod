@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState, type MutableRefObject } from 'react';
+import { useMemo, useEffect, useState, useRef, type MutableRefObject } from 'react';
 import { Confirm, Empty, Icon, Modal } from '../components/basics';
 import { Facets } from '../components/Facets';
 import { Inspector } from '../components/Inspector';
@@ -13,6 +13,7 @@ import { albumSetting } from '../lib/album.mjs';
 import { albumVisionChoice, albumVisionOn } from '../lib/vision.mjs';
 import { WORKFLOW_OPTIONS, pipelineSteps, workflowIncludesCull, workflowIncludesIdentify, workflowLabel, workflowModeOf, type PipelineStep } from '../lib/workflow.mjs';
 import { everythingCount, hasReadings, identifyActionLabel, identifyNewLabel, identifyScopeOf, keeperCount } from '../lib/identify.mjs';
+import { RERUN_STAGES, anyRerunRunning, rerunDoneText, rerunHint, rerunKey, rerunLabel, rerunStartedText, runningRerun, type RerunStage } from '../lib/rerun.mjs';
 import { call, engine } from '../lib/api';
 import { applyLine } from '../lib/apply.mjs';
 import { etaText, pct } from '../lib/format';
@@ -208,6 +209,22 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     if (lightroomDev === 'import' || lightroomDev === 'imported') { setLightroomOpen(true); return; }
     setExportOpen(true);
   }, [lightroomDev]);
+  // A stage rerun runs in the background. When its operation key leaves the status
+  // list, the finished task carries the counts: toast them and reload the album.
+  const lastRerun = useRef<string | null>(null);
+  useEffect(() => {
+    const key = jobId == null ? undefined : status.operations.find((k) => k.startsWith('Rerunning ') && k.endsWith(`:${jobId}`));
+    if (key) { lastRerun.current = key; return; }
+    const finished = lastRerun.current;
+    if (!finished || jobId == null) return;
+    lastRerun.current = null;
+    const stage = finished.slice('Rerunning '.length, finished.lastIndexOf(':'));
+    const task = status.tasks.find((t) => t.label.startsWith(`Rerunning ${stage}`) && t.label.includes(`album ${jobId}`));
+    if (task?.state === 'done') toast(rerunDoneText(stage, task.detail), { tone: 'ok' });
+    else if (task?.state === 'failed') toast(task.error || `${rerunLabel(stage)} failed.`, { tone: 'error' });
+    void rv.refresh();
+    void onJobsChanged();
+  }, [status.operations, status.tasks, jobId, rv, toast, onJobsChanged]);
   const { filters, patchFilters, frames: allFrames, review, facts, keepers, selected, frame, grouping, expanded } = rv;
   // While the scan runs, Review shows only the frames whose measurement has finished; the rest
   // arrive through the usual 4 s refresh. Bursts that are ready keep their normal actions.
@@ -474,6 +491,18 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const identifyScope = identifyScopeOf(albumSetting(currentJob, 'identify_scope', settings));
   const scopeEligible = identifyScope === 'everything' ? everythingEligible : keeperEligible;
   const busy = scanning || status.operations.some((key) => key.endsWith(`:${jobId}`));
+  // Stage reruns: one at a time across the library, and never beside a scan or any
+  // other background operation on this album. `running` is the stage on this album.
+  const running = runningRerun(status.operations, jobId);
+  const rerunBusy = busy || anyRerunRunning(status.operations);
+  const doRerun = (stage: RerunStage) => {
+    if (jobId == null || rerunBusy) return;
+    void run(async () => {
+      const out = await engine.rerunStage(jobId, stage);
+      if (out?.operation) toast(rerunStartedText(stage));
+      else { await rv.refresh(); toast(rerunDoneText(stage, null), { tone: 'ok' }); }
+    });
+  };
   const currentParent = profileParent(currentProfile);
   const kind = currentParent === 'portrait' ? 'portrait'
     : currentParent === 'motorsport' && !isOn(policy, 'vehicles') ? 'mixed'
@@ -513,6 +542,23 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const identified = scopeEligible === 0 && review.detections.length > 0;
   const identifyStale = Boolean(albumSetting(currentJob, 'native_identify_stale', settings));
   const steps = pipelineSteps(workflow, { scanned, identified, identifying, scanning });
+  // "Run again" offers each stage the album has actually run: detect/rate/pick need
+  // a finished scan, identify needs the identify half of the workflow, moments needs
+  // the moment lane on. A stage that never ran here is not offered.
+  const rerunAvailable: Record<RerunStage, boolean> = {
+    detect: scanned,
+    rate: scanned,
+    identify: workflowIncludesIdentify(workflow) && review.detections.length > 0,
+    moments: isOn(policy, 'moments_detect'),
+    pick: scanned,
+  };
+  const rerunItems: MenuItem[] = RERUN_STAGES.filter((stage) => rerunAvailable[stage]).map((stage) => ({
+    id: `rerun_${stage}`,
+    label: rerunLabel(stage, { vehicles: vehicleBrowse }),
+    hint: rerunHint(stage),
+    disabled: rerunBusy,
+    onClick: () => doRerun(stage),
+  }));
   const pickWorkflow = (value: string) => {
     void run(async () => {
       await saveAlbum({ workflow_mode: workflowModeOf(value) });
@@ -848,6 +894,18 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           </select>
         </label>
         <PipelineStepper steps={steps} />
+        {(rerunItems.length > 0 || running) && (
+          <MenuDropdown
+            className="pipeline-rerun"
+            variant="ghost"
+            align="left"
+            title="Run one step again on this album, without redoing the whole thing"
+            label={running
+              ? <span className="pipeline-rerun-running"><span className="work-spinner" />{rerunLabel(running, { vehicles: vehicleBrowse })}…</span>
+              : 'Run again'}
+            items={rerunItems}
+          />
+        )}
         <span
           className="apply-note"
           title="Conrod's stars and suggested picks reach the files, and the Lightroom plug-in, without a separate command."

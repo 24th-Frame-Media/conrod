@@ -164,7 +164,7 @@ pub fn rescan(d: &Arc<Desktop>, job: i64) -> Result<Value> {
 /// `heuristic`, `panning` and `sharp_end` (and the whole-frame sharpness) are
 /// written; `run` then derives the ratings, verdicts and cull reasons from them.
 /// Returns how many photos could not be read (moved or deleted originals).
-fn remeasure_pixels(
+pub(crate) fn remeasure_pixels(
     d: &Desktop,
     job: i64,
     cfg: &Settings,

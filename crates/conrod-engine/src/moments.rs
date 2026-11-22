@@ -99,16 +99,20 @@ fn picture(preview: Option<&str>, path: &str) -> Result<Rgb> {
     Ok(Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation))
 }
 
-/// Keepers of the album, or every frame, that have not been judged yet.
-fn pending(d: &Desktop, job: i64, everything: bool) -> Result<Vec<Value>> {
+/// Keepers of the album, or every frame, that have not been judged yet. A
+/// `rejudge` run looks at every frame again, judged or not: the photographer
+/// asked for the decisions to be made again, and a failed answer still leaves
+/// the frame's old verdict in place.
+fn pending(d: &Desktop, job: i64, everything: bool, rejudge: bool) -> Result<Vec<Value>> {
     let keepers = if everything {
         String::new()
     } else {
         "AND (COALESCE(i.picked,0)=1 OR COALESCE(i.burst_pick,0)=1 OR COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id),0)=1)".to_string()
     };
+    let unread = if rejudge { "" } else { "AND i.moments IS NULL" };
     rows(
         &lock(&d.reader),
-        &format!("SELECT i.id,i.path,i.preview_path,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 AND i.moments IS NULL {keepers} ORDER BY i.id"),
+        &format!("SELECT i.id,i.path,i.preview_path,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 {unread} {keepers} ORDER BY i.id"),
         [job],
     )
 }
@@ -123,7 +127,10 @@ fn store(d: &Desktop, image: i64, verdict: &MomentVerdict) -> Result<()> {
     Ok(())
 }
 
-/// Judge the album's frames. Returns how many frames were judged.
+/// Judge the album's frames. Returns how many frames were judged. `rejudge`
+/// looks at frames that already carry a verdict too (a manual "judge again");
+/// otherwise only frames nobody has judged are asked.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run(
     d: &Desktop,
     job: i64,
@@ -132,6 +139,7 @@ pub(crate) fn run(
     cfg: &Settings,
     lanes: &Lanes,
     scope: &str,
+    rejudge: bool,
 ) -> Result<usize> {
     let vocab: &[Moment] = lanes.moments();
     if vocab.is_empty() {
@@ -152,7 +160,7 @@ pub(crate) fn run(
         }
     };
     let everything = scope == settings::IDENTIFY_EVERYTHING;
-    let frames = pending(d, job, everything)?;
+    let frames = pending(d, job, everything, rejudge)?;
     let context = lanes.preset.prompt_context();
     task.detail(format!("Judging moments with the {} backend", judge.name()));
     let (next, judged) = (AtomicUsize::new(0), AtomicUsize::new(0));
@@ -313,6 +321,32 @@ mod tests {
         let seen = shown_as("IMG_1.CR3", None, || SHOWN.with(|s| s.borrow().clone()));
         assert_eq!(seen.unwrap().0, "IMG_1.CR3");
         assert!(SHOWN.with(|s| s.borrow().is_none()), "cleared afterwards");
+    }
+
+    #[test]
+    fn a_rejudge_asks_frames_that_already_carry_a_verdict() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("moments-rejudge");
+        let judged = lib.frame("a.jpg", Some(1));
+        let fresh = lib.frame("b.jpg", Some(1));
+        lib.sql(
+            "UPDATE images SET burst_pick=1,moments='{\"backend\":\"x\",\"readings\":[]}' WHERE id=?",
+            [judged],
+        );
+        lib.sql("UPDATE images SET burst_pick=1 WHERE id=?", [fresh]);
+        let ids = |rows: Vec<Value>| -> Vec<i64> {
+            rows.iter().map(|r| r["id"].as_i64().unwrap()).collect()
+        };
+        assert_eq!(
+            ids(pending(lib.d(), lib.job, false, false).unwrap()),
+            vec![fresh],
+            "a first run leaves the judged frame alone"
+        );
+        assert_eq!(
+            ids(pending(lib.d(), lib.job, false, true).unwrap()),
+            vec![judged, fresh],
+            "a rejudge asks every keeper frame again"
+        );
     }
 
     #[test]

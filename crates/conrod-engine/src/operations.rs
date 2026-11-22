@@ -1,4 +1,4 @@
-﻿//! The slower identification and metadata lanes. Work is visible and cancellable.
+//! The slower identification and metadata lanes. Work is visible and cancellable.
 use crate::analyze::{self, Context, Readers};
 use crate::desktop::{rows, Desktop, Result};
 use crate::err;
@@ -564,6 +564,19 @@ pub fn skip_identify(d: &Desktop, job: i64) -> Result<Value> {
 }
 
 pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool) -> Result<Value> {
+    identify_with_kind(d, job, scope, only_new, "Identifying")
+}
+
+/// [`identify`] under a chosen operation name. The scan and the Identify command
+/// use "Identifying"; a manual stage rerun uses "Rerunning identify" so the busy
+/// guard and the screen can tell a rerun from the first read.
+pub(crate) fn identify_with_kind(
+    d: &Arc<Desktop>,
+    job: i64,
+    scope: Option<&str>,
+    only_new: bool,
+    kind: &str,
+) -> Result<Value> {
     let settings = settings(d, job)?;
     let vision_off = vision_off(d, job)?;
     let lanes = settings.lanes();
@@ -582,7 +595,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool)
     } else {
         ""
     };
-    launch(d, job, "Identifying", move |d, stop, task| {
+    launch(d, job, kind, move |d, stop, task| {
         if !wait_for_cull(d, stop, task) {
             return Ok(());
         }
@@ -592,7 +605,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool)
                 task.detail(format!("Prepared {faces} faces for name suggestions"));
             }
             // No vehicles to read, but the shoot may still have moments to judge.
-            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope)? > 0 {
+            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope, false)? > 0 {
                 crate::passes::pick_keepers(d, job)?;
             }
             return Ok(());
@@ -628,7 +641,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool)
             } else {
                 "No keepers need identification"
             });
-            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope)? > 0 {
+            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope, false)? > 0 {
                 crate::passes::pick_keepers(d, job)?;
             }
             note_identify_stale(d, job, false);
@@ -729,7 +742,8 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool)
         let moments: Mutex<Option<Result<usize>>> = Mutex::new(None);
         std::thread::scope(|s| {
             s.spawn(|| {
-                let result = crate::moments::run(d, job, stop, task, &settings, &lanes, scope);
+                let result =
+                    crate::moments::run(d, job, stop, task, &settings, &lanes, scope, false);
                 *lock(&moments) = Some(result);
             });
             for lane in 0..workers {
@@ -1288,6 +1302,66 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
         assert_eq!(all, vec![read, fresh]);
+    }
+
+    #[test]
+    fn an_identified_album_shows_its_readings_and_asks_only_for_new_cars() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("identify-no-reask");
+        // Two cars, both read long ago but not yet accepted: the album is identified.
+        let a = lib.detection(lib.frame("a.jpg", None), "vehicle", 0.9);
+        let b = lib.detection(lib.frame("b.jpg", None), "vehicle", 0.9);
+        for id in [a, b] {
+            lib.sql(
+                "UPDATE detections SET attributes='{\"make\":\"BMW\"}',read_at=1700000000,burst_pick=1 WHERE id=?",
+                [id],
+            );
+        }
+        // The review payload must carry `read_at`, or the screen cannot tell that
+        // these were read and keeps asking to identify them again.
+        let review = lib
+            .run("review", serde_json::json!({"jobId": lib.job}))
+            .unwrap();
+        for d in review["detections"].as_array().unwrap() {
+            assert!(
+                d["read_at"].as_f64().is_some(),
+                "a read subject carries read_at: {d}"
+            );
+        }
+        // Nothing is pending: an incremental run reads no subject again.
+        let pending = |lib: &Lib| -> Vec<i64> {
+            let db = lib.db();
+            let mut stmt = db
+                .prepare(
+                    "SELECT d.id FROM detections d JOIN images i ON i.id=d.image_id \
+                     WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='vehicle' \
+                     AND d.reviewed=0 AND d.read_at IS NULL ORDER BY d.id",
+                )
+                .unwrap();
+            stmt.query_map([lib.job], |r| r.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        assert!(
+            pending(&lib).is_empty(),
+            "an identified album asks for nothing"
+        );
+
+        // A new car turns up: only it is offered, and the payload leaves it unread.
+        let fresh = lib.detection(lib.frame("c.jpg", None), "vehicle", 0.9);
+        lib.sql("UPDATE detections SET burst_pick=1 WHERE id=?", [fresh]);
+        assert_eq!(pending(&lib), vec![fresh], "only the new car is pending");
+        let review = lib
+            .run("review", serde_json::json!({"jobId": lib.job}))
+            .unwrap();
+        let new = review["detections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["id"].as_i64() == Some(fresh))
+            .unwrap();
+        assert!(new["read_at"].is_null(), "the new car has not been read");
     }
 
     #[test]

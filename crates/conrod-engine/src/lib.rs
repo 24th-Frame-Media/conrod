@@ -135,6 +135,7 @@ mod pantest;
 pub mod passes;
 pub mod progress;
 pub mod region_training;
+pub mod rerun;
 pub mod rescore;
 pub mod seed;
 pub mod selftest;

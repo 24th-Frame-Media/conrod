@@ -1256,6 +1256,10 @@ dialog.viewer {
 .pipeline-step.done .pipeline-dot { background: var(--good); border-color: var(--good); color: var(--bg); }
 .pipeline-step.active .pipeline-dot { border-color: var(--text); animation: pulse 1.4s ease-in-out infinite; }
 .pipeline-label { font-weight: 500; }
+.pipeline-rerun { flex: none; }
+.pipeline-rerun .menu-trigger { height: 30px; padding: 0 10px; font-size: 12.5px; gap: 6px; }
+.pipeline-rerun-running { display: inline-flex; align-items: center; gap: 7px; color: var(--text); }
+.pipeline-rerun-running .work-spinner { width: 13px; height: 13px; border-width: 2px; }
 
 /* Settings Makeover & App Updates Hero Card */
 .update-hero-card {

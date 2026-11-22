@@ -91,6 +91,7 @@ function makeDb(): Db {
       sharpness: rating, panning: i % 3 === 0 ? 1 : 0, number: read ? no : null, plate: read ? plate : null,
       cull_reason: rating < 0.6 ? 'Motion blur' : null, rating, rating_verdict: rating >= 0.8 ? 'good' : rating >= 0.6 ? 'fair' : 'poor', sharp_end: i % 3 === 0 ? 'subject' : 'even',
       attributes: JSON.stringify(read ? { make, model, colour, team, race_number: no, plate } : {}), burst_pick: soft ? 0 : i % 5 === 0 ? 1 : 0, region_type: 'vehicle',
+      read_at: read ? 1789000000 : null, reviewed: 0,
     });
   }
   const jobs: Job[] = [
@@ -450,6 +451,13 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       return out(null);
     }
     case 'composition': return out({ jobId: (a.jobId as number | undefined) ?? null });
+    case 'rerun_stage': {
+      const jobId = Number(a.jobId) || 1;
+      const stage = String(a.stage ?? 'pick');
+      // The identify rerun reads only the subjects nobody has read yet.
+      if (stage === 'identify') for (const d of db.dets) if (d.read_at == null) d.read_at = Math.floor(Date.now() / 1000);
+      return out({ operation: `Rerunning ${stage}:${jobId}` });
+    }
     case 'mark': {
       const f = db.frames.find((x) => x.id === a.imageId);
       if (f) {
