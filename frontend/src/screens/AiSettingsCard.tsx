@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { engine, mocked } from '../lib/api';
 import * as ai from '../lib/aiCard.mjs';
 import type { ModelInfo, SettingValue, Settings as SettingsMap, Toaster } from '../lib/types';
@@ -28,6 +28,42 @@ type CardModels = {
 };
 
 const hostShort = (url: string) => (url || '').replace(/^https?:\/\//, '').replace(/\/$/, '') || 'new host';
+
+/** Place an anchored menu entirely inside the viewport.
+ *  Static `top: calc(100% + 5px)` / `left: 0` rules opened every menu down and
+ *  to the right, so a menu near the bottom or right window edge was clipped.
+ *  Measure the anchor and the menu against the window, prefer below/left, flip
+ *  above/left when they would cross an edge, then clamp. Fixed positioning is
+ *  required: the Settings pane scrolls in its own container, so absolute
+ *  coordinates would drift with it. Both the helper "+N more" popup and the
+ *  add-service popover go through this one path. */
+const MENU_GAP = 5;
+const MENU_MARGIN = 8;
+function placeAnchoredMenu(anchor: HTMLElement, menu: HTMLElement, align: 'left' | 'center') {
+  const a = anchor.getBoundingClientRect();
+  const m = menu.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const maxH = Math.max(48, vh - 2 * MENU_MARGIN);
+  const w = m.width;
+  const h = Math.min(m.height, maxH);
+  const below = a.bottom + MENU_GAP;
+  const above = a.top - MENU_GAP - h;
+  let top = below + h <= vh - MENU_MARGIN ? below : (above >= MENU_MARGIN ? above : below);
+  let left = align === 'center' ? a.left + a.width / 2 - w / 2 : a.left;
+  if (left + w > vw - MENU_MARGIN) {
+    const flipped = a.right - w; // right-align to the anchor instead
+    if (flipped >= MENU_MARGIN) left = flipped;
+  }
+  top = Math.max(MENU_MARGIN, Math.min(top, vh - MENU_MARGIN - h));
+  left = Math.max(MENU_MARGIN, Math.min(left, Math.max(MENU_MARGIN, vw - MENU_MARGIN - w)));
+  menu.style.position = 'fixed';
+  menu.style.top = `${Math.round(top)}px`;
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.maxHeight = `${Math.round(maxH)}px`;
+  menu.style.overflowY = m.height > maxH ? 'auto' : 'visible';
+  menu.style.visibility = 'visible';
+}
 
 function Switch({ on, onChange, ariaLabel, mini }: { on: boolean; onChange: (v: boolean) => void; ariaLabel?: string; mini?: boolean }) {
   return (
@@ -74,6 +110,31 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     }
     return init;
   });
+
+  // Anchors for the two viewport-clamped menus (see placeAnchoredMenu).
+  const addAnchorRef = useRef<HTMLSpanElement | null>(null);
+  const addMenuRef = useRef<HTMLDivElement | null>(null);
+  const helperPopRef = useRef<HTMLSpanElement | null>(null);
+
+  /* Re-place every open anchored menu when one opens, on window resize, and on
+     any scroll (the Settings pane scrolls in its own container, so capture). */
+  useLayoutEffect(() => {
+    if (!openPopup && !addMenuOpen) return;
+    const helperAnchor = openPopup
+      ? document.querySelector<HTMLElement>(`.ai-settings .helper[data-h="${openPopup}"] .hm-more-wrap`)
+      : null;
+    const place = () => {
+      if (openPopup && helperAnchor && helperPopRef.current) placeAnchoredMenu(helperAnchor, helperPopRef.current, 'left');
+      if (addMenuOpen && addAnchorRef.current && addMenuRef.current) placeAnchoredMenu(addAnchorRef.current, addMenuRef.current, 'center');
+    };
+    place();
+    window.addEventListener('resize', place);
+    document.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      document.removeEventListener('scroll', place, true);
+    };
+  }, [openPopup, addMenuOpen]);
 
   /* Non-AI helpers run on Conrod's own bundled models, read from the app's
      model manifest/status (the `models` prop). No cloud provider is involved. */
@@ -400,9 +461,9 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
       onClick={() => setAddMenuOpen((o) => !o)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAddMenuOpen((o) => !o); } }}>
       <span className="plus">+</span>
-      <span className="add-label">Add service</span>
+      <span className="add-label" ref={addAnchorRef}>Add service</span>
       <span className="add-hint">OpenCode, OpenRouter, Local Ollama (one card per host), Gemini, Anthropic or OpenAI</span>
-      <div className="add-menu" hidden={!addMenuOpen} onClick={(e) => e.stopPropagation()}>
+      {addMenuOpen && <div className="add-menu" ref={addMenuRef} onClick={(e) => e.stopPropagation()}>
         {A.ADD_ORDER.map((type: string) => {
           const added = type !== 'ollama' && cards.some((c) => c.type === type);
           return (
@@ -414,7 +475,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
             </button>
           );
         })}
-      </div>
+      </div>}
     </div>
   );
 
@@ -446,10 +507,10 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
                       onClick={(e) => { e.stopPropagation(); setOpenPopup((cur) => cur === h.id ? null : h.id); }}>
                       +{line.rest.length} more <svg width="9" height="9" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     </button>
-                    <span className="hm-pop" hidden={!open}>
+                    {open && <span className="hm-pop" ref={helperPopRef}>
                       <span className="hm-pop-title">Models in use</span>
                       {line.all.map((id) => <span key={id}>{id}</span>)}
-                    </span>
+                    </span>}
                   </span>
                 )}
               </>

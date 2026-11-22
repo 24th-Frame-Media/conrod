@@ -218,9 +218,12 @@
 .ai-settings .add-tile .plus { font-size: 26px; line-height: 1; font-weight: 300; }
 .ai-settings .add-tile .add-label { font-size: 13.5px; font-weight: 600; }
 .ai-settings .add-tile .add-hint { font-size: 11.5px; color: var(--text-mute); text-align: center; max-width: 250px; }
+/* Anchored menus are placed in viewport coordinates by placeAnchoredMenu() so
+   they can flip above/left of their anchor instead of running off the window
+   edge. Fixed positioning keeps them put while the Settings pane scrolls. */
 .ai-settings .add-menu {
-  position: absolute; left: 50%; transform: translateX(-50%); top: calc(50% + 26px); z-index: 40;
-  width: min(330px, 92%); text-align: left; cursor: default;
+  position: fixed; top: 0; left: 0; visibility: hidden; z-index: 40;
+  width: 330px; max-width: calc(100vw - 16px); text-align: left; cursor: default;
   background: var(--surface-3); border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: var(--shadow); padding: 6px; display: grid; gap: 2px;
 }
@@ -259,9 +262,10 @@
 .ai-settings .hm-more:hover { color: var(--text); }
 .ai-settings .hm-more svg { transition: transform .18s var(--ease); }
 .ai-settings .hm-more-wrap.open .hm-more svg { transform: rotate(180deg); }
-/* anchored popup: the helper row itself never changes size */
+/* anchored popup: the helper row itself never changes size; coords come from JS */
 .ai-settings .hm-pop {
-  position: absolute; left: 0; top: calc(100% + 5px); z-index: 35; min-width: 170px;
+  position: fixed; top: 0; left: 0; visibility: hidden; z-index: 35;
+  min-width: 170px; max-width: calc(100vw - 16px);
   background: var(--surface-3); border: 1px solid var(--line); border-radius: 8px;
   box-shadow: var(--shadow); padding: 6px 9px; display: grid; gap: 3px;
 }
