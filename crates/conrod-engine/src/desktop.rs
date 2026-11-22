@@ -405,8 +405,8 @@ pub fn rows_compact(
 /// embedding are matched against the known vehicles and people here, and the
 /// embedding itself never leaves this function.
 pub fn review_payload(db: &Connection, job: i64) -> Result<Value> {
-    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.moments,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.af_sharpness,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path",[job])?;
-    let mut detections = rows_compact(db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY d.image_id,d.id",[job])?;
+    let frames = rows_compact(db,"SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.moments,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.af_sharpness,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 AND COALESCE(i.visible,1)=1 ORDER BY path",[job])?;
+    let mut detections = rows_compact(db,"SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 AND COALESCE(i.visible,1)=1 ORDER BY d.image_id,d.id",[job])?;
     let known: Vec<(Value, Vec<f32>)> = rows(db, "SELECT plate,make,model,colour,team,race_number,driver,country,embedding FROM known_vehicles WHERE embedding IS NOT NULL AND embedding!=''", [])?
         .into_iter()
         .filter_map(|row| similarity::unpack(row["embedding"].as_str()?).map(|vector| (row, vector)))
@@ -572,12 +572,23 @@ impl Desktop {
     /// in-progress words a future stage could leave behind; treating them the
     /// same costs nothing and keeps a crash from stranding an album.
     fn reconcile_interrupted(&self) -> Result<usize> {
-        lock(&self.db)
+        let db = lock(&self.db);
+        let changed = db
             .execute(
                 "UPDATE jobs SET status='stopped' WHERE status IN ('scanning','indexing','grouping','picking','identifying')",
                 [],
             )
-            .map_err(err)
+            .map_err(err)?;
+        // A crash between seed and the last stage left its units hidden. The
+        // album is stopped and resumable, not empty, so show what it has.
+        db.execute(
+            "UPDATE images SET visible=1
+              WHERE COALESCE(visible,1)=0
+                AND job_id IN (SELECT id FROM jobs WHERE status='stopped')",
+            [],
+        )
+        .map_err(err)?;
+        Ok(changed)
     }
 
     /// Record how far the album's pipeline got, so a later resume continues at
@@ -1688,6 +1699,18 @@ impl Desktop {
                     crate::taste::after_scan(&desktop, job);
                 }
             }
+            // Every unit's last stage has finished: make its frames visible in
+            // one transaction per burst. A stopped or failed album shows
+            // everything instead of looking empty.
+            let shown = if stopped || final_status == "error" {
+                crate::seed::reveal_all(&desktop, job)
+            } else {
+                crate::seed::reveal_units(&desktop, job)
+                    .or_else(|_| crate::seed::reveal_all(&desktop, job))
+            };
+            if let Err(e) = shown {
+                desktop.hub.start("Showing finished bursts", 0).fail(e);
+            }
             // Frames that could not be read are counted, with a few reasons:
             // one unreadable file finishes the album done-with-errors instead
             // of failing it, and a retry of those frames resumes the scan.
@@ -2623,6 +2646,7 @@ impl Desktop {
                 camera: v["camera"].as_str().unwrap_or_default().into(),
                 taken: v["taken_at"].as_f64(),
                 burst: 0,
+                unit: 0,
             })
             .collect();
         conrod_core::bursts::assign_bursts(&mut frames, gap);
@@ -4512,8 +4536,8 @@ mod tests {
             .unwrap_or(106);
         let db = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .expect("open the album read-only");
-        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.moments,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY path";
-        const DET_SQL: &str = "SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 ORDER BY d.image_id,d.id";
+        const FRAME_SQL: &str = "SELECT i.id,i.path,i.status,i.thumb_path,i.preview_path,i.width,i.height,i.rating,i.rejected,i.picked,i.burst_key,i.dupe_key,i.error, COALESCE(i.stars,(SELECT max(d.stars) FROM detections d WHERE d.image_id=i.id)) AS manual_stars, COALESCE((SELECT max(d.burst_pick) FROM detections d WHERE d.image_id=i.id AND d.burst_pick=1), i.burst_pick) AS burst_pick, i.set_id,i.set_kind,i.moments,i.exposure_verdict,i.highlight_clip,i.shadow_clip,i.dark_frame,i.tilt_deg,i.converge_deg,i.level_verdict,i.eye_open_min,i.smile_max,i.buck_score,i.taste,i.comp_placement,i.comp_mode,i.comp_balance_x,i.comp_balance_y,i.comp_symmetry,i.comp_clutter,i.comp_lines,i.comp_subject_share,i.comp_at,i.af_x1,i.af_y1,i.af_x2,i.af_y2,i.camera,i.lens,i.iso,i.file_size,i.exposure_time,i.exposure_bias,i.f_number,i.focal_length,i.focus_distance,i.taken_at FROM images i WHERE job_id=? AND COALESCE(i.copy_of,0)=0 AND COALESCE(i.visible,1)=1 ORDER BY path";
+        const DET_SQL: &str = "SELECT d.id,d.image_id,d.cls,d.crop_path,d.x1,d.y1,d.x2,d.y2,d.sharpness,d.panning,d.number,d.plate,d.cull_reason,d.attributes,d.burst_pick,d.region_type,d.reviewed,d.rejected,d.bystander,d.stars,d.group_key,d.group_size,d.group_agreement,d.embedding,d.rating,d.rating_verdict,d.sharp_end,d.quality,d.cut_sides,d.subject_frac,d.lead_room,d.framing_score FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(i.copy_of,0)=0 AND COALESCE(i.visible,1)=1 ORDER BY d.image_id,d.id";
 
         let mut sql = f64::MAX;
         let mut payload = f64::MAX;
