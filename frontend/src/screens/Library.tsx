@@ -1,159 +1,199 @@
-import { useRun } from '../state/hooks';
+import { useEffect, useRef, useState } from 'react';
 import { asset, call } from '../lib/api';
-import { useEffect, useState } from 'react';
-import { Confirm, Empty } from '../components/basics';
+import { Confirm, Empty, Icon } from '../components/basics';
 import { GlobalStatsModal } from '../components/GlobalStatsModal';
-import { coverTint, etaText, hiddenCopies, jobState, pct, plural, queueLabel, shortDate } from '../lib/format';
+import { coverTint, etaText, pct } from '../lib/format';
 import { overallEta, overallFraction } from '../lib/scan.mjs';
-import { albumSetting } from '../lib/album.mjs';
-import { identifyScopeOf } from '../lib/identify.mjs';
-import { installableModels, modelGroups, modelWord, type HealthStatus } from '../lib/health.mjs';
+import {
+  STATUS_OPTIONS, SORT_OPTIONS, albumCount, cardView, groupAlbums, groupTitle,
+  setupLine, stripWork, visibleJobs,
+} from '../lib/library.mjs';
 import type { ScanLive } from '../state/useScanProgress';
-import { profileParent, type Job, type ModelInfo } from '../lib/types';
+import type { Job } from '../lib/types';
+import '../styles/library.css';
 
+/** Model readiness for the strip's "Set up" line, computed once in App. */
+type Setup = { needed: boolean; ready: number; total: number };
 type Props = {
-  jobs: Job[]; models: ModelInfo[]; health: HealthStatus; scanning: boolean; live: Record<number, ScanLive>; activeJob: number | null;
+  jobs: Job[]; scanning: boolean; live: Record<number, ScanLive>; activeJob: number | null;
   /** Albums waiting their turn, first to run first. */
-  queue: number[];
-  onOpen: (job: Job) => void; onNewScan: () => void; onIdentify: (job: Job) => void;
-  onResume: (job: Job) => void; onDelete: (job: Job) => void; onToggleIncludePeople: (job: Job) => void;
-  onUnqueue: (job: Job) => void;
+  queue: number[]; setup: Setup;
+  onOpen: (job: Job) => void; onNewScan: () => void; onResume: (job: Job) => void;
+  onDelete: (job: Job) => void; onUnqueue: (job: Job) => void; onOpenSettings: () => void;
 };
 
-function JobCard({ job, scanning, active, live, queuePosition, onOpen, onIdentify, onResume, onAsk, onToggleIncludePeople, onUnqueue }: {
-  job: Job; scanning: boolean; active: boolean; live?: ScanLive;
-  /** Its place in the waiting list (0 = starts next), or undefined when it is not waiting. */
-  queuePosition?: number;
-  onOpen: () => void; onIdentify: () => void; onResume: () => void; onAsk: () => void; onToggleIncludePeople: () => void; onUnqueue: () => void;
+/** One album cover card. The same six parts in every state: chip, overflow,
+ *  3:2 cover (or placeholder), badge, name + meta, one primary action. */
+function JobCard({ job, active, live, queue, scanningElsewhere, onOpen, onResume, onUnqueue, onAsk }: {
+  job: Job; active: boolean; live?: ScanLive; queue: number[]; scanningElsewhere: boolean;
+  onOpen: () => void; onResume: () => void; onUnqueue: () => void; onAsk: () => void;
 }) {
-  // While this album scans the card follows the live pipeline: overall progress, not just the frames written so far.
-  const p = active ? live?.progress : undefined;
-  const fraction = p ? Math.round(overallFraction(p.pipeline.stages) * 100) : pct(job.done, job.total);
-  const stageLabel = p?.pipeline.stages.find((s) => s.id === p.stage)?.label;
-  const eta = p && live?.stable ? etaText(overallEta(p.pipeline.stages)) : '';
+  // While this album scans, follow the live pipeline: overall progress, not just frames written.
+  const prog = active ? live?.progress : undefined;
+  const percent = prog ? Math.round(overallFraction(prog.pipeline.stages) * 100) : pct(job.done, job.total);
+  const stage = prog?.pipeline.stages.find((s) => s.id === prog.stage)?.label;
+  const eta = prog && live?.stable ? etaText(overallEta(prog.pipeline.stages)) : '';
+  const view = cardView(job, { queue, scanningElsewhere, percent, stage, eta, queuePosition: queue.indexOf(job.id) });
+
   const [cover, setCover] = useState<string>();
-  useEffect(() => { let live = true; void call<{path: string} | null>('cover', {jobId: job.id}).then(c => { if(live) setCover(asset(c?.path)); }).catch(() => undefined); return () => { live = false; }; }, [job.id, job.done]);
-  const left = job.total - job.done;
-  const resumable = left > 0 && job.status !== 'scanning' && !scanning;
-  const queued = queuePosition != null;
-  // The album's own scope, so the card's button names what the run will read.
-  const identifyScope = identifyScopeOf(albumSetting(job, 'identify_scope', undefined));
+  useEffect(() => {
+    let alive = true;
+    void call<{ path: string } | null>('cover', { jobId: job.id })
+      .then((c) => { if (alive) setCover(asset(c?.path)); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [job.id, job.done]);
+
+  // The ⋯ overflow is always visible; its one item opens the unchanged Confirm dialog.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const away = (e: PointerEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false); };
+    window.addEventListener('pointerdown', away);
+    return () => window.removeEventListener('pointerdown', away);
+  }, [menuOpen]);
+
+  const runPrimary = () => {
+    if (view.primary.action === 'unqueue') onUnqueue();
+    else if (view.primary.action === 'resume') onResume();
+    else onOpen();
+  };
+  const showPlaceholder = view.placeholder || !cover;
+
   return (
-    <article className="job-card" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) onOpen(); }}>
-      <div className="shot" style={{ background: coverTint(job.id), backgroundImage: cover ? `url("${cover}")` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
-        {/* Where the photograph would be, as on the Python home screen: said only while there is no cover. */}
-        {!cover && <div className="state">{active ? `Scanning ${fraction}%` : queued ? queueLabel(queuePosition) : jobState(job)}</div>}
-        <span className="badge">{plural(job.total, 'photo')}</span>
-        {(active || job.status === 'scanning') && <div className="bar cover-bar"><div className="fill" style={{ width: `${fraction}%` }} /></div>}
-        {resumable && <button className="resume" onClick={(e) => { e.stopPropagation(); onResume(); }}>{job.status === 'indexed' ? 'Suggest culls' : job.status === 'queued' ? 'Start scan' : job.status === 'done_errors' ? 'Retry failed' : 'Resume'}</button>}
-        <div className="job-menu">
-          <button className="iconbtn danger" title="Forget this album. Your photographs are not touched" onClick={(e) => { e.stopPropagation(); onAsk(); }}>Delete</button>
+    <article className="lib-card" tabIndex={0} onClick={onOpen}
+      onKeyDown={(e) => { if (e.key === 'Enter' && e.target === e.currentTarget) onOpen(); }}>
+      <div className="lib-shot" style={{ background: coverTint(job.id) }}>
+        {showPlaceholder ? (
+          <div className="lib-placeholder"><Icon name="folder" size={30} /><span>No preview yet</span></div>
+        ) : (
+          <img className="lib-cover" src={cover} alt="" />
+        )}
+        <span className={`lib-chip lib-chip--${view.chip.tone}`}>{view.chip.text}</span>
+        <div className="lib-overflow" ref={menuRef}>
+          <button className="lib-overflow-btn" aria-label="Album options" aria-haspopup="menu" aria-expanded={menuOpen}
+            onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}>&#8943;</button>
+          {menuOpen && (
+            <div className="lib-menu" role="menu">
+              <button className="lib-menu-item" role="menuitem"
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onAsk(); }}>Forget album</button>
+            </div>
+          )}
         </div>
+        {view.badge && <span className="lib-badge">{view.badge}</span>}
+        {view.bar && <div className="lib-bar"><div className="lib-bar-fill" style={{ width: `${view.percent}%` }} /></div>}
       </div>
-      <div className="name" title={job.root}>{job.label}</div>
-      <div className="sub">{active
-        ? `Scanning · ${fraction}%${stageLabel ? ` · ${stageLabel}` : ''}${eta ? ` · ${eta}` : ''}`
-        : queued ? `${queueLabel(queuePosition)} · starts when the scan on screen finishes`
-          : `${job.done.toLocaleString()} / ${job.total.toLocaleString()} photos${hiddenCopies(job.copies)} · ${shortDate(job.created_at)}`}</div>
-      {profileParent(job.scan_profile ?? '') === 'motorsport' && (
-        <label className="sub" onClick={(e) => e.stopPropagation()}>
-          <input type="checkbox" checked={Boolean(job.include_people)} onChange={onToggleIncludePeople} /> Includes people
-        </label>
-      )}
-      <div className="steps">
-        <button className="step" onClick={(e) => { e.stopPropagation(); onOpen(); }}>{active ? 'Watch scan' : 'Review'}</button>
-        {queued && (
-          <button className="step" title="Take this album out of the line. Nothing imported is lost." onClick={(e) => { e.stopPropagation(); onUnqueue(); }}>Remove from queue</button>
-        )}
-        {['done', 'done_errors'].includes(job.status) && !active && (
-          <button className="step" title={`Name what this album's identify scope covers: ${identifyScope === 'everything' ? 'every subject' : 'the suggested keeper of each burst'}.`} onClick={(e) => { e.stopPropagation(); onIdentify(); }}>
-            Identify {identifyScope === 'everything' ? 'everything' : 'keepers'}
-          </button>
-        )}
-      </div>
+      <div className="lib-name" title={job.root}>{job.label}</div>
+      <div className="lib-meta">{view.meta}</div>
+      <button className="lib-primary" title={view.primary.hint || undefined}
+        onClick={(e) => { e.stopPropagation(); runPrimary(); }}>{view.primary.label}</button>
+      {view.primary.hint && <div className="lib-hint">{view.primary.hint}</div>}
     </article>
   );
 }
 
-/** Home: the albums as cover cards, with totals and model setup in the rail, as on the Python home screen. */
-export function Library({ jobs, models, health, scanning, live, activeJob, queue, onOpen, onNewScan, onIdentify, onResume, onDelete, onToggleIncludePeople, onUnqueue }: Props) {
-  const run = useRun();
+/** Home: one column, no rail. Start zone → sticky status strip → filter row and
+ *  two labelled groups of cover cards. Setup and lifetime totals live in
+ *  Settings / the health popover and the GlobalStatsModal. */
+export function Library({ jobs, scanning, live, activeJob, queue, setup, onOpen, onNewScan, onResume, onDelete, onUnqueue, onOpenSettings }: Props) {
   const [doomed, setDoomed] = useState<Job | null>(null);
   const [statsOpen, setStatsOpen] = useState(false);
-  const scanned = jobs.reduce((n, j) => n + j.done, 0);
-  const { local, optional, vision } = modelGroups(models);
-  const ready = local.filter((m) => m.ready).length;
-  const missing = installableModels(models);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('all');
+  const [sort, setSort] = useState('newest');
+
+  // One running scan (the engine's active job, or an album still marked scanning).
+  const scanJob = jobs.find((j) => j.id === activeJob) ?? jobs.find((j) => j.status === 'scanning') ?? null;
+  const aScanIsRunning = scanning || scanJob != null;
+  const scanLive = scanJob ? live[scanJob.id] : undefined;
+  const scanProg = scanLive?.progress;
+  const scanPercent = scanProg ? Math.round(overallFraction(scanProg.pipeline.stages) * 100) : scanJob ? pct(scanJob.done, scanJob.total) : 0;
+  const scanStage = scanProg?.pipeline.stages.find((s) => s.id === scanProg.stage)?.label;
+  const scanEta = scanProg && scanLive?.stable ? etaText(overallEta(scanProg.pipeline.stages)) : '';
+  const scan = scanJob ? { label: scanJob.label, percent: scanPercent, stage: scanStage, eta: scanEta } : null;
+  const queueLabels = queue.map((id) => jobs.find((j) => j.id === id)?.label).filter((l): l is string => Boolean(l));
+  const errorJob = jobs.find((j) => j.status === 'error');
+  const otherUnfinished = jobs.some((j) => j.id !== scanJob?.id && (j.total === 0 || ['stopped', 'incomplete', 'queued'].includes(j.status)));
+  const work = stripWork({
+    scan, queueLabels,
+    error: errorJob ? { label: errorJob.label, kind: 'folder_unreachable' } : null,
+    elsewhere: aScanIsRunning && otherUnfinished,
+  });
+  const setupText = setupLine(setup);
+
+  const visible = visibleJobs(jobs, { search, status, activeJob, queue });
+  const groups = groupAlbums(visible, { activeJob, queue, sort });
+  const clearFilters = () => { setSearch(''); setStatus('all'); setSort('newest'); };
+
   return (
-    <div className="screen">
-      <div className="home">
-        <div className="home-main">
-          <div className="new-scan">
-            <div className="new-scan-head">
-              <div>
-                <h4>Import a shoot</h4>
-                <p>Copy your SD card to your PC, import the folder, then cull before running ML on your keepers.</p>
-              </div>
-              <button className="primary" onClick={onNewScan}>+ Import photos</button>
-            </div>
+    <div className="screen lib">
+      <header className="lib-start">
+        <div className="lib-start-text">
+          <h1>Your albums</h1>
+          <p className="lib-helper">Import a shoot: Conrod measures sharpness, groups bursts and suggests keepers.</p>
+        </div>
+        <button className="primary lib-import" onClick={onNewScan}><Icon name="plus" size={15} /> Import photos</button>
+      </header>
+
+      <div className="lib-strip">
+        <span className={`lib-work lib-work--${work.tone}`}>
+          <span className="lib-work-text">{work.text}</span>
+          {work.watch && scanJob && <button className="lib-link" onClick={() => onOpen(scanJob)}>Watch scan</button>}
+        </span>
+        <div className="lib-strip-right">
+          {setupText && <span>{setupText} ·</span>}
+          <button className="lib-link" onClick={onOpenSettings}>Set up</button>
+          <span className="lib-sep">·</span>
+          <button className="lib-link" onClick={() => setStatsOpen(true)}>View statistics</button>
+        </div>
+      </div>
+
+      {jobs.length === 0 ? (
+        <Empty icon="folder" title="No albums yet.">
+          <p>Drop a folder with photos anywhere on this window, or press <b>Import photos</b>. Conrod measures sharpness, groups bursts and suggests keepers.</p>
+        </Empty>
+      ) : (
+        <div className="lib-zone">
+          <div className="lib-filters">
+            <input className="lib-search" type="search" placeholder="Search albums" aria-label="Search albums"
+              value={search} onChange={(e) => setSearch(e.target.value)} />
+            <select value={status} aria-label="Filter by status" onChange={(e) => setStatus(e.target.value)}>
+              {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <select value={sort} aria-label="Sort albums" onChange={(e) => setSort(e.target.value)}>
+              {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <span className="lib-count">{albumCount(visible.length)}</span>
           </div>
-          <div className="section-label"><span>Albums</span><span>{jobs.length || ''}</span></div>
-          {jobs.length ? (
-            <div className="cards">
-              {jobs.map((job) => {
-                const place = queue.indexOf(job.id);
-                return (
-                  <JobCard key={job.id} job={job} scanning={scanning} active={job.id === activeJob} live={live[job.id]} queuePosition={place < 0 ? undefined : place}
-                    onOpen={() => onOpen(job)} onIdentify={() => onIdentify(job)}
-                    onResume={() => onResume(job)} onAsk={() => setDoomed(job)} onToggleIncludePeople={() => onToggleIncludePeople(job)} onUnqueue={() => onUnqueue(job)} />
-                );
-              })}
-            </div>
-          ) : (
-            <Empty icon="folder" title="No albums yet.">
-              <p>Drop a folder anywhere on this window, or press <b>Import photos</b>.</p>
+
+          {visible.length === 0 ? (
+            <Empty icon="images" title="No albums match these filters.">
+              <button className="ghost" onClick={clearFilters}>Clear filters</button>
             </Empty>
+          ) : (
+            [
+              { key: 'attention', label: 'Needs attention', items: groups.attention },
+              { key: 'ready', label: 'Ready to review', items: groups.ready },
+            ].map(({ key, label, items }) => items.length ? (
+              <section className="lib-group" key={key}>
+                <h2 className="lib-group-head" aria-label={groupTitle(label, items.length)}>
+                  {label} <span className="lib-group-count">· {items.length}</span>
+                </h2>
+                <div className="lib-cards">
+                  {items.map((job) => (
+                    <JobCard key={job.id} job={job} active={job.id === activeJob} live={live[job.id]} queue={queue}
+                      scanningElsewhere={aScanIsRunning}
+                      onOpen={() => onOpen(job)} onResume={() => onResume(job)} onUnqueue={() => onUnqueue(job)}
+                      onAsk={() => setDoomed(job)} />
+                  ))}
+                </div>
+              </section>
+            ) : null)
           )}
         </div>
-        <aside className="rail">
-          <div className="rail-card">
-            <h4>Totals</h4>
-            <div className="big-stat">{scanned.toLocaleString()}</div>
-            <div className="big-label">Frames scanned</div>
-            <div className="stat-grid">
-              <div><div className="n">{jobs.length}</div><div className="big-label">Albums</div></div>
-              <div><div className="n">{jobs.filter((j) => j.status === 'done' || j.status === 'done_errors').length}</div><div className="big-label">Ready to review</div></div>
-            </div>
-            {jobs.length > 0 && (
-              <div className="rail-actions">
-                <button className="ghost" onClick={() => setStatsOpen(true)}>View statistics…</button>
-              </div>
-            )}
-          </div>
-          <div className="rail-card">
-            <h4>Setup</h4>
-            <p>{health.label} · {ready} of {local.length} models ready</p>
-            <button
-              title="Installs Conrod's own models only. A vision model (Ollama, OpenRouter) is set up in Settings, not here."
-              onClick={() => void run(async () => { await call('install_models'); })}
-              disabled={missing.length === 0}
-            >
-              Install missing
-            </button>
-            <ul className="model-list">
-              {local.map((m) => (
-                <li key={m.file ?? m.name}><span className={`dot ${m.ready ? 'ok' : 'no'}`} />{m.name}<small>{modelWord(m)}</small></li>
-              ))}
-              {vision.map((m) => (
-                <li key={m.id ?? m.name}><span className={`dot ${m.ready ? 'ok' : 'no'}`} />{m.name}<small title={m.detail}>{modelWord(m)} · set up in Settings</small></li>
-              ))}
-              {optional.map((m) => (
-                <li key={m.file ?? m.name}><span className={`dot ${m.ready ? 'ok' : 'no'}`} />{m.name}<small>{modelWord(m)}</small></li>
-              ))}
-            </ul>
-          </div>
-        </aside>
-      </div>
+      )}
+
       {doomed && (
         <Confirm title="Forget this album?" action="Forget album" onCancel={() => setDoomed(null)}
           onConfirm={() => { onDelete(doomed); setDoomed(null); }}>
