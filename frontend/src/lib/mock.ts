@@ -37,10 +37,17 @@ const CARS: [string, string, string, string, string, string, number][] = [
 const W = 6000, H = 4000;
 const COMP_MODES = ['centre', 'thirds', 'phi'] as const;
 
+/**
+ * The mock's one tall frame. Its recorded size is the camera's (landscape), the way an album scanned
+ * before the orientation fix looks: the photo is tall, the recorded shape is not. The viewer has to
+ * follow the photo, so the dev mock keeps this frame to show that it does.
+ */
+const TALL_FRAME = { id: 1000, width: 6000, height: 4000, previewW: 800, previewH: 1200 };
+
 /** A landscape with a car in it, as a data URI; car box is x 0.5±s/2, y .40-.74 of the frame. */
 function scene(hue: number, cx: number, s: number, paint: string, w: number, h: number): string {
   const x = (cx - s / 2) * w, cw = s * w, y = 0.5 * h, ch = 0.2 * h, r = ch * 0.3;
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${w} ${h}'><defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>`
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' viewBox='0 0 ${w} ${h}'><defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>`
     + `<stop offset='0' stop-color='hsl(${hue} 34% 30%)'/><stop offset='.66' stop-color='hsl(${hue} 22% 14%)'/><stop offset='.66' stop-color='#26262b'/><stop offset='1' stop-color='#111114'/></linearGradient></defs>`
     + `<rect width='${w}' height='${h}' fill='url(#g)'/><rect x='0' y='${h * 0.66}' width='${w}' height='${h * 0.012}' fill='#3a3a42'/>`
     + `<rect x='${x}' y='${y}' width='${cw}' height='${ch}' rx='${r}' fill='${paint}'/>`
@@ -63,11 +70,15 @@ function makeDb(): Db {
     const id = 1000 + i, rating = soft ? 0.6 + ((i * 7) % 6) / 100 : 0.5 + ((i * 37) % 48) / 100;
     const cx = 0.38 + ((i * 13) % 25) / 100, s = 0.5 + ((i * 7) % 20) / 100;
     const read = i % 4 !== 3;
+    // The first frame is the tall one: a tall photo with a recorded shape that does not match it.
+    const tall = id === TALL_FRAME.id;
+    const fw = tall ? TALL_FRAME.width : W;
+    const fh = tall ? TALL_FRAME.height : H;
     // Composition: frame 0 opens with a busy background on a pan, frame 3 is the clean pan the strip marks.
     const clutter = i === 3 ? 0.18 : i % 3 === 0 ? 0.85 + ((i * 11) % 9) / 100 : 0.4 + ((i * 17) % 24) / 100;
     frames.push({
       id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > count - 4 ? 'pending' : 'done',
-      thumb_path: scene(hue, cx, s, colour, 420, 280), preview_path: null, width: W, height: H, rating,
+      thumb_path: scene(hue, cx, s, colour, tall ? TALL_FRAME.previewW : 420, tall ? TALL_FRAME.previewH : 280), preview_path: null, width: fw, height: fh, rating,
       manual_stars: soft ? null : i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, picked: i % 17 === 5 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
       moments: i % 7 === 3 ? JSON.stringify({ backend: 'decider', strength: 0.9, readings: [{ tag: 'tyre_smoke', p: 0.93, calibrated: true }, { tag: 'flames', p: 0.62, calibrated: true }] }) : null,
       comp_placement: 0.52 + ((i * 23) % 42) / 100, comp_mode: COMP_MODES[i % 3],
@@ -76,7 +87,7 @@ function makeDb(): Db {
       comp_lines: i % 5, comp_subject_share: 0.18 + ((i * 13) % 45) / 100,
     });
     dets.push({
-      id: 5000 + i, image_id: id, cls: 'car', x1: (cx - s / 2) * W, y1: 0.38 * H, x2: (cx + s / 2) * W, y2: 0.74 * H,
+      id: 5000 + i, image_id: id, cls: 'car', x1: (cx - s / 2) * fw, y1: 0.38 * fh, x2: (cx + s / 2) * fw, y2: 0.74 * fh,
       sharpness: rating, panning: i % 3 === 0 ? 1 : 0, number: read ? no : null, plate: read ? plate : null,
       cull_reason: rating < 0.6 ? 'Motion blur' : null, rating, rating_verdict: rating >= 0.8 ? 'good' : rating >= 0.6 ? 'fair' : 'poor', sharp_end: i % 3 === 0 ? 'subject' : 'even',
       attributes: JSON.stringify(read ? { make, model, colour, team, race_number: no, plate } : {}), burst_pick: soft ? 0 : i % 5 === 0 ? 1 : 0, region_type: 'vehicle',
@@ -455,7 +466,14 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       if (d) { const attrs = JSON.parse(d.attributes || '{}') as Record<string, unknown>; const { detectionId, ...rest } = a; void detectionId; d.attributes = JSON.stringify({ ...attrs, ...rest }); }
       return out(null);
     }
-    case 'preview': return out(scene(20, 0.5, 0.6, 'crimson', 1200, 800));
+    case 'preview': {
+      // The preview follows the photo, not the recorded shape: a tall frame previews tall.
+      const pf = db.frames.find((x) => x.id === Number(a.imageId));
+      if (pf?.id === TALL_FRAME.id) return out(scene(20, 0.5, 0.6, 'crimson', TALL_FRAME.previewW, TALL_FRAME.previewH));
+      const par = pf?.width && pf?.height ? pf.width / pf.height : 3 / 2;
+      const ph = 1200;
+      return out(scene(20, 0.5, 0.6, 'crimson', Math.round(ph * par), ph));
+    }
     case 'known': return out(db.known);
     case 'save_known': { const v = args as KnownVehicle; db.known = [...db.known.filter((k) => k.plate !== v.plate), v].sort((p, q) => p.plate.localeCompare(q.plate)); return out(null); }
     case 'delete_known': db.known = db.known.filter((k) => k.plate !== a.plate); return out(null);

@@ -31,6 +31,7 @@
     }
   },
   "commits": {
+    "de9ac90": { "section": "Fixed", "text": "Zooming a tall photo now shows the whole photo: it keeps its own shape instead of being cropped to a wide box." },
     "4c553fe0": { "section": "New", "text": "The Lightroom plug-in is now optional; Conrod writes stars, picks and colour labels to your photos by default." },
     "5130167": [
       { "section": "New", "text": "Settings has one AI models page: every model Conrod can use, in plain words, with where it runs, whether it is ready and a switch to turn it on or off." },
