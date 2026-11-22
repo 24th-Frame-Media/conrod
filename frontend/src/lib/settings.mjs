@@ -122,6 +122,10 @@ export const FIELDS = {
     label: 'Use a vision model', kind: 'toggle',
     hint: 'Ask a vision model for make, model, colour and team.',
   },
+  vlm_reasoning: {
+    label: 'Extended thinking', kind: 'toggle',
+    hint: 'Some models think step by step before answering. Off keeps car reading fast and cheap. Not all services support this.',
+  },
   use_decider: {
     label: 'Use the decision model', kind: 'toggle',
     hint: "Runs the Perplexity decision model to answer yes/no questions about a frame. Off, or not enough video memory: every scan behaves exactly as without it.",
@@ -335,7 +339,7 @@ export function aiModelStatusLabel(state) {
      keys: [
       'include_cars', 'include_bikes', 'include_trucks',
       'read_plates', 'read_numbers', 'read_text', 'include_people',
-      'use_quality_score', 'use_vlm', 'read_action', 'vlm_strategy',
+      'use_quality_score', 'use_vlm', 'vlm_reasoning', 'read_action', 'vlm_strategy',
       'use_decider', 'decider_quant', 'moments_transport',
       'moments_openrouter_model', 'moments_openrouter_key',
       'moments_opencode_model', 'moments_opencode_key',

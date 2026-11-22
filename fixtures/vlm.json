@@ -118,7 +118,8 @@
       "temperature": 0.0
      },
      "prompt": "describe it",
-     "stream": false
+     "stream": false,
+     "think": false
     },
     "query": {},
     "url": "http://127.0.0.1:11434/api/generate"
@@ -207,6 +208,9 @@
       }
      ],
      "model": "claude-sonnet-5",
+     "thinking": {
+      "type": "disabled"
+     },
      "tool_choice": {
       "name": "describe_vehicle",
       "type": "tool"
@@ -265,6 +269,9 @@
       }
      ],
      "model": "claude-sonnet-5",
+     "thinking": {
+      "type": "disabled"
+     },
      "tool_choice": {
       "name": "describe_vehicle",
       "type": "tool"

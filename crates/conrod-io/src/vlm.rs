@@ -580,6 +580,79 @@ pub struct ProviderRequest {
 /// KV cache alone is several GB and spills qwen2.5vl:7b off the GPU.
 pub const OLLAMA_NUM_CTX: i64 = 8192;
 
+/// Add a provider's own switch for model thinking. `on` is the user's
+/// `vlm_reasoning` setting. Only parameters the provider documents are sent:
+///
+/// - Ollama takes `"think"` (boolean) on `/api/generate` and `/api/chat`:
+///   <https://docs.ollama.com/api>.
+/// - OpenRouter takes `"reasoning": {"enabled": bool}` on chat completions:
+///   <https://openrouter.ai/docs/use-cases/reasoning-tokens>.
+/// - Anthropic takes `"thinking": {"type": "disabled"}`; thinking is on by
+///   default on its newest models. A few models reject `disabled`, so the
+///   form is chosen per model from the table at
+///   <https://platform.claude.com/docs/en/build-with-claude/thinking>.
+/// - Gemini takes `generationConfig.thinkingConfig`; the field is an error on
+///   models without thinking, and `thinkingLevel` is an error before Gemini 3,
+///   so the form is chosen per model:
+///   <https://ai.google.dev/api/generate-content>.
+/// - OpenAI's `reasoning_effort` has no value that disables reasoning on every
+///   model (the newest reject `none` and `minimal`), and OpenCode Console
+///   documents no reasoning field at all. Both are left untouched.
+///
+/// Turning thinking on never sends anything for Anthropic or Gemini: their
+/// model default is to think, and the on form differs by model family.
+fn apply_reasoning(request: &mut ProviderRequest, provider: &str, model: &str, on: bool) {
+    match provider {
+        "ollama" => request.json["think"] = json!(on),
+        "openrouter" => request.json["reasoning"] = json!({"enabled": on}),
+        "anthropic" if !on => {
+            if let Some(thinking) = anthropic_thinking_off(model) {
+                request.json["thinking"] = thinking;
+            }
+        }
+        "gemini" if !on => {
+            if let Some(thinking) = gemini_thinking_off(model) {
+                request.json["generationConfig"]["thinkingConfig"] = thinking;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The documented lowest-thinking form for Claude, or `None` when the model
+/// rejects every form that turns thinking off (Opus 5.5, Fable, Mythos). On
+/// Sonnet 5.5 `disabled` is a 400; `between_tools` is its lowest accepted
+/// value and turns off up-front thinking.
+fn anthropic_thinking_off(model: &str) -> Option<Value> {
+    let model = model.trim().to_lowercase();
+    if model.starts_with("claude-sonnet-5-5") {
+        Some(json!({"type": "between_tools"}))
+    } else if model.starts_with("claude-opus-5-5")
+        || model.starts_with("claude-fable")
+        || model.starts_with("claude-mythos")
+    {
+        None
+    } else {
+        Some(json!({"type": "disabled"}))
+    }
+}
+
+/// The documented lowest-thinking form for Gemini, or `None` when the model
+/// cannot turn thinking off. Gemini 3 and later reject `thinkingBudget` and
+/// always think, so their lowest `thinkingLevel` is sent instead. Gemini 2.5
+/// Pro has a minimum budget and cannot go to zero; 2.0 has no thinking, and
+/// setting `thinkingConfig` on it is an error.
+fn gemini_thinking_off(model: &str) -> Option<Value> {
+    let model = model.trim().to_lowercase();
+    if model.starts_with("gemini-3") || model.starts_with("gemini-4") {
+        Some(json!({"thinkingLevel": "low"}))
+    } else if model.starts_with("gemini-2.5-flash") {
+        Some(json!({"thinkingBudget": 0}))
+    } else {
+        None
+    }
+}
+
 pub fn ollama_request(
     host: &str,
     model: &str,
@@ -1096,24 +1169,24 @@ pub fn build_request(
     } else {
         settings.vlm_provider.to_lowercase()
     };
-    match provider.as_str() {
-        "ollama" => Ok(ollama_request(
+    let mut request = match provider.as_str() {
+        "ollama" => ollama_request(
             &settings.vlm_host,
             &settings.vlm_model,
             prompt,
             images,
             schema,
             num_predict,
-        )),
-        "openai" => Ok(openai_request(
+        ),
+        "openai" => openai_request(
             &settings.vlm_model,
             &settings.vlm_api_key,
             prompt,
             images,
             schema,
             num_predict,
-        )),
-        "openrouter" => Ok(openai_request_at(
+        ),
+        "openrouter" => openai_request_at(
             OPENROUTER_URL,
             false,
             &settings.vlm_model,
@@ -1122,21 +1195,15 @@ pub fn build_request(
             images,
             schema,
             num_predict,
-        )),
-        "anthropic" => Ok(anthropic_request(
-            settings,
-            prompt,
-            images,
-            schema,
-            num_predict,
-        )),
-        "gemini" => Ok(gemini_request(
+        ),
+        "anthropic" => anthropic_request(settings, prompt, images, schema, num_predict),
+        "gemini" => gemini_request(
             &settings.vlm_model,
             &settings.vlm_api_key,
             prompt,
             images,
             num_predict,
-        )),
+        ),
         "opencode" | "opencode-go" => {
             // Both spellings are the Console (credits) endpoint. `opencode-go`
             // is only an alias from older settings; it never reaches the Go
@@ -1154,10 +1221,17 @@ pub fn build_request(
             request
                 .headers
                 .push(("User-Agent".into(), OPENCODE_USER_AGENT.into()));
-            Ok(request)
+            request
         }
-        other => Err(VlmError::UnknownProvider(other.to_string())),
-    }
+        other => return Err(VlmError::UnknownProvider(other.to_string())),
+    };
+    apply_reasoning(
+        &mut request,
+        &provider,
+        &settings.vlm_model,
+        settings.vlm_reasoning,
+    );
+    Ok(request)
 }
 
 // ── response parsing ─────────────────────────────────────────────────────
@@ -1384,6 +1458,12 @@ impl VlmClient {
                 images,
                 schema,
                 num_predict,
+            );
+            apply_reasoning(
+                &mut req,
+                "ollama",
+                &settings.vlm_model,
+                settings.vlm_reasoning,
             );
             // Only for a retry: a penalty on the first ask costs the digits
             // that repeat in the visible text, and the first ask rarely loops.

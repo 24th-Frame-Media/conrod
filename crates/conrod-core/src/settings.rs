@@ -213,6 +213,10 @@ pub struct Settings {
     pub vlm_max_retries: i64,
     pub vlm_timeout: f64,
     pub vlm_input_edge: i64,
+    /// Let the vision model think step by step before it answers. Off by
+    /// default: a structured identification reply gains nothing from it, and
+    /// a thinking model otherwise spends its whole token budget reasoning.
+    pub vlm_reasoning: bool,
     pub normalise_names: bool,
     pub burst_second_look: bool,
     pub group_by_burst: bool,
@@ -406,6 +410,7 @@ impl Default for Settings {
             vlm_max_retries: 4,
             vlm_timeout: 180.0,
             vlm_input_edge: 1568,
+            vlm_reasoning: false,
             normalise_names: true,
             burst_second_look: true,
             group_by_burst: true,
