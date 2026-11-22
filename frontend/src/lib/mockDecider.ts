@@ -73,7 +73,7 @@ export function startDeciderSim(emit: (p: DeciderLive) => void, thumb: (k: numbe
     const t = (Date.now() - started) % 2600;
     const frame = Math.floor((Date.now() - started) / 2600);
     if (frame !== k) { k = frame; }
-    const label = 'D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_' + (4200 + k) + '.CR3';
+    const label = 'D:\\Photos\\2026\\10\\Challenge Bathurst\\IMG_' + (4200 + k) + '.CR3';
     const live = base('running', 'Answering questions.');
     if (t < 1300) {
       emit({ ...live, busy: 1, done, avg_ms: done ? Math.round(total / done) : null, recent: [...recent],
