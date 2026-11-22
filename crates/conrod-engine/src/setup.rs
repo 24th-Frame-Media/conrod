@@ -162,7 +162,13 @@ mod tests {
     #[test]
     fn the_decision_model_is_opt_in_and_never_part_of_install_everything() {
         let manifest = assets::manifest();
-        let decider: Vec<_> = manifest.iter().filter(|a| a.optional).collect();
+        // The previous detector (yolo11s-960.onnx) is opt-in as well, as a
+        // fallback, so it is excluded from this set rather than counted as a
+        // decision asset.
+        let decider: Vec<_> = manifest
+            .iter()
+            .filter(|a| a.optional && a.id() != "yolo11s-960.onnx")
+            .collect();
         // Weights, vision projector, and the llama.cpp runtime.
         assert_eq!(decider.len(), 3, "{decider:?}");
         assert!(decider
@@ -182,5 +188,11 @@ mod tests {
         }
         // The big file has upstream sources to resume from (no release mirror hosts it).
         assert!(decider.iter().all(|a| !a.sources.is_empty()));
+        // The old detector stays pinned and installable on request, but a fresh
+        // install only fetches the current one.
+        assert!(manifest
+            .iter()
+            .any(|a| a.id() == "yolo11s-960.onnx" && a.optional));
+        assert!(!everything.iter().any(|id| id == "yolo11s-960.onnx"));
     }
 }

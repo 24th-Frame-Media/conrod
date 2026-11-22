@@ -9,7 +9,9 @@
 use crate::settings::data_root;
 use std::path::PathBuf;
 
-pub const DETECTOR: &str = "yolo11s-960.onnx";
+/// The car/person detector: YOLO26m at 960 px (dynamic input, `[1, 84, N]`
+/// output). `yolo11s-960.onnx` stays pinned in the manifest as the fallback.
+pub const DETECTOR: &str = "yolo26m-960.onnx";
 pub const FACES: &str = "face_detection_yunet_2023mar.onnx";
 /// OCEC eyes open/closed (PINTO0309, MIT), the large variant.
 pub const EYES: &str = "ocec_l.onnx";

@@ -1,6 +1,6 @@
 Assets shipped beside Conrod.exe (see scripts/README.md).
 
-  models/    yolo11s-960.onnx, face_detection_yunet_2023mar.onnx,
+  models/    yolo26m-960.onnx, face_detection_yunet_2023mar.onnx,
              dinov2-small-quantized.onnx, the plate detector + reader,
              ch_PP-OCRv4_det_infer.onnx + ch_PP-OCRv4_rec_infer.onnx
   exiftool/  exiftool.exe + exiftool_files/

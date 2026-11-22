@@ -1,7 +1,9 @@
 //! Finding vehicles and people in a frame.
 //!
-//! Runs on ONNX Runtime instead of ultralytics + torch. The model is YOLO11s
-//! exported by `tools/export_onnx.py`, decoded to reproduce ultralytics box
+//! Runs on ONNX Runtime instead of ultralytics + torch. The shipped model is
+//! YOLO26m exported by `tools/export_onnx.py`; any ultralytics export with the
+//! same `[1, 84, N]` output works (the YOLO11s fallback included), decoded to
+//! reproduce ultralytics box
 //! for box: rectangular letterbox (ultralytics' predict() sets rect=True),
 //! argmax over all 80 classes then the class filter, class-wise NMS, and
 //! ultralytics' rescale. Then a few of the app's own rules: drop tiny boxes, drop boxes inside a
