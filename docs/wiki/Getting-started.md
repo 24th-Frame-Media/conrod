@@ -64,7 +64,7 @@ Conrod writes stars, picks, and colour labels into your files. Lightroom reads t
 
 For make, model, colour, team, and stronger race-number reads, add a vision server:
 
-- **Ollama** on the same PC (`ollama pull qwen2.5vl:7b`), or
+- **Ollama** on the same PC (`ollama pull qwen3-vl:8b-instruct-q4_K_M`, Conrod's local recommendation), or
 - **OpenRouter** or **OpenCode Go** with a key.
 
 Open **Settings > Identification > AI models**. The model guidance, costs, and privacy notes are in [AI models in Conrod](../user/ai-models.md).

@@ -36,7 +36,7 @@ The album can follow the global switch or set its own. An album's own choice win
 
 Add one or more servers in **Settings > Identification > AI models**:
 
-- **Ollama** on this PC or another machine on the network.
+- **Ollama** on this PC or another machine on the network. For local reading, Conrod recommends `qwen3-vl:8b-instruct-q4_K_M`: the best free score in our 22 November 2026 test, with every door number right. The older `qwen2.5vl:7b` still works well on small GPUs.
 - **OpenRouter** with an API key. **Test key** checks the key without spending a model call.
 - **OpenCode Go** with a subscription key.
 

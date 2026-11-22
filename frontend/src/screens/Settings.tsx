@@ -37,7 +37,7 @@ const OPENCODE_CREDITS_HINT =
   'OpenCode is charged per use from your OpenCode Console credit balance. Do not paste an OpenCode Go subscription key: Go is sold for coding assistants, not for Conrod. Add credits in the Console and use that key for vision and JEV.';
 
 const VLM_PROVIDERS: { id: VlmProvider; name: string; defaultModel: string }[] = [
-  { id: 'ollama', name: 'Ollama (local or self-hosted)', defaultModel: 'qwen2.5vl:7b' },
+  { id: 'ollama', name: 'Ollama (local or self-hosted)', defaultModel: 'qwen3-vl:8b-instruct-q4_K_M' },
   { id: 'openrouter', name: 'OpenRouter', defaultModel: 'qwen/qwen2.5-vl-72b-instruct' },
   { id: 'openai', name: 'OpenAI (GPT-4o and newer)', defaultModel: 'gpt-4o' },
   { id: 'anthropic', name: 'Anthropic (Claude 3.5 / 3.7)', defaultModel: 'claude-3-7-sonnet-20250219' },

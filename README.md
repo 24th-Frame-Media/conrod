@@ -19,7 +19,7 @@ Download the latest release from [Releases](../releases):
 - **Windows 10 or 11, 64-bit**, with the **WebView2** runtime (included in current Windows releases).
 - The detector, plate reader, OCR, face, grouping models, and ExifTool ship with the app or download on first run. The start-up splash shows each step.
 - **Graphics card (optional)**: DirectML speeds up detection; without one, detection runs on the processor.
-- **Optional AI**: make/model/colour needs a vision model. Use a local [Ollama](https://ollama.com/) server (`ollama pull qwen2.5vl:7b`), or add an OpenRouter or OpenCode Go key in **Settings > Identification > AI models**. A built-in vision model and smaller decision model are planned, not shipped.
+- **Optional AI**: make/model/colour needs a vision model. Use a local [Ollama](https://ollama.com/) server (`ollama pull qwen3-vl:8b-instruct-q4_K_M`), or add an OpenRouter or OpenCode Go key in **Settings > Identification > AI models**. A built-in vision model and smaller decision model are planned, not shipped.
 - **Lightroom (optional extra)**: Conrod writes stars, picks, and colour labels straight into your files by default, so Lightroom sees them without anything else installed. An optional Conrod Bridge plug-in can apply them live to the catalog.
 - **Existing Users**: libraries in `%USERPROFILE%\.conrod` (database, settings, models, Lightroom bridge packages) open automatically.
 - See [`docs/user/ai-models.md`](docs/user/ai-models.md) for model choices, prices, and setup, and [`docs/wiki/`](docs/wiki/Home.md) for photographer-facing guides.
