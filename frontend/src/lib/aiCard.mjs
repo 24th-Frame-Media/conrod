@@ -474,12 +474,19 @@ export function photoCost(id) {
   if (m.pM < 0 || m.cM < 0) return { varies: true };
   return { usd: (IN_TOK * m.pM + OUT_TOK * m.cM) / 1e6 };
 }
+/** A "None — skip" (or a cleared free-text row) is not a picked model: it must
+ *  never be billed or counted in the pool. */
+export function isPicked(sel) {
+  return Boolean(sel) && String(sel).trim() !== '' && sel !== 'none';
+}
+
 /** Card cost line: per photo AND per 1,000, always "est." unless free.
- *  `picked` = [{ id, local }]. */
+ *  `picked` = [{ id, local }]. A "None — skip" is filtered out first. */
 export function costLine(picked = []) {
-  if (!picked.length) return 'No models picked yet — no cost.';
-  if (picked.every((p) => p.local)) return 'Free — runs on your own hardware.';
-  const costs = picked.filter((p) => !p.local).map((p) => photoCost(p.id));
+  const chosen = picked.filter((p) => p && isPicked(p.id));
+  if (!chosen.length) return 'No models picked yet — no cost.';
+  if (chosen.every((p) => p.local)) return 'Free — runs on your own hardware.';
+  const costs = chosen.filter((p) => !p.local).map((p) => photoCost(p.id));
   if (costs.some((c) => c && c.varies)) return 'est. varies per photo · varies per 1,000 photos — the router’s pick sets the price.';
   const usd = costs.reduce((s, c) => s + (c && c.usd ? c.usd : 0), 0);
   if (usd === 0) return 'est. $0 per photo · $0 per 1,000 photos (free tier).';
@@ -722,13 +729,15 @@ export function momentsStatus(settings = {}, localInstalled = false) {
 
 /* ---- pool count + one-line summary strip ---- */
 export function poolCount(ctx = {}) {
-  let n = (ctx.builtinVision || []).length + (ctx.builtinDecisions || []).length;
+  const builtinVision = (ctx.builtinVision || []).filter(isPicked);
+  const builtinDecisions = (ctx.builtinDecisions || []).filter(isPicked);
+  let n = builtinVision.length + builtinDecisions.length;
   let svc = n ? 1 : 0;
   for (const c of (ctx.cards || [])) {
     if (!c.enabled) continue;
     let joined = 0;
-    if (c.visionSel && c.visionSel !== 'none') joined++;
-    if (c.decisionSel && c.decisionSel !== 'none') joined++;
+    if (isPicked(c.visionSel)) joined++;
+    if (isPicked(c.decisionSel)) joined++;
     if (joined) { svc++; n += joined; }
   }
   return { n, svc };
@@ -743,5 +752,60 @@ export function summaryText(ctx = {}) {
   const routing = (SHARING.find((s) => s.id === ctx.routing) || SHARING[0]).name.toLowerCase();
   if (!p.n) return { text: 'No models in the pool. Enable a service and pick its models.', dot: 'amber' };
   return { text: `${p.n} model${p.n === 1 ? '' : 's'} ready across ${p.svc} service${p.svc === 1 ? '' : 's'}, shared ${routing}.`, dot: 'ok' };
+}
+
+/* ── interpreting the REAL engine check commands ──────────────────────────
+   openrouter_check / openCodeCheck / ollama_models resolve with { ok:false,
+   error } on a bad key or { ok:false, online:false, error } on an offline
+   host; provider_models resolves with { models:[], error }. A rejected promise
+   carries the same plain reason. `ready` is true only on a clean reply, so the
+   Test button can never claim "Ready" for a service that refused us. Pure, so
+   the failure-surfacing behaviour is unit-testable without the engine. */
+export function checkOutcome(res, err) {
+  const plain = (v) => {
+    if (v == null) return 'The service did not answer.';
+    if (typeof v === 'string') return v.trim() || 'The service did not answer.';
+    if (typeof v === 'object') {
+      const field = v.error ?? v.message;
+      if (field != null && String(field).trim()) return String(field).trim();
+    }
+    return 'The service did not answer.';
+  };
+  let reason = err != null ? plain(err) : null;
+  if (!reason && res && typeof res === 'object') {
+    const failed = res.ok === false || res.online === false
+      || (typeof res.error === 'string' && res.error.trim() !== '');
+    if (failed) reason = res.error ? plain(res.error) : plain(res);
+  }
+  return { ready: !reason, reason: reason || '' };
+}
+
+/* ── built-in rows: the engine's model manifest, not invented flags ─────────
+   The "Built-in models (This PC)" card used to seed each row from a hardcoded
+   `on`/`dl` flag, so a model that was actually installed and active still
+   showed "not downloaded" with a Download button. These rows now read the
+   app's real model manifest/status list (ModelInfo[]: name, file, ready) plus
+   the real `use_decider` setting. `momentsStatus` stays the one source of truth
+   for who is serving the moments job. */
+const BUILTIN_MATCH = {
+  'qwen3-vl:8b': ['vision', 'qwen'],
+  'pplx-decider-local': ['decision', 'decider'],
+};
+export function builtinRowStates(models = [], useDecider = false) {
+  const rows = Array.isArray(models) ? models : [];
+  const readyFor = (needles) => {
+    const hit = rows.find((m) => {
+      const name = String((m && m.name) || '').toLowerCase();
+      const file = String((m && m.file) || '').toLowerCase();
+      return needles.some((n) => name.includes(n) || file.includes(n));
+    });
+    return Boolean(hit && hit.ready);
+  };
+  const vision = readyFor(BUILTIN_MATCH['qwen3-vl:8b']);
+  const decision = readyFor(BUILTIN_MATCH['pplx-decider-local']);
+  return {
+    'qwen3-vl:8b': { downloaded: vision, on: vision },
+    'pplx-decider-local': { downloaded: decision, on: decision && Boolean(useDecider) },
+  };
 }
 

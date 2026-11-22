@@ -56,17 +56,34 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   const [modelLists, setModelLists] = useState<Record<string, CardModels>>({});
   const [addMenuOpen, setAddMenuOpen] = useState(() => dev().get('aiadd') === '1');
   const [openPopup, setOpenPopup] = useState<string | null>(() => dev().get('aipopup') || null);
-  const [testing, setTesting] = useState<Record<string, 'testing' | 'ok'>>({});
+  const [testing, setTesting] = useState<Record<string, 'testing' | 'ok' | 'fail'>>({});
+  const [testErrors, setTestErrors] = useState<Record<string, string>>({});
   const [tested, setTested] = useState<Record<string, boolean>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  // Which built-in model is installing right now (null = none): a real running
+  // state that ends only when the manifest shows the model appeared.
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
+  // One ref for every pending timer so unmount never leaves one behind.
+  const timeoutsRef = useRef<Set<number>>(new Set());
+  const aliveRef = useRef(true);
   const [opts, setOpts] = useState<Record<string, string>>({});
   const [builtinEnabled, setBuiltinEnabled] = useState(true);
-  const [builtinRows, setBuiltinRows] = useState<Record<string, { on: boolean; downloaded: boolean }>>(() => {
-    const init: Record<string, { on: boolean; downloaded: boolean }> = {};
-    for (const m of A.BUILTIN.models) init[m.id] = { on: Boolean(m.on), downloaded: !m.dl };
-    return init;
-  });
+  // Built-in rows read the engine's model manifest + the real use_decider
+  // setting, never hardcoded flags. Only an explicit switch toggle is local.
+  const [switchOverrides, setSwitchOverrides] = useState<Record<string, boolean>>({});
+  const derivedRows = useMemo(
+    () => A.builtinRowStates(models, Boolean(draft.use_decider)) as Record<string, { on: boolean; downloaded: boolean }>,
+    [models, draft.use_decider],
+  );
+  const builtinRows = useMemo<Record<string, { on: boolean; downloaded: boolean }>>(() => {
+    const out: Record<string, { on: boolean; downloaded: boolean }> = {};
+    for (const id of Object.keys(derivedRows)) {
+      const d = derivedRows[id];
+      out[id] = { downloaded: d.downloaded, on: d.downloaded ? (switchOverrides[id] ?? d.on) : false };
+    }
+    return out;
+  }, [derivedRows, switchOverrides]);
   const [helpersOn, setHelpersOn] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
     for (const h of A.HELPERS) {
@@ -193,6 +210,31 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, []);
 
+  const stopPolling = () => {
+    if (pollRef.current != null) { window.clearInterval(pollRef.current); pollRef.current = null; }
+  };
+  /* Clear every pending test/install timer and the install poll on unmount. */
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      stopPolling();
+      for (const t of timeoutsRef.current) window.clearTimeout(t);
+      timeoutsRef.current.clear();
+    };
+  }, []);
+  /* A Download is finished only when the real manifest shows the model: the
+     derived built-in row then flips from its Download button to its switch. */
+  useEffect(() => {
+    if (!downloading) return;
+    const d = A.builtinRowStates(models, Boolean(draft.use_decider))[downloading] as { downloaded: boolean } | undefined;
+    if (!d || !d.downloaded) return;
+    stopPolling();
+    setDownloading(null);
+    toast('The built-in model is ready on this PC.', { tone: 'ok' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [models, downloading, draft.use_decider]);
+
   /* ---------- settings write-through ---------- */
   const applyPatch = (p: { vlm_services: unknown[]; moments_services: unknown[] }) => {
     onChange('vlm_services', p.vlm_services as unknown as SettingValue);
@@ -212,45 +254,102 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     setAddMenuOpen(false);
   };
 
-  /* ---------- Test buttons (existing check commands) ---------- */
-  const testLabel = (key: string) => testing[key] === 'testing' ? 'Testing…' : testing[key] === 'ok' ? 'Ready ✓' : 'Test';
-  const test = (key: string, promise: Promise<unknown>) => {
-    if (testing[key]) return;
-    setTesting((t) => ({ ...t, [key]: 'testing' }));
-    void Promise.resolve(promise).catch(() => null).then(() => {
-      setTesting((t) => ({ ...t, [key]: 'ok' }));
+  /* ---------- Test buttons: the REAL engine check commands ---------- */
+  const testLabel = (key: string) => testing[key] === 'testing' ? 'Testing…'
+    : testing[key] === 'ok' ? 'Ready ✓'
+      : testing[key] === 'fail' ? 'Retry' : 'Test';
+  const finishTest = (key: string, res: unknown, err?: unknown) => {
+    if (!aliveRef.current) return;
+    const outcome = A.checkOutcome(res, err) as { ready: boolean; reason: string };
+    setTesting((t) => ({ ...t, [key]: outcome.ready ? 'ok' : 'fail' }));
+    if (outcome.ready) {
+      setTestErrors((s) => { const n = { ...s }; delete n[key]; return n; });
       setTested((s) => ({ ...s, [key]: true }));
       setRefreshNonce((n) => n + 1);
-      window.setTimeout(() => setTesting((t) => { const n = { ...t }; delete n[key]; return n; }), 2400);
-    });
+    } else {
+      // A bad key / offline host is never "tested": name the engine's plain reason.
+      setTested((s) => { const n = { ...s }; delete n[key]; return n; });
+      setTestErrors((s) => ({ ...s, [key]: outcome.reason }));
+      toast(`Not ready — ${outcome.reason}`, { tone: 'error' });
+    }
+    const t = window.setTimeout(() => {
+      timeoutsRef.current.delete(t);
+      if (aliveRef.current) setTesting((prev) => { const n = { ...prev }; delete n[key]; return n; });
+    }, 3200);
+    timeoutsRef.current.add(t);
+  };
+  const test = (key: string, promise: Promise<unknown>) => {
+    if (testing[key] === 'testing') return;
+    setTesting((t) => ({ ...t, [key]: 'testing' }));
+    setTestErrors((s) => { const n = { ...s }; delete n[key]; return n; });
+    void Promise.resolve(promise).then(
+      (res) => finishTest(key, res),
+      (err) => finishTest(key, undefined, err),
+    );
   };
   const testCard = (c: Card) => {
-    const promise = c.type === 'ollama' ? engine.ollamaModels(c.host)
+    const promise: Promise<unknown> = c.type === 'ollama' ? engine.ollamaModels(c.host)
       : c.type === 'openrouter' ? engine.openRouterCheck(c.apiKey)
         : c.type === 'opencode' ? engine.openCodeCheck(c.apiKey)
-          : Promise.resolve(null);
+          : engine.providerModels(c.type, '', c.apiKey);
     test(c.key, promise);
   };
+  // Dev QA only: `&aitest=1` runs each card's real check once on open, so a
+  // failing-key state can be screenshotted without an interactive click.
+  const autoTested = useRef(false);
+  useEffect(() => {
+    if (autoTested.current || !dev().get('aitest') || !cards.length) return;
+    autoTested.current = true;
+    for (const c of cards) testCard(c);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards]);
 
   /* ---------- built-in model rows: download -> real install commands ---------- */
   const downloadBuiltin = (id: string) => {
     const row = A.BUILTIN.models.find((m: { id: string }) => m.id === id);
-    if (!row || builtinRows[id].downloaded || downloadProgress !== null) return;
-    setDownloadProgress(0);
+    if (!row || builtinRows[id]?.downloaded || downloading) return;
+    setDownloading(id);
     const cmd = row.role === 'decisions' ? engine.installDecider() : engine.installModels();
-    void Promise.resolve(cmd).catch(() => undefined);
-    let p = 0;
-    const timer = window.setInterval(() => {
-      p += 0.2;
-      if (p >= 1) {
-        window.clearInterval(timer);
-        setDownloadProgress(null);
-        setBuiltinRows((s) => ({ ...s, [id]: { on: true, downloaded: true } }));
-        toast('The built-in models are ready on this PC.', { tone: 'ok' });
+    void Promise.resolve(cmd).then(
+      () => {
+        if (!aliveRef.current) return;
+        let tries = 0;
+        // Poll the real models status (onModelsChanged -> health -> `models`)
+        // until the model appears. No timer pretends an install finished.
+        pollRef.current = window.setInterval(() => {
+          tries += 1;
+          if (!aliveRef.current || tries > 30) {
+            stopPolling();
+            if (aliveRef.current) {
+              setDownloading(null);
+              toast('The model has not appeared yet. Check its status and try again.', { tone: 'error' });
+            }
+            return;
+          }
+          onModelsChanged?.();
+        }, 1200);
         onModelsChanged?.();
-      } else setDownloadProgress(p);
-    }, 160);
+      },
+      (err) => {
+        stopPolling();
+        if (aliveRef.current) {
+          setDownloading(null);
+          const reason = (A.checkOutcome(null, err) as { reason: string }).reason;
+          toast(`Install failed — ${reason}`, { tone: 'error' });
+        }
+      },
+    );
   };
+  // Dev QA only: `&aidownload=1` starts one real built-in install on open, so
+  // the running -> installed transition can be screenshotted.
+  const autoDownloaded = useRef(false);
+  useEffect(() => {
+    if (autoDownloaded.current || !dev().get('aidownload')) return;
+    autoDownloaded.current = true;
+    const first = A.BUILTIN.models.find((m: { id: string }) => !builtinRows[m.id]?.downloaded);
+    if (first) downloadBuiltin(first.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ---------- render helpers ---------- */
   const optVal = (key: string, def: string) => opts[key] ?? def;
@@ -310,7 +409,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     let control;
     if (o.freeText) {
       control = <input className="free-text" type="text" placeholder="Type the model id" aria-label={`${label} model`}
-        value={sel === 'none' ? '' : sel} onChange={(e) => setSel(e.target.value)} />;
+        value={sel === 'none' ? '' : sel} onChange={(e) => setSel(e.target.value.trim() ? e.target.value : 'none')} />;
     } else if (o.disabled) {
       control = <select disabled aria-label={`${label} model`}><option>{o.placeholder}</option></select>;
     } else {
@@ -321,7 +420,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
         </select>
       );
     }
-    const cur = sel !== 'none' ? sel : null;
+    const cur = A.isPicked(sel) ? sel : null;
     return (
       <div className="pick">
         <div className="pick-line"><label>{label}</label>{control}</div>
@@ -333,13 +432,14 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
 
   const builtinRow = (m: { id: string; role: string; dl?: string; variants?: string[] }) => {
     const st = builtinRows[m.id] || { on: false, downloaded: false };
-    const missing = Boolean(m.dl) && !st.downloaded;
-    const meta = missing ? `${m.dl} · not downloaded` : 'on this PC';
+    const missing = !st.downloaded;
+    const meta = missing ? (m.dl ? `${m.dl} · not downloaded` : 'not downloaded') : 'on this PC';
+    const running = downloading === m.id;
     const ctl = missing
-      ? <button className="btn small primary mo-dl" disabled={downloadProgress !== null} onClick={() => downloadBuiltin(m.id)}>
-          {downloadProgress !== null ? 'Downloading…' : 'Download'}
+      ? <button className={`btn small primary mo-dl${running ? ' running' : ''}`} disabled={downloading !== null} onClick={() => downloadBuiltin(m.id)}>
+          {running ? <><span className="mo-spin" aria-hidden="true" />Installing…</> : 'Download'}
         </button>
-      : <Switch mini on={st.on} ariaLabel={m.id} onChange={(v) => setBuiltinRows((s) => ({ ...s, [m.id]: { ...s[m.id], on: v } }))} />;
+      : <Switch mini on={st.on} ariaLabel={m.id} onChange={(v) => setSwitchOverrides((s) => ({ ...s, [m.id]: v }))} />;
     let variant = null;
     if (st.on && st.downloaded && m.variants && m.variants.length) {
       const key = `builtin:${m.id}:variant`;
@@ -386,8 +486,8 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     const def = A.SERVICE_TYPES[card.type];
     const title = card.type === 'ollama' ? `${def.name} — ${hostShort(card.host)}` : def.name;
     const picked: { id: string; local: boolean }[] = [];
-    if (card.visionSel && card.visionSel !== 'none') picked.push({ id: card.visionSel, local: card.type === 'ollama' });
-    if (def.decisions && card.decisionSel && card.decisionSel !== 'none') picked.push({ id: card.decisionSel, local: false });
+    if (A.isPicked(card.visionSel)) picked.push({ id: card.visionSel, local: card.type === 'ollama' });
+    if (def.decisions && A.isPicked(card.decisionSel)) picked.push({ id: card.decisionSel, local: false });
     const cost = A.costLine(picked) as string;
     // Per-service thinking lives on the entry as `reasoning` (default false);
     // the backend applies it when building the VLM request (engine seam TODO).
@@ -406,6 +506,9 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
           : <input className="key mono" type="text" placeholder="http://host:11434" value={card.host} spellCheck={false}
               aria-label="Ollama host address" onChange={(e) => patchCard(card.key, { host: e.target.value })} />}
         <p className="cost-line" title="Estimate at about 900 tokens in and 250 out per photo, summed over the picked models.">{cost}</p>
+        {testErrors[card.key]
+          ? <p className="test-reason" role="status">Not ready — {testErrors[card.key]}</p>
+          : null}
         <div className="mo-scroll">
           <h3 className="mo-group">Reads photos</h3>
           {pickRow(card, 'vision', 'Vision')}
