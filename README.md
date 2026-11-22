@@ -1,8 +1,6 @@
 # Conrod
 
-Fast vehicle keywording and culling for motorsport and automotive photography.
-
-Conrod scans RAW and JPEG folders to detect vehicles and people, measure sharpness, group bursts, suggest keepers, read race numbers and plates, and identify make, model, and colour. It writes tags to XMP sidecars for Lightroom, Photo Mechanic, Bridge, and Capture One.
+Conrod scans RAW and JPEG folders to find vehicles and people, cull frames, and write keywords to XMP sidecars.
 
 Conrod is a native Windows app built with Rust, Tauri, and React. (The legacy Python release lives on the [`legacy-python`](../tree/legacy-python) branch).
 
@@ -26,7 +24,7 @@ Download the latest release from [Releases](../releases):
 
 ## Key Features
 
-- **Non-destructive**: RAW files are never modified; metadata is written to `.xmp` sidecars. JPEGs update in place.
+- **Non-destructive**: RAW files are never modified; metadata is written to `.xmp` sidecars for Lightroom, Photo Mechanic, Bridge, and Capture One. JPEGs update in place.
 - **Scan queue**: start several albums; one scans at a time and the rest wait their turn. Pull a waiting album out with **Unqueue**, or pause, resume, and stop the running one.
 - **Sharpness scoring**: subject-level focus scoring distinguishes a soft frame from a sharp car against a streaked pan. Composition, moments, and burst suggestions never demote a sharp frame.
 - **AF-aware subject**: the car under the camera's autofocus area is the main subject; other cars in the frame are background and are dimmed in Review. Without usable AF data, the sharpest car is the subject.
@@ -36,6 +34,8 @@ Download the latest release from [Releases](../releases):
 - **Folder Watch**: automatically processes new frames as they copy from memory cards.
 - **Lightroom**: stars, picks, and colour labels written to your files; an optional plug-in applies them in Lightroom. Conrod can read flags from the plug-in or a `.lrcat` catalog.
 - **Formats**: tested on Canon `.cr3` and `.cr2`, alongside `.jpg` / `.jpeg`.
+
+For step-by-step guides, see [Getting started](docs/wiki/Getting-started.md), [How culling works](docs/wiki/How-culling-works.md), [Identify](docs/wiki/Identify.md), and [Lightroom integration](docs/wiki/Lightroom-integration.md).
 
 ## Screens
 
@@ -55,15 +55,20 @@ Download the latest release from [Releases](../releases):
 
 | Task | Model | Purpose |
 |---|---|---|
-| Vehicle Detection | YOLO11s (DirectML / GPU) | Fast bounding boxes (~17ms/frame) |
-| Plate Detection | open-image-models | License plates & number roundels |
-| Plate OCR | fast-plate-ocr | Dedicated plate character recognition |
-| Livery & Numbers | PP-OCRv4 | Competition numbers and sponsor decals; fills a number only when the vision model missed one |
-| Burst Grouping | DINOv2 (quantized) | Visual similarity clustering |
+| Vehicles | YOLO11s (DirectML / GPU) | Fast bounding boxes (~17ms/frame) |
+| Plates | open-image-models | License plates & number roundels |
+| Plate text | fast-plate-ocr | Dedicated plate character recognition |
+| Livery & numbers | PP-OCRv4 | Competition numbers and sponsor decals; fills a number only when the vision model missed one |
+| Burst groups | DINOv2 (quantized) | Visual similarity clustering |
 | Moments | Vision model or decision model | Tyre smoke, a kiss, a jump apex; same sharpness-band tie-break either way |
-| Make, Model, Livery | Qwen3-VL 8B (Ollama), or a cloud vision model (OpenCode credits / OpenRouter) | Vehicle visual identification |
+| Make/model/livery | Qwen3-VL 8B (Ollama), or a cloud vision model (OpenCode credits / OpenRouter) | Vehicle visual identification |
 
-Benchmarked 22 Nov 2026 on 3 Challenge Bathurst frames.
+Best free: **qwen3-vl:8b** on your own PC.  
+Best paid value: **gpt-6-luna** at about **$0.42 per 1,000 cars**.  
+[See all 10 models](#benchmark-details).
+
+<details id="benchmark-details">
+<summary>Benchmark details (22 Nov 2026, 3 frames, 10 models)</summary>
 
 | Model | What it is | Where it runs | Cars right | Numbers right | Sponsors found | Speed | Cost per 1,000 cars | Verdict |
 |---|---|---|---|---|---|---|---|---|
@@ -83,6 +88,7 @@ Benchmarked 22 Nov 2026 on 3 Challenge Bathurst frames.
 Cars right = make and model both correct. Numbers right = door number exact.
 Sponsors found = out of 16 across the three cars. Local rows use the reader's own GPU;
 cloud rows are OpenCode pay-as-you-go credits at list price, one image per car.
+</details>
 
 ## Development & Build
 
