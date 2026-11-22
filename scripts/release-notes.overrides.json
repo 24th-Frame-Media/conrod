@@ -821,6 +821,14 @@
     "84a91fa": {
       "section": "Improved",
       "text": "Model thinking is off by default when reading cars, so answers come back fast; a switch in Settings turns it back on."
+    },
+    "a05d646": {
+      "section": "New",
+      "text": "Each AI service in Settings has its own thinking switch, so one service can reason before it answers while another replies straight away."
+    },
+    "4db38d5": {
+      "section": "Improved",
+      "text": "A cloud moments service now lists its decision models to pick from instead of asking you to type one, and every cloud model shows its price so you can estimate what a shoot costs."
     }
   }
 }

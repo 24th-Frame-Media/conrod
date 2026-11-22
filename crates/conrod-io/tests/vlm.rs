@@ -449,8 +449,15 @@ fn ollama_carries_the_think_flag_on_the_wire() {
 
     let (base, server) = capture_once();
     let settings = Settings {
-        vlm_host: base,
-        vlm_reasoning: true,
+        vlm_host: base.clone(),
+        vlm_services: vec![conrod_core::settings::VlmService {
+            id: "loud".into(),
+            provider: "ollama".into(),
+            model: "qwen2.5vl:7b".into(),
+            host: base,
+            reasoning: true,
+            ..conrod_core::settings::VlmService::default()
+        }],
         ..Settings::default()
     };
     client
@@ -464,7 +471,10 @@ fn ollama_carries_the_think_flag_on_the_wire() {
         .expect("the mock answers");
     let body = server.join().unwrap();
     let sent: Value = serde_json::from_str(body.trim()).expect("the wire body is JSON");
-    assert_eq!(sent["think"], true);
+    assert_eq!(
+        sent["think"], true,
+        "the service's own flag beats the global default"
+    );
 }
 
 #[test]

@@ -554,6 +554,9 @@ fn for_service(settings: &Settings, service: &conrod_core::settings::VlmService)
         vlm_extra_hosts: String::new(),
         vlm_api_key: service.api_key.clone(),
         anthropic_key_kind: service.key_kind.clone(),
+        // The service's own thinking switch, not the global one: the settings
+        // card chooses it per entry as well as for the list.
+        vlm_reasoning: service.reasoning,
         vlm_services: Vec::new(),
         ..settings.clone()
     }
@@ -580,8 +583,9 @@ pub struct ProviderRequest {
 /// KV cache alone is several GB and spills qwen2.5vl:7b off the GPU.
 pub const OLLAMA_NUM_CTX: i64 = 8192;
 
-/// Add a provider's own switch for model thinking. `on` is the user's
-/// `vlm_reasoning` setting. Only parameters the provider documents are sent:
+/// Add a provider's own switch for model thinking. `on` is the vision service
+/// entry's `reasoning` flag (`vlm_reasoning` before the per-service field
+/// existed). Only parameters the provider documents are sent:
 ///
 /// - Ollama takes `"think"` (boolean) on `/api/generate` and `/api/chat`:
 ///   <https://docs.ollama.com/api>.
@@ -861,18 +865,87 @@ fn is_local_host(url: &str) -> bool {
     }
 }
 
-/// The models a provider key can call, as `(id, name)` pairs. Uses the
-/// provider's own list endpoint; anything that is not an OpenAI-shaped
-/// `{"data":[{"id":…}]}` (or `{"models":[…]}`) is reported as an error rather
-/// than guessed at.
+/// The models a provider key can call, with the provider's published price
+/// where it has one. Uses the provider's own list endpoint; anything that is
+/// not an OpenAI-shaped `{"data":[{"id":…}]}` (or `{"models":[…]}`) is reported
+/// as an error rather than guessed at.
 pub fn list_models(
     provider: &str,
     host: &str,
     api_key: &str,
-) -> Result<Vec<(String, String)>, String> {
+) -> Result<Vec<ProviderModel>, String> {
     let provider = provider.to_lowercase();
     let (_, list) = fetch_model_items(&provider, host, api_key)?;
-    let mut models: Vec<(String, String)> = list
+    Ok(parse_provider_models(&list))
+}
+
+/// One model a provider lists, and its price when the catalogue publishes one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderModel {
+    pub id: String,
+    pub name: String,
+    /// Omitted when the catalogue publishes no price for this model.
+    pub pricing: Option<ModelPricing>,
+}
+
+impl ProviderModel {
+    /// The wire shape the settings card reads: `id`, `name`, and a `pricing`
+    /// object only when the provider published a price.
+    pub fn to_json(&self) -> Value {
+        let mut object = serde_json::Map::new();
+        object.insert("id".into(), Value::String(self.id.clone()));
+        object.insert("name".into(), Value::String(self.name.clone()));
+        if let Some(pricing) = self.pricing {
+            object.insert(
+                "pricing".into(),
+                json!({"prompt": pricing.prompt, "completion": pricing.completion}),
+            );
+        }
+        Value::Object(object)
+    }
+}
+
+/// A model's price in US dollars per million tokens: the settings card's
+/// "est. per photo / per 1,000" is a token count times these.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModelPricing {
+    pub prompt: f64,
+    pub completion: f64,
+}
+
+/// A catalogue's per-token price as dollars per million. OpenAI-shaped
+/// catalogues (OpenRouter, OpenCode) publish `pricing.prompt` and
+/// `pricing.completion` as USD per token, as a number or a numeric string; a
+/// catalogue that already says per-million is taken as written.
+fn price_per_million(item: &Value, key: &str) -> Option<f64> {
+    fn number(value: &Value) -> Option<f64> {
+        value
+            .as_f64()
+            .or_else(|| value.as_str().and_then(|text| text.trim().parse().ok()))
+    }
+    if let Some(per_m) = item
+        .pointer(&format!("/pricing/{key}_per_m"))
+        .or_else(|| item.pointer(&format!("/pricing/{key}_per_million")))
+        .and_then(number)
+    {
+        return (per_m.is_finite() && per_m >= 0.0).then_some(per_m);
+    }
+    let per_token = item.pointer(&format!("/pricing/{key}")).and_then(number)?;
+    (per_token.is_finite() && per_token >= 0.0).then_some(per_token * 1_000_000.0)
+}
+
+/// One list entry's price, or `None` when it publishes no usable pair.
+fn model_pricing(item: &Value) -> Option<ModelPricing> {
+    Some(ModelPricing {
+        prompt: price_per_million(item, "prompt")?,
+        completion: price_per_million(item, "completion")?,
+    })
+}
+
+/// The catalogue's entries as models, sorted by id, each with its price where
+/// the provider publishes one.
+pub fn parse_provider_models(list: &[Value]) -> Vec<ProviderModel> {
+    let mut models: Vec<ProviderModel> = list
         .iter()
         .filter_map(|item| {
             let id = item
@@ -880,12 +953,16 @@ pub fn list_models(
                 .or_else(|| item.get("name"))
                 .and_then(Value::as_str)?;
             let name = item.get("name").and_then(Value::as_str).unwrap_or(id);
-            Some((id.to_string(), name.to_string()))
+            Some(ProviderModel {
+                id: id.to_string(),
+                name: name.to_string(),
+                pricing: model_pricing(item),
+            })
         })
         .collect();
-    models.sort();
-    models.dedup();
-    Ok(models)
+    models.sort_by(|a, b| a.id.cmp(&b.id));
+    models.dedup_by(|a, b| a.id == b.id);
+    models
 }
 
 /// The raw entries of a provider's model list, and the URL they came from.
@@ -1024,12 +1101,42 @@ fn decision_entry(item: &Value) -> Option<DecisionModel> {
     decision_model(item, image)
 }
 
+/// Whether an OpenRouter catalogue entry's id or name names a decision model.
+/// Its endpoint publishes no decision type, so the marker in the name is the
+/// only signal: `decision`, `decider`, or the JEV family's `jev`.
+fn names_a_decider(item: &Value) -> bool {
+    let marker = format!(
+        "{} {}",
+        item.get("id").and_then(Value::as_str).unwrap_or(""),
+        item.get("name").and_then(Value::as_str).unwrap_or("")
+    )
+    .to_ascii_lowercase();
+    ["decision", "decider", "jev"]
+        .iter()
+        .any(|part| marker.contains(part))
+}
+
+/// One OpenRouter entry as a moment model, or `None` when its name carries no
+/// decision marker or its metadata says it takes only text. An entry that says
+/// nothing about input is offered as unverified: the Test button is the truth.
+fn openrouter_decision_entry(item: &Value) -> Option<DecisionModel> {
+    if !names_a_decider(item) {
+        return None;
+    }
+    let image = image_capability(item);
+    if image == Some(false) {
+        return None;
+    }
+    decision_model(item, image)
+}
+
 /// Parse a model-list reply for the moment lane. OpenCode marks each entry's
 /// type and input modalities, so only its `decision` models that take photos
-/// are offered. OpenRouter has no decision marker on its models (they describe
-/// chat models), so it keeps the free-text field and the known-good default;
-/// when the configured model is on its list, its modality is reported, and a
-/// text-only model is withheld instead of offered as a broken default.
+/// are offered. OpenRouter's catalogue describes chat models with no decision
+/// type, so its decision-capable entries are the ones whose id or name carries
+/// the marker such a model uses (`decision`, `decider`, `jev`); only the
+/// photo-capable ones are offered. When nothing matches, its free-text field
+/// and the known-good default stay, so the screen never dead-ends.
 pub fn decision_models_reply(
     provider: &str,
     body: &Value,
@@ -1037,27 +1144,31 @@ pub fn decision_models_reply(
 ) -> Result<DecisionModels, String> {
     match provider.to_lowercase().as_str() {
         "openrouter" => {
+            let list = model_items(body);
+            let models: Vec<DecisionModel> = list
+                .map(|items| items.iter().filter_map(openrouter_decision_entry).collect())
+                .unwrap_or_default();
             let configured = configured.trim();
-            let mut models = Vec::new();
+            // A configured model the catalogue lists text-only is never
+            // offered, and the screen is told why it has no listed default.
             let mut note = None;
             if !configured.is_empty() {
-                if let Some(item) = model_items(body).and_then(|list| {
-                    list.iter()
+                if let Some(item) = list.and_then(|items| {
+                    items
+                        .iter()
                         .find(|item| item.get("id").and_then(Value::as_str) == Some(configured))
                 }) {
-                    match image_capability(item) {
-                        Some(false) => {
-                            note = Some(
-                                "No photo-capable decision model available for this service".into(),
-                            );
-                        }
-                        image => models.extend(decision_model(item, image)),
+                    if image_capability(item) == Some(false) {
+                        note = Some(
+                            "No photo-capable decision model available for this service".into(),
+                        );
                     }
                 }
             }
+            let free_text = models.is_empty();
             Ok(DecisionModels {
                 models,
-                free_text: true,
+                free_text,
                 note,
             })
         }
@@ -1085,11 +1196,9 @@ pub fn decision_models(
 ) -> Result<DecisionModels, String> {
     let provider = provider.to_lowercase();
     match provider.as_str() {
-        // No decision marker: free text. When a model is configured, check
-        // its entry so a text-only one is withheld.
-        "openrouter" if configured.trim().is_empty() => {
-            decision_models_reply(&provider, &Value::Null, configured)
-        }
+        // OpenRouter's catalogue has no decision type, so the live list is
+        // matched by name; the free-text field is the fallback when nothing
+        // matches, and the configured model's modality is checked for it.
         "openrouter" => {
             let (_, list) = fetch_model_items(&provider, host, api_key)?;
             let body = json!({ "data": list });
@@ -2931,25 +3040,74 @@ mod tests {
     }
 
     #[test]
-    fn openrouter_has_no_decision_marker_so_the_model_field_stays_free_text() {
-        // Its entries describe chat models and expose input modalities but no
-        // decision type: no enumeration, and the known-good default stays in
-        // the free-text field instead of being presented as a listed model.
+    fn openrouter_enumerates_decision_named_models_that_take_photos() {
+        // Its catalogue has no decision type, so the name is the marker:
+        // `decision`, `decider`, or JEV's `jev`.
         let body = json!({"data": [
+            {"id": "typesafe/jev-router", "name": "JEV Router",
+             "architecture": {"input_modalities": ["text", "image"]}},
+            {"id": "acme/decision-lite", "name": "Decision Lite",
+             "architecture": {"input_modalities": ["image", "text"]}},
+            {"id": "mystery/jev-mini", "name": "JEV Mini"},
             {"id": "perplexity/pplx-decider-flash-v1.3:free", "name": "PPLX Decider",
              "architecture": {"input_modalities": ["text"]}},
             {"id": "google/gemini-4-neon",
              "architecture": {"input_modalities": ["text", "image"]}}
         ]});
-        // No configured model: free text, nothing checked yet.
-        let bare = decision_models_reply("openrouter", &body, "").unwrap();
-        assert!(bare.free_text, "keep the free-text field");
-        assert!(bare.models.is_empty());
-        assert!(bare.note.is_none());
-        // The known default is listed text-only: withhold it, with a reason.
+        let list = decision_models_reply("openrouter", &body, "").unwrap();
+        assert!(!list.free_text, "a match means the list is offered");
+        let ids: Vec<&str> = list.models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "typesafe/jev-router",
+                "acme/decision-lite",
+                "mystery/jev-mini"
+            ],
+            "decision-named models only, in the catalogue's order; a text-only \
+             decider and a plain vision model are not offered"
+        );
+        let mystery = list
+            .models
+            .iter()
+            .find(|m| m.id == "mystery/jev-mini")
+            .unwrap();
+        assert_eq!(mystery.image, None, "no modality metadata");
+        assert!(mystery.unverified, "offered, but the Test button decides");
+        assert!(list.models.iter().all(|m| m.id != "google/gemini-4-neon"));
+        assert_eq!(
+            list.models[0].image,
+            Some(true),
+            "an image-capable entry is verified"
+        );
+    }
+
+    #[test]
+    fn openrouter_with_no_decision_named_model_keeps_the_free_text_fallback() {
+        // Nothing matches: the free-text field stays, so the screen never
+        // dead-ends on an empty list.
+        let plain = json!({"data": [
+            {"id": "google/gemini-4-neon",
+             "architecture": {"input_modalities": ["text", "image"]}}
+        ]});
+        let list = decision_models_reply("openrouter", &plain, "").unwrap();
+        assert!(list.free_text);
+        assert!(list.models.is_empty());
+
+        // An empty catalogue is the same fallback, not an error.
+        let empty = decision_models_reply("openrouter", &json!({"data": []}), "").unwrap();
+        assert!(empty.free_text);
+        assert!(empty.models.is_empty());
+
+        // A configured model the catalogue calls text-only is withheld, with
+        // a plain-words reason.
+        let text_only = json!({"data": [
+            {"id": "perplexity/pplx-decider-flash-v1.3:free",
+             "architecture": {"input_modalities": ["text"]}}
+        ]});
         let pplx = decision_models_reply(
             "openrouter",
-            &body,
+            &text_only,
             "perplexity/pplx-decider-flash-v1.3:free",
         )
         .unwrap();
@@ -2963,14 +3121,65 @@ mod tests {
             .as_deref()
             .unwrap_or("")
             .contains("No photo-capable decision model"));
-        // A configured model whose metadata lists images is surfaced as verified.
-        let image = decision_models_reply("openrouter", &body, "google/gemini-4-neon").unwrap();
-        assert!(image.free_text);
-        assert_eq!(image.models.len(), 1);
-        assert_eq!(image.models[0].image, Some(true));
-        assert!(!image.models[0].unverified);
+
         // A provider without any decision list says so rather than guessing.
-        assert!(decision_models_reply("ollama", &body, "").is_err());
+        assert!(decision_models_reply("ollama", &plain, "").is_err());
+    }
+
+    #[test]
+    fn provider_models_carry_published_prices_per_million() {
+        // OpenRouter publishes pricing.prompt/completion as USD per token;
+        // the card wants dollars per million. Absent stays absent.
+        let body = json!({"data": [
+            {"id": "b/model", "name": "B Model",
+             "pricing": {"prompt": "0.000003", "completion": "0.000015"}},
+            {"id": "a/free", "pricing": {"prompt": "0", "completion": 0}},
+            {"id": "c/unknown", "name": "Unknown Price"}
+        ]});
+        let models = parse_provider_models(body["data"].as_array().unwrap());
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["a/free", "b/model", "c/unknown"]);
+        assert_eq!(
+            models[1].pricing,
+            Some(ModelPricing {
+                prompt: 3.0,
+                completion: 15.0
+            })
+        );
+        assert_eq!(models[1].name, "B Model");
+        assert_eq!(models[2].pricing, None, "no published price");
+        let absent = models[2].to_json();
+        assert!(
+            absent.get("pricing").is_none(),
+            "the field is omitted, never null: {absent}"
+        );
+    }
+
+    #[test]
+    fn the_thinking_switch_is_the_services_own_flag() {
+        let schema = json!({"type": "object"});
+        let service = |reasoning: bool| conrod_core::settings::VlmService {
+            id: "s".into(),
+            provider: "ollama".into(),
+            model: "qwen2.5vl:7b".into(),
+            host: "http://127.0.0.1:11434".into(),
+            reasoning,
+            ..conrod_core::settings::VlmService::default()
+        };
+        // The old one global switch: on. The entry still decides.
+        let settings = Settings {
+            vlm_reasoning: true,
+            ..Settings::default()
+        };
+        let quiet = for_service(&settings, &service(false));
+        let request = build_request(&quiet, "describe it", &[], &schema, 500).unwrap();
+        assert_eq!(
+            request.json["think"], false,
+            "the service's own flag overrides the global one"
+        );
+        let loud = for_service(&settings, &service(true));
+        let request = build_request(&loud, "describe it", &[], &schema, 500).unwrap();
+        assert_eq!(request.json["think"], true);
     }
 
     #[test]
