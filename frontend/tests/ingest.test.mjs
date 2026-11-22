@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  boxLabel, boxRole, boxStyle, etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase,
+  boxLabel, boxRole, boxStyle, comparingBursts, etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase,
   laneBadge, laneFrame, laneKey, laneNumber, laneState, laneText, leftLabel, mainVehicle, phaseRunning, phaseTone, phaseWord, roleLabel,
   selectLanes, stageOfStep, starsText, stepIndex, stripItems, verdictText, visionExpected, tagFits, tagWidth, afLabel, afTagSpot, failedWords,
   TAG_HEIGHT,
@@ -100,11 +100,38 @@ test('the phase follows the scan, then the identify run', () => {
 test('phase words and tones: paused wins while work is in flight', () => {
   assert.equal(phaseWord('scan'), 'Scanning');
   assert.equal(phaseWord('vision'), 'Identifying');
+  assert.equal(phaseWord('peaks'), 'Comparing bursts');
   assert.equal(phaseWord('scan', true), 'Paused');
   assert.equal(phaseWord('done', true), 'Complete');
   assert.equal(phaseTone('scan'), 'running');
+  assert.equal(phaseTone('peaks'), 'running');
   assert.equal(phaseTone('scan', true), 'stopped');
   assert.equal(phaseTone('error'), 'error');
+});
+
+test('past the cars, the run is its own phase: comparing bursts, with the count', () => {
+  const live = {
+    state: 'running', done: 5, total: 5, stage: 'done', workers: 0, active: [], recent: [],
+    phase: { name: 'peaks', done: 12, total: 214, state: 'running' },
+    decider: { state: 'ready', done: 5, busy: 0, current: null, recent: [] },
+  };
+  assert.equal(comparingBursts(live), true);
+  assert.equal(ingestPhase({ mode: 'identify', identify: live }), 'peaks');
+  assert.equal(ingestPhase({ scan: { state: 'done' }, identify: live }), 'peaks', 'a scan that finished its cars follows the identify run');
+  assert.equal(phaseRunning('peaks'), true);
+  // The chart names the work, and the DECIDER node does not tick until it ends.
+  const nodes = identifyNodes(live, 'qwen');
+  const decider = nodes.find((node) => node.id === 'decider');
+  assert.equal(decider.state, 'active');
+  assert.match(decider.meta, /Comparing bursts 12\/214/);
+  // The phase's terminal is the only tick, and the run's own state follows it.
+  const ended = { ...live, state: 'done', phase: { name: 'peaks', done: 214, total: 214, state: 'done' } };
+  assert.equal(comparingBursts(ended), false);
+  assert.equal(identifyNodes(ended, 'qwen').find((node) => node.id === 'decider').state, 'done');
+  assert.equal(ingestPhase({ mode: 'identify', identify: ended }), 'done');
+  // A run still on its cars has no phase of its own.
+  assert.equal(comparingBursts({ ...live, phase: null }), false);
+  assert.equal(comparingBursts(null), false);
 });
 
 test('the one bar: scan alone, or 70/30 with a vision phase', () => {

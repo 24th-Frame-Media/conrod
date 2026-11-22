@@ -49,6 +49,23 @@ export function flowNodes(live, model, stage) {
 /** States in which the decision model cannot run as things stand, for the node's dimmed look. */
 const DECIDER_OFF = new Set(['off', 'not_installed', 'installing', 'no_gpu', 'no_vram']);
 
+/** The words for each run-level phase after the cars. */
+const PHASE_WORDS = { moments: 'Judging moments', peaks: 'Comparing bursts' };
+
+/**
+ * A run-level phase as the header and the DECIDER node say it: "Comparing bursts 12/214".
+ * `phase` is the identify snapshot's `phase`: what the moments lane is doing once the
+ * cars are read, with its own count. Empty for no phase, or one this screen cannot name.
+ */
+export function phaseLabel(phase) {
+  if (!phase || typeof phase !== 'object') return '';
+  const words = PHASE_WORDS[String(phase.name ?? '')] ?? '';
+  if (!words) return '';
+  const done = Math.max(0, Math.round(Number(phase.done) || 0));
+  const total = Math.max(0, Math.round(Number(phase.total) || 0));
+  return total > 0 ? `${words} ${done}/${total}` : words;
+}
+
 /** A question, shortened for the node's subline; the whole text stays in the node's title. */
 function shortAsk(text) {
   const t = String(text ?? '').replace(/\s+/g, ' ').trim();
@@ -59,8 +76,12 @@ function shortAsk(text) {
  * The decision model's node for the identify flow: what it is asking (or last answered), how many
  * frames it has judged, and the seconds each frame takes. It runs beside the vision workers, so
  * it appears in the same row; when it is off, the node is dimmed and says why.
+ *
+ * `phase` is the identify snapshot's run-level phase. The tick is honest: the node checks off only
+ * once that phase reports finished. A lane that is merely between frames — or is still comparing
+ * bursts after the last car — stays active, and never pretends the moments work is over.
  */
-export function deciderStepNode(live) {
+export function deciderStepNode(live, phase = null) {
   if (!live || typeof live !== 'object') return null;
   const frames = Math.max(0, Math.round(Number(live.done) || 0));
   const busy = Number(live.busy) > 0 || live.current != null;
@@ -68,13 +89,17 @@ export function deciderStepNode(live) {
   const said = live.recent?.[0]?.says?.[0];
   const answer = said ? `${said.label} ${percent(said.p)}` : '';
   const off = DECIDER_OFF.has(live.state) && !busy && frames === 0;
-  const sub = off ? 'off' : shortAsk(ask) || (frames ? `${frames} frames` : 'waiting');
+  const run = phase && typeof phase === 'object' ? phase : null;
+  const work = phaseLabel(run);
+  const finished = run?.state === 'done';
+  const sub = off ? 'off' : shortAsk(ask) || work || (frames ? `${frames} frames` : 'waiting');
   const per = live.avg_ms ? `${msWords(live.avg_ms)}/frame` : '';
-  const meta = off ? '' : [frames ? `${frames} frames` : '', per, answer].filter(Boolean).join(' · ');
+  const meta = off ? '' : [frames ? `${frames} frames` : '', per, work, answer].filter(Boolean).join(' · ');
+  const state = finished ? 'done' : busy || run ? 'active' : frames > 0 ? 'done' : 'pending';
   return {
     id: 'decider', number: '', label: 'DECIDER', sub, meta,
     title: [sub, live.message, answer].filter(Boolean).join(' · '),
-    state: busy ? 'active' : frames > 0 ? 'done' : 'pending', off, filter: null,
+    state, off, filter: null,
   };
 }
 

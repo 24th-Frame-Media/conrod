@@ -462,6 +462,15 @@ export type IdentifyItem = {
 };
 
 /** The payload of the `identify-progress` event, a few times a second while identification runs. */
+/** The work after the cars, as the identify snapshot reports it (judging frames, then comparing bursts). */
+export type IdentifyPhase = {
+  name: 'moments' | 'peaks' | string;
+  done: number;
+  total: number;
+  /** `done` only when that work really ended: the DECIDER node's tick waits for it. */
+  state: 'running' | 'done' | 'stopped';
+};
+
 export type IdentifyLive = {
   job_id: number;
   state: 'running' | 'done' | 'stopped' | 'error';
@@ -471,6 +480,8 @@ export type IdentifyLive = {
   started_at?: number | null;
   elapsed_ms?: number | null;
   stage: IdentifyStage;
+  /** The work after the cars: judging moments, then comparing bursts. Null before it starts. */
+  phase?: IdentifyPhase | null;
   /** The vision model this run calls, for the VISION node; null when vision is off (see `vision_off_reason`). */
   model?: string | null;
   /** Why vision is off for this run: turned off for the album, off in Settings, no service switched on, or a shoot type with nothing to ask. Null when it is on. */

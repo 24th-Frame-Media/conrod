@@ -104,7 +104,8 @@ export function ingestNodes({ stages, identify = null, model = '', finished = fa
   const nodes = ids.map((id) => scanNode(id, byId.get(id), finished));
   if (visionExpected(ordered, identify)) nodes.push(visionNode(identify, byId.get('identify'), model, finished));
   // The decision model sits after VISION: it answers about the same frames, on the same GPU, when the shoot type asks it.
-  if (decider) nodes.push(deciderNode(decider));
+  // Its run-level phase (judging moments, then comparing bursts) is what its tick waits for.
+  if (decider) nodes.push(deciderNode(decider, identify?.phase));
   nodes.push({
     id: 'done', number: '', label: 'DONE', sub: finished ? 'ready to review' : 'review opens', meta: '', title: '',
     state: finished ? 'done' : 'pending', off: false, filter: null,
@@ -121,7 +122,8 @@ export function identifyNodes(live, model, decider = null) {
   const nodes = flowNodes(live, model).map((node) => ({
     id: node.label.toLowerCase(), number: node.number, label: node.label, sub: node.sub, meta: '', title: node.sub, state: node.state, off: node.off === true, filter: null,
   }));
-  const step = deciderStepNode(decider ?? live?.decider ?? null);
+  // The decision model's own run-level phase (judging moments, comparing bursts) is what its tick waits for.
+  const step = deciderStepNode(decider ?? live?.decider ?? null, live?.phase ?? null);
   if (step) nodes.splice(4, 0, step);
   return nodes.map((node, i) => ({ ...node, number: String(i + 1).padStart(2, '0') }));
 }
@@ -134,26 +136,36 @@ export function identifyNodes(live, model, decider = null) {
 export function ingestPhase({ mode = 'ingest', scan, identify = null, identifying = false } = {}) {
   if (mode === 'identify') {
     if (!identify) return identifying ? 'starting' : 'idle';
-    return identify.state === 'running' ? 'vision' : identify.state === 'done' ? 'done' : identify.state === 'stopped' ? 'stopped' : 'error';
+    return identify.state === 'running' ? (comparingBursts(identify) ? 'peaks' : 'vision') : identify.state === 'done' ? 'done' : identify.state === 'stopped' ? 'stopped' : 'error';
   }
   const state = scan?.state ?? 'idle';
   if (state === 'idle' || state === 'starting' || state === 'error' || state === 'stopped') return state;
   if (state === 'running') {
     if (scan.stage === 'group' || scan.stage === 'pick') return scan.stage;
-    return scan.stage === 'identify' || identify?.state === 'running' ? 'vision' : 'scan';
+    if (scan.stage === 'identify' || identify?.state === 'running') return comparingBursts(identify) ? 'peaks' : 'vision';
+    return 'scan';
   }
-  if (identify?.state === 'running' || identifying) return 'vision';
+  if (identify?.state === 'running' || identifying) return comparingBursts(identify) ? 'peaks' : 'vision';
   if (identify?.state === 'stopped') return 'stopped';
   if (identify?.state === 'error') return 'error';
   return 'done';
 }
 
-/** A phase that still has work in flight. */
-export function phaseRunning(phase) {
-  return phase === 'starting' || phase === 'scan' || phase === 'group' || phase === 'pick' || phase === 'vision';
+/**
+ * Is the identify run past the cars, comparing each burst for its peak? The header says so
+ * instead of holding a stale "Cars 5 / 5" while the moments lane still works.
+ */
+export function comparingBursts(identify) {
+  const phase = identify?.phase;
+  return Boolean(phase) && phase.name === 'peaks' && phase.state === 'running';
 }
 
-const PHASE_WORDS = { starting: 'Starting', scan: 'Scanning', group: 'Grouping', pick: 'Picking', vision: 'Identifying', done: 'Complete', stopped: 'Stopped', error: 'Failed', idle: 'Idle' };
+/** A phase that still has work in flight. */
+export function phaseRunning(phase) {
+  return phase === 'starting' || phase === 'scan' || phase === 'group' || phase === 'pick' || phase === 'vision' || phase === 'peaks';
+}
+
+const PHASE_WORDS = { starting: 'Starting', scan: 'Scanning', group: 'Grouping', pick: 'Picking', vision: 'Identifying', peaks: 'Comparing bursts', done: 'Complete', stopped: 'Stopped', error: 'Failed', idle: 'Idle' };
 
 /** The word next to the status dot: "Scanning", "Paused" while a running phase is frozen. */
 export function phaseWord(phase, paused = false) {

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FLOW_NODES, IDENTIFY_STAGES, actionLabel, activeStage, confidencePercent, confidenceTone, displayItem,
-  displayPath, elapsed, flowNodes, prettyReply, progressPercent, rateLabel, sourceLabel, workerLanes,
+  FLOW_NODES, IDENTIFY_STAGES, actionLabel, activeStage, confidencePercent, confidenceTone, deciderStepNode, displayItem,
+  displayPath, elapsed, flowNodes, phaseLabel, prettyReply, progressPercent, rateLabel, sourceLabel, workerLanes,
 } from '../src/lib/identifyFlow.mjs';
 
 test('the stages are the engine contract, in flow order', () => {
@@ -176,4 +176,31 @@ test('elapsed and rate read like a stopwatch, not a debug dump', () => {
   assert.equal(rateLabel(12, 30000), '24 cars/min');
   assert.equal(rateLabel(1, 8000), '8.0 s/car');
   assert.equal(rateLabel(0, 8000), '');
+});
+
+test('a phase reads as a count in words, and an unknown one as nothing', () => {
+  assert.equal(phaseLabel({ name: 'peaks', done: 12, total: 214, state: 'running' }), 'Comparing bursts 12/214');
+  assert.equal(phaseLabel({ name: 'moments', done: 3, total: 40, state: 'running' }), 'Judging moments 3/40');
+  assert.equal(phaseLabel({ name: 'peaks', done: 0, total: 0 }), 'Comparing bursts', 'before the first burst there is still a name');
+  assert.equal(phaseLabel({ name: 'nonsense', total: 3 }), '');
+  assert.equal(phaseLabel(null), '');
+  assert.equal(phaseLabel(undefined), '');
+});
+
+test('the DECIDER node ticks only when the moments lane has finished, and names the work it is on', () => {
+  const decider = { state: 'ready', done: 5, busy: 0, current: null, recent: [] };
+  // Idle between frames, but the lane has not finished: no tick yet.
+  const between = deciderStepNode(decider, { name: 'moments', done: 5, total: 5, state: 'running' });
+  assert.equal(between.state, 'active');
+  // The last car is read; the bursts still to be compared carry their own count.
+  const peaks = deciderStepNode(decider, { name: 'peaks', done: 12, total: 214, state: 'running' });
+  assert.equal(peaks.state, 'active');
+  assert.equal(peaks.sub, 'Comparing bursts 12/214');
+  assert.match(peaks.meta, /Comparing bursts 12\/214/);
+  // Only the phase's own terminal checks off.
+  assert.equal(deciderStepNode(decider, { name: 'peaks', done: 214, total: 214, state: 'done' }).state, 'done');
+  // Without a phase (an older engine) the old rule stands, so nothing else changes.
+  assert.equal(deciderStepNode(decider).state, 'done');
+  assert.equal(deciderStepNode({ ...decider, done: 0 }).state, 'pending');
+  assert.equal(deciderStepNode(null), null);
 });
