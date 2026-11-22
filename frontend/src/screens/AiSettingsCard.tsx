@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { engine, mocked } from '../lib/api';
 import * as ai from '../lib/aiCard.mjs';
 import type { ModelInfo, SettingValue, Settings as SettingsMap, Toaster } from '../lib/types';
+import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
 import '../styles/aiSettings.css';
 
 // The pure services-plan model is a plain .mjs module; keep one `any` handle so
@@ -28,42 +29,6 @@ type CardModels = {
 };
 
 const hostShort = (url: string) => (url || '').replace(/^https?:\/\//, '').replace(/\/$/, '') || 'new host';
-
-/** Place an anchored menu entirely inside the viewport.
- *  Static `top: calc(100% + 5px)` / `left: 0` rules opened every menu down and
- *  to the right, so a menu near the bottom or right window edge was clipped.
- *  Measure the anchor and the menu against the window, prefer below/left, flip
- *  above/left when they would cross an edge, then clamp. Fixed positioning is
- *  required: the Settings pane scrolls in its own container, so absolute
- *  coordinates would drift with it. Both the helper "+N more" popup and the
- *  add-service popover go through this one path. */
-const MENU_GAP = 5;
-const MENU_MARGIN = 8;
-function placeAnchoredMenu(anchor: HTMLElement, menu: HTMLElement, align: 'left' | 'center') {
-  const a = anchor.getBoundingClientRect();
-  const m = menu.getBoundingClientRect();
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const maxH = Math.max(48, vh - 2 * MENU_MARGIN);
-  const w = m.width;
-  const h = Math.min(m.height, maxH);
-  const below = a.bottom + MENU_GAP;
-  const above = a.top - MENU_GAP - h;
-  let top = below + h <= vh - MENU_MARGIN ? below : (above >= MENU_MARGIN ? above : below);
-  let left = align === 'center' ? a.left + a.width / 2 - w / 2 : a.left;
-  if (left + w > vw - MENU_MARGIN) {
-    const flipped = a.right - w; // right-align to the anchor instead
-    if (flipped >= MENU_MARGIN) left = flipped;
-  }
-  top = Math.max(MENU_MARGIN, Math.min(top, vh - MENU_MARGIN - h));
-  left = Math.max(MENU_MARGIN, Math.min(left, Math.max(MENU_MARGIN, vw - MENU_MARGIN - w)));
-  menu.style.position = 'fixed';
-  menu.style.top = `${Math.round(top)}px`;
-  menu.style.left = `${Math.round(left)}px`;
-  menu.style.maxHeight = `${Math.round(maxH)}px`;
-  menu.style.overflowY = m.height > maxH ? 'auto' : 'visible';
-  menu.style.visibility = 'visible';
-}
 
 function Switch({ on, onChange, ariaLabel, mini }: { on: boolean; onChange: (v: boolean) => void; ariaLabel?: string; mini?: boolean }) {
   return (

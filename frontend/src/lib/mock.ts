@@ -251,7 +251,20 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'watch_status': return out({active: false, jobId: null});
     case 'set_watch': return out(a);
     case 'cover': return out({ path: photo((Number(a.jobId) || 1) - 1) });
-    case 'health': return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}, {name: 'Decision model', ready: mockDeciderStatus().state === 'ready', optional: true, detail: mockDeciderStatus().message}]);
+    case 'health': {
+      // `&health=real` seeds the same row shape the engine sends (one row per
+      // VLM service with file:'vlm', plus the opt-in models) so the activity
+      // popover can be screenshotted in its real, split-section state.
+      if (params().get('health') === 'real') return out([
+        { name: 'Detector', file: 'det.onnx', ready: true },
+        { name: 'Text (OCR)', file: 'ocr', ready: true },
+        { id: 'vlm-opencode', name: 'OpenCode (pay-as-you-go credits)', file: 'vlm', ready: true, detail: 'glm-5.3-flash available' },
+        { id: 'vlm-local', name: 'in_process', file: 'vlm', ready: false, detail: 'Ollama unavailable' },
+        { name: 'Decision model', file: 'decider-int8.onnx', ready: true, optional: true, detail: 'Ready' },
+        { name: 'Quality', file: 'quality.onnx', ready: false, optional: true, detail: 'Opt-in sharpness tiebreak' },
+      ]);
+      return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}, {name: 'Decision model', ready: mockDeciderStatus().state === 'ready', optional: true, detail: mockDeciderStatus().message}]);
+    }
     case 'decider_status': return out(mockDeciderStatus());
     case 'install_decider': return out({operation: 'Installing decision model'});
     case 'install_models': return out({operation: 'Installing models'});

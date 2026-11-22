@@ -1,12 +1,34 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { getCurrentWindow, type Window } from '@tauri-apps/api/window';
 import { inTauri, mocked } from '../lib/api';
 import { etaText, pct, plural } from '../lib/format';
 import { applyTheme, storedTheme } from '../lib/theme.mjs';
 import { modelGroups, modelWord, workLabel, type HealthStatus } from '../lib/health.mjs';
+import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
 import type { Job, ModelInfo, Page, Status } from '../lib/types';
 import { profileLabel } from '../lib/types';
 import { Icon, Mark } from './basics';
+
+/** Engine health rows carry wire-format provider ids as `name` and use
+ *  `optional` as a pseudo-status. Render a friendly name and a readiness word
+ *  so the popover never leaks a token like `in_process` or shows "Optional"
+ *  where a state belongs (the row still has its readiness dot and the section
+ *  still has its ready/total count). */
+const HEALTH_NAMES: Record<string, string> = {
+  in_process: 'Local (this PC)',
+  'opencode-go': 'OpenCode (pay-as-you-go credits)',
+  opencode: 'OpenCode (pay-as-you-go credits)',
+  openrouter: 'OpenRouter',
+  ollama: 'Ollama',
+  gemini: 'Gemini',
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+};
+const healthName = (m: ModelInfo) => HEALTH_NAMES[m.name] ?? m.name;
+const healthState = (m: ModelInfo) => {
+  const word = modelWord(m);
+  return word === 'Optional' ? 'Not installed' : word;
+};
 
 const TABS: [Page, string, string][] = [
   ['Library', 'Library', 'Your albums'],
@@ -51,6 +73,21 @@ function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { st
   const [open, setOpen] = useState(defaultOpen);
   const [stopping, setStopping] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const popover = useRef<HTMLDivElement>(null);
+  /* The activity dashboard opens below the health light. Static `right: 0`
+     `top: calc(100% + 8px)` let it run off the bottom/right window edge;
+     place it against the viewport and re-place on resize and any scroll. */
+  useLayoutEffect(() => {
+    if (!open || !box.current || !popover.current) return;
+    const place = () => placeAnchoredMenu(box.current!, popover.current!, 'right');
+    place();
+    window.addEventListener('resize', place);
+    document.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      document.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
   useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
   useEffect(() => { if (status.activeJob == null) setStopping(false); }, [status.activeJob]);
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
@@ -80,7 +117,7 @@ function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { st
         <Icon name="chevron" size={13} />
       </button>
       {open && (
-        <div className="popover activity-dashboard" role="dialog" aria-label="Notifications and activity">
+        <div className="popover activity-dashboard" role="dialog" aria-label="Notifications and activity" ref={popover}>
           <div className="popover-head"><h3>Background work</h3><span className={`state ${tone === 'busy' ? 'running' : tone === 'error' ? 'failed' : tone === 'warn' ? 'paused' : 'done'}`}>{health.label}</span></div>
           <div className="activity-summary">
             <div><b>{activeJob && active?.total ? `${active.done.toLocaleString()} / ${active.total.toLocaleString()}` : '—'}</b><small>{activeJob ? activeJob.label : 'No active scan'}</small></div>
@@ -122,19 +159,19 @@ function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { st
           )}
           <div className="activity-section"><span>Setup models</span><span>{readyModels}/{local.length}</span></div>
           <ul className="activity-models">
-            {local.map((model) => <li key={model.file ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span>{model.name}</span><small>{modelWord(model)}</small></li>)}
+            {local.map((model) => <li key={model.file ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span className="activity-model-name" title={model.name}>{healthName(model)}</span><small>{healthState(model)}</small></li>)}
             {!local.length && <li className="muted">Checking model availability…</li>}
           </ul>
-          {vision.length > 0 && <div className="activity-section"><span>Vision service</span><span>{vision.filter((model) => model.ready).length}/{vision.length}</span></div>}
+          {vision.length > 0 && <div className="activity-section"><span>Vision services</span><span>{vision.filter((model) => model.ready).length}/{vision.length}</span></div>}
           {vision.length > 0 && (
             <ul className="activity-models">
-              {vision.map((model) => <li key={model.id ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span>{model.name}</span><small title={model.detail}>{modelWord(model)}</small></li>)}
+              {vision.map((model) => <li key={model.id ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span className="activity-model-name" title={model.name}>{healthName(model)}</span><small title={model.detail}>{healthState(model)}</small></li>)}
             </ul>
           )}
           {optional.length > 0 && <div className="activity-section"><span>Optional models</span><span>{optional.filter((model) => model.ready).length}/{optional.length}</span></div>}
           {optional.length > 0 && (
             <ul className="activity-models">
-              {optional.map((model) => <li key={model.file ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span>{model.name}</span><small>{modelWord(model)}</small></li>)}
+              {optional.map((model) => <li key={model.file ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span className="activity-model-name" title={model.name}>{healthName(model)}</span><small>{healthState(model)}</small></li>)}
             </ul>
           )}
           <details className="activity-history">
