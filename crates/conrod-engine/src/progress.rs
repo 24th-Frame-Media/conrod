@@ -403,6 +403,11 @@ impl Progress {
         Some(self.snapshot())
     }
 
+    /// The album this progress object reports on.
+    pub fn job(&self) -> i64 {
+        self.job
+    }
+
     pub fn snapshot(&self) -> ScanProgress {
         let now = self.started.elapsed().as_secs_f64();
         let phase = self.phase.load(Ordering::Relaxed);

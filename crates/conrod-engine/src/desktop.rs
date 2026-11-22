@@ -815,6 +815,7 @@ impl Desktop {
                 Ok(models)
             }
             Command::Status {} => Ok(self.status()),
+            Command::ScanStatus(a) => self.scan_status(a.job_id),
             Command::StartupStatus {} => Ok(self.startup.snapshot()),
             Command::Jobs {} => Ok(json!(self.jobs()?)),
             Command::Review(a) => self.review(a.job_id),
@@ -1156,6 +1157,88 @@ impl Desktop {
         // The albums waiting their turn, in the order they will start.
         let queue: Vec<i64> = lock(&self.queue).iter().copied().collect();
         json!({"revision":self.hub.version(),"tasks":tasks,"log":self.hub.log(),"operations":operations,"activeJob":active_job,"queue":queue,"scan":scan})
+    }
+
+    /// What this album's scan is doing right now, for the worker screen's entry
+    /// and re-entry: running with its live snapshot, waiting its turn, or how it
+    /// ended. The screen reads this instead of depending on catching the event
+    /// stream, so a queued, stopped or finished album still has a page.
+    pub fn scan_status(&self, job: i64) -> Result<Value> {
+        let running = {
+            let active = lock(&self.active);
+            active
+                .as_ref()
+                .filter(|(running, scan)| {
+                    *running == job
+                        && (!scan.is_finished() || self.finishing.load(Ordering::Acquire))
+                })
+                .map(|(_, scan)| scan.paused())
+        };
+        if let Some(paused) = running {
+            let snapshot = self
+                .progress()
+                .filter(|progress| progress.job() == job)
+                .map(|progress| json!(progress.snapshot()));
+            return Ok(json!({
+                "state": "running",
+                "paused": paused,
+                "progress": snapshot,
+                "queue_position": Value::Null,
+                "errors": 0,
+                "error_samples": Vec::<String>::new(),
+                "resume_stage": Value::Null,
+            }));
+        }
+        // The line in front of this album, counting from 1 (1 = starts next).
+        let place = {
+            let queue = lock(&self.queue);
+            queue
+                .iter()
+                .position(|waiting| *waiting == job)
+                .map(|place| place + 1)
+        };
+        let (status, settings): (String, Option<String>) = {
+            let reader = lock(&self.reader);
+            reader
+                .query_row(
+                    "SELECT status,settings_json FROM jobs WHERE id=?",
+                    [job],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(err)?
+                .ok_or("No such album")?
+        };
+        if place.is_some() || status == "queued" {
+            return Ok(json!({
+                "state": "queued",
+                "paused": false,
+                "progress": Value::Null,
+                "queue_position": place,
+                "errors": 0,
+                "error_samples": Vec::<String>::new(),
+                "resume_stage": Value::Null,
+            }));
+        }
+        let (errors, error_samples) = scan_errors(&lock(&self.reader), job);
+        // A finished run keeps the status it recorded. Anything else is not in
+        // the one-scan slot any more (a crash, a restart, or an album that was
+        // only indexed), so it stopped where it was and a resume picks it up.
+        let state = match status.as_str() {
+            "done" | "done_errors" | "stopped" | "error" => status.as_str(),
+            _ => "stopped",
+        };
+        let map = serde_json::from_str::<Map<String, Value>>(settings.as_deref().unwrap_or(""))
+            .unwrap_or_default();
+        Ok(json!({
+            "state": state,
+            "paused": false,
+            "progress": Value::Null,
+            "queue_position": Value::Null,
+            "errors": errors,
+            "error_samples": error_samples,
+            "resume_stage": resume_tail(&map).word(),
+        }))
     }
 
     fn jobs(&self) -> Result<Vec<Value>> {
@@ -3582,6 +3665,77 @@ mod tests {
         assert_eq!((frames, done), (2, 1), "nothing is deleted or re-read");
         drop(reopened);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn scan_status_tells_the_worker_screen_what_the_album_is_doing() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("scan-status");
+        let status = |job: i64| lib.run("scan_status", json!({"jobId": job})).unwrap();
+
+        // Running: the one-scan slot holds this album, its progress carries the
+        // live snapshot, and a pause is reported as one.
+        let progress = crate::progress::for_scan(lib.job, &Settings::default(), false);
+        *lock(&lib.d().progress) = Some(progress);
+        let scan = Arc::new(Scan::held());
+        scan.pause(true);
+        *lock(&lib.d().active) = Some((lib.job, scan));
+        lib.sql("UPDATE jobs SET status='scanning' WHERE id=?", [lib.job]);
+        let running = status(lib.job);
+        assert_eq!(running["state"], "running");
+        assert_eq!(running["paused"], true);
+        assert_eq!(running["progress"]["job_id"], lib.job);
+        assert_eq!(running["queue_position"], Value::Null);
+        *lock(&lib.d().active) = None;
+        *lock(&lib.d().progress) = None;
+
+        // Queued: the album waits its turn, with its place in line and no
+        // snapshot of its own yet.
+        lock(&lib.d().queue).push_back(lib.job);
+        lib.sql("UPDATE jobs SET status='queued' WHERE id=?", [lib.job]);
+        let queued = status(lib.job);
+        assert_eq!(queued["state"], "queued");
+        assert_eq!(queued["queue_position"], 1);
+        assert!(queued["progress"].is_null());
+        lock(&lib.d().queue).clear();
+
+        // Done: no snapshot, the count of frames it could not read, and the
+        // stage a resume would continue at.
+        lib.sql(
+            "UPDATE jobs SET status='done',settings_json=? WHERE id=?",
+            params![
+                json!({"native_resume_stage": "identify"}).to_string(),
+                lib.job
+            ],
+        );
+        let done = status(lib.job);
+        assert_eq!(done["state"], "done");
+        assert!(done["progress"].is_null());
+        assert_eq!(done["resume_stage"], "identify");
+
+        // Done with errors: the per-frame failures are counted and sampled.
+        let bad = lib.frame("bad.cr3", None);
+        lib.sql(
+            "UPDATE images SET status='error',error='unsupported RAW' WHERE id=?",
+            [bad],
+        );
+        lib.sql("UPDATE jobs SET status='done_errors' WHERE id=?", [lib.job]);
+        let done_errors = status(lib.job);
+        assert_eq!(done_errors["state"], "done_errors");
+        assert_eq!(done_errors["errors"], 1);
+        assert_eq!(done_errors["error_samples"][0], "bad.cr3: unsupported RAW");
+
+        // Stopped, failed, and an album the engine no longer holds (a stale
+        // `scanning` row reads as stopped, so Resume is offered).
+        lib.sql("UPDATE jobs SET status='stopped' WHERE id=?", [lib.job]);
+        assert_eq!(status(lib.job)["state"], "stopped");
+        lib.sql("UPDATE jobs SET status='error' WHERE id=?", [lib.job]);
+        assert_eq!(status(lib.job)["state"], "error");
+        lib.sql("UPDATE jobs SET status='scanning' WHERE id=?", [lib.job]);
+        assert_eq!(status(lib.job)["state"], "stopped");
+        assert!(lib
+            .run("scan_status", json!({"jobId": lib.job + 99}))
+            .is_err());
     }
 
     #[test]
