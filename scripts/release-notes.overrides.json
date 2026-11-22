@@ -276,6 +276,7 @@
       { "section": "New", "text": "The car the photo is judged on is marked MAIN · AF when the camera's focus point chose it, and MAIN · biggest when the largest car did." },
       { "section": "Improved", "text": "The shoot-type list says what each type actually changes, so picking one for an album is easier to judge." }
     ],
-    "3197952": { "section": "New", "text": "Focus areas are now read from Sony, Nikon, Fujifilm, OM System and Panasonic cameras too, so the camera's own focus point can pick the subject there as it does for Canon." }
+    "3197952": { "section": "New", "text": "Focus areas are now read from Sony, Nikon, Fujifilm, OM System and Panasonic cameras too, so the camera's own focus point can pick the subject there as it does for Canon." },
+    "a58c43f": { "section": "Improved", "text": "OpenCode vision reads and moment checks now use your pay-as-you-go Console credits, not the coding subscription, so a photography scan stays within OpenCode's terms." }
   }
 }
