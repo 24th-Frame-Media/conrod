@@ -68,6 +68,8 @@ export const engine = {
   cancelOperation: (key: string) => call('cancel_operation', { key }),
   deciderStatus: () => call<import('./types').DeciderStatus>('decider_status'),
   installDecider: () => call('install_decider'),
+  /** The Setup / model-manifest installer (InstallModels -> install_missing). */
+  installModels: () => call('install_models'),
   saveSettings: (settings: Settings) => call<Settings>('save_settings', settings),
   workerLimits: () => call<import('./types').WorkerLimits>('worker_limits'),
   known: () => call<KnownVehicle[]>('known'),

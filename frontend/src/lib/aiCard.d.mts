@@ -63,3 +63,63 @@ export function summaryLine(config: ServiceConfig): string;
 export function buildAiView(settings: Record<string, unknown>, modelLists: ModelLists): AiView;
 export function setService(settings: Record<string, unknown>, id: string, patch?: Record<string, unknown>): { vlm_services: unknown[]; moments_services: unknown[]; use_decider: boolean };
 export function setCapModel(settings: Record<string, unknown>, cap: string, id: string, model: string): Record<string, unknown[]>;
+
+/* ── services-plan rebuild ─────────────────────────────────────────────── */
+export type ServiceModel = {
+  id: string; role: string; img?: boolean; pM?: number; cM?: number;
+  efforts?: readonly string[]; def?: string; variants?: readonly string[];
+  local?: boolean; on?: boolean; dl?: string; group?: string; name?: string;
+};
+export type ServiceTypeDef = {
+  name: string; tag: string; dot: string; kind: 'key' | 'host';
+  decisions: boolean; thinking: boolean; keyPlaceholder?: string; note: string;
+  models: readonly ServiceModel[];
+};
+export type ServiceCard = {
+  key: string; type: string; apiKey: string; host: string;
+  enabled: boolean; reasoning: boolean; visionSel: string; decisionSel: string;
+};
+export type SharingOption = { id: string; name: string };
+export type ServingModel = { id: string; ready: boolean };
+export type ModelLine = { head: string | null; rest: string[]; all: string[]; noModel: boolean };
+export type HelperStatus = { text: string; cls: string; dot: string };
+export type Opt = { id: string; name: string };
+
+export const IN_TOK: number;
+export const OUT_TOK: number;
+export const SERVICE_TYPES: Record<string, ServiceTypeDef>;
+export const ADD_ORDER: readonly string[];
+export const ADD_DESC: Record<string, string>;
+export const THINK_HINT: string;
+export const BUILTIN: { name: string; tag: string; note: string; models: readonly ServiceModel[] };
+export const SHARING: readonly SharingOption[];
+export const SHARING_HINT: string;
+export const PRICE_BY_ID: Record<string, { pM: number; cM: number }>;
+export const VISION_HELPER: string;
+export const DECISION_HELPER: string;
+export const SERVICE_PROVIDER_OF: Record<string, string>;
+
+export function sharingValue(settings?: Record<string, unknown>): string;
+export function setSharing(value: string): { vlm_strategy: string; moments_strategy: string };
+export function fmtUsd(v: number, deep?: boolean): string;
+export function photoCost(id: string): { varies: true } | { free: true } | { usd: number } | null;
+export function costLine(picked?: readonly { id: string; local: boolean }[]): string;
+export function visionModels(type: string): readonly ServiceModel[];
+export function decisionModels(type: string): readonly ServiceModel[];
+export function makeCard(type: string, opts?: Record<string, unknown>): any;
+export function defaultThinking(): boolean;
+export function cardReady(card: Record<string, unknown>): boolean;
+export function visionCandidates(type: string, live?: readonly Record<string, unknown>[]): Opt[];
+export function decisionCandidates(type: string, live?: readonly Record<string, unknown>[], decisionLive?: readonly Record<string, unknown>[]): { models: Opt[]; freeText: boolean };
+export function providerToType(provider: string): string | null;
+export function cardKeyFor(entry: Record<string, unknown>): string | null;
+export function cardsFromDraft(settings?: Record<string, unknown>): ServiceCard[];
+export function addService(settings: Record<string, unknown>, type: string, opts?: Record<string, unknown>): { vlm_services: unknown[]; moments_services: unknown[] };
+export function removeService(settings: Record<string, unknown>, key: string): { vlm_services: unknown[]; moments_services: unknown[] };
+export function patchService(settings: Record<string, unknown>, key: string, patch?: Record<string, unknown>): { vlm_services: unknown[]; moments_services: unknown[] };
+export function servingFor(helperId: string, ctx?: Record<string, unknown>): ServingModel[];
+export function modelLine(list: readonly ServingModel[]): ModelLine;
+export function helperStatus(on: boolean, list: readonly ServingModel[]): HelperStatus;
+export function poolCount(ctx?: Record<string, unknown>): { n: number; svc: number };
+export function poolLabel(p: { n: number; svc: number }): string;
+export function summaryText(ctx?: Record<string, unknown>): { text: string; dot: string };

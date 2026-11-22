@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { engine, mocked } from '../lib/api';
-import { Segmented } from '../components/SettingsFields';
 import * as ai from '../lib/aiCard.mjs';
-import type { ModelInfo, SettingValue, Settings as SettingsMap, Toaster, VlmService } from '../lib/types';
+import type { ModelInfo, SettingValue, Settings as SettingsMap, Toaster } from '../lib/types';
 import '../styles/aiSettings.css';
+
+// The pure services-plan model is a plain .mjs module; keep one `any` handle so
+// the JSX below stays free of generated-type friction.
+const A: any = ai;
 
 type Props = {
   draft: SettingsMap;
@@ -14,486 +17,486 @@ type Props = {
   onModelsChanged?: () => void;
 };
 
-type Tone = 'ok' | 'locked' | 'off' | 'ready';
-type ModelOption = { id: string; name: string };
-type ModelList = { models: ModelOption[]; freeText: boolean };
-type ModelLists = { vision: Record<string, ModelList>; decision: Record<string, ModelList> };
-
-const emptyLists = (): ModelLists => ({ vision: {}, decision: {} });
-const dotClass = (tone: Tone): string => tone === 'ok' || tone === 'ready' ? 'ok' : tone === 'locked' ? 'no' : 'off';
-const maskKey = (key: string) => key ? 'key ••••••••' : '';
-
-/* ---- small inline icons (line style, currentColor) ---- */
-const Ico = {
-  download: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4" /><path d="M4 17v3h16v-3" /></svg>,
-  cloud: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6 9.2 4.2 4.2 0 0 0 7 18Z" /></svg>,
-  caret: <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>,
-  lock: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2" /><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" /></svg>,
-  chevron: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>,
+type Card = {
+  key: string; type: string; apiKey: string; host: string;
+  enabled: boolean; reasoning: boolean; visionSel: string; decisionSel: string;
+};
+type Opt = { id: string; name: string };
+type CardModels = {
+  vision: Opt[]; decision: Opt[]; decisionFreeText: boolean;
+  liveOllama: { name: string; vision: boolean }[];
 };
 
-function Switch({ checked, disabled, onChange, ariaLabel }: { checked: boolean; disabled?: boolean; onChange: (v: boolean) => void; ariaLabel?: string }) {
+const hostShort = (url: string) => (url || '').replace(/^https?:\/\//, '').replace(/\/$/, '') || 'new host';
+
+function Switch({ on, onChange, ariaLabel, mini }: { on: boolean; onChange: (v: boolean) => void; ariaLabel?: string; mini?: boolean }) {
   return (
-    <label className="ai-switch">
-      <input type="checkbox" role="switch" aria-label={ariaLabel} checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-      <span className="track"><span className="knob" /></span>
-    </label>
+    <button
+      type="button"
+      className={`switch${mini ? ' mini' : ''}${on ? ' on' : ''}`}
+      aria-label={ariaLabel}
+      aria-pressed={on}
+      onClick={() => onChange(!on)}
+    />
   );
 }
 
-/** The "Photo helpers" card: Version C — Two zones. */
-export function AiSettingsCard({ draft, onChange, toast, onModelsChanged }: Props) {
-  // Dev-mock shortcuts so the screenshot states open directly: &ai=decision
-  // expands the Spots moments panel, &ai=services opens AI services.
-  const devAi = () => (import.meta.env.DEV && mocked ? new URLSearchParams(location.search).get('ai') : null);
-  const [openPanel, setOpenPanel] = useState<string | null>(() => devAi() === 'decision' ? 'moments' : null);
-  const [servicesOpen, setServicesOpen] = useState(() => devAi() === 'services');
-  const [forkChoice, setForkChoice] = useState<'download' | 'cloud' | null>(null);
-  const [forkKeys, setForkKeys] = useState<{ opencode: string; openrouter: string }>({ opencode: '', openrouter: '' });
-  const [hostInput, setHostInput] = useState('');
-  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
-  const [modelLists, setModelLists] = useState<ModelLists>(emptyLists);
+/** The rebuilt AI services card. The services panel is always shown; there is
+ *  no Manage/collapse. Each added service is one card with its own key or host,
+ *  Test/Remove, a cost line, a per-card Thinking toggle (default off), and
+ *  Vision/Decisions dropdowns filled from the engine's live model lists. */
+export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged }: Props) {
+  // Dev-mock shortcuts so a screenshot state opens straight from a URL.
+  const dev = () => (import.meta.env.DEV && mocked ? new URLSearchParams(location.search) : new URLSearchParams());
+
+  const cards = useMemo<Card[]>(() => A.cardsFromDraft(draft) as Card[], [draft]);
+  const routing = A.sharingValue(draft) as string;
+
+  const [modelLists, setModelLists] = useState<Record<string, CardModels>>({});
+  const [addMenuOpen, setAddMenuOpen] = useState(() => dev().get('aiadd') === '1');
+  const [openPopup, setOpenPopup] = useState<string | null>(() => dev().get('aipopup') || null);
   const [testing, setTesting] = useState<Record<string, 'testing' | 'ok'>>({});
-  const changeRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-
-  const config = useMemo(() => ai.serviceConfig(draft), [draft]);
-  // A string-keyed view of the four services for loops/ids that TS cannot narrow.
-  const cfg = config as unknown as Record<string, { key?: string; hosts?: string[]; enabled?: boolean; downloaded?: boolean }>;
-  const view = useMemo(() => ai.buildAiView(draft, modelLists), [draft, modelLists]);
-  const ctx = view.ctx;
-
-  /* Enumerate the models each configured service can serve, live from the
-     engine: provider_models / ollama_models for vision, decision_models
-     (image-filtered) for moments. Missing lists become free-text. */
-  const configKey = JSON.stringify({
-    local: config.local,
-    ollama: config.ollama,
-    openrouter: { key: Boolean(config.openrouter.key), enabled: config.openrouter.enabled },
-    opencode: { key: Boolean(config.opencode.key), enabled: config.opencode.enabled },
+  const [tested, setTested] = useState<Record<string, boolean>>({});
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [opts, setOpts] = useState<Record<string, string>>({});
+  const [builtinEnabled, setBuiltinEnabled] = useState(true);
+  const [builtinRows, setBuiltinRows] = useState<Record<string, { on: boolean; downloaded: boolean }>>(() => {
+    const init: Record<string, { on: boolean; downloaded: boolean }> = {};
+    for (const m of A.BUILTIN.models) init[m.id] = { on: Boolean(m.on), downloaded: !m.dl };
+    return init;
   });
+  const [helpersOn, setHelpersOn] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    for (const h of A.HELPERS) {
+      const keys = (A.SIMPLE_CONTROLS[h.id] || []).map((c: { key: string }) => c.key);
+      init[h.id] = keys.length ? keys.some((k: string) => Boolean(draft[k])) : true;
+    }
+    return init;
+  });
+
+  /* Non-AI helpers run on Conrod's own bundled models, read from the app's
+     model manifest/status (the `models` prop). No cloud provider is involved. */
+  const bundled = useMemo(() => {
+    const find = (needle: string) => models.find((m) => m.name.toLowerCase().includes(needle));
+    const mk = (needle: string, fallback: string) => {
+      const m = find(needle);
+      return { id: m ? (m.file || m.name) : fallback, ready: m ? m.ready : true };
+    };
+    return {
+      'cars-people': [mk('detector', 'Vehicle detector (YOLO)'), mk('person', 'Person detector')],
+      sharpness: [mk('sharp', 'Edge sharpness'), { id: 'Quality tie-break', ready: true }],
+      faces: [mk('face', 'Face + eye model')],
+      plates: [mk('plate', 'Plate reader (OCR)'), { id: 'Plate spell-check', ready: true }],
+      'race-numbers': [mk('text', 'Text reader (OCR)'), mk('plate', 'Number OCR')],
+    } as Record<string, { id: string; ready: boolean }[]>;
+  }, [models]);
+
+  const ctx = useMemo(() => {
+    const v = builtinRows['qwen3-vl:8b'];
+    const d = builtinRows['pplx-decider-local'];
+    const builtinVision = builtinEnabled && v && v.on && v.downloaded ? ['qwen3-vl:8b'] : [];
+    const builtinDecisions = builtinEnabled && d && d.on && d.downloaded ? ['pplx-decider-local'] : [];
+    const cardsCtx = cards.map((c) => ({
+      type: c.type, enabled: c.enabled, visionSel: c.visionSel, decisionSel: c.decisionSel,
+      apiKey: c.apiKey, tested: Boolean(tested[c.key]),
+      liveModels: (modelLists[c.key] || {}).liveOllama || [],
+    }));
+    return { builtinVision, builtinDecisions, cards: cardsCtx, bundled, routing };
+  }, [cards, builtinRows, builtinEnabled, tested, modelLists, bundled, routing]);
+
+  const pool = A.poolCount(ctx) as { n: number; svc: number };
+  const summary = A.summaryText(ctx) as { text: string; dot: string };
+
+  /* Fill each card's Vision/Decisions dropdowns from the engine's live model
+     lists. Unknown/failed lists fall back to the known capable models; an
+     OpenRouter decisions list with no decision-capable id becomes free text. */
+  const listKey = refreshNonce + '::' + cards.map((c) => `${c.key}|${c.type}|${c.apiKey ? 1 : 0}`).join(';');
   useEffect(() => {
     let cancelled = false;
-    const next = emptyLists();
-    if (ai.serving('local', config)) {
-      next.vision.local = { models: [{ id: 'built-in', name: 'Built-in car reader' }], freeText: false };
-      next.decision.local = { models: [{ id: 'in_process', name: 'Built-in moment helper' }], freeText: false };
-    }
-    const tasks: Promise<void>[] = [];
-    for (const id of ['ollama', 'openrouter', 'opencode'] as const) {
-      if (!ai.serving(id, config)) continue;
-      const key = cfg[id]?.key ?? '';
-      const host = id === 'ollama' ? config.ollama.hosts[0] : '';
-      if (id === 'ollama') {
-        next.decision.ollama = { models: [], freeText: true };
-        tasks.push(engine.ollamaModels(host)
-          .then((res) => { next.vision.ollama = { models: (res.models || []).filter((m) => m.vision).map((m) => ({ id: m.name, name: m.name })), freeText: false }; })
-          .catch(() => { next.vision.ollama = { models: [], freeText: true }; }));
-      } else {
-        tasks.push(engine.providerModels(id, host, key)
-          .then((res) => { const ms = (res.models || []).map((m) => ({ id: m.id, name: m.name || m.id })); next.vision[id] = { models: ms, freeText: ms.length === 0 }; })
-          .catch(() => { next.vision[id] = { models: [], freeText: true }; }));
-        if (id === 'opencode') {
-          tasks.push(engine.decisionModels(id, host, key, '')
-            .then((res) => { const ms = (res.models || []).map((m) => ({ id: m.id, name: m.name || m.id })); next.decision.opencode = { models: ms, freeText: Boolean(res.freeText) && ms.length === 0 }; })
-            .catch(() => { next.decision.opencode = { models: [], freeText: true }; }));
-        } else {
-          next.decision.openrouter = { models: [], freeText: false };
+    const tasks = cards.map(async (c): Promise<[string, CardModels]> => {
+      const def = A.SERVICE_TYPES[c.type];
+      const key = def.kind === 'key' ? c.apiKey : c.host;
+      if (c.type === 'ollama') {
+        try {
+          const res = await engine.ollamaModels(c.host);
+          const live = res.models || [];
+          return [c.key, { vision: A.visionCandidates('ollama', live), decision: [], decisionFreeText: false, liveOllama: live }];
+        } catch {
+          return [c.key, { vision: [], decision: [], decisionFreeText: false, liveOllama: [] }];
         }
       }
-    }
-    Promise.all(tasks).then(() => { if (!cancelled) setModelLists(next); });
+      let live: Opt[] = [];
+      try { const res = await engine.providerModels(c.type, '', key); live = (res.models || []) as Opt[]; } catch { /* no list */ }
+      // TODO(engine, backend-owned): OpenRouter decision enumeration is a
+      // decision_models command (same { id/model, sees_photos, note? } shape as
+      // OpenCode's); both render through this same path. Until it lands,
+      // decisionCandidates falls back to the live model list / free text.
+      let decisionLive: Opt[] = [];
+      if (def.decisions && (c.type === 'opencode' || c.type === 'openrouter')) {
+        try {
+          const res = await engine.decisionModels(c.type, '', key, '');
+          decisionLive = ((res.models || []) as any[]).map((m) => ({ id: m.id || m.model || m.name, name: m.name || m.id || m.model }));
+        } catch { /* enumeration command not landed yet -> fallback below */ }
+      }
+      const dc = A.decisionCandidates(c.type, live, decisionLive) as { models: Opt[]; freeText: boolean };
+      return [c.key, { vision: A.visionCandidates(c.type, live) as Opt[], decision: dc.models, decisionFreeText: dc.freeText, liveOllama: [] }];
+    });
+    Promise.all(tasks).then((entries) => { if (!cancelled) setModelLists(Object.fromEntries(entries)); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configKey]);
+  }, [listKey]);
 
-  /* An opened panel scrolls into view, so the bottom-zone helpers (moments)
-     are usable without hunting for them. */
+  /* Esc and outside clicks close the one open helper popup and the add menu. */
   useEffect(() => {
-    if (!openPanel) return;
-    document.getElementById(`ai-model-panel-${openPanel}`)?.scrollIntoView({ block: 'nearest' });
-  }, [openPanel]);
-
-  /* Escape closes the one open panel and returns focus to its Change link. */
-  useEffect(() => {
-    if (!openPanel) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      const prev = openPanel;
-      setOpenPanel(null);
-      window.setTimeout(() => changeRefs.current[prev]?.focus(), 0);
+    const onDown = (e: MouseEvent) => {
+      if (!(e.target instanceof Element)) return;
+      if (!e.target.closest('.hm-more-wrap') && !e.target.closest('.hm-pop')) setOpenPopup(null);
+      if (!e.target.closest('.add-tile') && !e.target.closest('.add-menu')) setAddMenuOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setOpenPopup(null); setAddMenuOpen(false); }
+    };
+    document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [openPanel]);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, []);
 
-  const applyService = useCallback((id: string, patch: Record<string, unknown>) => {
-    const next = ai.setService(draft, id, patch);
-    onChange('vlm_services', next.vlm_services as unknown as SettingValue);
-    onChange('moments_services', next.moments_services as unknown as SettingValue);
-    onChange('use_decider', next.use_decider);
-  }, [draft, onChange]);
-
-  const selectModel = useCallback((cap: 'vision' | 'decision', id: string, model: string) => {
-    const patch = ai.setCapModel(draft, cap, id, model);
-    for (const [key, value] of Object.entries(patch)) onChange(key, value as unknown as SettingValue);
-  }, [draft, onChange]);
-
-  const modelOf = (cap: 'vision' | 'decision', id: string): string => {
-    const list = (draft[cap === 'vision' ? 'vlm_services' : 'moments_services'] as unknown as VlmService[]) || [];
-    return list.find((s) => ai.providerGroup(s.provider) === id)?.model || '';
+  /* ---------- settings write-through ---------- */
+  const applyPatch = (p: { vlm_services: unknown[]; moments_services: unknown[] }) => {
+    onChange('vlm_services', p.vlm_services as unknown as SettingValue);
+    onChange('moments_services', p.moments_services as unknown as SettingValue);
+  };
+  const patchCard = (key: string, patch: Record<string, unknown>) => applyPatch(A.patchService(draft, key, patch));
+  const removeCard = (key: string) => applyPatch(A.removeService(draft, key));
+  const chooseSharing = (value: string) => {
+    const p = A.setSharing(value) as { vlm_strategy: string; moments_strategy: string };
+    onChange('vlm_strategy', p.vlm_strategy);
+    onChange('moments_strategy', p.moments_strategy);
+  };
+  const doAdd = (type: string) => {
+    const firstOllama = !cards.some((c) => c.type === 'ollama');
+    const url = type === 'ollama' ? (firstOllama ? 'http://localhost:11434' : '') : undefined;
+    applyPatch(A.addService(draft, type, { hostIndex: cards.filter((c) => c.type === 'ollama').length + 1, url }));
+    setAddMenuOpen(false);
   };
 
-  const testLabel = (id: string) => testing[id] === 'testing' ? 'Testing…' : testing[id] === 'ok' ? '✓ Works' : 'Test';
-  const testService = useCallback((id: string) => {
-    if (testing[id]) return;
-    setTesting((t) => ({ ...t, [id]: 'testing' }));
-    const call = id === 'ollama'
-      ? engine.ollamaModels(config.ollama.hosts[0])
-      : id === 'openrouter'
-        ? engine.openRouterCheck(config.openrouter.key)
-        : id === 'opencode'
-          ? engine.openCodeCheck(config.opencode.key)
-          : Promise.resolve(null);
-    void Promise.resolve(call).catch(() => null).then(() => {
-      setTesting((t) => ({ ...t, [id]: 'ok' }));
-      window.setTimeout(() => setTesting((t) => { const n = { ...t }; delete n[id]; return n; }), 2800);
+  /* ---------- Test buttons (existing check commands) ---------- */
+  const testLabel = (key: string) => testing[key] === 'testing' ? 'Testing…' : testing[key] === 'ok' ? 'Ready ✓' : 'Test';
+  const test = (key: string, promise: Promise<unknown>) => {
+    if (testing[key]) return;
+    setTesting((t) => ({ ...t, [key]: 'testing' }));
+    void Promise.resolve(promise).catch(() => null).then(() => {
+      setTesting((t) => ({ ...t, [key]: 'ok' }));
+      setTested((s) => ({ ...s, [key]: true }));
+      setRefreshNonce((n) => n + 1);
+      window.setTimeout(() => setTesting((t) => { const n = { ...t }; delete n[key]; return n; }), 2400);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [testing, config]);
+  };
+  const testCard = (c: Card) => {
+    const promise = c.type === 'ollama' ? engine.ollamaModels(c.host)
+      : c.type === 'openrouter' ? engine.openRouterCheck(c.apiKey)
+        : c.type === 'opencode' ? engine.openCodeCheck(c.apiKey)
+          : Promise.resolve(null);
+    test(c.key, promise);
+  };
 
-  const download = useCallback(() => {
-    if (config.local.downloaded || downloadProgress !== null) return;
+  /* ---------- built-in model rows: download -> real install commands ---------- */
+  const downloadBuiltin = (id: string) => {
+    const row = A.BUILTIN.models.find((m: { id: string }) => m.id === id);
+    if (!row || builtinRows[id].downloaded || downloadProgress !== null) return;
     setDownloadProgress(0);
-    void engine.installDecider().catch(() => undefined);
+    const cmd = row.role === 'decisions' ? engine.installDecider() : engine.installModels();
+    void Promise.resolve(cmd).catch(() => undefined);
     let p = 0;
     const timer = window.setInterval(() => {
-      p += 0.18;
+      p += 0.2;
       if (p >= 1) {
         window.clearInterval(timer);
         setDownloadProgress(null);
-        applyService('local', { download: true });
+        setBuiltinRows((s) => ({ ...s, [id]: { on: true, downloaded: true } }));
         toast('The built-in models are ready on this PC.', { tone: 'ok' });
         onModelsChanged?.();
       } else setDownloadProgress(p);
     }, 160);
-  }, [config.local.downloaded, downloadProgress, applyService, toast, onModelsChanged]);
-
-  const addHost = () => {
-    const host = hostInput.trim();
-    if (!host) return;
-    applyService('ollama', { addHost: host });
-    setHostInput('');
   };
 
-  const togglePanel = (id: string) => setOpenPanel((cur) => cur === id ? null : id);
+  /* ---------- render helpers ---------- */
+  const optVal = (key: string, def: string) => opts[key] ?? def;
 
-  /* ---------- render helpers (called directly, never mounted as components,
-     so controlled inputs keep focus across re-renders) ---------- */
-  const detailFoot = () => (
-    <div className="d-foot">
-      <span className="muted" style={{ fontSize: 11 }}>Press Esc to close</span>
-      <span className="end"><button type="button" className="ai-btn link small" onClick={() => setOpenPanel(null)}>Close</button></span>
-    </div>
-  );
+  const modelDef = (card: Card, id: string) =>
+    (A.SERVICE_TYPES[card.type].models || []).find((m: { id: string }) => m.id === id);
 
-  const progressBar = () => downloadProgress === null ? null : (
-    <>
-      <div className="dl-progress"><i style={{ width: Math.round(downloadProgress * 100) + '%' }} /></div>
-      <div className="dl-label">Downloading the built-in models… about 5 GB</div>
-    </>
-  );
-
-  const forkHtml = () => (
-    <div className="fork">
-      <h3>{ai.EMPTY_FORK.heading}</h3>
-      <p className="fork-lead">{ai.EMPTY_FORK.lead}</p>
-      <div className="fork-opts">
-        <button type="button" className="ai-opt" onClick={download} aria-expanded={downloadProgress !== null}>
-          <span className="fo-ico">{Ico.download}</span>
-          <span className="fo-body">
-            <span className="fo-title">{ai.EMPTY_FORK.download.title}</span>
-            <span className="fo-sub">{ai.EMPTY_FORK.download.sub}</span>
-            {progressBar()}
-          </span>
-          <span className="fo-caret">{Ico.chevron}</span>
-        </button>
-        <button type="button" className="ai-opt" aria-expanded={forkChoice === 'cloud'} onClick={() => setForkChoice((c) => c === 'cloud' ? null : 'cloud')}>
-          <span className="fo-ico">{Ico.cloud}</span>
-          <span className="fo-body">
-            <span className="fo-title">{ai.EMPTY_FORK.cloud.title}</span>
-            <span className="fo-sub">{ai.EMPTY_FORK.cloud.sub}</span>
-            <span className="fo-note">{ai.EMPTY_FORK.cloud.note}</span>
-          </span>
-          <span className="fo-caret">{Ico.caret}</span>
-        </button>
-      </div>
-      {forkChoice === 'cloud' && (
-        <div className="fork-form">
-          <div className="ff-title">{ai.EMPTY_FORK.cloudFormTitle}</div>
-          {(['opencode', 'openrouter'] as const).map((id) => (
-            <div className="ff-row" key={id}>
-              <label htmlFor={`fork-${id}`}>{id === 'opencode' ? 'OpenCode key' : 'OpenRouter key'}</label>
-              <input id={`fork-${id}`} type="password" placeholder={`Paste your ${id === 'opencode' ? 'OpenCode' : 'OpenRouter'} key`} value={forkKeys[id]}
-                onChange={(e) => setForkKeys((k) => ({ ...k, [id]: e.target.value }))} />
-              <button type="button" className="ai-btn small" disabled={!forkKeys[id].trim()} onClick={() => { applyService(id, { key: forkKeys[id].trim() }); setForkChoice(null); }}>Save</button>
-              <div className="ff-note">{id === 'opencode' ? ai.EMPTY_FORK.opencodeNote : ai.EMPTY_FORK.openrouterNote}</div>
-            </div>
-          ))}
-          <div className="ff-foot">You can add or change these any time in AI services.</div>
-        </div>
-      )}
-    </div>
-  );
-
-  const summaryHtml = () => (
-    <div className="fork-summary">
-      <span className="dot ok" />
-      <span className="fs-text">{view.summary}</span>
-      <button type="button" className="ai-btn link fs-link" onClick={() => setServicesOpen(true)}>Manage services</button>
-    </div>
-  );
-
-  const svcLocalHtml = () => {
-    const s = config.local;
-    const ready = s.downloaded && s.enabled;
-    return (
-      <div className="svc">
-        <div className="svc-head"><span className={`dot ${ready ? 'ok' : 'no'}`} /><span className="svc-name">{ai.SERVICE_META.local.name}</span><span className="tag good">Own PC</span></div>
-        {downloadProgress !== null ? progressBar()
-          : ready ? <div className="svc-note">The models are ready on this PC. Nothing is uploaded.</div>
-            : <button type="button" className="ai-btn svc-dl" onClick={download}>Download the models (about 5 GB)</button>}
-        <div className="svc-foot"><label className="svc-enabled">Enabled <Switch checked={s.enabled} disabled={!s.downloaded} onChange={(v) => applyService('local', { enabled: v })} ariaLabel="Enable built-in models" /></label></div>
-      </div>
-    );
-  };
-
-  const svcOllamaHtml = () => {
-    const s = config.ollama;
-    return (
-      <div className="svc">
-        <div className="svc-head"><span className={`dot ${s.hosts.length && s.enabled ? 'ok' : 'no'}`} /><span className="svc-name">{ai.SERVICE_META.ollama.name}</span><span className="tag">Your network</span></div>
-        <div className="svc-note">Add a host on your network; its models join both car reading and moments.</div>
-        <div className="svc-field">
-          <input type="text" placeholder="http://localhost:11434" value={hostInput} spellCheck={false} onChange={(e) => setHostInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addHost(); }} />
-          <button type="button" className="ai-btn small" onClick={addHost}>Add host</button>
-        </div>
-        {s.hosts.length > 0 && <div className="hosts">{s.hosts.map((h) => (
-          <div className="host-chip" key={h}><span className="dot ok" /><span className="mono">{h}</span><span className="end"><button type="button" className="ai-btn link small" onClick={() => applyService('ollama', { removeHost: h })}>Remove</button></span></div>
-        ))}</div>}
-        <div className="svc-foot">
-          <label className="svc-enabled">Enabled <Switch checked={s.enabled} disabled={!s.hosts.length} onChange={(v) => applyService('ollama', { enabled: v })} ariaLabel="Enable Ollama hosts" /></label>
-          {s.hosts.length > 0 && <span className="end"><button type="button" className="ai-btn small" onClick={() => testService('ollama')}>{testLabel('ollama')}</button></span>}
-        </div>
-      </div>
-    );
-  };
-
-  const svcCloudHtml = (id: 'openrouter' | 'opencode') => {
-    const s = config[id];
-    const meta = ai.SERVICE_META[id];
-    const note = id === 'opencode'
-      ? 'Add your OpenCode key. Buy credits in the OpenCode Console — Conrod never logs your key.'
-      : 'Covers car reading and moments. Its moments model can’t see photos yet.';
-    return (
-      <div className="svc">
-        <div className="svc-head"><span className={`dot ${ai.serving(id, config) ? 'ok' : 'no'}`} /><span className="svc-name">{meta.name}</span><span className="tag">¢ per photo</span></div>
-        <div className="svc-field"><input type="password" placeholder={`Paste your ${meta.name} key`} value={s.key} spellCheck={false} onChange={(e) => applyService(id, { key: e.target.value })} /></div>
-        <div className="svc-note">{note}</div>
-        <div className="svc-foot">
-          <label className="svc-enabled">Enabled <Switch checked={s.enabled} disabled={!s.key} onChange={(v) => applyService(id, { enabled: v })} ariaLabel={`Enable ${meta.name}`} /></label>
-          <span className="end"><button type="button" className="ai-btn small" disabled={!s.key} onClick={() => testService(id)}>{testLabel(id)}</button></span>
-        </div>
-      </div>
-    );
-  };
-
-  const servicesHtml = () => servicesOpen ? (
-    <div className="svc-area">
-      <div className="svc-area-head"><span>AI services</span><button type="button" className="ai-btn link small" style={{ marginLeft: 'auto' }} onClick={() => setServicesOpen(false)}>Close</button></div>
-      <div className="svc-area-hint">Add a key, download the built-in models, or add an Ollama host. Helpers unlock as you go.</div>
-      <div className="svc-grid">
-        {svcLocalHtml()}{svcOllamaHtml()}{svcCloudHtml('openrouter')}{svcCloudHtml('opencode')}
-      </div>
-    </div>
-  ) : (
-    <button type="button" className="svc-bar" aria-expanded="false" onClick={() => setServicesOpen(true)}>
-      <span className="dot ok" /><span className="sb-title">AI services</span><span className="tag">{view.countOn} on</span><span className="sb-caret">{Ico.caret}</span>
-    </button>
-  );
-
-  const simpleHtml = (helper: (typeof ai.HELPERS)[number]) => (
-    <div className="detail">
-      <p className="d-desc">{helper.desc}</p>
-      <div className="d-checks">
-        {(ai.SIMPLE_CONTROLS[helper.id] || []).map((c) => (
-          <label className="d-check" key={c.key}>
-            <Switch checked={Boolean(draft[c.key])} onChange={(v) => onChange(c.key, v)} ariaLabel={c.label} />
-            <span>{c.label}</span>
-          </label>
-        ))}
-      </div>
-      {detailFoot()}
-    </div>
-  );
-
-  const versionHtml = (cap: 'vision' | 'decision', group: ReturnType<typeof ai.capGroups>[number]) => {
-    const value = modelOf(cap, group.id);
-    const list = group.models;
-    if (group.freeText) {
-      return (
-        <div className="ver-row">
-          <span className="ver-label">Version</span>
-          <input type="text" aria-label={`Version for ${group.name}`} placeholder="Type the model name" value={value} spellCheck={false}
-            onChange={(e) => selectModel(cap, group.id, e.target.value)} />
-        </div>
+  const modelOpts = (card: Card, selId: string) => {
+    const m = modelDef(card, selId) as { efforts?: string[]; def?: string; variants?: string[] } | undefined;
+    if (!m) return null;
+    const base = `${card.key}:${selId}`;
+    const bits = [];
+    if (card.reasoning && m.efforts && m.efforts.length) {
+      const key = base + ':thinking';
+      const cur = optVal(key, m.def || m.efforts[0]);
+      bits.push(
+        <label key="thinking">Thinking
+          <select aria-label={`Thinking level for ${selId}`} value={cur} onChange={(e) => setOpts((s) => ({ ...s, [key]: e.target.value }))}>
+            {m.efforts.map((e) => <option key={e} value={e}>{e.charAt(0).toUpperCase() + e.slice(1)}</option>)}
+          </select>
+        </label>,
       );
     }
-    return (
-      <div className="ver-row">
-        <span className="ver-label">Version</span>
-        <select aria-label={`Version for ${group.name}`} value={list.some((m) => m.id === value) ? value : ''} onChange={(e) => selectModel(cap, group.id, e.target.value)}>
-          {(!value || !list.some((m) => m.id === value)) && <option value={value || ''}>{value || 'Select a model…'}</option>}
-          {list.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+    if (m.variants && m.variants.length) {
+      const key = base + ':variant';
+      const cur = optVal(key, m.variants[0]);
+      bits.push(
+        <label key="variant">Variant
+          <select aria-label={`Variant for ${selId}`} value={cur} onChange={(e) => setOpts((s) => ({ ...s, [key]: e.target.value }))}>
+            {m.variants.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </label>,
+      );
+    }
+    return bits.length ? <div className="mo-opts">{bits}</div> : null;
+  };
+
+  const pickOptions = (card: Card, role: 'vision' | 'decisions') => {
+    const def = A.SERVICE_TYPES[card.type];
+    if (role === 'decisions' && !def.decisions) return null;
+    const ml = modelLists[card.key] || { vision: [], decision: [], decisionFreeText: false, liveOllama: [] };
+    if (role === 'vision') {
+      const options = ml.vision || [];
+      return { options, freeText: false, disabled: options.length === 0, placeholder: card.type === 'ollama' ? 'Test the host to list its models' : 'None offered' };
+    }
+    const options = ml.decision || [];
+    return { options, freeText: ml.decisionFreeText || options.length === 0, disabled: false };
+  };
+
+  const pickRow = (card: Card, role: 'vision' | 'decisions', label: string) => {
+    const o = pickOptions(card, role);
+    if (!o) return null;
+    const sel = role === 'vision' ? card.visionSel : card.decisionSel;
+    const setSel = (v: string) => patchCard(card.key, role === 'vision' ? { visionSel: v } : { decisionSel: v });
+    let control;
+    if (o.freeText) {
+      control = <input className="free-text" type="text" placeholder="Type the model id" aria-label={`${label} model`}
+        value={sel === 'none' ? '' : sel} onChange={(e) => setSel(e.target.value)} />;
+    } else if (o.disabled) {
+      control = <select disabled aria-label={`${label} model`}><option>{o.placeholder}</option></select>;
+    } else {
+      control = (
+        <select aria-label={`${label} model`} value={o.options.some((x) => x.id === sel) ? sel : 'none'} onChange={(e) => setSel(e.target.value)}>
+          <option value="none">None — skip</option>
+          {o.options.map((x) => <option key={x.id} value={x.id}>{x.id}</option>)}
         </select>
-      </div>
-    );
-  };
-
-  const pickerHtml = (cap: 'vision' | 'decision', helper: (typeof ai.HELPERS)[number]) => {
-    const unlocked = ai.unlockReason(helper, ctx);
-    if (unlocked.locked) {
-      return (
-        <div className="detail">
-          <div className="lk-box">
-            <div className="lk-ico">{Ico.lock}</div>
-            <div className="lk-reason">{unlocked.reason}</div>
-            <div className="lk-sub">{unlocked.sub}</div>
-            <div className="lk-actions">
-              <button type="button" className="ai-btn primary small" onClick={download}>Download the models</button>
-              <button type="button" className="ai-btn small" onClick={() => { setServicesOpen(true); setForkChoice('cloud'); }}>Add a cloud key</button>
-            </div>
-          </div>
-          {detailFoot()}
-        </div>
       );
     }
-    const groups = ai.capGroups(cap, ctx.config, modelLists);
-    const strategyKey = cap === 'vision' ? 'vlm_strategy' : 'moments_strategy';
-    const strategy = String(draft[strategyKey] ?? 'least_busy');
+    const cur = sel !== 'none' ? sel : null;
     return (
-      <div className="detail">
-        <h4>{cap === 'vision' ? 'Where cars are read' : 'Where moments are checked'}</h4>
-        <p className="d-hint">{cap === 'vision'
-          ? 'Add this PC or a cloud account. Turn on more than one to share the work.'
-          : 'This PC goes first when it has enough graphics memory. Cloud services can share the rest.'}</p>
-        {groups.map((g) => (
-          <div className="mo-group" key={g.id}>
-            <div className="mo-group-head">
-              <span className={`dot ${ai.serving(g.id, ctx.config) ? 'ok' : 'no'}`} />
-              <span className="mg-name">{g.name}</span><span className="tag">{g.tag}</span>
-              {g.key && <span className="key-mask">{maskKey(g.key)}</span>}
-              <span className="end">{g.testable && <button type="button" className="ai-btn small" disabled={!ai.serving(g.id, ctx.config)} onClick={() => testService(g.id)}>{testLabel(g.id)}</button>}</span>
-            </div>
-            <div className={`mo-card${g.disabledNote ? ' disabled' : ''}`}>
-              {g.disabledNote
-                ? <div className="disabled-note">{g.disabledNote}</div>
-                : versionHtml(cap, g)}
-              <div className="mo-foot">
-                <label className="svc-enabled">Enabled <Switch checked={cfg[g.id]?.enabled ?? false} onChange={(v) => applyService(g.id, { enabled: v })} ariaLabel={`Enable ${g.name}`} /></label>
-              </div>
-            </div>
-          </div>
-        ))}
-        <button type="button" className="ai-btn small add-service" onClick={() => setServicesOpen(true)}>+ Add a service</button>
-        <div className="hws">
-          <div className="hws-label">How work is shared</div>
-          <Segmented options={ai.STRATS} value={strategy} onChange={(v) => onChange(strategyKey, v)} label="How work is shared" />
-          <span className="hint">{ai.STRATS_HINT}</span>
-        </div>
-        {cap === 'vision' ? (
-          <div className="threshold">
-            <label className="d-check" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Switch checked={Boolean(draft.vlm_reasoning)} onChange={(v) => onChange('vlm_reasoning', v)} ariaLabel="Extended thinking" />
-              <span>Extended thinking</span>
-            </label>
-          </div>
-        ) : (
-          <>
-            <div className="shared-key">
-              <label htmlFor="moments-opencode-key">OpenCode key</label>
-              <div className="sk-row">
-                <input id="moments-opencode-key" type="password" placeholder="Paste your OpenCode key" value={ctx.config.opencode.key} spellCheck={false}
-                  onChange={(e) => applyService('opencode', { key: e.target.value })} />
-                <button type="button" className="ai-btn small" disabled={!ctx.config.opencode.key} onClick={() => testService('opencode')}>{testLabel('opencode')}</button>
-              </div>
-              <div className="svc-note" style={{ marginTop: 6 }}>One shared key for every OpenCode service. Conrod never logs it.</div>
-            </div>
-            <div className="threshold">
-              How sure Conrod must be
-              <select aria-label="How sure Conrod must be" value={Number(draft.moments_threshold ?? 0.85)}
-                onChange={(e) => onChange('moments_threshold', Number(e.target.value))}>
-                {[0.7, 0.8, 0.85, 0.9, 0.95].map((v) => <option key={v} value={v}>{Math.round(v * 100)}%</option>)}
-              </select>
-            </div>
-            <label className="d-check" style={{ marginTop: 10 }}>
-              <Switch checked={draft.moments_vlm_fallback !== false} onChange={(v) => onChange('moments_vlm_fallback', v)} ariaLabel="Use the car reader if no moment service answers" />
-              <span>Use the car reader if no moment service answers</span>
-            </label>
-          </>
-        )}
-        {detailFoot()}
+      <div className="pick">
+        <div className="pick-line"><label>{label}</label>{control}</div>
+        {role === 'decisions' && cur ? <div className="pick-meta">sees photos</div> : null}
+        {cur ? modelOpts(card, cur) : null}
       </div>
     );
   };
 
-  const rowHtml = (helper: (typeof ai.HELPERS)[number]) => {
-    const st = ai.statusOf(helper, ctx);
-    const open = openPanel === helper.id;
-    const tone = st.tone as Tone;
+  const builtinRow = (m: { id: string; role: string; dl?: string; variants?: string[] }) => {
+    const st = builtinRows[m.id] || { on: false, downloaded: false };
+    const missing = Boolean(m.dl) && !st.downloaded;
+    const meta = missing ? `${m.dl} · not downloaded` : 'on this PC';
+    const ctl = missing
+      ? <button className="btn small primary mo-dl" disabled={downloadProgress !== null} onClick={() => downloadBuiltin(m.id)}>
+          {downloadProgress !== null ? 'Downloading…' : 'Download'}
+        </button>
+      : <Switch mini on={st.on} ariaLabel={m.id} onChange={(v) => setBuiltinRows((s) => ({ ...s, [m.id]: { ...s[m.id], on: v } }))} />;
+    let variant = null;
+    if (st.on && st.downloaded && m.variants && m.variants.length) {
+      const key = `builtin:${m.id}:variant`;
+      variant = (
+        <div className="mo-opts"><label>Variant
+          <select aria-label={`Variant for ${m.id}`} value={optVal(key, m.variants[0])} onChange={(e) => setOpts((s) => ({ ...s, [key]: e.target.value }))}>
+            {m.variants.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </label></div>
+      );
+    }
     return (
-      <div className={`ph-row${open ? ' is-open' : ''}`} key={helper.id} data-helper={helper.id}>
-        <div className="ph-row-main">
-          <div className="ph-row-title">{helper.title}</div>
-          <div className="ph-row-desc">{helper.desc}</div>
-        </div>
-        <div className="ph-row-meta">
-          <span className="tag ph-row-tag">{st.tag}</span>
-          <span className={`ph-status ${tone}`}><span className={`dot ${dotClass(tone)}`} />{st.text}</span>
-        </div>
-        <div className="ph-row-ctl">
-          <button type="button" className="ph-change" ref={(el) => { changeRefs.current[helper.id] = el; }} aria-expanded={open} aria-controls={`ai-model-panel-${helper.id}`} onClick={() => togglePanel(helper.id)}>
-            Change <span className="chev">{Ico.caret}</span>
-          </button>
-        </div>
-        {open && (
-          <div id={`ai-model-panel-${helper.id}`} style={{ gridColumn: '1 / -1' }}>
-            {helper.capability
-              ? pickerHtml(helper.capability as 'vision' | 'decision', helper)
-              : simpleHtml(helper)}
-          </div>
-        )}
+      <div className={`mo${st.on && st.downloaded ? '' : ' off'}`}>
+        <div className="mo-line">{ctl}<div className="mo-name"><span className="mono">{m.id}</span><span className="mo-meta">{meta}</span></div></div>
+        {variant}
       </div>
     );
   };
 
-  const zoneHtml = (zone: ReturnType<typeof ai.groupByZone>[number]) => (
-    <div className="zone" key={zone.id}>
-      <div className="zone-head"><span className={`dot ${zone.id === 'pc' ? 'ok' : 'no'}`} />{zone.title}<span className="zh-count">{zone.helpers.length} {zone.helpers.length === 1 ? 'helper' : 'helpers'}</span></div>
-      {zone.helpers.length
-        ? zone.helpers.map((h) => rowHtml(h))
-        : <div className="zone-empty">{zone.empty}</div>}
+  const builtinCard = () => (
+    <section className={`service${builtinEnabled ? '' : ' svc-off'}`} data-card="builtin">
+      <div className="c-head"><span className={`dot ${builtinEnabled ? 'ok' : 'off'}`} /><h4>{A.BUILTIN.name}</h4><span className="tag own">{A.BUILTIN.tag}</span></div>
+      <p className="note">{A.BUILTIN.note}</p>
+      <p className="cost-line">Free — runs on this PC. Nothing is uploaded.</p>
+      <div className="mo-scroll">
+        <h3 className="mo-group">Reads photos</h3>
+        {A.BUILTIN.models.filter((m: { role: string }) => m.role === 'vision').map(builtinRow)}
+        <h3 className="mo-group">Makes decisions</h3>
+        {A.BUILTIN.models.filter((m: { role: string }) => m.role === 'decisions').map(builtinRow)}
+      </div>
+      <div className="svc-foot">
+        <span className="foot-label">Enabled</span>
+        <Switch on={builtinEnabled} ariaLabel="Enable built-in models" onChange={setBuiltinEnabled} />
+        <span className="spacer" />
+        <button className="btn small" onClick={() => test('builtin', Promise.resolve(null))}>{testLabel('builtin')}</button>
+      </div>
+    </section>
+  );
+
+  const serviceCard = (card: Card) => {
+    const def = A.SERVICE_TYPES[card.type];
+    const title = card.type === 'ollama' ? `${def.name} — ${hostShort(card.host)}` : def.name;
+    const picked: { id: string; local: boolean }[] = [];
+    if (card.visionSel && card.visionSel !== 'none') picked.push({ id: card.visionSel, local: card.type === 'ollama' });
+    if (def.decisions && card.decisionSel && card.decisionSel !== 'none') picked.push({ id: card.decisionSel, local: false });
+    const cost = A.costLine(picked) as string;
+    // Per-service thinking lives on the entry as `reasoning` (default false);
+    // the backend applies it when building the VLM request (engine seam TODO).
+    const think = card.reasoning;
+    return (
+      <section className={`service${card.enabled ? '' : ' svc-off'}`} data-card={card.key} key={card.key}>
+        <div className="c-head">
+          <span className={`dot ${card.enabled ? def.dot : 'off'}`} />
+          <h4 title={title}>{title}</h4>
+          <span className="tag">{def.tag}</span>
+        </div>
+        <p className="note">{def.note}</p>
+        {def.kind === 'key'
+          ? <input className="key" type="password" placeholder={def.keyPlaceholder} value={card.apiKey} spellCheck={false}
+              aria-label={`${def.name} key`} onChange={(e) => patchCard(card.key, { apiKey: e.target.value })} />
+          : <input className="key mono" type="text" placeholder="http://host:11434" value={card.host} spellCheck={false}
+              aria-label="Ollama host address" onChange={(e) => patchCard(card.key, { host: e.target.value })} />}
+        <p className="cost-line" title="Estimate at about 900 tokens in and 250 out per photo, summed over the picked models.">{cost}</p>
+        <div className="mo-scroll">
+          <h3 className="mo-group">Reads photos</h3>
+          {pickRow(card, 'vision', 'Vision')}
+          {def.decisions && <h3 className="mo-group">Makes decisions</h3>}
+          {def.decisions && pickRow(card, 'decisions', 'Decisions')}
+        </div>
+        {def.thinking && (
+          <div className="think-row">
+            <Switch mini on={think} ariaLabel={`Thinking for ${def.name}`} onChange={(v) => patchCard(card.key, { reasoning: v })} />
+            <div><span className="think-label">Thinking</span><p className="think-hint">{A.THINK_HINT}</p></div>
+          </div>
+        )}
+        <div className="svc-foot">
+          <span className="foot-label">Enabled</span>
+          <Switch on={card.enabled} ariaLabel={`Enable ${title}`} onChange={(v) => patchCard(card.key, { enabled: v })} />
+          <span className="spacer" />
+          <button className="link danger" onClick={() => removeCard(card.key)}>Remove</button>
+          <button className="btn small" onClick={() => testCard(card)}>{testLabel(card.key)}</button>
+        </div>
+      </section>
+    );
+  };
+
+  const addTile = () => (
+    <div className="add-tile" role="button" tabIndex={0} aria-haspopup="true" aria-expanded={addMenuOpen}
+      onClick={() => setAddMenuOpen((o) => !o)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAddMenuOpen((o) => !o); } }}>
+      <span className="plus">+</span>
+      <span className="add-label">Add service</span>
+      <span className="add-hint">OpenCode, OpenRouter, Local Ollama (one card per host), Gemini, Anthropic or OpenAI</span>
+      <div className="add-menu" hidden={!addMenuOpen} onClick={(e) => e.stopPropagation()}>
+        {A.ADD_ORDER.map((type: string) => {
+          const added = type !== 'ollama' && cards.some((c) => c.type === type);
+          return (
+            <button type="button" key={type} disabled={added}
+              onClick={(e) => { e.stopPropagation(); if (!added) doAdd(type); }}>
+              <span className="am-name">{A.SERVICE_TYPES[type].name}</span>
+              <span className="am-desc">{A.ADD_DESC[type]}</span>
+              {added && <span className="am-added">Added ✓</span>}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
+
+  const toggleHelper = (h: { id: string }) => {
+    const on = !helpersOn[h.id];
+    setHelpersOn((s) => ({ ...s, [h.id]: on }));
+    const keys = (A.SIMPLE_CONTROLS[h.id] || []).map((c: { key: string }) => c.key);
+    for (const k of keys) onChange(k, on);
+  };
+
+  const helperRow = (h: { id: string; title: string; desc: string }) => {
+    const on = Boolean(helpersOn[h.id]);
+    const list = A.servingFor(h.id, ctx) as { id: string; ready: boolean }[];
+    const st = A.helperStatus(on, list) as { text: string; cls: string; dot: string };
+    const line = A.modelLine(list) as { head: string | null; rest: string[]; all: string[]; noModel: boolean };
+    const open = openPopup === h.id;
+    return (
+      <div className="helper" key={h.id} data-h={h.id}>
+        <Switch mini on={on} ariaLabel={h.title} onChange={() => toggleHelper(h)} />
+        <div className="helper-main">
+          <h4 className="helper-title" title={h.desc}>{h.title}</h4>
+          <div className="hm-line">
+            {line.noModel ? <span className="hm-none">no model yet</span> : (
+              <>
+                <span className="hm-model">{line.head}</span>
+                {line.rest.length > 0 && (
+                  <span className={`hm-more-wrap${open ? ' open' : ''}`}>
+                    <button className="hm-more" aria-expanded={open} aria-haspopup="true"
+                      onClick={(e) => { e.stopPropagation(); setOpenPopup((cur) => cur === h.id ? null : h.id); }}>
+                      +{line.rest.length} more <svg width="9" height="9" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </button>
+                    <span className="hm-pop" hidden={!open}>
+                      <span className="hm-pop-title">Models in use</span>
+                      {line.all.map((id) => <span key={id}>{id}</span>)}
+                    </span>
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+        <div className="helper-status"><span className={`dot ${st.dot}`} /><span className={`ph-status${st.cls ? ' ' + st.cls : ''}`}>{st.text}</span></div>
+      </div>
+    );
+  };
 
   return (
-    <section className="settings-section ai-models ai-settings" aria-labelledby="settings-section-ai-models">
-      <header className="settings-section-head">
-        <h3 id="settings-section-ai-models">Photo helpers</h3>
-        <p className="section-hint">What Conrod finds, checks and reads. Everything runs on this PC unless a row says Cloud.</p>
-      </header>
-      {view.isEmpty ? forkHtml() : summaryHtml()}
-      {servicesHtml()}
-      <div className="zones">{view.groups.map((zone) => zoneHtml(zone))}</div>
+    <section className="ai-settings">
+      <div className="strip">
+        <span className={`dot ${summary.dot}`} />
+        <span className="strip-text">{summary.text}</span>
+        <span className="spacer" />
+      </div>
+
+      <hr className="divider" />
+
+      <div className="svc-head"><h2>AI services</h2></div>
+      <p className="sub">The models on this PC are always here. Add a service for more help, pick its models from the dropdowns. Cloud prices are estimates per photo.</p>
+
+      <div className="share-bar">
+        <h3>How work is shared</h3>
+        <div className="seg" role="group" aria-label="How work is shared across services">
+          {A.SHARING.map((s: { id: string; name: string }) => (
+            <button key={s.id} className={routing === s.id ? 'on' : ''} aria-pressed={routing === s.id} onClick={() => chooseSharing(s.id)}>{s.name}</button>
+          ))}
+        </div>
+        <span className="share-hint">{A.SHARING_HINT}</span>
+        <span className="spacer" />
+        <span className="pool">
+          {pool.n ? <><b>{pool.n}</b> model{pool.n === 1 ? '' : 's'} in the pool · {pool.svc} service{pool.svc === 1 ? '' : 's'}</> : 'Nothing in the pool yet'}
+        </span>
+      </div>
+
+      <div className="grid">
+        {builtinCard()}
+        {cards.map(serviceCard)}
+        {addTile()}
+      </div>
+
+      <section className="helpers">
+        <h2 className="section-title">Photo helpers</h2>
+        <p className="sub">Each helper shows the model it runs on. Switch one off to skip it.</p>
+        <div className="helper-list">{A.HELPERS.map(helperRow)}</div>
+      </section>
     </section>
   );
 }

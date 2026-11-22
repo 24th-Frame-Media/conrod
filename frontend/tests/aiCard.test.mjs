@@ -5,6 +5,13 @@ import {
   buildAiView, capStatus, capUsable, groupByZone, isEmpty, serviceConfig,
   serving, setService, statusOf, summaryLine, unlockReason, zoneOf,
 } from '../src/lib/aiCard.mjs';
+import {
+  ADD_ORDER, BUILTIN, IN_TOK, OUT_TOK, SERVICE_TYPES, SHARING, THINK_HINT,
+  addService, cardsFromDraft, costLine, decisionCandidates, defaultThinking,
+  fmtUsd, helperStatus, makeCard, modelLine, patchService, photoCost, poolCount,
+  providerToType, removeService, servingFor, setSharing, sharingValue, summaryText,
+  visionCandidates,
+} from '../src/lib/aiCard.mjs';
 
 const NO_MODELS = { vision: {}, decision: {} };
 const view = (settings) => buildAiView(settings, NO_MODELS);
@@ -177,4 +184,131 @@ test('wiring: groupByZone never lists a helper in two zones', () => {
     assert.equal(new Set(ids).size, ids.length);
     assert.equal(ids.length, HELPERS.length);
   }
+});
+
+/* ── services-plan rebuild: the four new behaviours ─────────────────────── */
+
+test('service definitions: six addable services, built-in rows, vision-only Ollama', () => {
+  assert.equal(ADD_ORDER.length, 6);
+  assert.equal(BUILTIN.models.length, 2);
+  assert.equal(SERVICE_TYPES.ollama.decisions, false);
+  assert.ok(THINK_HINT.length > 0);
+  assert.equal(providerToType('opencode-go'), 'opencode');
+  assert.equal(providerToType('in_process'), null); // built-in, not a service card
+});
+
+test('sharing control: one global value writes both strategy keys together', () => {
+  assert.deepEqual(SHARING.map((s) => s.id), ['round_robin', 'least_busy', 'random']);
+  assert.deepEqual(SHARING.map((s) => s.name), ['Round robin', 'Load balance', 'Random']);
+  assert.deepEqual(setSharing('least_busy'), { vlm_strategy: 'least_busy', moments_strategy: 'least_busy' });
+  assert.deepEqual(setSharing('random'), { vlm_strategy: 'random', moments_strategy: 'random' });
+  assert.deepEqual(setSharing('bogus'), { vlm_strategy: 'round_robin', moments_strategy: 'round_robin' });
+  assert.equal(sharingValue({ vlm_strategy: 'least_busy' }), 'least_busy');
+  assert.equal(sharingValue({}), 'round_robin');
+  assert.equal(sharingValue({ vlm_strategy: 'bogus' }), 'round_robin');
+});
+
+test('cost line: est. $X per photo · $Y per 1,000, free / varies honestly', () => {
+  assert.equal(IN_TOK, 900);
+  assert.equal(OUT_TOK, 250);
+  assert.equal(photoCost('glm-5.3-flash').usd, (900 * 0.15 + 250 * 0.5) / 1e6);
+  assert.equal(photoCost('not-a-known-model').varies, true);
+  assert.equal(fmtUsd(0.00026, true), '0.0003');
+  assert.equal(fmtUsd(0.26, false), '0.26');
+  const line = costLine([{ id: 'glm-5.3-flash', local: false }, { id: 'jev-1.13', local: false }]);
+  assert.match(line, /^est\. \$/);
+  assert.match(line, /per photo · \$/);
+  assert.match(line, /per 1,000 photos$/);
+  assert.equal(costLine([]), 'No models picked yet — no cost.');
+  assert.match(costLine([{ id: 'qwen3-vl:8b', local: true }]), /Free — runs on your own hardware/);
+  assert.match(costLine([{ id: 'openrouter/auto', local: false }]), /varies per photo/);
+  assert.match(costLine([{ id: 'jev-1.13-free', local: false }]), /free tier/);
+});
+
+test('popup data: the model line lists every serving model behind +N more', () => {
+  const list = [
+    { id: 'qwen3-vl:8b', ready: true },
+    { id: 'glm-5.3-flash', ready: true },
+    { id: 'gemini-4-hydrogen', ready: false },
+  ];
+  const line = modelLine(list);
+  assert.equal(line.noModel, false);
+  assert.equal(line.head, 'qwen3-vl:8b');
+  assert.deepEqual(line.rest, ['glm-5.3-flash', 'gemini-4-hydrogen']);
+  assert.deepEqual(line.all, ['qwen3-vl:8b', 'glm-5.3-flash', 'gemini-4-hydrogen']);
+  assert.equal(modelLine([]).noModel, true);
+});
+
+test('per-card Thinking defaults off, is persisted as reasoning on both service lists', () => {
+  assert.equal(defaultThinking(), false);
+  for (const type of ADD_ORDER) assert.equal(makeCard(type).reasoning, false, `${type} default`);
+  const a = makeCard('opencode'), b = makeCard('gemini');
+  a.reasoning = true;
+  assert.equal(b.reasoning, false, 'toggling one card does not affect another');
+  const added = addService({ vlm_services: [], moments_services: [] }, 'opencode');
+  assert.equal(added.vlm_services[0].reasoning, false);
+  assert.equal(added.moments_services[0].reasoning, false);
+  assert.equal(cardsFromDraft(added)[0].reasoning, false);
+  const on = patchService(added, 'opencode', { reasoning: true });
+  assert.equal(on.vlm_services[0].reasoning, true);
+  assert.equal(on.moments_services[0].reasoning, true);
+  assert.equal(cardsFromDraft(on)[0].reasoning, true);
+});
+
+test('helper serving: non-AI helpers use bundled models, AI helpers use the pool', () => {
+  const ctx = {
+    builtinVision: ['qwen3-vl:8b'], builtinDecisions: [],
+    bundled: { 'cars-people': [{ id: 'Vehicle detector (YOLO)', ready: true }, { id: 'Person detector', ready: true }] },
+    cards: [{ type: 'opencode', enabled: true, visionSel: 'glm-5.3-flash', decisionSel: 'jev-1.13', apiKey: 'k' }],
+  };
+  assert.deepEqual(servingFor('cars-people', ctx).map((x) => x.id), ['Vehicle detector (YOLO)', 'Person detector']);
+  assert.deepEqual(servingFor('reads-cars', ctx).map((x) => x.id), ['qwen3-vl:8b', 'glm-5.3-flash']);
+  assert.deepEqual(servingFor('moments', ctx).map((x) => x.id), ['jev-1.13']);
+});
+
+test('helper status: ready / needs a key / no model / off, no cloud wording', () => {
+  assert.equal(helperStatus(false, [{ id: 'x', ready: true }]).text, 'Off');
+  assert.equal(helperStatus(true, [{ id: 'x', ready: true }]).text, 'Ready');
+  assert.equal(helperStatus(true, [{ id: 'x', ready: false }]).text, 'Needs a key');
+  assert.equal(helperStatus(true, []).text, 'No model');
+});
+
+test('wiring: add / patch / remove service rows, one card per service', () => {
+  const added = addService({ vlm_services: [], moments_services: [] }, 'opencode');
+  const cards = cardsFromDraft(added);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].type, 'opencode');
+  assert.equal(cards[0].visionSel, 'glm-5.3-flash');
+  assert.equal(cards[0].decisionSel, 'jev-1.13');
+  const patched = patchService(added, 'opencode', { apiKey: 'secret', enabled: false, visionSel: 'glm-4.6v' });
+  const pc = cardsFromDraft(patched)[0];
+  assert.equal(pc.apiKey, 'secret');
+  assert.equal(pc.enabled, false);
+  assert.equal(pc.visionSel, 'glm-4.6v');
+  assert.equal(cardsFromDraft(removeService(patched, 'opencode')).length, 0);
+});
+
+test('Ollama = one card per host; OpenRouter decisions render through decision_models', () => {
+  const o1 = addService({ vlm_services: [], moments_services: [] }, 'ollama', { id: 'ollama-1', url: 'http://h1:11434' });
+  const o2 = addService(o1, 'ollama', { id: 'ollama-2', url: 'http://h2:11434' });
+  assert.equal(cardsFromDraft(o2).length, 2);
+  // decision_models enumeration (same shape) feeds the same path as OpenCode.
+  const dc = decisionCandidates('openrouter', [{ id: 'qwen/qwen2.5-vl-72b-instruct' }],
+    [{ id: 'typesafe/jev-router', sees_photos: true }, { id: 'openrouter/auto', sees_photos: true }]);
+  assert.equal(dc.freeText, false);
+  assert.deepEqual(dc.models.map((m) => m.id), ['typesafe/jev-router', 'openrouter/auto']);
+  assert.equal(decisionCandidates('openrouter', [], []).freeText, true, 'honest free-text when nothing matches');
+  assert.equal(decisionCandidates('opencode', [], [{ id: 'jev-1.13' }]).models[0].id, 'jev-1.13');
+  assert.equal(visionCandidates('openrouter', [{ id: 'typesafe/jev-router' }, { id: 'qwen/qwen2.5-vl-72b-instruct' }]).length, 1);
+});
+
+test('pool + summary strip follow enabled services and routing', () => {
+  const ctx = {
+    builtinVision: ['qwen3-vl:8b'], builtinDecisions: [], routing: 'round_robin',
+    cards: [{ enabled: true, visionSel: 'glm-5.3-flash', decisionSel: 'none' }],
+  };
+  assert.deepEqual(poolCount(ctx), { n: 2, svc: 2 });
+  assert.match(summaryText(ctx).text, /2 models ready across 2 services, shared round robin/);
+  assert.equal(poolCount({ ...ctx, cards: [], builtinVision: [] }).n, 0);
+  assert.match(summaryText({ ...ctx, cards: [], builtinVision: [], builtinDecisions: [] }).text, /No models in the pool/);
 });

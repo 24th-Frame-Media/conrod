@@ -6,6 +6,7 @@ import type { ShootStats } from './shot.mjs';
 import { applyOverrides, defaultSummary, overridesOf } from './presetPolicy.mjs';
 import { profileDefaults } from './wizard.mjs';
 import type { Bootstrap, DeciderLive, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, Settings, Status, WorkerLimits } from './types';
+import * as aiCard from './aiCard.mjs';
 
 export type DevStart = {
   page?: Page; jobId?: number; viewer?: boolean; popover?: boolean;
@@ -98,6 +99,24 @@ function makeDb(): Db {
   const ai = params().get('ai');
   const openCodeKey = 'oc_sk_live_7f3a';
   const servicesForAi = () => {
+    // `&svc=opencode,gemini` (or `all`) seeds the AI services cards directly,
+    // so each "service added" screenshot opens straight from a URL.
+    const svcParam = params().get('svc');
+    if (svcParam) {
+      const types = svcParam === 'all' ? aiCard.ADD_ORDER : svcParam.split(',').filter((t) => aiCard.ADD_ORDER.includes(t));
+      let s: any = { vlm_services: [], moments_services: [], use_decider: false };
+      types.forEach((t, i) => {
+        s = aiCard.addService(s, t, {
+          hostIndex: i + 1,
+          id: t === 'ollama' ? `ollama-${i + 1}` : undefined,
+          url: t === 'ollama' ? 'http://localhost:11434' : undefined,
+        });
+      });
+      const think = params().get('aithink') === '1';
+      s.vlm_services = s.vlm_services.map((r: any) => ({ ...r, api_key: r.provider === 'ollama' ? '' : 'sk_mock_key', reasoning: think }));
+      s.moments_services = s.moments_services.map((r: any) => ({ ...r, api_key: 'sk_mock_key', reasoning: think }));
+      return s;
+    }
     if (ai === 'empty') return { vlm_services: [], moments_services: [], use_decider: false };
     if (ai === 'local') return {
       vlm_services: [],
@@ -116,8 +135,8 @@ function makeDb(): Db {
     use_vlm: true, vlm_provider: 'ollama', vlm_model: 'qwen2.5vl:7b', vlm_host: 'http://localhost:11434', vlm_extra_hosts: '', vlm_api_key: '', vlm_timeout: 120,
     ...(servicesForAi() as unknown as Settings),
     // Moment + vision wiring the two-zone card writes back to the engine.
-    moments_strategy: 'least_busy', moments_vlm_fallback: true, moments_threshold: 0.85,
-    vlm_strategy: 'least_busy', vlm_reasoning: false, use_quality_score: true, include_people: true,
+    moments_strategy: 'round_robin', moments_vlm_fallback: true, moments_threshold: 0.85,
+    vlm_strategy: 'round_robin', vlm_reasoning: false, use_quality_score: true, include_people: true,
     workflow_mode: 'both', identify_scope: 'keepers',
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
     overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', decider_quant: 'auto', close_to_tray: false,
@@ -235,6 +254,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'health': return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}, {name: 'Decision model', ready: mockDeciderStatus().state === 'ready', optional: true, detail: mockDeciderStatus().message}]);
     case 'decider_status': return out(mockDeciderStatus());
     case 'install_decider': return out({operation: 'Installing decision model'});
+    case 'install_models': return out({operation: 'Installing models'});
     case 'cache_info': return out({total: {files: 64, bytes: 3200000}});
     case 'check_update': return out({ok: true, current: '0.0.0-mock', latest: '0.0.1-mock', newer: true, installable: true});
     case 'ollama_models': return out({
@@ -250,26 +270,27 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     });
     case 'provider_models': {
       const provider = String(a.provider ?? '');
-      const listable = ['openai', 'opencode', 'opencode-go', 'openrouter'];
-      if (!listable.includes(provider)) {
-        return out({ models: [], error: `'${provider}' does not list models; type the model name` });
-      }
-      let models: { id: string; name: string }[];
-      if (provider === 'openai') models = [{ id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }, { id: 'o4-mini', name: 'o4-mini' }];
-      else if (provider === 'openrouter') models = [{ id: 'qwen/qwen2.5-vl-72b-instruct', name: 'qwen/qwen2.5-vl-72b-instruct' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }];
-      else models = [{ id: 'glm-5.3-flash', name: 'glm-5.3-flash' }, { id: 'glm-4.6v', name: 'glm-4.6v' }, { id: 'qwen3-vl:8b', name: 'qwen3-vl:8b' }];
-      return out({ models });
+      const type = provider === 'opencode-go' ? 'opencode' : provider;
+      const def = aiCard.SERVICE_TYPES[type];
+      if (!def) return out({ models: [], error: `'${provider}' does not list models; type the model name` });
+      // OpenCode's decisions come from decision_models, so its key list is vision only.
+      const ids = type === 'opencode'
+        ? def.models.filter((m) => m.img && m.role === 'vision').map((m) => m.id)
+        : def.models.filter((m) => m.img).map((m) => m.id);
+      return out({ models: ids.map((id) => ({ id, name: id })) });
     }
     case 'decision_models': {
       const provider = String(a.provider ?? '');
       if (provider === 'openrouter') {
-        return out({ models: [], freeText: true, note: 'No photo-capable decision model available for this service' });
+        // Backend-owned enumeration, same shape as decision_models:
+        // { id/model, sees_photos, note? } — rendered through the same path.
+        const ms = aiCard.decisionModels('openrouter').map((m) => ({ id: m.id, name: m.id, sees_photos: true, image: true, unverified: false }));
+        return out({ models: ms, freeText: false, note: null });
       }
-      if (provider === 'opencode' || provider === 'opencode-go') {
-        return out({ models: [
-          { id: 'jev-1.13', name: 'jev-1.13', image: true, unverified: false },
-          { id: 'jev-1.13-free', name: 'jev-1.13-free', image: true, unverified: false },
-        ], freeText: false, note: null });
+      const type = provider === 'opencode-go' ? 'opencode' : provider;
+      if (type === 'opencode') {
+        const ms = aiCard.decisionModels('opencode').map((m) => ({ id: m.id, name: m.id, image: true, unverified: false }));
+        return out({ models: ms, freeText: false, note: null });
       }
       return out({ models: [], freeText: true, error: `'${provider}' does not list decision models` });
     }
