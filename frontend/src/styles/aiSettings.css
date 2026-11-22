@@ -13,6 +13,10 @@
 .ai-settings * { box-sizing: border-box; }
 .ai-settings h2, .ai-settings h3, .ai-settings h4, .ai-settings p { margin: 0; }
 .ai-settings button, .ai-settings input, .ai-settings select { font: inherit; color: var(--text); }
+/* Native dropdown popups use the OS palette, not the app theme. Without this the
+   <option> list of every select in the card (Vision, Decisions, effort, variant)
+   comes up white-on-white in dark mode; bind it to the same tokens as the card. */
+.ai-settings select option { background: var(--bg); color: var(--text); }
 .ai-settings button:focus-visible, .ai-settings input:focus-visible, .ai-settings select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* ---- one-line summary strip (always visible) ---- */
@@ -59,10 +63,15 @@
 .ai-settings .seg button:hover { color: var(--text); }
 .ai-settings .seg button.on { background: var(--surface-3); color: var(--text); font-weight: 500; }
 
-/* ---- service grid: fixed-height cards, inner scroll ---- */
-.ai-settings .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+/* ---- service grid: cards grow to fit every option row ----
+   A fixed height plus an inner scroller used to give the pick list only ~140px
+   while its content needs ~200px, so the Decisions dropdown (and the per-model
+   thinking/variant rows added when Thinking is on) was clipped and looked empty.
+   Cards now size to their content; the grid stretches siblings in a row to the
+   tallest so the layout stays even. */
+.ai-settings .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; align-items: stretch; }
 .ai-settings .service {
-  display: flex; flex-direction: column; min-width: 0; height: 430px;
+  display: flex; flex-direction: column; min-width: 0; min-height: 430px; height: auto;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px;
   padding: 14px 14px 12px;
   transition: border-color .14s var(--ease), background-color .2s var(--ease);
@@ -108,10 +117,9 @@
 .ai-settings button:disabled { opacity: .45; cursor: not-allowed; }
 .ai-settings .mono { font-family: var(--mono); font-size: 12px; letter-spacing: .01em; font-variant-numeric: tabular-nums; }
 
-/* ---- scrolling pick list with sticky group labels ---- */
+/* ---- pick list: every option row stays visible (no inner clipping) ---- */
 .ai-settings .mo-scroll {
-  flex: 1; min-height: 0; overflow-y: auto; margin: 2px -6px 0; padding: 0 6px 4px;
-  scrollbar-width: thin; scrollbar-color: var(--scroll) transparent;
+  flex: 1; min-height: 0; overflow: visible; margin: 2px -6px 0; padding: 0 6px 4px;
 }
 .ai-settings .mo-scroll::-webkit-scrollbar { width: 8px; }
 .ai-settings .mo-scroll::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 4px; }
@@ -264,7 +272,7 @@
 .ai-settings .ph-status.off { color: var(--text-mute); }
 
 @media (max-width: 900px) { .ai-settings .helper-list { grid-template-columns: 1fr; } }
-@media (max-width: 700px) { .ai-settings .service { height: 410px; } }
+@media (max-width: 700px) { .ai-settings .service { min-height: 410px; } }
 @media (prefers-reduced-motion: reduce) {
   .ai-settings *, .ai-settings *::before, .ai-settings *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }

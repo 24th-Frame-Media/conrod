@@ -235,8 +235,10 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     if (card.reasoning && m.efforts && m.efforts.length) {
       const key = base + ':thinking';
       const cur = optVal(key, m.def || m.efforts[0]);
+      // The card already has a "Thinking" toggle; this per-model row is its
+      // effort level, so name it that instead of doubling the word.
       bits.push(
-        <label key="thinking">Thinking
+        <label key="thinking">Effort
           <select aria-label={`Thinking level for ${selId}`} value={cur} onChange={(e) => setOpts((s) => ({ ...s, [key]: e.target.value }))}>
             {m.efforts.map((e) => <option key={e} value={e}>{e.charAt(0).toUpperCase() + e.slice(1)}</option>)}
           </select>
