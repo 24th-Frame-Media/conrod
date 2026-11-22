@@ -31,6 +31,9 @@
     }
   },
   "commits": {
+    "66dd39d": { "section": "New", "text": "Every stage of a scan can be run again by hand: find cars again, check sharpness again, read cars again, judge moments again, pick the best of each burst again — one stage at a time, never touching your own picks or ratings." },
+    "35e9734": { "section": "Improved", "text": "Each step of a scan now has its own Run again button in Review, with a short message while it runs and the counts when it is done." },
+    "917e942": { "section": "Fixed", "text": "An album you've identified stays identified: only cars that turn up later are offered, and Skip leaves the old readings alone." },
     "4c553fe0": { "section": "New", "text": "The Lightroom plug-in is now optional; Conrod writes stars, picks and colour labels to your photos by default." },
     "5130167": [
       { "section": "New", "text": "Settings has one AI models page: every model Conrod can use, in plain words, with where it runs, whether it is ready and a switch to turn it on or off." },
