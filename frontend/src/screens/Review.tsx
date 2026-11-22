@@ -1096,14 +1096,14 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
             <p className="muted">
               What is on disk stays as it is unless you ask to read it again.
             </p>
-            <div className="identify-footer">
-              {scopeEligible > 0 && (
-                <button type="button" className="primary" onClick={() => onIdentify(identifyScope, true)}>
-                  Identify new only
-                </button>
-              )}
-              <button type="button" className="ghost" onClick={onSkipAlbumIdentify}>Skip</button>
-            </div>
+          </div>
+          <div className="identify-actions">
+            {scopeEligible > 0 && (
+              <button type="button" className="primary" onClick={() => onIdentify(identifyScope, true)}>
+                Identify new only
+              </button>
+            )}
+            <button type="button" className="ghost" onClick={onSkipAlbumIdentify}>Skip</button>
           </div>
         </section>
       )}
