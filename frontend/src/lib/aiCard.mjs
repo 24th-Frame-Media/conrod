@@ -674,6 +674,47 @@ export function helperStatus(on, list) {
   return { text: 'No model', cls: 'off', dot: 'off' };
 }
 
+/* ── who is actually doing the moments (decisions) job ─────────────────────
+   One source of truth for every "who serves moments" status. A cloud decision
+   service (e.g. OpenCode's JEV) is ready with a key — nothing is installed on
+   this PC — while the built-in local model reports its own install state. The
+   "Spots moments" helper row, the This PC card's note and the identify screen's
+   DECIDER node all read this, so none of them claims "not installed" while a
+   cloud service is judging. Setting names are the engine's wire format. */
+
+/** Cloud decision services, keyed by the provider ids the settings use. */
+const DECISION_SERVICES = {
+  opencode: 'OpenCode', openrouter: 'OpenRouter', gemini: 'Gemini',
+  anthropic: 'Anthropic', openai: 'OpenAI',
+};
+
+/**
+ * Who serves the moments job, in plain words. `localInstalled` is the built-in
+ * local decider's install state (the This PC card's "Makes decisions" row); it
+ * only matters when no cloud decision service is enabled with a picked model.
+ * Returns { path, service, model, label, status, ready, others }.
+ */
+export function momentsStatus(settings = {}, localInstalled = false) {
+  const cloud = cardsFromDraft(settings)
+    .filter((c) => c.enabled && c.decisionSel && c.decisionSel !== 'none'
+      && c.decisionSel !== 'in_process' && DECISION_SERVICES[c.type])
+    .map((c) => ({ service: DECISION_SERVICES[c.type], model: c.decisionSel, ready: Boolean(c.apiKey) }));
+  if (cloud.length) {
+    const first = cloud[0];
+    return {
+      path: 'cloud', service: first.service, model: first.model,
+      label: `${first.model} via ${first.service}`,
+      status: first.ready ? 'Ready' : 'Needs a key', ready: first.ready,
+      others: cloud.slice(1).map((c) => `${c.model} via ${c.service}`),
+    };
+  }
+  return {
+    path: 'local', service: null, model: localInstalled ? 'pplx-decider-local' : null,
+    label: 'On this PC', status: localInstalled ? 'Ready' : 'Not installed',
+    ready: Boolean(localInstalled), others: [],
+  };
+}
+
 /* ---- pool count + one-line summary strip ---- */
 export function poolCount(ctx = {}) {
   let n = (ctx.builtinVision || []).length + (ctx.builtinDecisions || []).length;

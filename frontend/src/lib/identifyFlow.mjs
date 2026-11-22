@@ -59,21 +59,28 @@ function shortAsk(text) {
  * The decision model's node for the identify flow: what it is asking (or last answered), how many
  * frames it has judged, and the seconds each frame takes. It runs beside the vision workers, so
  * it appears in the same row; when it is off, the node is dimmed and says why.
+ * `serving` is the cloud decision service actually doing the moments job (e.g. "jev-1.13 via
+ * OpenCode"). Its state comes from `decider-progress`, a feed for the LOCAL model only: when a
+ * cloud service serves, nothing is installed locally, so the node must name that service and
+ * never show the local model's "not installed"/off state.
  */
-export function deciderStepNode(live) {
+export function deciderStepNode(live, serving = null) {
   if (!live || typeof live !== 'object') return null;
   const frames = Math.max(0, Math.round(Number(live.done) || 0));
   const busy = Number(live.busy) > 0 || live.current != null;
   const ask = live.current?.asking?.[0]?.text ?? '';
   const said = live.recent?.[0]?.says?.[0];
   const answer = said ? `${said.label} ${percent(said.p)}` : '';
-  const off = DECIDER_OFF.has(live.state) && !busy && frames === 0;
-  const sub = off ? 'off' : shortAsk(ask) || (frames ? `${frames} frames` : 'waiting');
+  const cloud = Boolean(serving);
+  const off = !cloud && DECIDER_OFF.has(live.state) && !busy && frames === 0;
+  const sub = off ? 'off' : cloud ? serving : shortAsk(ask) || (frames ? `${frames} frames` : 'waiting');
   const per = live.avg_ms ? `${msWords(live.avg_ms)}/frame` : '';
   const meta = off ? '' : [frames ? `${frames} frames` : '', per, answer].filter(Boolean).join(' · ');
+  const title = cloud
+    ? [serving, shortAsk(ask), answer].filter(Boolean).join(' · ')
+    : [sub, live.message, answer].filter(Boolean).join(' · ');
   return {
-    id: 'decider', number: '', label: 'DECIDER', sub, meta,
-    title: [sub, live.message, answer].filter(Boolean).join(' · '),
+    id: 'decider', number: '', label: 'DECIDER', sub, meta, title,
     state: busy ? 'active' : frames > 0 ? 'done' : 'pending', off, filter: null,
   };
 }

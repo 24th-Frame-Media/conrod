@@ -95,7 +95,7 @@ function visionNode(identify, identifyStage, model, finished) {
  * draws a node of its own. A stage the engine has not reported yet is drawn pending, so the row is whole from the first frame.
  * decider (the decision model's live snapshot) adds the DECIDER node before DONE, dimmed while it is off or unavailable.
  */
-export function ingestNodes({ stages, identify = null, model = '', finished = false, decider = null } = {}) {
+export function ingestNodes({ stages, identify = null, model = '', finished = false, decider = null, serving = null } = {}) {
   const ordered = orderStages(stages);
   const byId = new Map(ordered.map((s) => [s.id, s]));
   const ids = [...SCAN_NODE_IDS, ...ordered.map((s) => s.id).filter((id) => id !== 'identify' && !SCAN_NODE_IDS.includes(id))];
@@ -104,7 +104,7 @@ export function ingestNodes({ stages, identify = null, model = '', finished = fa
   const nodes = ids.map((id) => scanNode(id, byId.get(id), finished));
   if (visionExpected(ordered, identify)) nodes.push(visionNode(identify, byId.get('identify'), model, finished));
   // The decision model sits after VISION: it answers about the same frames, on the same GPU, when the shoot type asks it.
-  if (decider) nodes.push(deciderNode(decider));
+  if (decider) nodes.push(deciderNode(decider, serving));
   nodes.push({
     id: 'done', number: '', label: 'DONE', sub: finished ? 'ready to review' : 'review opens', meta: '', title: '',
     state: finished ? 'done' : 'pending', off: false, filter: null,
@@ -117,11 +117,11 @@ export function ingestNodes({ stages, identify = null, model = '', finished = fa
  * the decision model reports in (`decider`, else `live.decider`), its node sits after VISION,
  * with the question it is on and the frames it has judged.
  */
-export function identifyNodes(live, model, decider = null) {
+export function identifyNodes(live, model, decider = null, serving = null) {
   const nodes = flowNodes(live, model).map((node) => ({
     id: node.label.toLowerCase(), number: node.number, label: node.label, sub: node.sub, meta: '', title: node.sub, state: node.state, off: node.off === true, filter: null,
   }));
-  const step = deciderStepNode(decider ?? live?.decider ?? null);
+  const step = deciderStepNode(decider ?? live?.decider ?? null, serving);
   if (step) nodes.splice(4, 0, step);
   return nodes.map((node, i) => ({ ...node, number: String(i + 1).padStart(2, '0') }));
 }

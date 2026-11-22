@@ -129,6 +129,9 @@
   font-size: 11px; letter-spacing: .02em; color: var(--text-mute); font-weight: 500;
   padding: 6px 2px 5px; margin: 0;
 }
+/* When a cloud service judges moments, the local "Makes decisions" row is still
+   local-only: this note keeps it from reading as "the decision model isn't installed". */
+.ai-settings .mo-served { color: var(--good); font-size: 10.5px; line-height: 1.4; margin: 0 2px 7px; }
 .ai-settings .pick {
   background: var(--fill-1); border: 1px solid var(--line-soft); border-radius: 8px;
   padding: 8px 10px; margin-bottom: 6px;

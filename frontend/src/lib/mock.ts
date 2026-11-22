@@ -99,6 +99,15 @@ function makeDb(): Db {
   const ai = params().get('ai');
   const openCodeKey = 'oc_sk_live_7f3a';
   const servicesForAi = () => {
+    // QA: `?jev=1` seeds OpenCode enabled with its JEV decision model picked —
+    // the exact state that used to read "not installed" while moments were
+    // actively judged by the cloud service. Pair with `&decider=install` to see
+    // a not-installed local model feeding the DECIDER node.
+    if (params().get('jev') === '1') return {
+      vlm_services: [{ id: 'vlm-opencode', provider: 'opencode', model: 'glm-5.3-flash', host: '', api_key: openCodeKey, enabled: true }],
+      moments_services: [{ id: 'moments-opencode', provider: 'opencode', model: 'jev-1.13', host: '', api_key: openCodeKey, enabled: true }],
+      use_decider: false,
+    };
     // `&svc=opencode,gemini` (or `all`) seeds the AI services cards directly,
     // so each "service added" screenshot opens straight from a URL.
     const svcParam = params().get('svc');

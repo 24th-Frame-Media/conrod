@@ -8,7 +8,7 @@ export type StatusLine = { tone: 'ok' | 'warn' | 'bad' | 'idle'; title: string; 
 export function deciderWord(state: DeciderState | string): string;
 export function deciderActive(live: DeciderLive | null | undefined): boolean;
 export function msWords(ms: number | null | undefined): string;
-export function deciderNode(live: DeciderLive | null | undefined): DeciderNode;
+export function deciderNode(live: DeciderLive | null | undefined, serving?: string | null): DeciderNode;
 export function percent(p: number): string;
 export function barTone(p: number): 'good' | 'warn' | 'none';
 export function sizeWords(bytes: number): string;

@@ -28,12 +28,14 @@ function Answer({ said }: { said: DeciderSaid }) {
  * questions in flight), DECIDES (its answers with their probabilities as small bars), and counters. When the model is
  * off or the machine cannot run it, the same page says so instead of showing activity.
  */
-export function DeciderLane({ live }: { live: DeciderLive }) {
+export function DeciderLane({ live, serving = null }: { live: DeciderLive; serving?: string | null }) {
   const current = live.current;
   const last = live.recent[0] ?? null;
   const busy = live.busy > 0 || live.state === 'loading' || (current != null && !current.queued);
   const waiting = current?.queued === true;
-  const unavailable = ['off', 'not_installed', 'installing', 'no_gpu', 'no_vram'].includes(live.state) && !busy && !last;
+  // A cloud decision service (e.g. JEV via OpenCode) serves with a key: the local model's
+  // "not installed" state is irrelevant, so the lane never reads as off or names the local model.
+  const unavailable = !serving && ['off', 'not_installed', 'installing', 'no_gpu', 'no_vram'].includes(live.state) && !busy && !last;
   const shown = current ?? last;
   const image = shown?.thumb ? asset(shown.thumb) : undefined;
   const asking = current?.asking ?? [];
@@ -44,13 +46,13 @@ export function DeciderLane({ live }: { live: DeciderLive }) {
     <section className={`id-lane decider-lane${cls}${unavailable ? ' off' : ''}`} aria-label="Decision model">
       <header className="id-lane-head">
         <span className="id-lane-name mono">DECIDER</span>
-        <span className={`id-lane-stage ${busy ? 'ing-stage busy' : 'ing-stage idle'}`}>{busy ? (live.state === 'loading' ? 'loading' : 'deciding') : deciderWord(live.state)}</span>
+        <span className={`id-lane-stage ${busy ? 'ing-stage busy' : 'ing-stage idle'}`}>{busy ? (live.state === 'loading' ? 'loading' : 'deciding') : serving ? 'ready' : deciderWord(live.state)}</span>
         {busy && <i className="id-lane-dot" aria-hidden="true" />}
       </header>
 
       {/* Short screens (below 900 px) fold the whole card into one row; the full page is below it. */}
       <div className="decider-row">
-        <b>{deciderWord(live.state)}</b>
+        <b>{serving ? 'ready' : deciderWord(live.state)}</b>
         <span className="mono">{live.avg_ms ? `${msWords(live.avg_ms)} / frame` : 'no frame yet'}</span>
         <span className="muted">{last ? (last.says[0] ? `${last.says[0].text}: ${last.says[0].label} ${percent(last.says[0].p)}` : `${live.done.toLocaleString('en-US')} frames judged`) : live.message}</span>
       </div>
@@ -92,7 +94,7 @@ export function DeciderLane({ live }: { live: DeciderLive }) {
         {last && !last.ok && <span className="id-failures">The last frame failed; the scan went on without it.</span>}
       </section>
       <p className="muted dec-foot mono">
-        {[live.model, live.quant, live.device].filter(Boolean).join(' · ') || 'pplx-decider-flash'}
+        {serving || [live.model, live.quant, live.device].filter(Boolean).join(' · ') || 'pplx-decider-flash'}
         {last?.ms ? ` · ${msWords(last.ms)} · ${last.tokens} tokens` : ''}
       </p>
     </section>

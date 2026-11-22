@@ -39,8 +39,8 @@ export const STEP_STAGE: Readonly<Record<string, string>>;
 export function stageOfStep(step: string | null | undefined, fallback?: string): string;
 export function stepIndex(step: string | null | undefined): number;
 export function visionExpected(stages: PipelineStage[] | null | undefined, identify?: IdentifyLive | null): boolean;
-export function ingestNodes(input?: { stages?: PipelineStage[] | null; identify?: IdentifyLive | null; model?: string; finished?: boolean; decider?: import('./types').DeciderLive | null }): IngestNode[];
-export function identifyNodes(live: IdentifyLive | null | undefined, model?: string | null, decider?: DeciderLive | null): IngestNode[];
+export function ingestNodes(input?: { stages?: PipelineStage[] | null; identify?: IdentifyLive | null; model?: string; finished?: boolean; decider?: import('./types').DeciderLive | null; serving?: string | null }): IngestNode[];
+export function identifyNodes(live: IdentifyLive | null | undefined, model?: string | null, decider?: DeciderLive | null, serving?: string | null): IngestNode[];
 export function ingestPhase(input?: {
   mode?: 'ingest' | 'identify';
   scan?: { state: string; stage?: string } | null;

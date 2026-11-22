@@ -26,18 +26,21 @@ export function msWords(ms) {
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
-/** The DECIDER node of the flowchart, in the shape of the other nodes (see ingest.mjs `scanNode`). */
-export function deciderNode(live) {
+/** The DECIDER node of the flowchart, in the shape of the other nodes (see ingest.mjs `scanNode`).
+ *  `serving` is the cloud decision service actually doing the moments job; when set, the node
+ *  names it instead of the local model's install state (see identifyFlow.mjs `deciderStepNode`). */
+export function deciderNode(live, serving = null) {
+  const cloud = Boolean(serving);
   const state = live?.state ?? 'off';
   const busy = (live?.busy ?? 0) > 0 || state === 'loading' || state === 'running';
   const answered = live?.done ?? 0;
-  const off = UNAVAILABLE.has(state) && !busy && answered === 0;
+  const off = !cloud && UNAVAILABLE.has(state) && !busy && answered === 0;
   // The box says what the model is for; the file, precision and speed live in the meta line and the tooltip.
-  const sub = off ? `Decision model · ${deciderWord(state)}` : 'Decision model';
+  const sub = cloud ? serving : off ? `Decision model · ${deciderWord(state)}` : 'Decision model';
   const frames = answered > 0 || busy ? `${answered.toLocaleString('en-US')} frames` : '';
   const failed = live?.errors > 0 ? `${live.errors.toLocaleString('en-US')} failed` : '';
   const meta = off ? '' : [frames, failed, live?.quant, live?.avg_ms ? msWords(live.avg_ms) : ''].filter(Boolean).join(' · ');
-  const title = [sub, live?.message, live?.device, live?.model].filter(Boolean).join(' · ');
+  const title = cloud ? serving : [sub, live?.message, live?.device, live?.model].filter(Boolean).join(' · ');
   return {
     id: 'decider', number: '', label: 'DECIDER', sub, meta, title,
     state: busy ? 'active' : answered > 0 ? 'done' : 'pending', off, filter: 'decider',
