@@ -813,6 +813,10 @@
     "a73cb3b9": {
       "section": "Fixed",
       "text": "The development preview shows real example cars instead of drawn placeholders."
+    },
+    "84a91fa": {
+      "section": "Improved",
+      "text": "Model thinking is off by default when reading cars, so answers come back fast; a switch in Settings turns it back on."
     }
   }
 }

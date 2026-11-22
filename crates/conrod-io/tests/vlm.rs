@@ -37,6 +37,16 @@ fn settings_for(provider: &str) -> Settings {
             settings.vlm_model = "gemini-2.0-flash".into();
             settings.vlm_api_key = "AIzaTest".into();
         }
+        "openrouter" => {
+            settings.vlm_provider = "openrouter".into();
+            settings.vlm_model = "qwen/qwen3-vl-235b-a22b-instruct".into();
+            settings.vlm_api_key = "sk-or-test".into();
+        }
+        "opencode" => {
+            settings.vlm_provider = "opencode".into();
+            settings.vlm_model = "deepseek-v4.1-flash".into();
+            settings.vlm_api_key = "sk-oc-test".into();
+        }
         _ => unreachable!(),
     }
     settings
@@ -254,6 +264,207 @@ fn racing_hints_drop_the_plate_from_prompt_and_schema() {
         .as_object()
         .unwrap()
         .contains_key("plate"));
+}
+
+#[test]
+fn thinking_is_off_by_default_and_back_on_when_asked() {
+    let images = vec!["b64img".to_string()];
+    let schema = json!({"type": "object"});
+
+    let mut ollama = settings_for("ollama");
+    let off = build_request(&ollama, "describe it", &images, &schema, 500).unwrap();
+    assert_eq!(off.json["think"], false, "Ollama thinks unless told not to");
+    ollama.vlm_reasoning = true;
+    let on = build_request(&ollama, "describe it", &images, &schema, 500).unwrap();
+    assert_eq!(on.json["think"], true);
+
+    let mut openrouter = settings_for("openrouter");
+    let off = build_request(&openrouter, "describe it", &images, &schema, 500).unwrap();
+    assert_eq!(off.json["reasoning"]["enabled"], false);
+    openrouter.vlm_reasoning = true;
+    let on = build_request(&openrouter, "describe it", &images, &schema, 500).unwrap();
+    assert_eq!(on.json["reasoning"]["enabled"], true);
+
+    // Claude thinks before it answers by default on the newest models.
+    let mut anthropic = settings_for("anthropic");
+    let off = build_request(&anthropic, "describe it", &images, &schema, 500).unwrap();
+    assert_eq!(off.json["thinking"]["type"], "disabled");
+    anthropic.vlm_reasoning = true;
+    let on = build_request(&anthropic, "describe it", &images, &schema, 500).unwrap();
+    assert!(
+        on.json.get("thinking").is_none(),
+        "on leaves the model's own default in place"
+    );
+
+    let mut gemini = settings_for("gemini");
+    gemini.vlm_model = "gemini-2.5-flash".into();
+    let off = build_request(&gemini, "describe it", &images, &schema, 500).unwrap();
+    assert_eq!(
+        off.json["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+        0
+    );
+    gemini.vlm_reasoning = true;
+    let on = build_request(&gemini, "describe it", &images, &schema, 500).unwrap();
+    assert!(on.json["generationConfig"].get("thinkingConfig").is_none());
+}
+
+#[test]
+fn the_off_form_is_the_lowest_one_each_model_accepts() {
+    let images = vec!["b64img".to_string()];
+    let schema = json!({"type": "object"});
+    let ask = |provider: &str, model: &str| {
+        let mut settings = settings_for(provider);
+        settings.vlm_model = model.into();
+        build_request(&settings, "describe it", &images, &schema, 500).unwrap()
+    };
+
+    // Sonnet 5.5 rejects "disabled"; between_tools is its lowest accepted value.
+    assert_eq!(
+        ask("anthropic", "claude-sonnet-5-5").json["thinking"]["type"],
+        "between_tools"
+    );
+    // Opus 5.5, Fable and Mythos cannot turn thinking off at all.
+    assert!(ask("anthropic", "claude-opus-5-5")
+        .json
+        .get("thinking")
+        .is_none());
+    assert!(ask("anthropic", "claude-fable-5-2")
+        .json
+        .get("thinking")
+        .is_none());
+
+    // Gemini 3 and later always think: low is the lowest level, not budget 0.
+    let gemini3 = ask("gemini", "gemini-3.8-flash");
+    assert_eq!(
+        gemini3.json["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+        "low"
+    );
+    assert!(gemini3.json["generationConfig"]["thinkingConfig"]
+        .get("thinkingBudget")
+        .is_none());
+    // 2.5 Pro cannot reach zero and 2.0 has no thinking: send nothing.
+    assert!(ask("gemini", "gemini-2.5-pro").json["generationConfig"]
+        .get("thinkingConfig")
+        .is_none());
+    assert!(ask("gemini", "gemini-2.0-flash").json["generationConfig"]
+        .get("thinkingConfig")
+        .is_none());
+}
+
+#[test]
+fn providers_without_a_documented_switch_send_nothing() {
+    let images = vec!["b64img".to_string()];
+    let schema = json!({"type": "object"});
+    for provider in ["openai", "opencode"] {
+        let request = build_request(
+            &settings_for(provider),
+            "describe it",
+            &images,
+            &schema,
+            500,
+        )
+        .unwrap();
+        assert!(
+            request.json.get("think").is_none()
+                && request.json.get("reasoning").is_none()
+                && request.json.get("thinking").is_none()
+                && request.json["generationConfig"]
+                    .get("thinkingConfig")
+                    .is_none(),
+            "{provider} has no verified off switch"
+        );
+    }
+}
+
+#[test]
+fn ollama_carries_the_think_flag_on_the_wire() {
+    use conrod_io::vlm::{RealClock, VlmClient};
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+
+    fn capture_once() -> (String, std::thread::JoinHandle<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut buf).unwrap_or(0);
+                seen.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&seen).to_string();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let len = text
+                        .lines()
+                        .find_map(|l| {
+                            let l = l.to_ascii_lowercase();
+                            l.strip_prefix("content-length:")
+                                .map(|v| v.trim().to_string())
+                        })
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if n == 0 || seen.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+            }
+            let body = String::from_utf8_lossy(&seen).to_string();
+            let body = match body.find("\r\n\r\n") {
+                Some(end) => body[end + 4..].to_string(),
+                None => body,
+            };
+            let reply = br#"{"response":"{\"ok\":true}"}"#;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                reply.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(reply);
+            body
+        });
+        (base, server)
+    }
+
+    let (base, server) = capture_once();
+    let settings = Settings {
+        vlm_host: base,
+        ..Settings::default()
+    };
+    let client = VlmClient::new(Arc::new(RealClock::default()));
+    client
+        .call(
+            &settings,
+            "describe it",
+            &[],
+            &json!({"type": "object"}),
+            500,
+        )
+        .expect("the mock answers");
+    let body = server.join().unwrap();
+    let sent: Value = serde_json::from_str(body.trim()).expect("the wire body is JSON");
+    assert_eq!(sent["think"], false, "the off switch must reach the wire");
+
+    let (base, server) = capture_once();
+    let settings = Settings {
+        vlm_host: base,
+        vlm_reasoning: true,
+        ..Settings::default()
+    };
+    client
+        .call(
+            &settings,
+            "describe it",
+            &[],
+            &json!({"type": "object"}),
+            500,
+        )
+        .expect("the mock answers");
+    let body = server.join().unwrap();
+    let sent: Value = serde_json::from_str(body.trim()).expect("the wire body is JSON");
+    assert_eq!(sent["think"], true);
 }
 
 #[test]

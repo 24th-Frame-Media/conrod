@@ -1236,6 +1236,10 @@ fn settings_match_snapshot() {
         m.remove("blur_explicit");
         m.remove("lightroom_bridge"); // Rust-only: the plug-in installer
         m.remove("auto_apply"); // Rust-only: stars and picks applied at album finish
+        m.remove("vlm_reasoning"); // Rust-only: whether the vision model may think
+                                   // Rust-only: the shipped detector is YOLO26m; the Python app's
+                                   // snapshot still names yolo11s.
+        m.remove("detect_model");
         v
     };
     let as_map = |s: &Settings| prune(serde_json::to_value(s).unwrap());
