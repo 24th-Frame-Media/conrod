@@ -1837,7 +1837,7 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         }
     }
 
-    // (detection, attributes, group key, size, agreement, sampled colour)
+    // (detection, reading, grouping's own fields, key, size, agreement, sampled colour)
     let mut writes = Vec::new();
     for (key, ids) in &members {
         let group: Vec<_> = ids.iter().map(|i| attributes[i].clone()).collect();
@@ -1880,9 +1880,19 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
             }
             current.insert("group_disputed".into(), json!(agreed.disputed));
             current.insert("group_second_look".into(), json!(agreed.second_look));
+            // Grouping's own fields, kept apart from the reading: they are the
+            // pass's to rewrite on a hand-edited row, the reading is not.
+            let grouping_fields = json!({
+                "group_make": agreed.make,
+                "group_model": agreed.model,
+                "group_disputed": agreed.disputed,
+                "group_second_look": agreed.second_look,
+            })
+            .to_string();
             writes.push((
                 *id,
                 Value::Object(current).to_string(),
+                grouping_fields,
                 *key,
                 agreed.size as i64,
                 (agreed.agreement * 1000.0).round() / 1000.0,
@@ -1893,15 +1903,38 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
     let cfg = settings(d, job)?;
     let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
-    for (id, attrs, key, size, agreement, hex) in &writes {
+    for (id, attrs, grouping_fields, key, size, agreement, hex) in &writes {
         // group_colour_hex, never colour_hex: the per-frame sample is a
         // measurement and a second regroup must not average averages.
+        //
+        // The grouping keys are this pass's own fields and are cut afresh every
+        // run (`grouping::cluster_by_look` numbers its groups from 1). They are
+        // written for every row, a hand-edited car too: a stale key left beside
+        // a re-cut one puts two cars in one `(burst, group_key)` unit, or cuts a
+        // car in two and invents a keeper.
         tx.execute(
-            // A reading the photographer edited by hand is not the album
-            // pass's to correct: it may inform the consensus, never be
-            // overwritten by it.
-            "UPDATE detections SET attributes=?,group_key=?,group_size=?,group_agreement=?,group_colour_hex=? WHERE id=? AND reviewed=0",
-            params![attrs, key, size, agreement, hex, id],
+            "UPDATE detections SET group_key=?,group_size=?,group_agreement=?,group_colour_hex=? WHERE id=?",
+            params![key, size, agreement, hex, id],
+        )
+        .map_err(err)?;
+        tx.execute(
+            // The reading is different: once the photographer edited it by
+            // hand it is not the album pass's to correct. It may inform the
+            // consensus, never be overwritten by it.
+            "UPDATE detections SET attributes=? WHERE id=? AND reviewed=0",
+            params![attrs, id],
+        )
+        .map_err(err)?;
+        tx.execute(
+            // A hand-edited row still gets grouping's own fields refreshed,
+            // merged into the reading it keeps: a stale `group_make` beside a
+            // freshly cut key would name the wrong car. `json_patch` touches
+            // only the keys named in the patch; anything the photographer
+            // wrote stays exactly as it was, and unparsable attributes are
+            // left alone rather than replaced.
+            "UPDATE detections SET attributes=json_patch(COALESCE(NULLIF(attributes,''),'{}'),?)
+                 WHERE id=? AND (attributes IS NULL OR attributes='' OR json_valid(attributes))",
+            params![grouping_fields, id],
         )
         .map_err(err)?;
     }
@@ -2631,11 +2664,17 @@ mod tests {
         assert_eq!(attrs["model"], "Typed");
         assert_eq!(attrs["race_number"], "007");
         assert!(
-            attrs.get("group_make").is_none(),
-            "the reviewed row keeps its own reading without a group rewrite: {attrs}"
+            attrs.get("group_make").is_some(),
+            "grouping's own fields are still refreshed on a hand-edited row: {attrs}"
         );
         let key: Option<i64> = lib.one("SELECT group_key FROM detections WHERE id=?", [typed]);
-        assert_eq!(key, None, "the guard skips the whole identity write");
+        let read_key: Option<i64> = lib.one("SELECT group_key FROM detections WHERE id=?", [read]);
+        assert!(
+            key.is_some() && key == read_key,
+            "the keys are re-cut for every row: a reviewed car still belongs to its car"
+        );
+        let size: i64 = lib.one("SELECT group_size FROM detections WHERE id=?", [typed]);
+        assert_eq!(size, 2, "one car in two frames, the reviewed one included");
         let read_attrs: Value = serde_json::from_str(
             &lib.one::<String>("SELECT attributes FROM detections WHERE id=?", [read]),
         )
@@ -2643,6 +2682,76 @@ mod tests {
         assert_eq!(
             read_attrs["group_make"], "Hand",
             "a reviewed reading still informs the consensus, it is only never overwritten"
+        );
+    }
+
+    #[test]
+    fn editing_a_car_then_regrouping_recuts_its_key_and_keeps_its_reading() {
+        let lib = Lib::new("group-edited");
+        let (f1, f2, f3) = (
+            lib.frame("1.jpg", Some(1)),
+            lib.frame("2.jpg", Some(1)),
+            lib.frame("3.jpg", Some(1)),
+        );
+        let (other1, other2) = (
+            lib.detection(f1, "vehicle", 0.8),
+            lib.detection(f2, "vehicle", 0.7),
+        );
+        // The car whose key will go stale is the last frame, so its first key
+        // is cut late and differs from the car it joins on the second run.
+        let car = lib.detection(f3, "vehicle", 0.9);
+        look(&lib, other1, [0.0, 1.0, 0.0]);
+        look(&lib, other2, [0.1, 0.99, 0.0]);
+        look(&lib, car, [1.0, 0.0, 0.0]);
+        for (det, make) in [(car, "Ford"), (other1, "Vauxhall"), (other2, "Vauxhall")] {
+            lib.sql(
+                "UPDATE detections SET attributes=? WHERE id=?",
+                params![json!({"make": make}).to_string(), det],
+            );
+        }
+        lib.run("group", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+        let key = |det: i64| -> Option<i64> {
+            lib.one("SELECT group_key FROM detections WHERE id=?", [det])
+        };
+        assert_ne!(key(car), key(other1), "a Ford is not the Vauxhall");
+
+        // The photographer edits the car by hand, and the pictures show it is
+        // in fact one of the other car's frames after all.
+        lib.run(
+            "edit_detection",
+            json!({"detectionId": car, "make": "Hand"}),
+        )
+        .unwrap();
+        look(&lib, car, [0.05, 0.999, 0.0]);
+        lib.run("group", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+
+        assert_eq!(
+            key(car),
+            key(other1),
+            "the hand-edited car's key is re-cut with the car it joined"
+        );
+        assert_eq!(key(car), key(other2));
+        let size: i64 = lib.one("SELECT group_size FROM detections WHERE id=?", [car]);
+        assert_eq!(size, 3, "one car in three frames");
+        // The reading the photographer settled on is untouched; grouping's own
+        // fields are refreshed so the row names the car it is really in.
+        let attrs: Value = serde_json::from_str(
+            &lib.one::<String>("SELECT attributes FROM detections WHERE id=?", [car]),
+        )
+        .unwrap();
+        assert_eq!(attrs["make"], "Hand", "the hand reading stays: {attrs}");
+        assert_eq!(
+            attrs["group_make"], "Vauxhall",
+            "the group's answer is fresh: {attrs}"
+        );
+        // One keeper for the one car: the stale key cannot add a second unit.
+        let picked = picks(&lib);
+        assert_eq!(
+            picked.len(),
+            1,
+            "one keeper for one car, not one per stale key: {picked:?}"
         );
     }
 
