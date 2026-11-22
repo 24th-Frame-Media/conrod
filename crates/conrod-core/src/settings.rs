@@ -23,6 +23,9 @@ pub const BURST_GAP_SCALE: i64 = 1;
 /// Bumped by the moment-service migration: a file without it predates
 /// `moments_services`. See [`migrate_moments_services`].
 pub const MOMENTS_SERVICES_SCALE: i64 = 1;
+/// Bumped by the per-service reasoning migration: a file without it has
+/// service entries that predate `reasoning`. See [`migrate_service_reasoning`].
+pub const SERVICE_REASONING_SCALE: i64 = 1;
 /// The old default for `burst_gap`. The engine used to ignore it as a sentinel
 /// (and grouped at 1.5 s), so stored files carrying it mean the old default,
 /// not four seconds. The migration rewrites it once.
@@ -217,6 +220,38 @@ pub fn migrate_moments_services(map: &mut Map<String, Value>) -> bool {
     ] {
         map.remove(key);
     }
+    true
+}
+
+/// One-time migration of a stored settings map: service entries written before
+/// per-service thinking have no `reasoning` flag. Stamp each with the global
+/// `vlm_reasoning` (false when that too is absent), so an old entry keeps the
+/// behaviour it had -- the one switch the whole list followed -- and the field
+/// is always present for the settings card. A marked map is left alone, so a
+/// choice made since stays. Returns whether anything was rewritten.
+pub fn migrate_service_reasoning(map: &mut Map<String, Value>) -> bool {
+    if map.get("service_reasoning_scale").and_then(Value::as_i64) == Some(SERVICE_REASONING_SCALE) {
+        return false;
+    }
+    let global = map
+        .get("vlm_reasoning")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    for key in ["vlm_services", "moments_services"] {
+        let Some(list) = map.get_mut(key).and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for entry in list.iter_mut() {
+            let Some(object) = entry.as_object_mut() else {
+                continue;
+            };
+            object.entry("reasoning").or_insert(Value::Bool(global));
+        }
+    }
+    map.insert(
+        "service_reasoning_scale".into(),
+        Value::from(SERVICE_REASONING_SCALE),
+    );
     true
 }
 
@@ -692,6 +727,12 @@ pub struct VlmService {
     pub api_key: String,
     pub key_kind: String,
     pub enabled: bool,
+    /// Let this service's model think step by step. Per entry rather than one
+    /// global switch: a thinking model spends its budget reasoning, but one
+    /// service may be a reasoning model while another is a plain reader. An
+    /// entry from before the field follows the global `vlm_reasoning` once
+    /// (see [`migrate_service_reasoning`]).
+    pub reasoning: bool,
 }
 
 impl Default for VlmService {
@@ -704,6 +745,7 @@ impl Default for VlmService {
             api_key: String::new(),
             key_kind: "auto".into(),
             enabled: true,
+            reasoning: false,
         }
     }
 }
@@ -746,6 +788,7 @@ impl Settings {
         if !stored.is_empty() {
             migrated |= migrate_burst_gap(&mut stored);
             migrated |= migrate_moments_services(&mut stored);
+            migrated |= migrate_service_reasoning(&mut stored);
         }
         let mut settings = Settings::default().apply(&stored);
         // One spelling of the moment strategy, whatever the file holds: a
@@ -787,6 +830,8 @@ impl Settings {
             api_key: self.vlm_api_key.clone(),
             key_kind: self.anthropic_key_kind.clone(),
             enabled: true,
+            // The legacy single-provider file had one switch for it.
+            reasoning: self.vlm_reasoning,
         };
         let extra: Vec<String> = self.ollama_hosts().into_iter().skip(1).collect();
         self.vlm_services.push(main);
@@ -1221,6 +1266,32 @@ mod tests {
 
     fn map(text: &str) -> Map<String, Value> {
         serde_json::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn a_service_entry_from_before_reasoning_follows_the_global_switch_once() {
+        // No global switch either: every old entry reads as thinking off.
+        let mut old = map(
+            r#"{"vlm_services":[{"id":"a","provider":"ollama"}],"moments_services":[{"id":"m","provider":"openrouter"}]}"#,
+        );
+        assert!(migrate_service_reasoning(&mut old));
+        assert_eq!(old["vlm_services"][0]["reasoning"], false);
+        assert_eq!(old["moments_services"][0]["reasoning"], false);
+        assert!(
+            !migrate_service_reasoning(&mut old),
+            "the marker makes it one-time"
+        );
+
+        // A file written while the one global switch was on keeps what it did.
+        let mut on = map(r#"{"vlm_reasoning":true,"vlm_services":[{"id":"a"}]}"#);
+        assert!(migrate_service_reasoning(&mut on));
+        assert_eq!(on["vlm_services"][0]["reasoning"], true);
+
+        // An entry that already carries its own choice keeps it.
+        let mut own =
+            map(r#"{"vlm_reasoning":true,"vlm_services":[{"id":"a","reasoning":false}]}"#);
+        assert!(migrate_service_reasoning(&mut own));
+        assert_eq!(own["vlm_services"][0]["reasoning"], false);
     }
 
     #[test]
