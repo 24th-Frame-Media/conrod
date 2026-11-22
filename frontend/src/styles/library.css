@@ -46,9 +46,12 @@
 .lib-group-head { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: .01em; }
 .lib-group-head .lib-group-count { color: var(--text-mute); font-weight: 500; font-variant-numeric: tabular-nums; }
 
-/* The cover wall: 3:2 native RAW ratio, capped at 300px tall. */
-.lib-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
-.lib-card { cursor: pointer; position: relative; min-width: 0; border-radius: var(--radius); animation: stage-in .22s var(--ease) backwards; }
+/* The cover wall: 3:2 native RAW ratio, capped at 300px tall.
+   auto-fill (not auto-fit) keeps the empty tracks on a partial row, so a lone
+   album stays the same width as a full row instead of stretching into one
+   giant card. The card max-width is a hard ceiling for any very wide track. */
+.lib-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; }
+.lib-card { cursor: pointer; position: relative; min-width: 0; max-width: 420px; border-radius: var(--radius); animation: stage-in .22s var(--ease) backwards; }
 .lib-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .lib-shot {
   position: relative; width: 100%;
