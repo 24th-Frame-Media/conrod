@@ -1,8 +1,8 @@
 # Shoot types: what Conrod does for each
 
-Generated from the policy table in `crates/conrod-core/src/profile.rs` (`ShootPreset::policy`) and the moment vocabularies in `crates/conrod-core/src/moments.rs`. The summary the app shows when you pick a type comes from the same table (`preset_policy`), so this page cannot drift from it: `presets_match_the_frontend_copy` fails when the table changes.
+Generated from `crates/conrod-core/src/profile.rs` (`ShootPreset::policy`) and `crates/conrod-core/src/moments.rs`. The app's shoot-type summary uses the same table (`preset_policy`); `presets_match_the_frontend_copy` checks that its copy stays in sync.
 
-Every detector and reader below is a per-album switch in **both** directions (import sheet, album *Shoot settings*). A switch sets an override in the album's `overrides`; clearing it follows the type again. A reader needs its detector: numbers, plates, make/model and livery need *cars & bikes* (jersey numbers on field and court sport need *people*); names need *faces & eyes*; *let moments lift ranking* needs *spot moments*.
+Each detector and reader below is a per-album switch in the import sheet and album *Shoot settings*. A switch sets an album `overrides` value; clear it to follow the type. Readers need their detector: numbers, plates, make/model, and livery need *cars & bikes* (jersey numbers in field and court sports need *people*); names need *faces & eyes*; *let moments lift ranking* needs *spot moments*.
 
 ## The table
 
@@ -37,11 +37,9 @@ Every detector and reader below is a per-album switch in **both** directions (im
 | **Landscape** (`landscape`) | nothing (whole frame) | nothing | golden hour, dramatic light | no pan forgiveness, blur strict, level check, keeps most | Nothing to detect; level check; keeps nearly everything. |
 | **Astro** (`astro`) | nothing (whole frame) | nothing | milky way core, meteor, aurora | no pan forgiveness, blur lenient, dark ok | Nothing to detect; dark frames are the subject; lenient blur. |
 
-Cars are an option on every type but on by default only where vehicles are the subject or common: motorsport (all), meets, cycling and action sports (their own bike classes), dealerships, aviation (aircraft), mixed. They are off for shows, events, parties, portraits, weddings, concerts, field/court sport, rodeo, equestrian, wildlife, property, landscape and astro.
+Cars can be enabled for every type. They are on by default only where vehicles are the subject or common: motorsport, meets, cycling and action sports (their bike classes), dealerships, aviation (aircraft), and mixed. The table lists types where cars are off by default.
 
-Faces are off at circuit racing, track days, rallies and burnouts (people stay on at the last three), cycling, action sports and field sports; the photographer can switch them on per album or, in setup, for every album of a type.
-
-Field and court sports read **jersey numbers** through the players lane: the number reader runs on person boxes with a player prompt (`prompts/player.txt`) instead of a vehicle, so it needs *People* on. Names stay court-only. Vehicles are off by default for shows, events, parties, portraits, weddings, concerts, field and court sport, rodeo, equestrian, wildlife, property, landscape and astro; switch them on for a car-heavy event.
+Field and court sports read **jersey numbers** from person boxes through the players lane using `prompts/player.txt`, so *People* must be on. Names are court-only. Faces are off by default for circuit racing, track days, rallies, burnouts, cycling, action sports, and field sports; the photographer can enable them per album or as a type default in setup.
 
 ## What changed
 

@@ -4,20 +4,20 @@
 
 [Home](Home) · Previous: [Identify](Identify) · Next: [Settings reference](Settings-reference)
 
-Conrod writes stars, picks and colour labels into your photos' XMP sidecars when an album finishes. That is the main path: Lightroom reads them with **Metadata → Read Metadata from File**, or when you import the photos, and nothing needs installing.
+When an album finishes, Conrod writes stars, picks, and colour labels to XMP sidecars. Lightroom reads them with **Metadata → Read Metadata from File** or on import. Nothing needs installing.
 
-The optional Conrod Bridge plug-in adds live flags and labels inside Lightroom, and sends Lightroom's own flags back, without re-reading metadata. It is file-based: neither app has to be running while the other works, so a 3,000-frame import cannot time out.
+The optional Conrod Bridge plug-in applies flags and labels in Lightroom and sends Lightroom's flags back without re-reading metadata. It uses files, so the apps need not run at the same time and large imports do not time out.
 
 ## Optional: install the plug-in
 
-The bridge is **off by default**. Turn it on in Settings > **Lightroom**, then Conrod copies the bundled plug-in into Lightroom's Modules folder:
+The bridge is **off by default**. Turn it on in Settings > **Lightroom** to copy the plug-in into Lightroom's Modules folder:
 
 `%APPDATA%\Adobe\Lightroom\Modules\ConrodBridge.lrplugin`
 
-- Settings > **Lightroom** shows whether the plug-in is installed, its version, and whether a newer bundled version is waiting.
+- Settings > **Lightroom** shows whether the plug-in is installed, its version, and whether an update is available.
 - **Install plug-in** copies it now; **Remove plug-in** removes only Conrod's folder.
 - **Restart Lightroom Classic** after an install or update.
-- A start only updates a stale plug-in when the bridge is on. It never removes anything.
+- Conrod updates a stale plug-in on start only when the bridge is on. It never removes anything.
 
 If you prefer, add it by hand: **File > Plug-in Manager > Add** and choose the `ConrodBridge.lrplugin` folder. Lightroom Classic 6 or later is supported.
 
@@ -38,7 +38,7 @@ Lists packages Conrod wrote, newest first. **Check only** validates without chan
 - adds keywords, never removes them;
 - finds or creates a collection in a set named **Conrod** and adds the picked photos.
 
-Ratings and colour labels are written only when the photo has none, unless the package allows overwriting. A pick flag is set only on an unflagged photo and is never cleared. A bad entry is counted, not fatal.
+Ratings and colour labels are written only when empty, unless the package allows overwriting. Picks are set only on unflagged photos and never cleared. Bad entries are counted.
 
 ### Show pending packages
 
@@ -58,7 +58,7 @@ It carries one entry per visible, non-copy, done frame:
 - keywords — `<prefix> keeper`, `<prefix> cull`, `<prefix> burst <n>`.
 - a collection name.
 
-Suggested stars, picks, and colour labels therefore land in the catalog without retyping. The package is written to a temporary name and renamed, so the plug-in never sees half a file.
+Suggested stars, picks, and colour labels reach the catalog without retyping. Conrod writes the package to a temporary name, then renames it so the plug-in never sees a partial file.
 
 ## From Lightroom to Conrod
 
@@ -71,7 +71,7 @@ The import reports matched, unmatched, missing, the percentage of effective keep
 
 ## Folder layout and TO-IMPORT
 
-Conrod does not require a folder layout, but this one keeps albums and Lightroom collections predictable:
+Conrod does not require a folder layout. This example keeps albums and Lightroom collections predictable:
 
 ```
 P:\Photography\02_Projects\2026-11-22_Bathurst-1000\
@@ -89,7 +89,7 @@ P:\Photography\02_Projects\2026-11-22_Bathurst-1000\
 4. Import to Lightroom from the same paths, or apply the Conrod package.
 5. Move files out of `TO-IMPORT` once both apps have read them. Keep the paths stable until then.
 
-Matching is by path, so renaming or moving files between Conrod and the Lightroom apply breaks the match. Move files before scanning, or re-sync afterwards.
+Matching uses paths. Renaming or moving files between the Conrod scan and Lightroom apply breaks the match. Move files before scanning or re-sync afterwards.
 
 ## Safety
 

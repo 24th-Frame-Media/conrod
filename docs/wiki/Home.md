@@ -2,9 +2,9 @@
 
 **November 2026**
 
-Conrod is a Windows app for culling and keywording motorsport, automotive, and event photography. It scans a folder of RAW or JPEG frames, finds the cars and people, measures what is sharp, groups bursts and moments, suggests a keeper for each pass, reads race numbers and plates, and can identify make, model, colour, team, and names. Everything is written to `.xmp` sidecars, so your RAW files are never changed.
+Conrod is a Windows app for culling and keywording motorsport, automotive, and event photos. It scans RAW or JPEG folders, finds cars and people, measures sharpness, groups bursts, suggests keepers, reads race numbers and plates, and can identify make, model, colour, team, and names. It writes metadata to `.xmp` sidecars; RAW files stay unchanged.
 
-You do not need any AI model to use Conrod. Detection, sharpness, bursts, and suggested keepers run on the PC. The vision model adds make/model/colour and better race numbers; the decision model adds calibrated moments.
+Conrod works without AI models. Detection, sharpness, bursts, and suggested keepers run on the PC. The vision model adds make, model, colour, and better race-number reads; the decision model adds calibrated moments.
 
 ## Start here
 
@@ -20,11 +20,11 @@ You do not need any AI model to use Conrod. Detection, sharpness, bursts, and su
 
 ## What is new in this build
 
-- Scan queue: start several albums, one scans at a time. Pull a waiting album with **Unqueue**.
+- Scan queue: start several albums; they scan one at a time. Remove a waiting album with **Unqueue**.
 - Start-up splash with real steps: library, unfinished albums, models, ExifTool, graphics card.
 - AI models card in Settings, with vision and decision model rows.
 - Vision inheritance and an explicit reason when vision is off.
-- OpenRouter and OpenCode Go as vision providers; OpenRouter as a decision-model transport.
+- OpenRouter and OpenCode Go vision providers; OpenRouter decision-model transport.
 - OCR demoted behind the vision model, with a race-number tiebreak across panels and a burst.
 - Identified albums can skip identification or run **Identify new only**.
 - Detector fixes: sharp autofocus frames kept, cars/trucks/buses as one vehicle class, a confidence floor for big cars, AF-selected main subject, dimmed background cars, composition never culls.

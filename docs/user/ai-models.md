@@ -6,23 +6,20 @@
 
 # AI models in Conrod: what they do and how to set them up
 
-Conrod uses several small "AI models" to help you cull and label photos. Most of them run on your own computer and
-need nothing from you. Two of them (the **vision model** and the **decision model**) are bigger. The vision model is the
-one you may want to run in the cloud instead, especially on a laptop. The decision model always runs on your own PC.
+Conrod uses several models to cull and label photos. Most run on your PC and need no setup. The larger **vision model**
+can run in the cloud. The **on-device decision model** runs on your PC; OpenCode Go can also provide JEV for moment checks.
 (coming) The vision model can also do the decision model's job, so you do not need both.
 
-You can use Conrod with every one of these turned off. You will still get sharpness checks, bursts and suggested
-keepers. The models add things on top: finding the cars, reading numbers and plates, naming the car, spotting a moment.
+You can turn off every model and still get sharpness checks, bursts, and suggested keepers. Models add vehicle detection,
+number and plate reads, car identification, and moment spotting.
 
-Prices and limits in this guide were checked on **22 November 2026**. They change. Look at the company's own page
-(links at the end) before you add money.
+Prices and limits were checked on **22 November 2026**. Check the provider's page before adding money.
 
 ---
 
 ## 1. What each model does
 
-Settings, **AI models**, lists every model below with a one-line description, where it runs, whether it is ready, and a
-switch.
+**Settings > AI models** lists each model, where it runs, its status, and its switch.
 
 | In Settings it is called | What it does for you | Where it runs | Needs |
 |---|---|---|---|
@@ -32,17 +29,15 @@ switch.
 | **Faces/eyes** | Finds faces and checks whether eyes are open, so a shut eye can lower a portrait's rating. It can also help suggest names. Nothing leaves your PC. | Your PC | About 43 MB, installed automatically. Turn on with **People**. |
 | **Sharpness/quality** | Checks how sharp the subject is. The main sharpness check is a measurement of the picture itself and needs no download. The optional quality model scores a subject's technical quality and is used only to choose between two equally sharp frames. | Your PC | The optional model is a small extra download. Off by default. |
 | **Vision model** | Looks at a cropped picture of a car and reads **make, model, colour, team and race number**. This is the model that "knows what a car is". It is the slowest part of a scan. | (coming) **Built into Conrod** ("This PC (built-in)"), no extra program needed. Or your PC through **Ollama** (a free program you install yourself). Or the cloud (OpenRouter, OpenCode Go, and others). | Built-in: about 5.2 GB of download and about 6 GB of free video memory (the graphics card's own memory). Ollama: about 6 GB of each. Cloud: a key. |
-| **Decision model** | Answers yes/no questions about a photo: tyre smoke? a kiss? the peak of a jump? It helps choose between frames that are equally sharp. Optional. | Your PC's graphics card **only**. | About 5.5 GB download and about 6.5 GB of free video memory (or about 4.5 GB in the smaller "4-bit" version). |
+| **Decision model** | Answers yes/no questions about a photo: tyre smoke? a kiss? the peak of a jump? It helps choose between equally sharp frames. Optional. | On-device: your PC's graphics card. Cloud moments: JEV through OpenCode Go. | About 5.5 GB download and about 6.5 GB of free video memory for the on-device model (or about 4.5 GB in the smaller "4-bit" version). |
 
-**The vision model can stand in for the decision model.** (coming) If you have no decision model, or not enough video
-memory for both, or you simply do not want the extra download, Conrod asks the **vision model** the same yes/no questions
-about each sharp photo ("is there tyre smoke?"), using the whole photo and the car crop. It does this in the same
-request that reads the car, so it costs little extra time. The answers are a bit less precise than the decision model's
-and Conrod shows more of them as "maybe" instead of "yes". The setup wizard chooses for you from your graphics card
-and keys, and you can change it later.
+**The vision model can stand in for the decision model.** (coming) If the on-device model does not fit or you do not want
+its download, the vision model can answer the same yes/no questions using the full photo and car crop in the car-reading
+request. Its answers are less precise, so more show as "maybe". The setup wizard chooses based on your graphics card and
+keys; you can change the choice later.
 
-Also on your PC, with no setting to change: a small "same car?" matcher that groups the same car across bursts
-(about 23 MB), and an optional "taste" ranker.
+The "same car?" matcher also runs on your PC (about 23 MB) and groups the same car across bursts. An optional "taste"
+ranker is available.
 
 ### What "vision off" means
 
@@ -53,7 +48,7 @@ only". Nothing is wrong; it just does less. The scan screen tells you when visio
 
 ### How good are they?
 
-Be realistic. In Conrod's own tests on a motorsport set, the local vision model read the race number correctly about
+In Conrod's motorsport tests, the local vision model read the race number correctly about
 **83%** of the time and the exact model about **91%** of the time. At a car meet it was weaker: the make was right about
 **73%** of the time and the model only about half the time. Always glance at what it reads before you rely on it.
 The cloud models listed below are mostly **untested** by us; only one has been tried (see section 6).
@@ -67,7 +62,8 @@ The cloud models listed below are mostly **untested** by us; only one has been t
 | Your photo files (RAW, JPEG) | Always. Conrod never uploads whole files. | Never |
 | Detector, plates, text reader, faces/eyes, sharpness, grouping | Always | Never |
 | **Vision model** | If you pick "this PC" (built-in or Ollama) | A **cropped picture of one car** (up to about 1,500 pixels on its long side), plus a short instruction. At shoots where Conrod reads jersey numbers, the crop is of a **person**. (coming) If the cloud vision model also answers the yes/no moment questions, it gets a **small copy of the whole photo** (about 640 pixels wide) as well. |
-| **Decision model** | Always. It never runs in the cloud. | Never |
+| **On-device decision model** | Always. | Never |
+| **JEV moment checks** | Never | Through OpenCode Go, if enabled. |
 | Your key | Stored on your PC in Conrod's settings file, **not encrypted** | Sent to the company that owns it, to prove it is you |
 
 If you shoot weddings, children, or anything with a privacy agreement, keep the vision model on your PC or turn it
@@ -79,7 +75,7 @@ off.
 
 ### (a) A good graphics card: everything on your PC
 
-For a card with 12 GB of video memory or more. Free to run, nothing leaves the PC.
+For a card with 12 GB of video memory or more. No usage fees; photos stay on the PC.
 
 1. (coming) In Conrod, Settings, **AI models**, press **Download the built-in vision model** (about 5.2 GB). Nothing else
    to install. (Today: install **Ollama**, ollama.com, free, let it download `qwen2.5vl:7b`, and add it as your vision
@@ -87,24 +83,25 @@ For a card with 12 GB of video memory or more. Free to run, nothing leaves the P
 2. With a 16 GB card or more, also turn on **Use the decision model** and let it download (about 5.5 GB). With 12 to 16 GB
    you can skip it: the vision model answers the moment questions too (see section 1).
 
-A local vision read takes about 10 seconds per car (the built-in model aims for 5 to 8, not yet measured), so a big shoot
-reads for a long time. That is normal. You can leave it running.
+A local vision read takes about 10 seconds per car. The built-in model aims for 5 to 8 seconds, but has not been measured.
+Large shoots take time; leave Conrod running.
 
 ### (b) A laptop or a weak graphics card: use the cloud
 
-For under about 6 GB of video memory, or no graphics card. The cloud reads cars quickly and costs cents.
+For under about 6 GB of video memory or no graphics card. Cloud reads are quick and cost cents.
+
+Try OpenCode Go first: it is probably the best bang for your buck. Its subscription allowance covers vision reads and JEV moment checks (`jev-1.13` or `jev-1.13-free`) with one key, instead of per-token billing.
 
 1. Set up **OpenRouter** (section 4) or **OpenCode Go** (section 5) as your vision server.
-2. Leave the **decision model** off. (coming) The cloud vision model answers the moment questions as well, so you lose
-   nothing. The decision model cannot run in the cloud.
+2. Leave the on-device **decision model** off if you do not want its download. You can select JEV through OpenCode Go for
+   moment checks; the cloud vision model can also judge moments (coming).
 
 Detection will run on the processor if there is no graphics card, which is slower: Conrod tells you at start-up.
 With no graphics card and no key, Conrod still reads plates and race numbers, but not make or model.
 
 ### (c) Mixed: a mid-range card (8 GB) with a cloud helper
 
-For an 8 GB card (many gaming laptops). The vision model and the decision model are each too big to sit on the card
-together. Best result, and what the setup wizard picks if you have a key:
+For an 8 GB card, common in gaming laptops. The vision and decision models do not both fit on the card. If you have a key:
 
 1. Vision model in the **cloud** (OpenRouter or OpenCode Go), so the card is free for the detector.
 2. Decision model on your **graphics card**, in the smaller 4-bit version if Conrod offers it. Or skip it and let the
@@ -114,7 +111,7 @@ With **no key**: use the built-in vision model (coming) and let it answer the mo
 model on the card, so everything fits. It is slow, a few hours for a very big shoot, which is the price of keeping every
 photo on your PC.
 
-Conrod chooses between these automatically when a scan starts and tells you what it chose.
+Conrod chooses between these setups when a scan starts and tells you which it picked.
 
 ---
 
@@ -165,12 +162,11 @@ Real bills can be **two or three times higher**: some models turn one photo into
 before answering and charge for it. Watch the **Activity** page on openrouter.ai after your first scan. Prices are from
 OpenRouter's public list on 22 November 2026, plus the 5.5% fee on the money you add.
 
-### 4.5 The decision model is not available through OpenRouter
+### 4.5 The on-device decision model is not available through OpenRouter
 
-Conrod's **decision model always runs on your own graphics card**. OpenRouter lists a Perplexity decision model, but its own
-page says it "currently accepts text and JSON; image inputs are not yet supported", so Conrod does not send photos to it.
-You lose nothing: (coming) when there is no decision model on your PC, the **vision model answers the same yes/no
-questions**, in the cloud if that is where your vision model runs.
+The on-device **decision model** runs on your graphics card. OpenRouter's Perplexity decision model accepts text and JSON,
+not images, so Conrod does not send photos to it. OpenCode Go supports JEV for moment checks with the same key used for
+vision reads.
 ### 4.6 Privacy
 
 - OpenRouter says it does **not log your prompts or pictures** unless you turn on logging yourself (it offers a 1%
@@ -196,8 +192,7 @@ questions**, in the cloud if that is where your vision model runs.
 ### 5.1 What it is
 
 OpenCode Go is a **fixed monthly price** for a set of models, sold mainly to people who use AI coding assistants.
-You pay one monthly fee and get a generous allowance instead of paying per photo. Conrod can use it as a vision
-provider.
+The monthly allowance replaces per-photo billing. Conrod can use Go for vision reads and JEV moment checks.
 
 | Plan | Price | |
 |---|---|---|
@@ -216,12 +211,13 @@ provider.
 Not every model in Go can look at pictures. Pictures work with, among others: **GLM-5.3-Flash**, **Qwen3.8 Flash**,
 **Qwen3.7 Plus**, **MiMo-V2.6-Flash**, **MiniMax M3.1 Flash**, **Claude Haiku 5.5**, **GPT-6 Luna** and **Gemini 4 Argon**.
 
-Use **GLM-5.3-Flash** (`glm-5.3-flash`). It is the one Conrod's team has tried, and it read a test car's number correctly.
+Use **GLM-5.3-Flash** (`glm-5.3-flash`). It is the only one Conrod's team has tried; it read a test car's number correctly.
+For moment checks, OpenCode Go offers JEV as `jev-1.13` and `jev-1.13-free`.
 **Do not use DeepSeek V4.1 Flash for cars:** in our test it kept thinking and never gave an answer.
 
 ### 5.4 Limits and cost
 
-- Your plan has a monthly allowance measured in dollars at the models' list prices. On Go it is **$60 of GLM-5.3-Flash use**
+- Your plan has a monthly allowance measured in dollars at the models' list prices. On Go, it is **$60 of GLM-5.3-Flash use**
   a month. The allowance also has a **5-hour** window (a fifth of the month) and a **weekly** window (half the month, resets
   Monday 00:00 UTC).
 - At our assumed 1,900 tokens in and 150 out per read, GLM-5.3-Flash is about **0.04 cents per read** on Go, so $60 covers well
@@ -271,8 +267,8 @@ There is no separate "Test" button for OpenCode Go. A model list that loads is t
   cloud provider. You can add more than one; Conrod shares the work between them. **Use a vision model** is the on/off switch.
   (coming) **Moments are judged by**: Automatic (the decision model if it fits, otherwise the vision model), Decision model,
   or Vision model.
-- **Decision model** row: **Use the decision model** switch and **Precision** (8-bit or the smaller 4-bit). It always runs on
-  your graphics card.
+- **Decision model** row: **Use the decision model** switch and **Precision** (8-bit or the smaller 4-bit). The on-device
+  model runs on your graphics card.
 - (coming) The first-run **setup wizard** has an "AI helpers" step that picks sensible choices from your graphics card and
   any key you paste, and shows how long a 1,000-photo shoot should take. **Re-check my setup** in Settings runs it again.
 - **Save changes** at the bottom saves everything.
@@ -292,7 +288,7 @@ There is no separate "Test" button for OpenCode Go. A model list that loads is t
 | "does not support images" or empty answers | The model cannot look at pictures | Pick one from the tables above, or filter by **Input: Image** on openrouter.ai/models |
 | **400**, "MissingSessionID" (Go) | A very old Conrod, or the wrong OpenCode type | Update Conrod; choose **OpenCode Go (subscription)**, not plain OpenCode |
 | Numbers say "Number read by OCR only" | Vision is off or failed for that car | Check the vision switch and server; the scan screen says why |
-| "Not enough video memory: X free, needs Y" (decision model) | Another program (a game, a video, Ollama) is using the card, or the card is too small for both models | Close it, choose the 4-bit version, or leave the decision model off. (coming) The vision model then answers the moment questions instead. The scan works without it |
+| "Not enough video memory: X free, needs Y" (decision model) | Another program (a game, a video, Ollama) is using the card, or the card is too small for both models | Close it, choose the 4-bit version, or leave the on-device model off. You can select JEV through OpenCode Go for moments. (coming) The vision model can answer moment questions too. The scan works without either |
 | (coming) "Built-in vision model: not enough video memory" | The card has under about 6 GB free | Close other programs that use the graphics card, use a cloud vision server, or leave vision off |
 | (coming) The built-in vision model download stops or fails | A dropped connection or full disk (it needs about 5.2 GB free) | Press download again: it carries on where it stopped and checks the file when done |
 | "No graphics card was found" | Detection runs on the processor | Fine, just slower. Cloud vision still works |

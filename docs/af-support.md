@@ -1,14 +1,13 @@
 # Autofocus areas by camera brand
 
-Conrod reads the camera's autofocus area so the main-subject rule still works
-when the detector misses: the camera's own point decides the subject
-(`crates/conrod-engine/src/afsubject.rs`). The reader is
-`crates/conrod-io/src/af.rs`; it runs one `exiftool -n -json -G1` pass per
-200 frames, strips the group from each tag name, and returns the area as
-fractions of the upright frame.
+Conrod uses the camera's autofocus area to choose the main subject when the
+detector misses (`crates/conrod-engine/src/afsubject.rs`). The reader,
+`crates/conrod-io/src/af.rs`, runs `exiftool -n -json -G1` once per 200 frames,
+strips the group from each tag name, and returns the area as fractions of the
+upright frame.
 
-Tag names and units below were checked against the ExifTool 13.58 tag
-database (`exiftool -listx`, plus the Perl tables in `Image::ExifTool`).
+Tag names and units were checked against the ExifTool 13.58 tag database
+(`exiftool -listx` and the `Image::ExifTool` Perl tables).
 
 | Brand | Files | Tags read | Supported |
 |---|---|---|---|

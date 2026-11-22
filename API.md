@@ -1,12 +1,11 @@
 # Native command API
 
-Tauri: `invoke('command', {action, args})`. The CLI exposes the same API as
-`conrod-cli command ACTION '{"jobId":1}'`. Action names are snake_case; argument names
-are camelCase except settings and known-vehicle records, which retain Python field names.
-Omitted/null `args` becomes `{}`. IDs must be positive. Errors reject with a readable string.
-Commands returning `operation` run in the background; inspect `status.tasks` for completion
-or failure, and cancel with `cancel_operation`. CLI commands wait for completion and fail
-with a nonzero exit code if a task fails.
+Tauri: `invoke('command', {action, args})`. The CLI uses the same API:
+`conrod-cli command ACTION '{"jobId":1}'`. Actions are snake_case; arguments are
+camelCase except settings and known-vehicle records, which keep Python field names.
+Missing or null `args` becomes `{}`. IDs must be positive. Errors reject with a readable string.
+Commands returning `operation` run in the background. Check `status.tasks` and cancel with
+`cancel_operation`. CLI commands wait for completion and exit nonzero if a task fails.
 
 | Action | Arguments | Result / behavior |
 |---|---|---|
