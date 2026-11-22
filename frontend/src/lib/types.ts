@@ -530,6 +530,14 @@ export type OllamaModelsResponse = {
 export type VlmProvider = 'ollama' | 'openrouter' | 'openai' | 'anthropic' | 'gemini' | 'opencode' | 'opencode-go';
 /** `provider_models`: the models a provider key can call. */
 export type ProviderModelsResponse = { models: { id: string; name: string }[]; error?: string };
+/** `decision_models`: only decision-capable, photo-capable models a service offers. */
+export type DecisionModel = { id: string; name: string; image: boolean | null; unverified: boolean };
+export type DecisionModelsResponse = {
+  models: DecisionModel[];
+  freeText: boolean;
+  note?: string | null;
+  error?: string;
+};
 /** `openrouter_check`: who an OpenRouter key belongs to, without a model call. */
 export type OpenRouterCheck = { ok: boolean; label?: string; limit?: number | null; usage?: number | null; error?: string };
 /** `openCodeCheck`: the OpenCode model list a key can call, without a model call. */

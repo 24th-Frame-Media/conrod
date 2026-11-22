@@ -4,7 +4,7 @@
 
 export const TABS = [
   { id: 'culling', label: 'Culling', hint: 'What counts as a keeper' },
-  { id: 'identification', label: 'Identification', hint: 'Plates, numbers and vision models' },
+  { id: 'identification', label: 'Identification', hint: 'Plates, numbers and photo reading' },
   { id: 'metadata', label: 'Metadata', hint: 'What is written next to your files' },
   { id: 'lightroom', label: 'Lightroom', hint: 'Stars, picks and labels in your files' },
   { id: 'system', label: 'System', hint: 'Models, cache and library data' },
@@ -117,6 +117,15 @@ export const FIELDS = {
     label: 'Load balancing', kind: 'segmented',
     hint: 'How work is spread across the enabled providers.',
     options: [{ id: 'least_busy', name: 'Least busy' }, { id: 'round_robin', name: 'Round robin' }, { id: 'random', name: 'Random' }],
+  },
+  moments_strategy: {
+    label: 'How work is shared', kind: 'segmented',
+    hint: 'How moment questions are spread across the enabled services. Least busy uses the shortest queue; round robin takes turns.',
+    options: [{ id: 'least_busy', name: 'Least busy' }, { id: 'round_robin', name: 'Round robin' }, { id: 'random', name: 'Random' }],
+  },
+  moments_vlm_fallback: {
+    label: 'Use the car reader if no moment service answers', kind: 'toggle',
+    hint: 'When every moment service fails, let the car reader judge the frame. Its readings stay unverified.',
   },
   use_vlm: {
     label: 'Use a vision model', kind: 'toggle',
@@ -334,21 +343,17 @@ export function aiModelStatusLabel(state) {
     keys: ['detect_conf', 'min_box_fraction', 'max_vehicles_per_frame'],
   },
   {
-    id: 'ai-models', tab: 'identification', title: 'AI models',
-    hint: 'Every model Conrod can use, what each does, where it runs and whether it is ready. A switch turns each one on or off.',
+    id: 'ai-models', tab: 'identification', title: 'Photo helpers',
+    hint: 'What Conrod finds, checks and reads. Everything runs on this PC unless a row says Cloud.',
      keys: [
       'include_cars', 'include_bikes', 'include_trucks',
       'read_plates', 'read_numbers', 'read_text', 'include_people',
       'use_quality_score', 'use_vlm', 'vlm_reasoning', 'read_action', 'vlm_strategy',
-      'use_decider', 'decider_quant', 'moments_transport',
+      'use_decider', 'decider_quant', 'moments_transport', 'moments_strategy', 'moments_vlm_fallback',
+      'moments_threshold',
       'moments_openrouter_model', 'moments_openrouter_key',
       'moments_opencode_model', 'moments_opencode_key',
     ],
-  },
-  {
-    id: 'moments', tab: 'identification', title: 'Moments',
-    hint: 'What makes a keeper at each kind of shoot (a kiss, tyre smoke, a jump). Which moments, and whether they lift ranking, are set per album from its shoot settings.',
-    keys: ['moments_backend', 'moments_threshold'],
   },
   {
     id: 'known-fill', tab: 'identification', title: 'Known vehicles and names',
@@ -398,7 +403,7 @@ export const OVERRIDABLE = [
 ];
 
 /** Whole objects that behave like one field on the page, and the tab they dirty. */
-const EXTRA_KEY_TABS = { vlm_services: 'identification' };
+const EXTRA_KEY_TABS = { vlm_services: 'identification', moments_services: 'identification' };
 
 const sectionOf = new Map();
 for (const section of SECTIONS) for (const key of section.keys) sectionOf.set(key, section);

@@ -27,7 +27,7 @@ test('every setting keeps its engine key and appears in exactly one section', ()
     if (key === 'vlm_services') continue; // a whole list, rendered by the providers section
     assert.ok(seen.has(key), `${key} is still on the page`);
   }
-  assert.equal(SECTIONS.length, 12); // one AI models card, not four scattered sections
+  assert.equal(SECTIONS.length, 11); // one Photo helpers card; moments threshold folded into it
   assert.deepEqual(TABS.map((t) => t.label), ['Culling', 'Identification', 'Metadata', 'Lightroom', 'System']);
 });
 

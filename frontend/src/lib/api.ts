@@ -85,6 +85,9 @@ export const engine = {
   ollamaModels: (host?: string) => call<import('./types').OllamaModelsResponse>('ollama_models', { host }),
   providerModels: (provider: string, host?: string, apiKey?: string) =>
     call<import('./types').ProviderModelsResponse>('provider_models', { provider, host, apiKey }),
+  /** Live, image-filtered list of decision models a moment service can call. */
+  decisionModels: (provider: string, host: string, apiKey: string, model: string) =>
+    call<import('./types').DecisionModelsResponse>('decision_models', { provider, host, apiKey, model }),
   openRouterCheck: (key: string) => call<import('./types').OpenRouterCheck>('openrouter_check', { key }),
   openCodeCheck: (key: string) => call<import('./types').OpenCodeCheck>('openCodeCheck', { key }),
 };
