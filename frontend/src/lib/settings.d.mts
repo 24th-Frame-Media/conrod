@@ -51,6 +51,9 @@ export function aiModelStatus(
 ): AiModelState;
 export function aiModelStatusLabel(state: AiModelState): string;
 
+/** The OpenCode key the decider uses: its own, else an enabled vision service's. */
+export function decisionOpenCodeKey(settings?: Record<string, unknown>): string;
+
 export function tabById(id: string): SettingsTab | null;
 export function keyTab(key: string): SettingsTabId | null;
 export function fieldsOf(sectionId: string): SettingsField[];

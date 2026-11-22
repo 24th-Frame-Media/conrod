@@ -8,7 +8,7 @@ import { engine, inTauri } from '../lib/api';
 import { plural } from '../lib/format';
 import {
   AI_MODELS, FIELDS, SECTIONS, TABS, aiModelStatus, aiModelStatusLabel, aiModelWhere,
-  albumOverrideCounts, dirtyKeys, dirtyTabs, searchFields, tabById,
+  albumOverrideCounts, decisionOpenCodeKey, dirtyKeys, dirtyTabs, searchFields, tabById,
   type SettingsTabId,
 } from '../lib/settings.mjs';
 import { SettingsSection, SettingRow } from '../components/SettingsFields';
@@ -441,7 +441,12 @@ type AiModelsCardProps = {
  */
 function AiModelsCard({ draft, saved, models, services, onChange, setServices, toast, onModelsChanged }: AiModelsCardProps) {
   const [testing, setTesting] = useState(false);
+  const [testingOpenCode, setTestingOpenCode] = useState(false);
   const openRouterKey = String(draft.moments_openrouter_key ?? '');
+  const openCodeKey = decisionOpenCodeKey(draft);
+  // JEV is offered once there is an OpenCode key to call it with; a saved
+  // choice stays visible even after the key is removed, so it can be changed.
+  const showOpenCode = Boolean(openCodeKey.trim()) || String(draft.moments_transport ?? '') === 'opencode';
 
   const testOpenRouter = async () => {
     if (testing) return;
@@ -454,6 +459,20 @@ function AiModelsCard({ draft, saved, models, services, onChange, setServices, t
       toast(String(e), { tone: 'error' });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const testOpenCode = async () => {
+    if (testingOpenCode) return;
+    setTestingOpenCode(true);
+    try {
+      const res = await engine.openCodeCheck(openCodeKey);
+      if (res.ok) toast(`OpenCode key works${res.label ? ` (${res.label})` : ''}.`, { tone: 'ok' });
+      else toast(`OpenCode: ${res.error ?? 'the key was refused'}`, { tone: 'error' });
+    } catch (e) {
+      toast(String(e), { tone: 'error' });
+    } finally {
+      setTestingOpenCode(false);
     }
   };
 
@@ -533,7 +552,10 @@ function AiModelsCard({ draft, saved, models, services, onChange, setServices, t
           onChange={(value) => onChange('decider_quant', value)}
         />
         <SettingRow
-          field={FIELDS.moments_transport}
+          field={showOpenCode ? FIELDS.moments_transport : {
+            ...FIELDS.moments_transport,
+            options: (FIELDS.moments_transport.options ?? []).filter((option) => option.id !== 'opencode'),
+          }}
           value={draft.moments_transport ?? 'auto'}
           changed={draft.moments_transport !== saved.moments_transport}
           onChange={(value) => onChange('moments_transport', value)}
@@ -541,8 +563,28 @@ function AiModelsCard({ draft, saved, models, services, onChange, setServices, t
         <p className="section-hint">
           {String(draft.moments_transport ?? 'auto') === 'openrouter'
             ? 'Questions go to OpenRouter. Add a key below; the vision model can share it.'
-            : "Local runs on this PC's graphics card. OpenRouter sends the questions to the cloud."}
+            : String(draft.moments_transport ?? 'auto') === 'opencode'
+              ? 'Questions go to OpenCode’s decision model JEV. Add an OpenCode key below, or switch on an OpenCode vision service to share its key.'
+              : "Local runs on this PC's graphics card. OpenCode (JEV) and OpenRouter send the questions to the cloud."}
         </p>
+        <SettingRow
+          field={FIELDS.moments_opencode_model}
+          value={draft.moments_opencode_model ?? 'jev-1.13'}
+          changed={draft.moments_opencode_model !== saved.moments_opencode_model}
+          onChange={(value) => onChange('moments_opencode_model', value)}
+        />
+        <SettingRow
+          field={FIELDS.moments_opencode_key}
+          value={draft.moments_opencode_key ?? ''}
+          changed={draft.moments_opencode_key !== saved.moments_opencode_key}
+          onChange={(value) => onChange('moments_opencode_key', value)}
+        />
+        <div className="actions-row">
+          <button type="button" className="ghost small" disabled={testingOpenCode || !openCodeKey.trim()} onClick={() => void testOpenCode()}>
+            {testingOpenCode ? 'Testing…' : 'Test OpenCode key'}
+          </button>
+          <span className="muted small">Checks the key against OpenCode’s model list and says whether JEV is on it, without spending a model call.</span>
+        </div>
         <SettingRow
           field={FIELDS.moments_openrouter_model}
           value={draft.moments_openrouter_model ?? ''}

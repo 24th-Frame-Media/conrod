@@ -834,6 +834,10 @@ impl Desktop {
                 Ok(info) => info,
                 Err(e) => json!({"ok": false, "error": e}),
             }),
+            Command::OpenCodeCheck(a) => Ok(match conrod_io::vlm::opencode_key_check(&a.key) {
+                Ok(info) => info,
+                Err(e) => json!({"ok": false, "error": e}),
+            }),
             Command::Write(a) => {
                 crate::operations::write(self, a.job_id, a.dry_run, a.embed_in_raw)
             }

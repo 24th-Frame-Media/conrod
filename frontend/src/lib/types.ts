@@ -532,6 +532,8 @@ export type VlmProvider = 'ollama' | 'openrouter' | 'openai' | 'anthropic' | 'ge
 export type ProviderModelsResponse = { models: { id: string; name: string }[]; error?: string };
 /** `openrouter_check`: who an OpenRouter key belongs to, without a model call. */
 export type OpenRouterCheck = { ok: boolean; label?: string; limit?: number | null; usage?: number | null; error?: string };
+/** `openCodeCheck`: the OpenCode model list a key can call, without a model call. */
+export type OpenCodeCheck = { ok: boolean; label?: string; error?: string };
 export type VlmService = {
   id: string;
   provider: VlmProvider;

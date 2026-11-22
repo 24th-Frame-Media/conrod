@@ -370,6 +370,14 @@ pub struct OpenRouterCheckArgs {
     pub key: String,
 }
 
+/// `openCodeCheck`: validate an OpenCode key against its model list, without
+/// spending a model call, and say whether JEV is listed.
+#[derive(Debug, Deserialize, Default)]
+pub struct OpenCodeCheckArgs {
+    #[serde(default)]
+    pub key: String,
+}
+
 /// What a bench item is claimed to be; a blank field is skipped when scoring.
 #[derive(Debug, Deserialize, Default)]
 pub struct BenchTruth {
@@ -443,6 +451,7 @@ pub enum Command {
     SkipIdentify(JobArgs),
     ProviderModels(ProviderModelsArgs),
     OpenRouterCheck(OpenRouterCheckArgs),
+    OpenCodeCheck(OpenCodeCheckArgs),
     Write(WriteArgs),
     CancelOperation(KeyArgs),
     InstallModels {},
