@@ -32,15 +32,28 @@ import type { Runner } from '../state/hooks';
 
 export const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
 
+/** Every OpenCode request is billed from the Console credit balance, never the Go coding subscription. */
+const OPENCODE_CREDITS_HINT =
+  'OpenCode is charged per use from your OpenCode Console credit balance. Do not paste an OpenCode Go subscription key: Go is sold for coding assistants, not for Conrod. Add credits in the Console and use that key for vision and JEV.';
+
 const VLM_PROVIDERS: { id: VlmProvider; name: string; defaultModel: string }[] = [
   { id: 'ollama', name: 'Ollama (local or self-hosted)', defaultModel: 'qwen2.5vl:7b' },
   { id: 'openrouter', name: 'OpenRouter', defaultModel: 'qwen/qwen2.5-vl-72b-instruct' },
   { id: 'openai', name: 'OpenAI (GPT-4o and newer)', defaultModel: 'gpt-4o' },
   { id: 'anthropic', name: 'Anthropic (Claude 3.5 / 3.7)', defaultModel: 'claude-3-7-sonnet-20250219' },
   { id: 'gemini', name: 'Google Gemini', defaultModel: 'gemini-1.5-flash' },
-  { id: 'opencode', name: 'OpenCode (Console credits)', defaultModel: 'qwen3.8-max' },
-  { id: 'opencode-go', name: 'OpenCode Go (subscription)', defaultModel: 'glm-5.3-flash' },
+  { id: 'opencode', name: 'OpenCode (pay-as-you-go credits)', defaultModel: 'glm-5.3-flash' },
 ];
+
+/** Names for provider ids that older settings can still contain. */
+const LEGACY_PROVIDER_NAMES: Partial<Record<VlmProvider, string>> = {
+  'opencode-go': 'OpenCode (pay-as-you-go credits)',
+};
+
+/** The provider's shown name, including ids that are no longer offered. */
+function providerName(provider: VlmProvider): string {
+  return VLM_PROVIDERS.find((p) => p.id === provider)?.name ?? LEGACY_PROVIDER_NAMES[provider] ?? provider;
+}
 
 const KEY_KINDS = [
   { id: 'auto', name: 'Auto-detect' },
@@ -55,7 +68,7 @@ function getVlmServices(draft: SettingsMap): VlmService[] {
 
 /** "Ollama · host:port" for a server card title, or just the provider name for cloud services. */
 function serverTitle(service: VlmService): string {
-  if (service.provider !== 'ollama') return VLM_PROVIDERS.find((p) => p.id === service.provider)?.name.split(' (')[0] || service.provider;
+  if (service.provider !== 'ollama') return providerName(service.provider);
   const host = (service.host || '').replace(/^https?:\/\//, '');
   return `Ollama · ${host}`;
 }
@@ -372,10 +385,13 @@ function VlmAddForm({ onAdd, sharedKey = '' }: VlmAddFormProps) {
             </label>
           )}
           {provider === 'opencode' && (
-            <label className="setting">
-              <span className="label">Endpoint (optional)</span>
-              <input type="text" value={host} spellCheck={false} placeholder="https://opencode.ai/inference/openai/v1" onChange={(e) => setHost(e.target.value)} />
-            </label>
+            <>
+              <label className="setting">
+                <span className="label">Endpoint (optional)</span>
+                <input type="text" value={host} spellCheck={false} placeholder="https://opencode.ai/inference/openai/v1" onChange={(e) => setHost(e.target.value)} />
+              </label>
+              <p className="section-hint" role="note">{OPENCODE_CREDITS_HINT}</p>
+            </>
           )}
           <label className="setting">
             <span className="label">Model</span>
@@ -517,6 +533,7 @@ function AiModelsCard({ draft, saved, models, services, onChange, setServices, t
       <div className="ai-model-detail">
         <h4>Vision servers</h4>
         <p className="section-hint">One or more servers that read make, model, colour and team. Work is spread across the ones that are on.</p>
+        <p className="section-hint" role="note">{OPENCODE_CREDITS_HINT}</p>
         <SettingRow
           field={FIELDS.vlm_strategy}
           value={draft.vlm_strategy ?? 'least_busy'}
@@ -564,7 +581,7 @@ function AiModelsCard({ draft, saved, models, services, onChange, setServices, t
           {String(draft.moments_transport ?? 'auto') === 'openrouter'
             ? 'Questions go to OpenRouter. Add a key below; the vision model can share it.'
             : String(draft.moments_transport ?? 'auto') === 'opencode'
-              ? 'Questions go to OpenCode’s decision model JEV. Add an OpenCode key below, or switch on an OpenCode vision service to share its key.'
+              ? 'Questions go to OpenCode’s decision model JEV. Add an OpenCode key below, or switch on an OpenCode vision service to share its key. JEV is charged per use to your Console credits ($0.042 per million input tokens; output free).'
               : "Local runs on this PC's graphics card. OpenCode (JEV) and OpenRouter send the questions to the cloud."}
         </p>
         <SettingRow
@@ -579,6 +596,7 @@ function AiModelsCard({ draft, saved, models, services, onChange, setServices, t
           changed={draft.moments_opencode_key !== saved.moments_opencode_key}
           onChange={(value) => onChange('moments_opencode_key', value)}
         />
+        <p className="section-hint" role="note">{OPENCODE_CREDITS_HINT}</p>
         <div className="actions-row">
           <button type="button" className="ghost small" disabled={testingOpenCode || !openCodeKey.trim()} onClick={() => void testOpenCode()}>
             {testingOpenCode ? 'Testing…' : 'Test OpenCode key'}

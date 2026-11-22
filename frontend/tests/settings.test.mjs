@@ -175,3 +175,12 @@ test('album override counts only count explicit values that differ from the defa
   assert.equal(counts.read_numbers, 0);
   assert.deepEqual(albumOverrideCounts(undefined, settings).map((o) => o.count), [0, 0, 0, 0, 0, 0, 0]);
 });
+
+test('OpenCode is described as pay-as-you-go credits, never the Go coding subscription', () => {
+  for (const key of ['moments_transport', 'moments_opencode_model', 'moments_opencode_key']) {
+    const hint = FIELDS[key].hint;
+    assert.match(hint, /credit/i, `${key} names credits`);
+  }
+  assert.match(FIELDS.moments_opencode_key.hint, /Go coding-subscription/, 'the key hint warns off Go');
+  assert.match(FIELDS.moments_opencode_key.hint, /Do not paste/, 'the warning is direct');
+});

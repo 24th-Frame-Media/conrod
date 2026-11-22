@@ -286,20 +286,18 @@ impl DecisionTransport for OpenRouterTransport {
 }
 
 /// OpenCode's System One endpoint, whose decision model is JEV. It takes the
-/// same body as OpenRouter's Decisions API; the Go plan headers are not needed
-/// because JEV is billed to the OpenCode balance.
+/// same body as OpenRouter's Decisions API. JEV is billed to the Console
+/// (pay-as-you-go) balance, so no Go subscription header or session id is sent.
 pub struct OpenCodeTransport {
     pub key: String,
     pub model: String,
     pub timeout: Duration,
 }
 
-impl DecisionTransport for OpenCodeTransport {
-    fn name(&self) -> &'static str {
-        "opencode"
-    }
-
-    fn decide(&self, request: &Request) -> Result<Response, String> {
+impl OpenCodeTransport {
+    /// One POST. `decide_at` takes the URL so a test can point it at a local
+    /// server and see exactly which headers the credits API receives.
+    fn decide_at(&self, url: &str, request: &Request) -> Result<Response, String> {
         if self.key.trim().is_empty() {
             return Err("No OpenCode key is set for the decision model".into());
         }
@@ -310,10 +308,9 @@ impl DecisionTransport for OpenCodeTransport {
                 .build(),
         );
         let mut reply = agent
-            .post(OPENCODE_DECISION_URL)
+            .post(url)
             .header("Authorization", &format!("Bearer {}", self.key.trim()))
             .header("User-Agent", vlm::OPENCODE_USER_AGENT)
-            .header("x-opencode-session", vlm::opencode_session())
             .send_json(decisions_body(&self.model, request))
             .map_err(|e| {
                 format!(
@@ -324,6 +321,16 @@ impl DecisionTransport for OpenCodeTransport {
         let status = reply.status().as_u16();
         let body = reply.body_mut().read_to_vec().map_err(|e| e.to_string())?;
         parse_opencode(status, &body)
+    }
+}
+
+impl DecisionTransport for OpenCodeTransport {
+    fn name(&self) -> &'static str {
+        "opencode"
+    }
+
+    fn decide(&self, request: &Request) -> Result<Response, String> {
+        self.decide_at(OPENCODE_DECISION_URL, request)
     }
 }
 
@@ -737,6 +744,77 @@ mod tests {
             .decide(&req)
             .unwrap_err()
             .contains("No OpenCode key"));
+    }
+
+    #[test]
+    fn opencode_jev_posts_with_credits_auth_and_no_go_session_header() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/systemone", listener.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            let mut head_end = None;
+            let mut content_length = 0usize;
+            loop {
+                let n = stream.read(&mut buf).unwrap_or(0);
+                seen.extend_from_slice(&buf[..n]);
+                if head_end.is_none() {
+                    if let Some(pos) = seen.windows(4).position(|w| w == b"\r\n\r\n") {
+                        head_end = Some(pos + 4);
+                        let head = String::from_utf8_lossy(&seen[..pos]).to_lowercase();
+                        content_length = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse().ok())
+                            .unwrap_or(0);
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+                if let Some(end) = head_end {
+                    // Drain the JSON body before answering: closing while the
+                    // client is still writing resets the socket and loses the reply.
+                    if seen.len() >= end + content_length {
+                        break;
+                    }
+                }
+            }
+            let _ = tx.send(String::from_utf8_lossy(&seen).to_string());
+            let body = br#"{"answers":{"m_waving":{"type":"noul","noul":0.91}}}"#;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body);
+            let _ = stream.flush();
+        });
+        let transport = OpenCodeTransport {
+            key: " oc_sk_credit ".into(),
+            model: "jev-1.13".into(),
+            timeout: Duration::from_secs(5),
+        };
+        let req = decision::moment_request("x", vocabulary(ShootPreset::Wedding), vec![]);
+        let reply = transport.decide_at(&url, &req);
+        let seen = rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default();
+        server.join().unwrap();
+        let headers = seen.to_lowercase();
+        assert!(headers.starts_with("post /systemone "), "{headers}");
+        assert!(
+            headers.contains("authorization: bearer oc_sk_credit"),
+            "{headers}"
+        );
+        assert!(headers.contains("user-agent: conrod/"), "{headers}");
+        assert!(
+            !headers.contains("x-opencode-session"),
+            "the credits API is not the Go subscription and takes no session id: {headers}"
+        );
+        let reply = reply.expect("a valid JEV reply");
+        assert_eq!(reply.answers["m_waving"].noul, Some(0.91));
     }
 
     #[test]

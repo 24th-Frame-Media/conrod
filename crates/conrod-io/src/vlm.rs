@@ -30,16 +30,17 @@ pub const OPENAI_URL: &str = "https://api.openai.com/v1/chat/completions";
 pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 pub const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 pub const OPENROUTER_KEY_URL: &str = "https://openrouter.ai/api/v1/key";
-/// OpenCode Console / Go: one key for the models it lists, OpenAI-compatible.
-/// The chat endpoint lives under `inference/openai/v1`; the model list under
-/// `inference/v1`.
+/// OpenCode Console (pay-as-you-go credits): one key for the models it lists,
+/// OpenAI-compatible. The chat endpoint lives under `inference/openai/v1`; the
+/// model list under `inference/v1`. Console credits are billed per request from
+/// the workspace balance (`opencode.billing_source: "balance"`).
+///
+/// Conrod deliberately has no Go subscription endpoint here. `/inference/go`
+/// draws on the coding-assistant subscription, which OpenCode sells for coding
+/// agents only, not for a photo app; the same key on the Console inference base
+/// bills credits instead. See docs/user/ai-models.md.
 pub const OPENCODE_CHAT_URL: &str = "https://opencode.ai/inference/openai/v1/chat/completions";
 pub const OPENCODE_MODELS_URL: &str = "https://opencode.ai/inference/v1/models";
-/// OpenCode Go (the subscription): the same key, billed to the Go plan instead
-/// of pay-as-you-go credits. This base only routes requests that carry a
-/// stable session id, and a client user agent rather than a library default.
-pub const OPENCODE_GO_CHAT_URL: &str = "https://opencode.ai/inference/go/v1/chat/completions";
-pub const OPENCODE_GO_MODELS_URL: &str = "https://opencode.ai/inference/go/v1/models";
 pub(crate) const OPENCODE_USER_AGENT: &str = concat!("conrod/", env!("CARGO_PKG_VERSION"));
 pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -727,14 +728,11 @@ fn models_url(provider: &str, host: &str) -> Result<(String, bool), String> {
         "openai" => Ok((OPENAI_MODELS_URL.to_string(), true)),
         "openrouter" => Ok((OPENROUTER_MODELS_URL.to_string(), true)),
         "opencode" | "opencode-go" => {
-            let default = if provider == "opencode-go" {
-                OPENCODE_GO_MODELS_URL
-            } else {
-                OPENCODE_MODELS_URL
-            };
+            // `opencode-go` is a settings alias kept from older builds: it now
+            // means the Console (credits) endpoint, never the Go subscription.
             let host = host.trim().trim_end_matches('/');
             if host.is_empty() {
-                return Ok((default.to_string(), true));
+                return Ok((OPENCODE_MODELS_URL.to_string(), true));
             }
             if !is_http_url(host) {
                 return Err(format!(
@@ -808,9 +806,6 @@ pub fn list_models(
     }
     if provider.starts_with("opencode") {
         request = request.header("User-Agent", OPENCODE_USER_AGENT);
-        if provider == "opencode-go" {
-            request = request.header("x-opencode-session", opencode_session());
-        }
     }
     let response = request.call().map_err(|e| e.to_string())?;
     let body: Value = response
@@ -931,7 +926,6 @@ pub fn opencode_key_at(url: &str, key: &str) -> Result<Value, String> {
         .get(url)
         .header("Authorization", &format!("Bearer {key}"))
         .header("User-Agent", OPENCODE_USER_AGENT)
-        .header("x-opencode-session", opencode_session())
         .call()
         .map_err(|e| {
             format!(
@@ -968,25 +962,6 @@ fn opencode_url(host: &str, default: &str) -> String {
 
 pub fn opencode_chat_url(host: &str) -> String {
     opencode_url(host, OPENCODE_CHAT_URL)
-}
-
-pub fn opencode_go_chat_url(host: &str) -> String {
-    opencode_url(host, OPENCODE_GO_CHAT_URL)
-}
-
-/// A stable id for this app run, sent as `x-opencode-session`: OpenCode Go uses
-/// it to route one client's requests and reuse its prompt cache. One per process
-/// is what "per conversation" means here -- Conrod keeps one long conversation
-/// with the model for the whole session.
-pub(crate) fn opencode_session() -> &'static str {
-    static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    SESSION.get_or_init(|| {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        format!("conrod-{:x}-{nanos:x}", std::process::id())
-    })
 }
 
 /// Claude Code's tokens are prefixed distinctly enough to recognise, which
@@ -1101,8 +1076,7 @@ pub fn display_name(provider: &str) -> String {
         "openrouter" => "OpenRouter".into(),
         "anthropic" => "Anthropic".into(),
         "gemini" => "Gemini".into(),
-        "opencode" => "OpenCode".into(),
-        "opencode-go" => "OpenCode Go".into(),
+        "opencode" | "opencode-go" => "OpenCode (pay-as-you-go credits)".into(),
         other => other.to_string(),
     }
 }
@@ -1163,7 +1137,10 @@ pub fn build_request(
             images,
             num_predict,
         )),
-        "opencode" => {
+        "opencode" | "opencode-go" => {
+            // Both spellings are the Console (credits) endpoint. `opencode-go`
+            // is only an alias from older settings; it never reaches the Go
+            // subscription base, whose allowance is for coding assistants.
             let mut request = openai_request_at(
                 &opencode_chat_url(&settings.vlm_host),
                 false,
@@ -1177,28 +1154,6 @@ pub fn build_request(
             request
                 .headers
                 .push(("User-Agent".into(), OPENCODE_USER_AGENT.into()));
-            Ok(request)
-        }
-        "opencode-go" => {
-            // The Go plan routes by provider and conversation: the request must
-            // carry a stable session id, and identify the client rather than the
-            // HTTP library, or it is billed as pay-as-you-go and refused.
-            let mut request = openai_request_at(
-                &opencode_go_chat_url(&settings.vlm_host),
-                false,
-                &settings.vlm_model,
-                &settings.vlm_api_key,
-                prompt,
-                images,
-                schema,
-                num_predict,
-            );
-            request
-                .headers
-                .push(("User-Agent".into(), OPENCODE_USER_AGENT.into()));
-            request
-                .headers
-                .push(("x-opencode-session".into(), opencode_session().into()));
             Ok(request)
         }
         other => Err(VlmError::UnknownProvider(other.to_string())),
@@ -2657,19 +2612,23 @@ mod tests {
     }
 
     #[test]
-    fn the_opencode_go_provider_routes_to_go_with_a_session() {
+    fn the_opencode_go_alias_bills_credits_and_never_the_subscription() {
+        // Settings saved by an older build say `opencode-go`. That must now
+        // spend Console credits, not the Go coding-assistant allowance.
         let settings = Settings {
             vlm_provider: "opencode-go".into(),
-            vlm_model: "deepseek-v4.1-flash".into(),
+            vlm_model: "glm-5.3-flash".into(),
             vlm_api_key: "sk-test".into(),
             vlm_host: String::new(),
             ..Default::default()
         };
         let schema = json!({"type": "object", "properties": {"number": {"type": "string"}}});
         let request = build_request(&settings, "read the number", &["abc".into()], &schema, 100)
-            .expect("opencode-go is a provider");
-        assert_eq!(request.url, OPENCODE_GO_CHAT_URL, "Go has its own base");
-        // The Go plan refuses a request without these two headers.
+            .expect("opencode-go is still a settings alias");
+        assert_eq!(
+            request.url, OPENCODE_CHAT_URL,
+            "the alias uses the Console credits base, never /inference/go"
+        );
         let header = |name: &str| {
             request
                 .headers
@@ -2679,13 +2638,14 @@ mod tests {
         };
         assert_eq!(header("Authorization"), Some("Bearer sk-test"));
         assert_eq!(header("User-Agent"), Some(OPENCODE_USER_AGENT));
-        assert!(
-            header("x-opencode-session").is_some_and(|id| id.starts_with("conrod-")),
-            "a stable session id is required for Go routing"
+        assert_eq!(
+            header("x-opencode-session"),
+            None,
+            "a session id is only for Go routing, which Conrod must not use"
         );
-        // The model is the plain id at the Go base, not the opencode-go/ prefix
-        // OpenCode's own config uses.
-        assert_eq!(request.json["model"], "deepseek-v4.1-flash");
+        // The model is the plain id, not the opencode-go/ prefix OpenCode's own
+        // config uses.
+        assert_eq!(request.json["model"], "glm-5.3-flash");
         assert_eq!(request.json["response_format"]["type"], "json_object");
         // Parsing is the OpenAI envelope, like the pay-as-you-go provider.
         let reply = json!({"choices": [{"message": {"content": "{\"number\":\"96\"}"}}]});
@@ -2693,15 +2653,13 @@ mod tests {
             parse_response("opencode-go", &reply).unwrap()["number"],
             "96"
         );
-    }
-
-    #[test]
-    fn an_opencode_go_endpoint_is_completed_with_the_chat_path() {
-        assert_eq!(opencode_go_chat_url(""), OPENCODE_GO_CHAT_URL);
+        // The model list follows the same rule: the Console list, not Go's.
         assert_eq!(
-            opencode_go_chat_url("https://proxy.local/go/v1/"),
-            "https://proxy.local/go/v1/chat/completions"
+            models_url("opencode-go", "").unwrap(),
+            (OPENCODE_MODELS_URL.to_string(), true)
         );
+        assert_eq!(display_name("opencode-go"), display_name("opencode"));
+        assert!(display_name("opencode").contains("credits"));
     }
 
     #[test]
