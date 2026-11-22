@@ -67,6 +67,26 @@ pub(crate) fn identify_eligibility(scope: &str) -> &'static str {
     }
 }
 
+/// The rows an identify run reads, in frame order: the scope's subjects, never
+/// one the photographer settled by hand (`reviewed`), and -- for an incremental
+/// run -- never one already read (`read_at`).
+///
+/// Both halves are needed. A hand edit writes `read_at` and `reviewed=1`, so it
+/// is neither offered again nor counted as unread; a row a hand edit of an
+/// older build touched may carry `reviewed=1` without `read_at`, and the
+/// `reviewed` filter keeps it out all the same. `reviewed` is nullable on
+/// libraries the legacy app wrote, hence the `COALESCE`.
+pub(crate) fn pending_detections(region: &str, eligibility: &str, only_new: bool) -> String {
+    let fresh = if only_new {
+        " AND d.read_at IS NULL"
+    } else {
+        ""
+    };
+    format!(
+        "SELECT d.*,i.path,i.thumb_path,i.preview_path,i.burst_key FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='{region}' AND COALESCE(d.reviewed,0)=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility}{fresh} ORDER BY i.id,d.id"
+    )
+}
+
 /// The scope one identify run uses: the command's own argument when it has
 /// one, otherwise the album's stored setting (keepers by default).
 pub(crate) fn run_scope(album_scope: &str, arg: Option<&str>) -> &'static str {
@@ -600,11 +620,6 @@ pub(crate) fn identify_with_kind(
     let eligibility = identify_eligibility(scope);
     // An incremental run leaves every subject that has already been read
     // alone; a full run reads them again (the photographer asked for it).
-    let fresh = if only_new {
-        " AND d.read_at IS NULL"
-    } else {
-        ""
-    };
     launch(d, job, kind, move |d, stop, task| {
         if !wait_for_cull(d, stop, task) {
             return Ok(());
@@ -627,7 +642,11 @@ pub(crate) fn identify_with_kind(
         } else {
             "vehicle"
         };
-        let pending = rows(&lock(&d.reader), &format!("SELECT d.*,i.path,i.thumb_path,i.preview_path,i.burst_key FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.region_type,'vehicle')='{region}' AND d.reviewed=0 AND COALESCE(i.copy_of,0)=0 AND {eligibility}{fresh} ORDER BY i.id,d.id"), [job])?;
+        let pending = rows(
+            &lock(&d.reader),
+            &pending_detections(region, eligibility, only_new),
+            [job],
+        )?;
         // The live feed the identify screen draws, replaced by the next run and
         // kept after this one so its summary stays on screen. The guard ends an
         // early return (`?`) as an error rather than leaving the feed running.
@@ -1312,6 +1331,65 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
         assert_eq!(all, vec![read, fresh]);
+    }
+
+    #[test]
+    fn a_hand_edited_car_is_never_offered_to_identify_again() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("identify-hand-edited");
+        let car = lib.detection(lib.frame("a.jpg", Some(1)), "vehicle", 0.9);
+        lib.sql("UPDATE detections SET burst_pick=1 WHERE id=?", [car]);
+        lib.run(
+            "edit_detection",
+            serde_json::json!({"detectionId": car, "make": "Hand"}),
+        )
+        .unwrap();
+        let (read_at, reviewed): (Option<f64>, i64) = lib
+            .db()
+            .query_row(
+                "SELECT read_at,reviewed FROM detections WHERE id=?",
+                [car],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(
+            read_at.is_some(),
+            "a hand edit settles the box: it is not left unread"
+        );
+        assert_eq!(reviewed, 1);
+        let offered = |only_new: bool| -> Vec<i64> {
+            let db = lib.db();
+            let mut stmt = db
+                .prepare(&pending_detections(
+                    "vehicle",
+                    identify_eligibility("everything"),
+                    only_new,
+                ))
+                .unwrap();
+            stmt.query_map([lib.job], |r| r.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        assert!(
+            offered(true).is_empty(),
+            "an incremental run does not offer a car the person already settled"
+        );
+        assert!(
+            offered(false).is_empty(),
+            "nor does a full run: reviewed keeps the hand reading"
+        );
+        // A row an older build's hand edit left without `read_at` is still not
+        // offered: `reviewed`, not `read_at`, is the settled-box test.
+        lib.sql(
+            "UPDATE detections SET read_at=NULL,reviewed=1 WHERE id=?",
+            [car],
+        );
+        assert!(offered(false).is_empty(), "reviewed alone is enough");
+        assert!(offered(true).is_empty());
+        // A car found later is still offered.
+        let fresh = lib.detection(lib.frame("b.jpg", Some(1)), "vehicle", 0.9);
+        assert_eq!(offered(true), vec![fresh]);
     }
 
     #[test]

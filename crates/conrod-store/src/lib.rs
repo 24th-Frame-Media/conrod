@@ -396,14 +396,27 @@ fn migrate(conn: &Connection) -> Result<()> {
              WHERE COALESCE(picked,0)=1;
          CREATE INDEX IF NOT EXISTS idx_images_job_visible ON images(job_id, visible);",
     )?;
-    // Albums identified before `read_at` existed already carry the reading in
-    // `attributes`; backfill it once so they do not ask to identify again.
-    conn.execute_batch(
+    backfill_read_at(conn)?;
+    Ok(())
+}
+
+/// Albums identified before `read_at` existed already carry the reading in
+/// `attributes`; stamp it so they do not ask to identify again.
+///
+/// A one-time migration for rows the engine wrote before the column existed:
+/// `read_at IS NULL` on a row with attributes is that signature, and every
+/// hand edit stamps `read_at` itself now (`update_detection_review` here, the
+/// engine's `edit_detection`), so a manual annotation can no longer be caught
+/// by it. It is idempotent -- the condition empties after the first pass -- and
+/// `migrate` runs once per album per process.
+fn backfill_read_at(conn: &Connection) -> Result<usize> {
+    let stamped = conn.execute(
         "UPDATE detections SET read_at=unixepoch('now')
              WHERE read_at IS NULL AND attributes IS NOT NULL
-               AND COALESCE(region_type,'vehicle')='vehicle';",
+               AND COALESCE(region_type,'vehicle')='vehicle'",
+        [],
     )?;
-    Ok(())
+    Ok(stamped)
 }
 
 /// Open a connection, run `f`, and close it. Autocommit means every write in
@@ -1255,10 +1268,17 @@ pub fn update_detection_review(
     if let Some(attributes) = attributes {
         let attributes = serde_json::to_string(attributes)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        // A hand-written reading settles the box: it counts as read (`read_at`,
+        // so Identify never offers it as unread again) and as reviewed (so the
+        // engine's own pass may not write over it). An explicit `reviewed` in
+        // the same call still wins where it is applied below.
         conn.execute(
-            "UPDATE detections SET attributes=? WHERE id=?",
+            "UPDATE detections SET attributes=?, read_at=unixepoch('now') WHERE id=?",
             (attributes, det_id),
         )?;
+        if reviewed.is_none() {
+            conn.execute("UPDATE detections SET reviewed=1 WHERE id=?", [det_id])?;
+        }
     }
     if let Some(rejected) = rejected {
         conn.execute(
@@ -1457,6 +1477,82 @@ mod tests {
             .unwrap();
         let rows = stmt.query_map([], |row| row.get::<_, String>(1)).unwrap();
         rows.map(Result::unwrap).collect()
+    }
+
+    #[test]
+    fn the_read_at_backfill_stamps_a_legacy_engine_reading_once_and_spares_a_hand_edit() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        // `read_at` is added by the migrations, not the first schema.
+        migrate(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO jobs(id,root,created_at) VALUES(1,'C:\\Photos',0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO images(id,job_id,path,status) VALUES(1,1,'C:\\Photos\\a.CR3','done')",
+            [],
+        )
+        .unwrap();
+        // A reading the engine wrote before `read_at` existed: attributes, no stamp.
+        conn.execute(
+            "INSERT INTO detections(image_id,cls,conf,attributes) VALUES(1,'car',0.9,'{\"make\":\"Ford\"}')",
+            [],
+        )
+        .unwrap();
+        // A reading the photographer typed, through the review API.
+        conn.execute(
+            "INSERT INTO detections(image_id,cls,conf) VALUES(1,'car',0.9)",
+            [],
+        )
+        .unwrap();
+        let manual = conn.last_insert_rowid();
+        let typed = serde_json::json!({"make": "Hand", "own_make": "Ford"});
+        update_detection_review(
+            &conn,
+            manual,
+            None,
+            None,
+            Some(&typed),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let (read_at, reviewed): (Option<f64>, i64) = conn
+            .query_row(
+                "SELECT read_at,reviewed FROM detections WHERE id=?",
+                [manual],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(
+            read_at.is_some(),
+            "a hand-written reading settles the box: Identify must not offer it as unread"
+        );
+        assert_eq!(
+            reviewed, 1,
+            "and the engine may not write over it on a full run"
+        );
+
+        assert_eq!(
+            backfill_read_at(&conn).unwrap(),
+            1,
+            "only the legacy engine row needed the stamp"
+        );
+        assert_eq!(
+            backfill_read_at(&conn).unwrap(),
+            0,
+            "the backfill runs once: nothing is left to stamp"
+        );
+        let attributes = get_detection(&conn, manual).unwrap().unwrap().attributes;
+        assert_eq!(
+            attributes,
+            Some(typed.clone()),
+            "the hand-written reading is exactly as it was left"
+        );
     }
 
     #[test]
