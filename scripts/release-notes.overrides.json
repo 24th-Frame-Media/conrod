@@ -831,6 +831,10 @@
     "4db38d5": {
       "section": "Improved",
       "text": "A cloud moments service now lists its decision models to pick from instead of asking you to type one, and every cloud model shows its price so you can estimate what a shoot costs."
+    },
+    "6bfd10f": {
+      "section": "Fixed",
+      "text": "Conrod refuses to send your key to anything but a secure or local address. A service on your own machine or network keeps working; a plain-http address on the internet is turned away with a note saying which setting to change, and the Ollama model list shows that note instead of an answer."
     }
   }
 }
