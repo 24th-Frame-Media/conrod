@@ -132,7 +132,9 @@
 .menu-dropdown { position: relative; display: inline-flex; }
 .menu-trigger { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 13px; padding: 7px 11px; }
 .menu-caret { display: inline-flex; opacity: 0.8; }
-.menu-popover { position: absolute; top: calc(100% + 6px); z-index: 120; min-width: 240px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; gap: 2px; }
+/* Coords come from placeAnchoredMenu() (fixed, viewport-clamped). Static
+   left/right are only a measurable pre-placement fallback. */
+.menu-popover { position: absolute; top: calc(100% + 6px); z-index: 120; min-width: 240px; max-width: min(400px, calc(100vw - 16px)); visibility: hidden; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; gap: 2px; }
 .menu-popover.align-right { right: 0; }
 .menu-popover.align-left { left: 0; }
 .menu-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 13px; text-align: left; cursor: pointer; transition: background-color .14s var(--ease); }

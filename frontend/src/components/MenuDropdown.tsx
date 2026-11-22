@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect, ReactNode } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, ReactNode } from 'react';
 import { Icon } from './basics';
+import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
 
 export type ActionMenuItem = {
   id: string;
@@ -53,6 +54,22 @@ export function MenuDropdown({
 }: Props) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  /* The action menu is long (identify/export/reprocessing groups). Static
+     `top: calc(100% + 6px)` pushed it off the bottom of the window; place it
+     against the viewport and re-place on resize and on any scroll. */
+  useLayoutEffect(() => {
+    if (!open || !containerRef.current || !popoverRef.current) return;
+    const place = () => placeAnchoredMenu(containerRef.current!, popoverRef.current!, align === 'right' ? 'right' : 'left');
+    place();
+    window.addEventListener('resize', place);
+    document.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      document.removeEventListener('scroll', place, true);
+    };
+  }, [open, align]);
 
   useEffect(() => {
     if (!open) return;
@@ -114,7 +131,7 @@ export function MenuDropdown({
       )}
 
       {open && (
-        <div className={`menu-popover align-${align}`} role="menu">
+        <div className={`menu-popover align-${align}`} role="menu" ref={popoverRef}>
           {items.map((item, idx) => {
             if ('type' in item) {
               if (item.type === 'divider') {
