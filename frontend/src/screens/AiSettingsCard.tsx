@@ -56,10 +56,14 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   const [modelLists, setModelLists] = useState<Record<string, CardModels>>({});
   const [addMenuOpen, setAddMenuOpen] = useState(() => dev().get('aiadd') === '1');
   const [openPopup, setOpenPopup] = useState<string | null>(() => dev().get('aipopup') || null);
-  const [testing, setTesting] = useState<Record<string, 'testing' | 'ok'>>({});
+  const [testing, setTesting] = useState<Record<string, 'testing' | 'ok' | 'fail'>>({});
+  const [testErrors, setTestErrors] = useState<Record<string, string>>({});
   const [tested, setTested] = useState<Record<string, boolean>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  // One ref for every pending timer so unmount never leaves one behind.
+  const timeoutsRef = useRef<Set<number>>(new Set());
+  const aliveRef = useRef(true);
   const [opts, setOpts] = useState<Record<string, string>>({});
   const [builtinEnabled, setBuiltinEnabled] = useState(true);
   const [builtinRows, setBuiltinRows] = useState<Record<string, { on: boolean; downloaded: boolean }>>(() => {
@@ -193,6 +197,16 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, []);
 
+  /* Clear every pending test/install timer when this card unmounts. */
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      for (const t of timeoutsRef.current) window.clearTimeout(t);
+      timeoutsRef.current.clear();
+    };
+  }, []);
+
   /* ---------- settings write-through ---------- */
   const applyPatch = (p: { vlm_services: unknown[]; moments_services: unknown[] }) => {
     onChange('vlm_services', p.vlm_services as unknown as SettingValue);
@@ -212,25 +226,55 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     setAddMenuOpen(false);
   };
 
-  /* ---------- Test buttons (existing check commands) ---------- */
-  const testLabel = (key: string) => testing[key] === 'testing' ? 'Testing…' : testing[key] === 'ok' ? 'Ready ✓' : 'Test';
-  const test = (key: string, promise: Promise<unknown>) => {
-    if (testing[key]) return;
-    setTesting((t) => ({ ...t, [key]: 'testing' }));
-    void Promise.resolve(promise).catch(() => null).then(() => {
-      setTesting((t) => ({ ...t, [key]: 'ok' }));
+  /* ---------- Test buttons: the REAL engine check commands ---------- */
+  const testLabel = (key: string) => testing[key] === 'testing' ? 'Testing…'
+    : testing[key] === 'ok' ? 'Ready ✓'
+      : testing[key] === 'fail' ? 'Retry' : 'Test';
+  const finishTest = (key: string, res: unknown, err?: unknown) => {
+    if (!aliveRef.current) return;
+    const outcome = A.checkOutcome(res, err) as { ready: boolean; reason: string };
+    setTesting((t) => ({ ...t, [key]: outcome.ready ? 'ok' : 'fail' }));
+    if (outcome.ready) {
+      setTestErrors((s) => { const n = { ...s }; delete n[key]; return n; });
       setTested((s) => ({ ...s, [key]: true }));
       setRefreshNonce((n) => n + 1);
-      window.setTimeout(() => setTesting((t) => { const n = { ...t }; delete n[key]; return n; }), 2400);
-    });
+    } else {
+      // A bad key / offline host is never "tested": name the engine's plain reason.
+      setTested((s) => { const n = { ...s }; delete n[key]; return n; });
+      setTestErrors((s) => ({ ...s, [key]: outcome.reason }));
+      toast(`Not ready — ${outcome.reason}`, { tone: 'error' });
+    }
+    const t = window.setTimeout(() => {
+      timeoutsRef.current.delete(t);
+      if (aliveRef.current) setTesting((prev) => { const n = { ...prev }; delete n[key]; return n; });
+    }, 3200);
+    timeoutsRef.current.add(t);
+  };
+  const test = (key: string, promise: Promise<unknown>) => {
+    if (testing[key] === 'testing') return;
+    setTesting((t) => ({ ...t, [key]: 'testing' }));
+    setTestErrors((s) => { const n = { ...s }; delete n[key]; return n; });
+    void Promise.resolve(promise).then(
+      (res) => finishTest(key, res),
+      (err) => finishTest(key, undefined, err),
+    );
   };
   const testCard = (c: Card) => {
-    const promise = c.type === 'ollama' ? engine.ollamaModels(c.host)
+    const promise: Promise<unknown> = c.type === 'ollama' ? engine.ollamaModels(c.host)
       : c.type === 'openrouter' ? engine.openRouterCheck(c.apiKey)
         : c.type === 'opencode' ? engine.openCodeCheck(c.apiKey)
-          : Promise.resolve(null);
+          : engine.providerModels(c.type, '', c.apiKey);
     test(c.key, promise);
   };
+  // Dev QA only: `&aitest=1` runs each card's real check once on open, so a
+  // failing-key state can be screenshotted without an interactive click.
+  const autoTested = useRef(false);
+  useEffect(() => {
+    if (autoTested.current || !dev().get('aitest') || !cards.length) return;
+    autoTested.current = true;
+    for (const c of cards) testCard(c);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards]);
 
   /* ---------- built-in model rows: download -> real install commands ---------- */
   const downloadBuiltin = (id: string) => {
@@ -406,6 +450,9 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
           : <input className="key mono" type="text" placeholder="http://host:11434" value={card.host} spellCheck={false}
               aria-label="Ollama host address" onChange={(e) => patchCard(card.key, { host: e.target.value })} />}
         <p className="cost-line" title="Estimate at about 900 tokens in and 250 out per photo, summed over the picked models.">{cost}</p>
+        {testErrors[card.key]
+          ? <p className="test-reason" role="status">Not ready — {testErrors[card.key]}</p>
+          : null}
         <div className="mo-scroll">
           <h3 className="mo-group">Reads photos</h3>
           {pickRow(card, 'vision', 'Vision')}

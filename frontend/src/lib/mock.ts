@@ -14,6 +14,10 @@ export type DevStart = {
   lightroom?: 'export' | 'sent' | 'import' | 'imported' | 'stats';
 };
 const params = () => new URLSearchParams(location.search);
+/** Dev QA: `&aikeytest=fail` makes every real AI-service check command refuse
+ *  the key/host with a plain reason, so the Test button's failure state can be
+ *  screenshotted without an interactive click (pair with `&aitest=1`). */
+const keyFails = () => params().get('aikeytest') === 'fail';
 
 /** `?mock=1&page=ingest` (or `page=scan`) plays a ~80 s ingest of album 3: scan lanes, group, pick, vision, done. `page=identify` plays only the vision phase.
     Tuning: `&speed=4` hurries it, `&at=30` starts 30 s in (scan 0-61, group 61-64, pick 64-67, vision 67-89, done after 90), `&paused` starts it paused, `&frames=` `&cars=` size it, `&theme=light`. */
@@ -279,19 +283,22 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'install_models': return out({operation: 'Installing models'});
     case 'cache_info': return out({total: {files: 64, bytes: 3200000}});
     case 'check_update': return out({ok: true, current: '0.0.0-mock', latest: '0.0.1-mock', newer: true, installable: true});
-    case 'ollama_models': return out({
-      ok: true,
-      host: 'http://127.0.0.1:11434',
-      online: true,
-      models: [
-        { name: 'qwen2.5vl:7b', size: 5969245856, vision: true, parameter_size: '8.3B' },
-        { name: 'qwen3-vl:8b', size: 6140415879, vision: true, parameter_size: '8.8B' },
-        { name: 'gemma4:12b', size: 7556508396, vision: true, parameter_size: '11.9B' },
-        { name: 'minicpm-v:8b', size: 5473838466, vision: true, parameter_size: '7.6B' },
-      ],
-    });
+    case 'ollama_models': return out(keyFails()
+      ? { ok: false, host: 'http://localhost:11434', online: false, models: [], error: 'Could not connect to Ollama: connection refused (the host is offline).' }
+      : {
+        ok: true,
+        host: 'http://127.0.0.1:11434',
+        online: true,
+        models: [
+          { name: 'qwen2.5vl:7b', size: 5969245856, vision: true, parameter_size: '8.3B' },
+          { name: 'qwen3-vl:8b', size: 6140415879, vision: true, parameter_size: '8.8B' },
+          { name: 'gemma4:12b', size: 7556508396, vision: true, parameter_size: '11.9B' },
+          { name: 'minicpm-v:8b', size: 5473838466, vision: true, parameter_size: '7.6B' },
+        ],
+      });
     case 'provider_models': {
       const provider = String(a.provider ?? '');
+      if (keyFails()) return out({ models: [], error: 'The service could not list models: the key was rejected.' });
       const type = provider === 'opencode-go' ? 'opencode' : provider;
       const def = aiCard.SERVICE_TYPES[type];
       if (!def) return out({ models: [], error: `'${provider}' does not list models; type the model name` });
@@ -316,8 +323,12 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       }
       return out({ models: [], freeText: true, error: `'${provider}' does not list decision models` });
     }
-    case 'openrouter_check': return out({ ok: true, label: 'Conrod dev key', limit: null, usage: null });
-    case 'openCodeCheck': return out({ ok: true, label: 'OpenCode Console (JEV enabled)' });
+    case 'openrouter_check': return out(keyFails()
+      ? { ok: false, error: 'OpenRouter rejected the key (401). Check the key in your account.' }
+      : { ok: true, label: 'Conrod dev key', limit: null, usage: null });
+    case 'openCodeCheck': return out(keyFails()
+      ? { ok: false, error: 'OpenCode could not reach the Console (network unreachable).' }
+      : { ok: true, label: 'OpenCode Console (JEV enabled)' });
     case 'summary': return out({images: {scanned: db.frames.length, written: 0, errors: 0}, counts: {numbered: 48, plated: 48, to_review: 12}});
     case 'shoot_stats': {
       const frames = db.frames.length;

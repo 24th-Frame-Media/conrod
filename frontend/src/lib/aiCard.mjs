@@ -745,3 +745,29 @@ export function summaryText(ctx = {}) {
   return { text: `${p.n} model${p.n === 1 ? '' : 's'} ready across ${p.svc} service${p.svc === 1 ? '' : 's'}, shared ${routing}.`, dot: 'ok' };
 }
 
+/* ── interpreting the REAL engine check commands ──────────────────────────
+   openrouter_check / openCodeCheck / ollama_models resolve with { ok:false,
+   error } on a bad key or { ok:false, online:false, error } on an offline
+   host; provider_models resolves with { models:[], error }. A rejected promise
+   carries the same plain reason. `ready` is true only on a clean reply, so the
+   Test button can never claim "Ready" for a service that refused us. Pure, so
+   the failure-surfacing behaviour is unit-testable without the engine. */
+export function checkOutcome(res, err) {
+  const plain = (v) => {
+    if (v == null) return 'The service did not answer.';
+    if (typeof v === 'string') return v.trim() || 'The service did not answer.';
+    if (typeof v === 'object') {
+      const field = v.error ?? v.message;
+      if (field != null && String(field).trim()) return String(field).trim();
+    }
+    return 'The service did not answer.';
+  };
+  let reason = err != null ? plain(err) : null;
+  if (!reason && res && typeof res === 'object') {
+    const failed = res.ok === false || res.online === false
+      || (typeof res.error === 'string' && res.error.trim() !== '');
+    if (failed) reason = res.error ? plain(res.error) : plain(res);
+  }
+  return { ready: !reason, reason: reason || '' };
+}
+

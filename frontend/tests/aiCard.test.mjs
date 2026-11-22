@@ -7,7 +7,7 @@ import {
 } from '../src/lib/aiCard.mjs';
 import {
   ADD_ORDER, BUILTIN, IN_TOK, OUT_TOK, SERVICE_TYPES, SHARING, THINK_HINT,
-  addService, cardsFromDraft, costLine, decisionCandidates, defaultThinking,
+  addService, cardsFromDraft, checkOutcome, costLine, decisionCandidates, defaultThinking,
   fmtUsd, helperStatus, makeCard, modelLine, momentsStatus, patchService, photoCost, poolCount,
   providerToType, removeService, servingFor, setCapModel, setSharing, sharingValue, summaryText,
   visionCandidates,
@@ -389,4 +389,32 @@ test('the built-in reader never becomes a vision service row', () => {
   // A real service still records its model.
   const cloud = setCapModel(before, 'vision', 'opencode', 'glm-5.3-flash');
   assert.equal(cloud.vlm_services.at(-1).provider, 'opencode');
+});
+
+/* ── Test button: it must surface the engine's real failure reason ───────── */
+test('a real check failure is surfaced; only a clean reply is ready', () => {
+  // openrouter_check / openCodeCheck: a bad key resolves with { ok:false, error }.
+  const badKey = checkOutcome({ ok: false, error: 'OpenRouter rejected the key (401).' });
+  assert.equal(badKey.ready, false);
+  assert.match(badKey.reason, /401/);
+  // ollama_models: an offline host resolves with { online:false, error }.
+  const offline = checkOutcome({ ok: false, online: false, error: 'Could not connect to Ollama: connection refused' });
+  assert.equal(offline.ready, false);
+  assert.match(offline.reason, /connection refused/);
+  // A rejected promise carries the same plain reason (provider_models).
+  const thrown = checkOutcome(undefined, new Error('network unreachable'));
+  assert.equal(thrown.ready, false);
+  assert.match(thrown.reason, /network unreachable/);
+  const listed = checkOutcome({ models: [], error: 'the key was rejected' });
+  assert.equal(listed.ready, false);
+  // Clean replies from every check command are ready, with no reason.
+  for (const good of [
+    { ok: true, label: 'Conrod dev key' },
+    { ok: true, online: true, models: [{ name: 'qwen3-vl:8b' }] },
+    { models: [{ id: 'glm-5.3-flash' }] },
+    null, // the built-in (on-this-PC) card has no engine check to fail
+  ]) {
+    assert.equal(checkOutcome(good).ready, true);
+    assert.equal(checkOutcome(good).reason, '');
+  }
 });
