@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Focus score at or above which a frame reads as sharp. The one definition:
 /// `conrod-vision`'s sharpness measure re-exports both of these.
@@ -348,6 +349,16 @@ pub fn data_root() -> PathBuf {
     PathBuf::from(profile).join(".conrod")
 }
 
+/// A settings file that could not be read, moved aside instead of being
+/// silently replaced by the defaults. `backup` is where the unreadable file now
+/// lives (`settings.json.corrupt-<unix millis>`), `error` is the parse error.
+/// The screen surfaces it; the next `save` writes a clean file and clears it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CorruptSettings {
+    pub backup: String,
+    pub error: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -565,6 +576,10 @@ pub struct Settings {
     /// Never logged.
     #[serde(skip_serializing, default)]
     pub moments_opencode_key: String,
+    /// Set by [`Settings::load`] when the file on disk would not parse and had
+    /// to be moved aside. Runtime state: never written by [`Settings::save`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corrupt: Option<CorruptSettings>,
 }
 
 impl Default for Settings {
@@ -689,6 +704,7 @@ impl Default for Settings {
             moments_openrouter_key: String::new(),
             moments_opencode_model: "jev-1.13".into(),
             moments_opencode_key: String::new(),
+            corrupt: None,
         }
     }
 }
@@ -801,17 +817,69 @@ fn same_kind(a: &Value, b: &Value) -> bool {
     )
 }
 
+/// The JSON kind of a value, for an error that reads in a log.
+fn kind_of(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "a list",
+        Value::Object(_) => "an object",
+    }
+}
+
+/// Move an unreadable settings file to `settings.json.corrupt-<unix millis>` and
+/// say where it went, so the person can recover keys from it. A failed move is
+/// reported too, with the file where it is: the defaults then come with a
+/// warning rather than a silent reset.
+fn set_aside(path: &Path, error: &str) -> Option<CorruptSettings> {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "settings.json".into());
+    let backup = path.with_file_name(format!("{name}.corrupt-{stamp}"));
+    match std::fs::rename(path, &backup) {
+        Ok(()) => Some(CorruptSettings {
+            backup: backup.display().to_string(),
+            error: error.to_string(),
+        }),
+        Err(e) => Some(CorruptSettings {
+            backup: path.display().to_string(),
+            error: format!("{error} (could not move it aside: {e})"),
+        }),
+    }
+}
+
 impl Settings {
     pub fn path() -> PathBuf {
         data_root().join("settings.json")
     }
 
-    /// Read settings, never failing: a missing or broken file is the defaults.
+    /// Read settings. A missing file is the defaults -- that is a first run.
+    /// A file that will not parse is not silently replaced: it is moved aside
+    /// as `settings.json.corrupt-<unix millis>` and the returned settings carry
+    /// [`Settings::corrupt`], so the screen can say so and the person never
+    /// loses keys to a crash-truncated write without being told.
     pub fn load(path: &Path) -> Settings {
-        let mut stored: Map<String, Value> = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
+        let (mut stored, corrupt) = match std::fs::read_to_string(path) {
+            Ok(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(Value::Object(map)) => (map, None),
+                Ok(other) => {
+                    let error = format!("settings are not an object: {}", kind_of(&other));
+                    (Map::new(), set_aside(path, &error))
+                }
+                Err(e) => (Map::new(), set_aside(path, &e.to_string())),
+            },
+            // A missing file is the ordinary first run. Anything else (a
+            // permission problem, a directory in its place) is left alone and
+            // not reported as corruption: nothing was lost by this read.
+            Err(_) => (Map::new(), None),
+        };
         // A file written by an older build: its 4.0 burst gap meant the default
         // (1.5 s), not four seconds. Rewrite it once, in place. A file from
         // before moment services gets its list synthesised from the retired
@@ -846,6 +914,7 @@ impl Settings {
             settings.focus_scale = FOCUS_SCALE;
         }
         settings.seed_vlm_services();
+        settings.corrupt = corrupt;
         if migrated {
             let _ = settings.save(path);
         }
@@ -1008,6 +1077,9 @@ impl Settings {
 
     /// Overlay known keys whose values have the right type.
     pub fn apply(self, updates: &Map<String, Value>) -> Settings {
+        // Corruption is a fact about the file, not a setting: neither a stored
+        // file nor a patch may set or clear it.
+        let corrupt = self.corrupt.clone();
         let Value::Object(mut current) = serde_json::to_value(&self).unwrap() else {
             unreachable!("Settings serialises to an object")
         };
@@ -1025,6 +1097,7 @@ impl Settings {
         settings
             .vlm_services
             .retain(|service| is_vision_provider(&service.provider));
+        settings.corrupt = corrupt;
         settings
     }
 
@@ -1036,8 +1109,25 @@ impl Settings {
         // struct by hand.
         let mut copy = self.clone();
         copy.moments_strategy = moments_strategy_word(&copy.moments_strategy).to_string();
+        // Corruption is a fact about the file that was just read, not a setting:
+        // the next save writes a clean file and the warning goes away.
+        copy.corrupt = None;
         let text = serde_json::to_string_pretty(&copy).map_err(std::io::Error::other)?;
-        std::fs::write(path, text)
+        // A crash mid-write must never truncate the settings. Write beside the
+        // real file, flush it to the disk, then rename over it: the rename is
+        // atomic on one volume, so the old file stays readable until the whole
+        // new one is there.
+        let temp = path.with_extension("json.tmp");
+        {
+            let mut file = std::fs::File::create(&temp)?;
+            std::io::Write::write_all(&mut file, text.as_bytes())?;
+            file.sync_all()?;
+        }
+        let renamed = std::fs::rename(&temp, path);
+        if renamed.is_err() {
+            let _ = std::fs::remove_file(&temp);
+        }
+        renamed
     }
 
     /// Cull-pool workers: `workers` when set, else most of the machine, a
@@ -1612,5 +1702,81 @@ mod tests {
         assert_eq!(moments_strategy_word(""), "least_busy");
         assert_eq!(Settings::default().moments_strategy, "least_busy");
         assert!(Settings::default().moments_vlm_fallback);
+    }
+
+    /// A save must never leave a truncated file behind: it writes beside the
+    /// real one and renames over it, so a reader sees the old file or the new
+    /// one, never half of either.
+    #[test]
+    fn a_save_is_atomic_and_leaves_no_scratch_file() {
+        let root = std::env::temp_dir().join(format!("conrod-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        let mut settings = Settings {
+            vlm_api_key: "sk-keep".into(),
+            ..Settings::default()
+        };
+        settings.save(&path).unwrap();
+        assert!(
+            !path.with_extension("json.tmp").exists(),
+            "the scratch file is renamed away, not left beside the settings"
+        );
+        assert_eq!(Settings::load(&path).vlm_api_key, "sk-keep");
+        // A second save over an existing file replaces it whole.
+        settings.vlm_api_key = "sk-keep-2".into();
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).vlm_api_key, "sk-keep-2");
+        assert!(!path.with_extension("json.tmp").exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A crash-truncated (or otherwise unreadable) file is never a silent reset:
+    /// the bad file is kept aside, the defaults come with a `corrupt` report,
+    /// and the next save writes a clean file.
+    #[test]
+    fn a_corrupt_settings_file_is_set_aside_and_reported_not_silently_reset() {
+        let root = std::env::temp_dir().join(format!("conrod-corrupt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        // What a crash mid-write leaves: the file ends mid-object, and the API
+        // keys in it are not recoverable by the parser.
+        let broken = r#"{"vlm_api_key":"sk-secret","vlm_services":[{"id":"vlm-1","model":"m""#;
+        std::fs::write(&path, broken).unwrap();
+
+        let loaded = Settings::load(&path);
+        let corrupt = loaded
+            .corrupt
+            .clone()
+            .expect("the settings must say the file was unreadable, not hide it");
+        assert!(!corrupt.error.is_empty(), "the reason is carried");
+        let backup = std::path::Path::new(&corrupt.backup);
+        assert!(backup.exists(), "the bad file is kept: {}", corrupt.backup);
+        assert_eq!(
+            std::fs::read_to_string(backup).unwrap(),
+            broken,
+            "byte for byte, so the keys in it can be recovered by hand"
+        );
+        assert!(
+            !path.exists(),
+            "the unreadable file is moved aside, not left to be written over"
+        );
+        assert_eq!(
+            loaded.vlm_api_key,
+            Settings::default().vlm_api_key,
+            "the defaults are in force, and the screen is told why"
+        );
+
+        // The next save writes a clean file, and the warning goes with it.
+        loaded.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("corrupt"), "runtime state is never written");
+        let reloaded = Settings::load(&path);
+        assert!(
+            reloaded.corrupt.is_none(),
+            "a clean file carries no warning"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
