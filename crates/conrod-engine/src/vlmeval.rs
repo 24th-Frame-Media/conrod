@@ -21,9 +21,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-const ROOT: &str = r"E:\code\photo\conrod";
-const VLM_DIR: &str = r"E:\code\photo\conrod\target\vlm";
-const ENTRY_LIST: &str = r"E:\code\photo\conrod\target\vlm\entry_list_bathurst_2026.json";
+const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+const VLM_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/vlm");
+const ENTRY_LIST: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../target/vlm/entry_list_bathurst_2026.json"
+);
 
 fn settings_for(group: &str) -> Settings {
     let mut s = Settings::default();

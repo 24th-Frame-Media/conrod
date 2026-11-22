@@ -1071,15 +1071,18 @@ mod tests {
         assert_eq!(path_key(r"D:\Shoots\A.CR3"), path_key("d:/shoots/a.cr3"));
     }
 
-    /// A real R7 frame from the Bathurst 1000 shoot, with a car where the
+    /// A real R7 frame from the race-weekend shoot, with a car where the
     /// detector found it. Ignored because it needs this machine's exiftool and
     /// the read-only D: originals.
     #[test]
     #[ignore = "reads a real CR3 from the D: originals with this machine's exiftool"]
     fn real_canon_af() {
-        let exe = Path::new(r"C:\Users\kapsikkum\AppData\Local\Programs\ExifTool\ExifTool.exe");
+        let exe = std::env::var_os("USERPROFILE")
+            .map(PathBuf::from)
+            .unwrap_or_default()
+            .join(r"AppData\Local\Programs\ExifTool\ExifTool.exe");
         let file = PathBuf::from(
-            r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-08_Thursday\20261008_B1000_4692.CR3",
+            r"D:\Photo Archive\Projects\2026-01-01_Race-Weekend-A\01_RAW\2026-01-02_Day-1\20260102_RACE_4692.CR3",
         );
         if !exe.exists() || !file.exists() {
             eprintln!(
@@ -1092,7 +1095,7 @@ mod tests {
         // The frame's own upright size, as the preview decode reports it.
         let mut frames = HashMap::new();
         frames.insert(file.clone(), (6960, 4640, 1));
-        let got = read(&[file], exe, &frames);
+        let got = read(&[file], &exe, &frames);
         let area = got[0].1.expect("the R7 writes an AF area");
         println!("{} -> {area:?}", got[0].0.display());
         assert!(

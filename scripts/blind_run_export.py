@@ -1,11 +1,13 @@
-"""Export the Neville blind-run picks from the Conrod DB, read-only, to target/neville_blind/."""
+"""Export the blind-run picks from the Conrod DB, read-only, to target/blind_run/."""
 import csv
 import json
 import os
 import sqlite3
 
 DB = os.path.expanduser(r"~\.conrod\conrod.db")
-OUT = r"E:\code\photo\conrod\target\neville_blind"
+OUT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "target", "blind_run"
+)
 JOB = 106
 os.makedirs(OUT, exist_ok=True)
 

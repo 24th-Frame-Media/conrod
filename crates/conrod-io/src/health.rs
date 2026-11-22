@@ -42,7 +42,7 @@ pub fn vision(settings: &Settings, enabled: bool) -> Value {
     }
 }
 
-/// Display name for a service (a server): "Ollama @ 192.168.1.100:11434"
+/// Display name for a service (a server): "Ollama @ gpu-box:11434"
 /// for Ollama (scheme and trailing slash stripped), else the provider name
 /// capitalised ("Anthropic"). Match rows by `id`, not by this.
 pub fn service_label(provider: &str, host: &str) -> String {

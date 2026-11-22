@@ -29,9 +29,11 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 VLM = ROOT / "target" / "vlm"
 RESULTS = VLM / "results"
-OPENCODE_CFG = Path(r"C:\Users\kapsikkum\.config\opencode\opencode.json")
+OPENCODE_CFG = Path(
+    os.environ.get("OPENCODE_CONFIG", Path.home() / ".config" / "opencode" / "opencode.json")
+)
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-STRATA_HOST = "192.168.1.100:8088"
+STRATA_HOST = os.environ.get("CONROD_STRATA_HOST", "192.168.1.100:8088")
 STRATA_URL = f"http://{STRATA_HOST}/v1/chat/completions"
 STRATA_MODEL = "qwen3.8-flash-next-coder-iq1_m"
 DEFAULT_MODELS = "qwen2.5vl:7b,mimo-iq4:latest,strata"

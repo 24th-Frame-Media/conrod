@@ -18,10 +18,10 @@ MIN_EXP = 0.004
 BAND = (1 / 160 - 1e-9, 1 / 30 + 1e-9)
 
 FOLDERS = [
-    ("wetpan", r"D:\24th Frame Media\02_Projects\2026-10-30_Sydney-Weekend\01_RAW\2026-10-31_Wetpan"),
-    ("roll", r"D:\24th Frame Media\02_Projects\2026-10-30_Sydney-Weekend\01_RAW\2026-10-30_Roll-Racing"),
-    ("sat", r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-10_Saturday"),
-    ("sun", r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-11_Sunday"),
+    ("wetpan", r"D:\Photo Archive\Projects\2026-01-03_Personal-Trip\01_RAW\2026-01-04_Wetpan"),
+    ("roll", r"D:\Photo Archive\Projects\2026-01-03_Personal-Trip\01_RAW\2026-01-03_Roll-Racing"),
+    ("sat", r"D:\Photo Archive\Projects\2026-01-01_Race-Weekend-A\01_RAW\2026-01-05_Saturday"),
+    ("sun", r"D:\Photo Archive\Projects\2026-01-01_Race-Weekend-A\01_RAW\2026-01-06_Sunday"),
 ]
 
 

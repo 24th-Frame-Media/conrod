@@ -1,6 +1,6 @@
 """Train the shipped taste head: DINOv2-small CLS + per-frame handcrafted features.
 
-The experiment (E:\\code\\photo\\conrod\\target\\taste) found its best in-burst ranker
+The experiment (`target/taste`) found its best in-burst ranker
 with burst-centred features: position, within-burst ranks, the cosine to the burst
 mean, and two no-reference IQA models. None of that survives into Conrod's
 `score(&Rgb) -> Option<f32>` surface, which sees one frame at a time, so this head

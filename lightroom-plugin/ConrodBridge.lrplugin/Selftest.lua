@@ -103,7 +103,7 @@ function Selftest.run()
       format = 'conrod.lightroom.bridge',
       version = 1,
       direction = 'to-conrod',
-      album = { label = 'Bathurst 1000 - Race Week', root = 'D:\\24th Frame Media\\01_RAW' },
+      album = { label = 'Album A', root = 'C:\\Photos\\Album-A' },
       created_at = '2026-11-19T16:00:00Z',
       producer = { app = 'conrod-bridge', version = '1.0.0' },
       photos = {
@@ -202,8 +202,8 @@ function Selftest.run()
       format = 'conrod.lightroom.bridge',
       version = 1,
       direction = 'to-lightroom',
-      collection = 'Conrod keepers - Bathurst 1000',
-      album = { job_id = 109, label = 'Bathurst 1000', root = 'D:\\24th Frame Media' },
+      collection = 'Conrod keepers - Album A',
+      album = { job_id = 109, label = 'Album A', root = 'C:\\Photos' },
       photos = {
         { path = 'D:\\a\\B.CR3', rating = 3, pick = 1, label = 'green',
           keywords = { 'Conrod keeper', 'Conrod burst 145' }, stars = 4,

@@ -3493,7 +3493,7 @@ mod tests {
         );
     }
 
-    /// A real R7 frame from the Bathurst 1000 shoot: the whole `focus_points`
+    /// A real R7 frame from the race-weekend shoot: the whole `focus_points`
     /// action against a temp album, reading the D: original (never writing it).
     /// Ignored because it needs the read-only originals. The box comes from the
     /// makernote, so no ExifTool is needed.
@@ -3501,7 +3501,7 @@ mod tests {
     #[ignore = "reads a real CR3 from the D: originals"]
     fn real_focus_points_stores_the_cameras_box() {
         let file = std::path::PathBuf::from(
-            r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-08_Thursday\20261008_B1000_4692.CR3",
+            r"D:\Photo Archive\Projects\2026-01-01_Race-Weekend-A\01_RAW\2026-01-02_Day-1\20260102_RACE_4692.CR3",
         );
         if !file.is_file() {
             eprintln!("skipping: {} is missing", file.display());
@@ -3581,7 +3581,7 @@ mod tests {
     fn real_orientation_read_time() {
         use std::time::Instant;
         let dir = std::path::Path::new(
-            r"D:\24th Frame Media\02_Projects\2026-10-06_Bathurst-1000\01_RAW\2026-10-08_Thursday",
+            r"D:\Photo Archive\Projects\2026-01-01_Race-Weekend-A\01_RAW\2026-01-02_Day-1",
         );
         if !dir.is_dir() {
             eprintln!("skipping: {} is missing", dir.display());

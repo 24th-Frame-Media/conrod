@@ -37,6 +37,8 @@ OUT_DIR = REPO_ROOT / "target" / "groundtruth"
 # drives to scan, newest first (D: wins a de-duplication tie)
 DRIVES = ("D", "P")
 PERSONAL_YEARS = ("2026",)
+# Name of the single archive folder at the root of a scanned drive.
+ARCHIVE_ROOT = "Photo Archive"
 
 # folder names that are never worth walking
 SKIP_DIR_NAMES = {
@@ -152,7 +154,7 @@ def drive_pairs(drive):
                      personal_exp if os.path.isdir(personal_exp) else None)
                 )
 
-    tfm = os.path.join(root, "24th Frame Media")
+    tfm = os.path.join(root, ARCHIVE_ROOT)
     for umbrella in ("01_Clients", "02_Projects"):
         if os.path.isdir(os.path.join(tfm, umbrella)):
             pairs.append((os.path.join(tfm, umbrella), None))
@@ -241,7 +243,7 @@ def client_of(directory):
 
     if low[0] == "client work" and len(rest) >= 2:
         return rest[1]
-    if low[0] == "24th frame media" and len(rest) >= 2:
+    if low[0] == ARCHIVE_ROOT.lower() and len(rest) >= 2:
         if low[1] == "01_clients" and len(rest) >= 3:
             return rest[2]
         if low[1] == "02_projects" and len(rest) >= 3:
