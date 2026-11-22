@@ -6,6 +6,7 @@
 //! demotion, and the scan never waits on it.
 
 use crate::desktop::{rows, Desktop, Result};
+use crate::identify_live::{IdentifyLive, MOMENTS_PHASE, PEAKS_PHASE};
 use crate::{err, lock};
 use conrod_core::decision::{peak_frame, InProcess};
 use conrod_core::moments::{Moment, MomentVerdict};
@@ -112,9 +113,16 @@ fn pending(d: &Desktop, job: i64, everything: bool, rejudge: bool) -> Result<Vec
     let unread = if rejudge { "" } else { "AND i.moments IS NULL" };
     rows(
         &lock(&d.reader),
-        &format!("SELECT i.id,i.path,i.preview_path,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 {unread} {keepers} ORDER BY i.id"),
+        &format!("SELECT i.id,i.path,i.preview_path,i.moments,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 {unread} {keepers} ORDER BY i.id"),
         [job],
     )
+}
+
+/// The live identify feed this run narrates its post-cars phases to, when one
+/// is still running. A standalone judge run has none: the album's feed belongs
+/// to an earlier run that has already finished.
+fn live_feed(d: &Desktop) -> Option<Arc<IdentifyLive>> {
+    lock(&d.identify).clone().filter(|live| !live.finished())
 }
 
 fn store(d: &Desktop, image: i64, verdict: &MomentVerdict) -> Result<()> {
@@ -163,6 +171,11 @@ pub(crate) fn run(
     let frames = pending(d, job, everything, rejudge)?;
     let context = lanes.preset.prompt_context();
     task.detail(format!("Judging moments with the {} backend", judge.name()));
+    // The identify screen names this work: judging frames, then the bursts.
+    let feed = live_feed(d);
+    if let Some(feed) = &feed {
+        feed.begin_phase(MOMENTS_PHASE, frames.len());
+    }
     let (next, judged) = (AtomicUsize::new(0), AtomicUsize::new(0));
     let workers = (cfg.identify_worker_count().max(1) as usize)
         .min(4)
@@ -198,27 +211,56 @@ pub(crate) fn run(
                 let verdict = shown_as(&label, thumb, || {
                     judge.judge_pair(context, vocab, &url, crop.as_deref())
                 });
-                if let Ok(verdict) = verdict {
+                if let Ok(mut verdict) = verdict {
+                    // The burst pass owns `peak`: reading a frame again (a
+                    // rejudge) must not wipe the peak an earlier pass stored.
+                    if verdict.peak.is_none() {
+                        verdict.peak = stored_peak(frame);
+                    }
                     if store(d, id, &verdict).is_ok() {
                         judged.fetch_add(1, Ordering::Relaxed);
                     }
                 }
-                task.progress(
-                    next.load(Ordering::Relaxed).min(frames.len()) as u64,
-                    frames.len() as u64,
-                );
+                let read = next.load(Ordering::Relaxed).min(frames.len());
+                task.progress(read as u64, frames.len() as u64);
+                if let Some(feed) = &feed {
+                    feed.phase_progress(read);
+                }
             });
         }
     });
-    if lanes.moments_rank && !stop.load(Ordering::Relaxed) {
-        peaks(d, job, stop, task, judge.as_ref(), context)?;
+    let ranked = if lanes.moments_rank && !stop.load(Ordering::Relaxed) {
+        peaks(d, job, stop, task, judge.as_ref(), context, feed.as_deref())
+    } else {
+        Ok(())
+    };
+    if let Some(feed) = &feed {
+        feed.end_phase();
     }
+    ranked?;
     Ok(judged.load(Ordering::Relaxed))
+}
+
+/// The peak a frame's stored verdict already carries, if any: the burst pass
+/// writes it on the one frame it picks, and a re-read must keep it.
+fn stored_peak(frame: &Value) -> Option<f64> {
+    frame["moments"]
+        .as_str()
+        .map(MomentVerdict::from_json)
+        .and_then(|verdict| verdict.peak)
+}
+
+/// Whether a burst has already been judged for its peak: one of its frames
+/// carries the peak an earlier pass stored. Asking again would only spend GPU
+/// time on the answer the album already has.
+fn judged_burst(members: &[&Value]) -> bool {
+    members.iter().any(|frame| stored_peak(frame).is_some())
 }
 
 /// For each burst, ask a judge that can say which frame shows the peak, and
 /// mark the one it picks clearly. Everything else in the burst loses any
-/// earlier mark.
+/// earlier mark. A burst an earlier pass already judged is left alone, so a
+/// re-run only asks about the bursts nobody has compared yet.
 fn peaks(
     d: &Desktop,
     job: i64,
@@ -226,6 +268,7 @@ fn peaks(
     task: &conrod_core::tasks::Task,
     judge: &dyn MomentJudge,
     context: &str,
+    feed: Option<&IdentifyLive>,
 ) -> Result<()> {
     let frames = rows(
         &lock(&d.reader),
@@ -239,9 +282,24 @@ fn peaks(
             .or_default()
             .push(frame);
     }
-    for members in bursts.values().filter(|b| b.len() >= 2) {
+    let bursts: Vec<&Vec<&Value>> = bursts.values().filter(|b| b.len() >= 2).collect();
+    let total = bursts.len();
+    // The header and the DECIDER node follow this pass by its own count.
+    if let Some(feed) = feed {
+        feed.begin_phase(PEAKS_PHASE, total);
+    }
+    task.progress(0, total as u64);
+    for (i, members) in bursts.iter().enumerate() {
         if stop.load(Ordering::Relaxed) {
             break;
+        }
+        task.progress(i as u64, total as u64);
+        task.detail(format!("Comparing bursts {}/{}", i + 1, total));
+        if let Some(feed) = feed {
+            feed.phase_progress(i);
+        }
+        if judged_burst(members.as_slice()) {
+            continue;
         }
         // At most eight, evenly spread, so the request stays small.
         let step = members.len().div_ceil(PEAK_FRAMES);
@@ -271,14 +329,14 @@ fn peaks(
             continue;
         };
         let winner = peak_frame(&ps, PEAK_FLOOR);
-        for (i, frame) in chosen.iter().enumerate() {
+        for (at, frame) in chosen.iter().enumerate() {
             let id = frame["id"].as_i64().unwrap_or_default();
             let mut verdict = frame["moments"]
                 .as_str()
                 .map(MomentVerdict::from_json)
                 .unwrap_or_default();
             let was = verdict.peak;
-            verdict.peak = (winner == Some(i)).then(|| ps[i]);
+            verdict.peak = (winner == Some(at)).then(|| ps[at]);
             if verdict.peak != was {
                 if verdict.backend.is_empty() {
                     verdict.backend = judge.name().to_string();
@@ -286,10 +344,12 @@ fn peaks(
                 store(d, id, &verdict)?;
             }
         }
-        task.detail(format!(
-            "Compared {} frames of a burst for the peak",
-            chosen.len()
-        ));
+    }
+    task.progress(total as u64, total as u64);
+    task.detail(format!("Compared {total} bursts for their peak"));
+    if let Some(feed) = feed {
+        feed.phase_progress(total);
+        feed.end_phase();
     }
     Ok(())
 }
@@ -311,6 +371,125 @@ mod tests {
         assert!(!seat.is_available());
         let request = Request::new("x");
         assert!(seat.decide(&request).unwrap_err().contains("not installed"));
+    }
+
+    #[test]
+    fn peaks_skips_bursts_that_already_have_a_peak_and_counts_its_progress() {
+        use crate::testkit::Lib;
+
+        /// A judge that always picks the first frame, and counts the bursts it was asked about.
+        struct Fake(AtomicUsize);
+        impl MomentJudge for Fake {
+            fn name(&self) -> &'static str {
+                "fake"
+            }
+            fn judge(
+                &self,
+                _context: &str,
+                _vocab: &[Moment],
+                _image: &str,
+            ) -> std::result::Result<MomentVerdict, String> {
+                Ok(MomentVerdict::default())
+            }
+            fn peak(
+                &self,
+                _context: &str,
+                images: &[String],
+            ) -> std::result::Result<Option<Vec<f64>>, String> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(Some(
+                    (0..images.len())
+                        .map(|at| if at == 0 { 0.9 } else { 0.1 })
+                        .collect(),
+                ))
+            }
+        }
+
+        fn preview(lib: &Lib, name: &str) -> String {
+            use image::ImageEncoder;
+            let path = lib.root.join(name);
+            let pixels: Vec<u8> = (0..16 * 16).flat_map(|i| [i as u8, 200, 30]).collect();
+            let mut bytes = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 80)
+                .write_image(&pixels, 16, 16, image::ExtendedColorType::Rgb8)
+                .unwrap();
+            std::fs::write(&path, bytes).unwrap();
+            path.to_string_lossy().into_owned()
+        }
+
+        let lib = Lib::new("peaks-skip");
+        let shot = preview(&lib, "burst.jpg");
+        // Two bursts of two frames; the first has already been compared.
+        let judged = [lib.frame("a1.jpg", Some(3)), lib.frame("a2.jpg", Some(3))];
+        let fresh = [lib.frame("b1.jpg", Some(4)), lib.frame("b2.jpg", Some(4))];
+        for id in judged.iter().chain(fresh.iter()) {
+            lib.sql(
+                "UPDATE images SET preview_path=? WHERE id=?",
+                rusqlite::params![shot, id],
+            );
+        }
+        lib.sql(
+            "UPDATE images SET moments='{\"backend\":\"fake\",\"peak\":0.9}' WHERE id=?",
+            [judged[0]],
+        );
+
+        let feed = Arc::new(IdentifyLive::new(lib.job, 0));
+        *lock(&lib.d().identify) = Some(feed.clone());
+        let task = lib.d().hub.start("Judging moments", 0);
+        let judge = Fake(AtomicUsize::new(0));
+        let peaks_now = || {
+            peaks(
+                lib.d(),
+                lib.job,
+                &AtomicBool::new(false),
+                &task,
+                &judge,
+                "Weddings.",
+                Some(&feed),
+            )
+            .unwrap()
+        };
+
+        peaks_now();
+        assert_eq!(
+            judge.0.load(Ordering::Relaxed),
+            1,
+            "only the burst with no peak is asked"
+        );
+        let stored = |id: i64| -> MomentVerdict {
+            let text: Option<String> = lib.one("SELECT moments FROM images WHERE id=?", [id]);
+            MomentVerdict::from_json(text.as_deref().unwrap_or_default())
+        };
+        assert_eq!(stored(fresh[0]).peak, Some(0.9), "the first frame wins");
+        assert_eq!(stored(fresh[1]).peak, None);
+        assert_eq!(
+            stored(judged[0]).peak,
+            Some(0.9),
+            "an already judged burst keeps its peak"
+        );
+        // A second pass asks nobody: every burst now carries a peak.
+        peaks_now();
+        assert_eq!(
+            judge.0.load(Ordering::Relaxed),
+            1,
+            "a re-run asks no burst again"
+        );
+
+        // The task counts bursts, and the live feed names the phase and ends it.
+        let task = lib.task("Judging moments");
+        assert_eq!(
+            (task["done"].as_u64(), task["total"].as_u64()),
+            (Some(2), Some(2)),
+            "the status area shows bursts compared, not frames judged"
+        );
+        assert_eq!(task["detail"], "Compared 2 bursts for their peak");
+        let phase = feed.snapshot()["phase"].clone();
+        assert_eq!(phase["name"], "peaks");
+        assert_eq!(
+            phase["state"], "done",
+            "the DECIDER may check off only at its end"
+        );
+        assert_eq!(phase["total"], 2);
     }
 
     #[test]

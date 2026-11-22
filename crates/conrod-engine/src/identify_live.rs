@@ -32,6 +32,12 @@ pub const VISION: &str = "vision";
 pub const MERGE: &str = "merge";
 pub const DONE: &str = "done";
 
+/// The run-level phase where the moments lane judges the frames.
+pub const MOMENTS_PHASE: &str = "moments";
+/// The run-level phase after the last car is read: comparing each burst for
+/// its peak. The header names it instead of holding a stale "Cars 5 / 5".
+pub const PEAKS_PHASE: &str = "peaks";
+
 fn epoch() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -155,10 +161,23 @@ impl Item {
     }
 }
 
+/// A run-level phase after the cars: how far the moments lane has got, and
+/// whether it has ended. The DECIDER node only checks off on `done`.
+#[derive(Debug, Clone)]
+struct Phase {
+    name: &'static str,
+    done: usize,
+    total: usize,
+    state: &'static str,
+}
+
 struct State {
     done: usize,
     /// The stage the run is in, for the header: the last phase a worker set.
     stage: &'static str,
+    /// The work that happens after the cars: judging the frames' moments, then
+    /// comparing each burst for its peak. `None` until that lane starts.
+    phase: Option<Phase>,
     /// The car the screen follows: the car that has been in flight longest, so
     /// it stays on screen from LOAD to RESULT while the other workers run on
     /// behind it.
@@ -203,6 +222,7 @@ impl IdentifyLive {
             inner: Mutex::new(State {
                 done: 0,
                 stage: READ,
+                phase: None,
                 current: None,
                 live: Vec::new(),
                 recent: VecDeque::new(),
@@ -363,6 +383,32 @@ impl IdentifyLive {
         lock(&self.inner).workers = workers;
     }
 
+    /// The work after the cars starts (`moments`, then `peaks`): the header
+    /// names this phase and its count instead of the last car's stage.
+    pub fn begin_phase(&self, name: &'static str, total: usize) {
+        lock(&self.inner).phase = Some(Phase {
+            name,
+            done: 0,
+            total,
+            state: "running",
+        });
+    }
+
+    /// How many items of the run-level phase are done.
+    pub fn phase_progress(&self, done: usize) {
+        if let Some(phase) = lock(&self.inner).phase.as_mut() {
+            phase.done = done;
+        }
+    }
+
+    /// The run-level phase ended: the DECIDER node may check off now.
+    pub fn end_phase(&self) {
+        if let Some(phase) = lock(&self.inner).phase.as_mut() {
+            phase.state = "done";
+            phase.done = phase.total;
+        }
+    }
+
     /// The run ended: `done`, `stopped` or `error`. The car in flight (if any)
     /// is dropped; the run has no more snapshots to follow.
     pub fn finish(&self, state: &'static str) {
@@ -372,6 +418,14 @@ impl IdentifyLive {
             inner.stage = DONE;
             inner.current = None;
             inner.live.clear();
+            // A phase the run never reached its end of (stopped, or failed) is
+            // not a finished one: it must not read as checked off.
+            if let Some(phase) = inner.phase.as_mut() {
+                phase.state = if state == "done" { "done" } else { "stopped" };
+                if state == "done" {
+                    phase.done = phase.total;
+                }
+            }
         }
         self.finished.store(true, Ordering::Release);
     }
@@ -402,6 +456,15 @@ impl IdentifyLive {
             "started_at": self.started_at,
             "elapsed_ms": round1(self.started.elapsed().as_secs_f64() * 1000.0),
             "stage": state.stage,
+            // The work after the cars (judging moments, comparing bursts) has
+            // no per-camera stage: the header and the DECIDER node read this so
+            // a full Cars 5 / 5 bar never looks like the run has stalled.
+            "phase": state.phase.as_ref().map(|p| json!({
+                "name": p.name,
+                "done": p.done,
+                "total": p.total,
+                "state": p.state,
+            })),
             "model": state.model,
             "vision_off_reason": state.vision_off_reason,
             "workers": state.workers,
@@ -712,6 +775,39 @@ mod tests {
         assert!(live.finished());
     }
 
+    #[test]
+    fn the_work_after_the_cars_is_a_run_level_phase_with_its_own_count() {
+        let live = IdentifyLive::new(108, 2);
+        assert!(
+            live.snapshot()["phase"].is_null(),
+            "no post-cars phase before it starts"
+        );
+        live.begin_phase(PEAKS_PHASE, 4);
+        let running = live.snapshot()["phase"].clone();
+        assert_eq!(running["name"], "peaks");
+        assert_eq!(running["state"], "running");
+        assert_eq!(
+            (running["done"].as_u64(), running["total"].as_u64()),
+            (Some(0), Some(4))
+        );
+        live.phase_progress(3);
+        assert_eq!(
+            live.snapshot()["phase"]["done"],
+            3,
+            "the header counts the bursts"
+        );
+        live.end_phase();
+        let done = live.snapshot()["phase"].clone();
+        assert_eq!(done["state"], "done", "the DECIDER node may check off");
+        assert_eq!(done["done"], 4);
+
+        // A run that stops mid-phase never reads as checked off.
+        live.begin_phase(PEAKS_PHASE, 4);
+        live.phase_progress(1);
+        live.finish("stopped");
+        assert_eq!(live.snapshot()["phase"]["state"], "stopped");
+    }
+
     /// The event's key set, pinned: the frontend agent builds against it.
     #[test]
     fn the_snapshot_has_the_documented_shape() {
@@ -735,6 +831,7 @@ mod tests {
                 "errors",
                 "job_id",
                 "model",
+                "phase",
                 "recent",
                 "started_at",
                 "stage",
