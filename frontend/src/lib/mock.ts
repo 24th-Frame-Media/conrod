@@ -438,6 +438,13 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       return out(null);
     }
     case 'composition': return out({ jobId: (a.jobId as number | undefined) ?? null });
+    case 'rerun_stage': {
+      const jobId = Number(a.jobId) || 1;
+      const stage = String(a.stage ?? 'pick');
+      // The identify rerun reads only the subjects nobody has read yet.
+      if (stage === 'identify') for (const d of db.dets) if (d.read_at == null) d.read_at = Math.floor(Date.now() / 1000);
+      return out({ operation: `Rerunning ${stage}:${jobId}` });
+    }
     case 'mark': {
       const f = db.frames.find((x) => x.id === a.imageId);
       if (f) {
