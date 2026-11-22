@@ -1204,8 +1204,12 @@ fn settings_match_snapshot() {
             "moments_openrouter_key",
             "moments_opencode_model",
             "moments_opencode_key",
+            "moments_strategy",
+            "moments_vlm_fallback",
+            "moments_services",
+            "moments_services_scale",
         ] {
-            m.remove(key); // Rust-only: moment judge
+            m.remove(key); // Rust-only: the moment services and their policy
         }
         m.remove("use_quality_score"); // Rust-only
         m.remove("use_decider"); // Rust-only: opt-in decision model

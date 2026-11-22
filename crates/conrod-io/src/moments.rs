@@ -10,11 +10,12 @@
 //! and never block a scan or demote a frame because of it.
 
 use crate::settings::Settings as IoSettings;
-use crate::vlm::{self, VlmClient};
+use crate::vlm::{self, pick_service, HostPools, VlmClient};
 use conrod_core::decision::{self, DecisionTransport, InProcess, Request, Response};
 use conrod_core::moments::{Moment, MomentReading, MomentVerdict};
-use conrod_core::settings::Settings;
+use conrod_core::settings::{MomentsService, Settings};
 use serde_json::{json, Value};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -334,13 +335,9 @@ impl DecisionTransport for OpenCodeTransport {
     }
 }
 
-/// The OpenCode key the decider uses: its own, else the key of an enabled
+/// The OpenCode key a moments service may borrow: the key of an enabled
 /// OpenCode vision service, so one OpenCode account serves both lanes.
-fn opencode_key(settings: &Settings) -> String {
-    let own = settings.moments_opencode_key.trim();
-    if !own.is_empty() {
-        return own.to_string();
-    }
+fn vision_opencode_key(settings: &Settings) -> String {
     settings
         .vlm_services
         .iter()
@@ -351,52 +348,210 @@ fn opencode_key(settings: &Settings) -> String {
         .to_string()
 }
 
-/// Which transport carries the decision model's questions, from the album's
-/// `moments_transport`: `auto` (the default) prefers the in-process model when
-/// one is seated, else OpenCode when a key is set, else OpenRouter; `auto`,
-/// `in_process`, `opencode` and `openrouter` are otherwise strict. `Err` says
-/// what is missing.
-fn transport_for(
-    settings: &Settings,
-    in_process: InProcess,
-) -> Result<Arc<dyn DecisionTransport>, String> {
-    let openrouter_key = settings.moments_openrouter_key.trim().to_string();
-    let opencode_key = opencode_key(settings);
-    let openrouter = || -> Arc<dyn DecisionTransport> {
-        Arc::new(OpenRouterTransport {
-            key: settings.moments_openrouter_key.clone(),
-            model: settings.moments_openrouter_model.clone(),
-            timeout: Duration::from_secs(60),
-        })
+/// How long one cloud decision may take before the next service is tried.
+const DECISION_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The model id a service uses when its own is blank.
+fn default_model(provider: &str) -> &'static str {
+    match provider {
+        "opencode" | "opencode-go" => "jev-1.13",
+        _ => "perplexity/pplx-decider-flash-v1.3:free",
+    }
+}
+
+/// The transport one enabled cloud service speaks. The local model is built
+/// from the engine's seat instead (see [`ServiceJudge::new`]); a provider this
+/// build does not know is skipped, never turned into a moment.
+fn cloud_transport(
+    service: &MomentsService,
+    shared_opencode: &str,
+) -> Option<Arc<dyn DecisionTransport>> {
+    let model = match service.model.trim() {
+        "" => default_model(&service.provider).to_string(),
+        model => model.to_string(),
     };
-    let opencode = || -> Arc<dyn DecisionTransport> {
-        Arc::new(OpenCodeTransport {
-            key: opencode_key.clone(),
-            model: if settings.moments_opencode_model.trim().is_empty() {
-                "jev-1.13".into()
+    match service.provider.as_str() {
+        "openrouter" => Some(Arc::new(OpenRouterTransport {
+            key: service.api_key.clone(),
+            model,
+            timeout: DECISION_TIMEOUT,
+        })),
+        "opencode" | "opencode-go" => {
+            let key = if service.api_key.trim().is_empty() {
+                shared_opencode.to_string()
             } else {
-                settings.moments_opencode_model.clone()
+                service.api_key.clone()
+            };
+            Some(Arc::new(OpenCodeTransport {
+                key,
+                model,
+                timeout: DECISION_TIMEOUT,
+            }))
+        }
+        _ => None,
+    }
+}
+
+/// One enabled cloud service and the transport it resolved to.
+struct CloudService {
+    id: String,
+    transport: Arc<dyn DecisionTransport>,
+}
+
+/// The moment lane's judge: the usable local model first, then every enabled
+/// cloud service once per question in `moments_strategy` order, then (when the
+/// album allows it) the car reader. A service that is down is skipped and
+/// never retried for the same frame: one dead service never drops a moment
+/// while another can answer, and total exhaustion is "not judged", never a
+/// failed scan.
+pub struct ServiceJudge {
+    name: &'static str,
+    local: Option<Arc<dyn DecisionTransport>>,
+    cloud: Vec<CloudService>,
+    pools: HostPools,
+    turn: AtomicUsize,
+    strategy: String,
+    fallback: Option<Box<dyn MomentJudge>>,
+}
+
+impl ServiceJudge {
+    fn new(
+        settings: &Settings,
+        vlm: Option<(VlmClient, IoSettings)>,
+        in_process: InProcess,
+    ) -> ServiceJudge {
+        let local_enabled = settings
+            .moments_services
+            .iter()
+            .any(|service| service.enabled && service.provider == "in_process");
+        // The seat is a candidate only when the model is installed and the
+        // graphics-memory check let it load; `is_available` already says so.
+        let local = (local_enabled && in_process.is_available())
+            .then(|| Arc::new(in_process) as Arc<dyn DecisionTransport>);
+        let shared_opencode = vision_opencode_key(settings);
+        let cloud: Vec<CloudService> = settings
+            .moments_services
+            .iter()
+            .filter(|service| service.enabled)
+            .filter_map(|service| {
+                cloud_transport(service, &shared_opencode).map(|transport| CloudService {
+                    id: service.id.clone(),
+                    transport,
+                })
+            })
+            .collect();
+        let fallback = vlm
+            .filter(|_| settings.moments_vlm_fallback && settings.use_vlm)
+            .map(|(client, settings)| {
+                Box::new(VlmJudge { client, settings }) as Box<dyn MomentJudge>
+            });
+        let name = if local.is_none() && cloud.is_empty() {
+            "vlm"
+        } else {
+            "services"
+        };
+        ServiceJudge {
+            name,
+            local,
+            cloud,
+            pools: HostPools::default(),
+            turn: AtomicUsize::new(0),
+            strategy: settings.moments_strategy.clone(),
+            fallback,
+        }
+    }
+
+    fn judgeable(&self) -> bool {
+        self.local.is_some() || !self.cloud.is_empty() || self.fallback.is_some()
+    }
+
+    /// One request down the failover order: local once, then each cloud
+    /// service once from a rotated start. `Err` keeps the last reason for the
+    /// fallback and the log.
+    fn decide_with(&self, request: &Request) -> Result<Response, String> {
+        let mut last = "No moment service answered".to_string();
+        if let Some(local) = &self.local {
+            match local.decide(request) {
+                Ok(response) => return Ok(response),
+                Err(why) => last = why,
+            }
+        }
+        if !self.cloud.is_empty() {
+            let ids: Vec<String> = self
+                .cloud
+                .iter()
+                .map(|service| service.id.clone())
+                .collect();
+            let pool = self.pools.pool_for(ids.clone());
+            let least_busy = self.strategy.is_empty() || self.strategy == "least_busy";
+            let held = least_busy.then(|| pool.acquire());
+            let start = pick_service(&self.strategy, &ids, held.as_deref(), &self.turn);
+            // As vision does: only the first pick holds a least-busy token;
+            // failover tries go unpooled rather than wait on a busy service.
+            if let Some(id) = held {
+                pool.release(id);
+            }
+            for step in 0..ids.len() {
+                let service = &self.cloud[(start + step) % self.cloud.len()];
+                match service.transport.decide(request) {
+                    Ok(response) => return Ok(response),
+                    Err(why) => last = why,
+                }
+            }
+        }
+        Err(last)
+    }
+}
+
+impl MomentJudge for ServiceJudge {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn judge(&self, context: &str, vocab: &[Moment], image: &str) -> Result<MomentVerdict, String> {
+        let request = decision::moment_request(context, vocab, vec![image.to_string()]);
+        match self.decide_with(&request) {
+            Ok(response) => Ok(decision::read_moments(&response, vocab)),
+            Err(why) => match &self.fallback {
+                Some(fallback) => fallback.judge(context, vocab, image),
+                None => Err(format!("not judged: {why}")),
             },
-            timeout: Duration::from_secs(60),
-        })
-    };
-    match settings.moments_transport.as_str() {
-        "in_process" => Ok(Arc::new(in_process)),
-        "openrouter" if !openrouter_key.is_empty() => Ok(openrouter()),
-        "openrouter" => {
-            Err("Add an OpenRouter key to judge moments with the decision model".into())
         }
-        "opencode" if !opencode_key.is_empty() => Ok(opencode()),
-        "opencode" => {
-            Err("Add an OpenCode key to judge moments with JEV".into())
+    }
+
+    fn judge_pair(
+        &self,
+        context: &str,
+        vocab: &[Moment],
+        frame: &str,
+        crop: Option<&str>,
+    ) -> Result<MomentVerdict, String> {
+        let mut images = vec![frame.to_string()];
+        if let Some(crop) = crop {
+            images.push(crop.to_string());
         }
-        _ if in_process.is_available() => Ok(Arc::new(in_process)),
-        _ if !opencode_key.is_empty() => Ok(opencode()),
-        _ if !openrouter_key.is_empty() => Ok(openrouter()),
-        _ => Err(
-            "Turn on the decision model in Settings (or add an OpenCode or OpenRouter key) to judge moments with it"
-                .into(),
-        ),
+        let request = decision::moment_request(context, vocab, images);
+        match self.decide_with(&request) {
+            Ok(response) => Ok(decision::read_moments(&response, vocab)),
+            Err(why) => match &self.fallback {
+                Some(fallback) => fallback.judge_pair(context, vocab, frame, crop),
+                None => Err(format!("not judged: {why}")),
+            },
+        }
+    }
+
+    fn peak(&self, context: &str, images: &[String]) -> Result<Option<Vec<f64>>, String> {
+        if images.len() < 2 {
+            return Ok(None);
+        }
+        let request = decision::peak_request(context, images.to_vec());
+        match self.decide_with(&request) {
+            Ok(response) => Ok(decision::read_peak(&response, images.len())),
+            Err(why) => match &self.fallback {
+                Some(fallback) => fallback.peak(context, images),
+                None => Err(format!("not judged: {why}")),
+            },
+        }
     }
 }
 
@@ -407,16 +562,14 @@ pub fn judge_for(
     vlm: Option<(VlmClient, IoSettings)>,
     in_process: InProcess,
 ) -> Result<Box<dyn MomentJudge>, String> {
-    match settings.moments_backend.as_str() {
-        "decider" => {
-            let transport = transport_for(settings, in_process)?;
-            Ok(Box::new(DeciderJudge { transport }))
-        }
-        _ => match vlm {
-            Some((client, settings)) => Ok(Box::new(VlmJudge { client, settings })),
-            None => Err("The vision model is off, so moments cannot be judged".into()),
-        },
+    let judge = ServiceJudge::new(settings, vlm, in_process);
+    if !judge.judgeable() {
+        return Err(
+            "No moment service is on, and the car reader is off, so moments cannot be judged"
+                .into(),
+        );
     }
+    Ok(Box::new(judge))
 }
 
 #[cfg(test)]
@@ -817,99 +970,258 @@ mod tests {
         assert_eq!(reply.answers["m_waving"].noul, Some(0.91));
     }
 
-    #[test]
-    fn the_opencode_key_is_its_own_or_the_vision_services() {
-        let mut s = Settings::default();
-        assert_eq!(
-            s.moments_opencode_model, "jev-1.13",
-            "the paid id works as is"
-        );
-        assert_eq!(opencode_key(&s), "", "no key anywhere");
-        s.vlm_services.push(conrod_core::settings::VlmService {
-            id: "vlm-1".into(),
-            provider: "opencode-go".into(),
-            model: "glm-5.3-flash".into(),
-            host: String::new(),
-            api_key: "oc_sk_shared".into(),
-            key_kind: "auto".into(),
-            enabled: true,
-        });
-        assert_eq!(
-            opencode_key(&s),
-            "oc_sk_shared",
-            "one OpenCode account serves vision and moments"
-        );
-        s.vlm_services[0].enabled = false;
-        assert_eq!(opencode_key(&s), "", "a service that is off shares nothing");
-        s.moments_opencode_key = " oc_sk_own ".into();
-        assert_eq!(opencode_key(&s), "oc_sk_own", "its own key wins");
-        // Auto prefers JEV over OpenRouter once a key exists.
-        s.moments_backend = "decider".into();
-        s.moments_openrouter_key = "or".into();
-        assert_eq!(
-            transport_for(&s, InProcess::unavailable()).unwrap().name(),
-            "opencode"
-        );
-        // Explicit opencode without a key says what is missing.
-        s.moments_opencode_key.clear();
-        s.moments_transport = "opencode".into();
-        let err = match transport_for(&s, InProcess::unavailable()) {
-            Ok(_) => panic!("opencode without a key has no transport"),
-            Err(e) => e,
-        };
-        assert!(err.contains("OpenCode key"));
+    /// A transport that records each attempt and can be a dead service.
+    struct Trip {
+        id: &'static str,
+        fail: bool,
+        seen: Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    impl DecisionTransport for Trip {
+        fn name(&self) -> &'static str {
+            "mock"
+        }
+        fn decide(&self, _: &Request) -> Result<Response, String> {
+            self.seen.lock().unwrap().push(self.id);
+            if self.fail {
+                Err(format!("{} is down", self.id))
+            } else {
+                Ok(Response::default())
+            }
+        }
+    }
+
+    fn trip(
+        id: &'static str,
+        fail: bool,
+        seen: &Arc<std::sync::Mutex<Vec<&'static str>>>,
+    ) -> Arc<dyn DecisionTransport> {
+        Arc::new(Trip {
+            id,
+            fail,
+            seen: seen.clone(),
+        })
+    }
+
+    /// The car reader as a stand-in that records that it was asked.
+    struct Fallback(Arc<std::sync::Mutex<Vec<&'static str>>>);
+
+    impl MomentJudge for Fallback {
+        fn name(&self) -> &'static str {
+            "vlm"
+        }
+        fn judge(
+            &self,
+            _context: &str,
+            _vocab: &[Moment],
+            _image: &str,
+        ) -> Result<MomentVerdict, String> {
+            self.0.lock().unwrap().push("fallback");
+            Ok(MomentVerdict {
+                backend: "vlm".into(),
+                ..MomentVerdict::default()
+            })
+        }
+    }
+
+    fn judge_with(
+        local: Option<Arc<dyn DecisionTransport>>,
+        cloud: Vec<(&'static str, Arc<dyn DecisionTransport>)>,
+        strategy: &str,
+        fallback: Option<Box<dyn MomentJudge>>,
+    ) -> ServiceJudge {
+        ServiceJudge {
+            name: "services",
+            local,
+            cloud: cloud
+                .into_iter()
+                .map(|(id, transport)| CloudService {
+                    id: id.into(),
+                    transport,
+                })
+                .collect(),
+            pools: HostPools::default(),
+            turn: AtomicUsize::new(0),
+            strategy: strategy.into(),
+            fallback,
+        }
+    }
+
+    fn ask(judge: &dyn MomentJudge) -> Result<MomentVerdict, String> {
+        judge.judge(
+            "Track day.",
+            vocabulary(ShootPreset::Wedding),
+            "data:image/jpeg;base64,AA",
+        )
     }
 
     #[test]
-    fn the_judge_follows_the_albums_backend_and_transport() {
-        let mut s = Settings::default();
+    fn the_usable_local_model_is_asked_before_any_cloud_service() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let judge = judge_with(
+            Some(trip("local", false, &seen)),
+            vec![("a", trip("a", false, &seen))],
+            "least_busy",
+            None,
+        );
+        assert_eq!(ask(&judge).unwrap().backend, "decider");
+        assert_eq!(*seen.lock().unwrap(), ["local"], "the cloud is not touched");
+    }
+
+    #[test]
+    fn a_down_service_is_tried_once_and_the_next_takes_over() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let judge = judge_with(
+            Some(trip("local", true, &seen)),
+            vec![
+                ("a", trip("a", true, &seen)),
+                ("b", trip("b", false, &seen)),
+            ],
+            "least_busy",
+            None,
+        );
+        assert_eq!(ask(&judge).unwrap().backend, "decider");
+        assert_eq!(*seen.lock().unwrap(), ["local", "a", "b"]);
+        // A second frame starts from the token least busy handed out; no
+        // service is retried twice for one question.
+        assert!(ask(&judge).is_ok());
+        assert_eq!(
+            *seen.lock().unwrap(),
+            ["local", "a", "b", "local", "b"],
+            "b's token came back first, so b is the least busy start"
+        );
+    }
+
+    #[test]
+    fn round_robin_cloud_services_take_turns() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let judge = judge_with(
+            None,
+            vec![
+                ("a", trip("a", false, &seen)),
+                ("b", trip("b", false, &seen)),
+                ("c", trip("c", false, &seen)),
+            ],
+            "round_robin",
+            None,
+        );
+        for _ in 0..4 {
+            assert!(ask(&judge).is_ok());
+        }
+        assert_eq!(*seen.lock().unwrap(), ["a", "b", "c", "a"]);
+    }
+
+    #[test]
+    fn total_exhaustion_is_the_car_reader_when_its_gate_is_on_and_not_judged_otherwise() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let with_fallback = judge_with(
+            Some(trip("local", true, &seen)),
+            vec![("a", trip("a", true, &seen))],
+            "least_busy",
+            Some(Box::new(Fallback(seen.clone()))),
+        );
+        assert_eq!(ask(&with_fallback).unwrap().backend, "vlm");
+        assert_eq!(*seen.lock().unwrap(), ["local", "a", "fallback"]);
+
+        let without = judge_with(
+            Some(trip("local", true, &seen)),
+            vec![("a", trip("a", true, &seen))],
+            "least_busy",
+            None,
+        );
+        let err = ask(&without).unwrap_err();
+        assert!(err.contains("not judged"), "{err}");
+    }
+
+    #[test]
+    fn the_local_card_needs_an_installed_model_that_fits_the_card() {
+        let mut s = Settings {
+            moments_vlm_fallback: false,
+            moments_services: vec![MomentsService {
+                id: "moments-local".into(),
+                provider: "in_process".into(),
+                enabled: true,
+                ..MomentsService::default()
+            }],
+            ..Settings::default()
+        };
         assert!(
             judge_for(&s, None, InProcess::unavailable()).is_err(),
-            "vlm backend needs the vision model"
+            "enabled but not installed (or no room): not a candidate"
         );
-        s.moments_backend = "decider".into();
-        assert_eq!(
-            s.moments_transport, "auto",
-            "in-process is preferred by default"
-        );
-        assert!(
-            judge_for(&s, None, InProcess::unavailable()).is_err(),
-            "no in-process model and no key: no judge"
-        );
-        s.moments_openrouter_key = "k".into();
-        assert_eq!(
-            judge_for(&s, None, InProcess::unavailable())
-                .unwrap()
-                .name(),
-            "decider"
-        );
-        // Auto prefers the seated in-process model over OpenRouter.
         let seated = InProcess::with(|_| Ok(Response::default()));
+        let judge = judge_for(&s, None, seated).unwrap();
+        assert_eq!(judge.name(), "services");
+        assert_eq!(ask(judge.as_ref()).unwrap().backend, "decider");
+        // A switched-off local card is not asked even when the seat is ready.
+        s.moments_services[0].enabled = false;
+        assert!(judge_for(&s, None, InProcess::with(|_| Ok(Response::default()))).is_err());
+    }
+
+    #[test]
+    fn a_cloud_service_resolves_by_provider_and_borrows_the_vision_key() {
+        let s = Settings {
+            vlm_services: vec![conrod_core::settings::VlmService {
+                id: "vlm-1".into(),
+                provider: "opencode-go".into(),
+                api_key: "oc_sk_shared".into(),
+                enabled: true,
+                ..conrod_core::settings::VlmService::default()
+            }],
+            ..Settings::default()
+        };
         assert_eq!(
-            transport_for(&s, seated.clone()).unwrap().name(),
-            "in_process"
+            vision_opencode_key(&s),
+            "oc_sk_shared",
+            "one OpenCode account serves vision and moments"
         );
+        let openrouter = MomentsService {
+            id: "or".into(),
+            provider: "openrouter".into(),
+            ..MomentsService::default()
+        };
         assert_eq!(
-            transport_for(&s, InProcess::unavailable()).unwrap().name(),
+            cloud_transport(&openrouter, "").unwrap().name(),
             "openrouter"
         );
-        // Without a key it still works in-process; explicit openrouter needs the key.
-        s.moments_openrouter_key.clear();
-        assert_eq!(transport_for(&s, seated).unwrap().name(), "in_process");
-        s.moments_transport = "openrouter".into();
-        assert!(transport_for(&s, InProcess::unavailable()).is_err());
-        s.moments_transport = "in_process".into();
-        s.moments_openrouter_key.clear();
-        let judge = judge_for(&s, None, InProcess::unavailable()).unwrap();
-        let err = judge
-            .judge(
-                "x",
-                vocabulary(ShootPreset::Wedding),
-                "data:image/jpeg;base64,AA",
+        let opencode = MomentsService {
+            id: "oc".into(),
+            provider: "opencode".into(),
+            ..MomentsService::default()
+        };
+        assert_eq!(
+            cloud_transport(&opencode, "shared").unwrap().name(),
+            "opencode"
+        );
+        assert!(
+            cloud_transport(
+                &MomentsService {
+                    provider: "in_process".into(),
+                    ..MomentsService::default()
+                },
+                ""
             )
-            .unwrap_err();
-        assert!(err.contains("not installed"));
+            .is_none(),
+            "the local model is the engine's seat, not a cloud transport"
+        );
+        assert!(cloud_transport(
+            &MomentsService {
+                provider: "mystery".into(),
+                ..MomentsService::default()
+            },
+            ""
+        )
+        .is_none());
         assert_eq!(strip_data_url("data:image/jpeg;base64,AAAA"), "AAAA");
         assert_eq!(strip_data_url("AAAA"), "AAAA");
+    }
+
+    #[test]
+    fn without_services_or_fallback_there_is_nothing_to_judge() {
+        let s = Settings {
+            moments_vlm_fallback: false,
+            ..Settings::default()
+        };
+        assert!(judge_for(&s, None, InProcess::unavailable()).is_err());
     }
 }

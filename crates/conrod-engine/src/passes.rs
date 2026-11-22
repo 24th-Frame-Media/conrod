@@ -2187,8 +2187,7 @@ mod tests {
             "update_job_settings",
             json!({"jobId": lib.job, "patch": {
                 "scan_profile": "wedding",
-                "moments_backend": "decider",
-                "moments_transport": "in_process",
+                "use_vlm": false,
             }}),
         )
         .unwrap();
@@ -2211,7 +2210,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             judged, 0,
-            "the in-process model is not installed: no moment, no error"
+            "no moment service and the car reader off: no moment, no error"
         );
         let stored: Option<String> = lib.one("SELECT moments FROM images WHERE id=?", [frame]);
         assert!(stored.is_none());

@@ -832,6 +832,21 @@ impl Desktop {
             }
             Command::Identified(a) => self.identified(a.job_id),
             Command::SkipIdentify(a) => crate::operations::skip_identify(self, a.job_id),
+            Command::DecisionModels(a) => Ok(
+                match conrod_io::vlm::decision_models(&a.provider, &a.host, &a.api_key, &a.model) {
+                    Ok(list) => json!({
+                        "models": list.models.into_iter().map(|model| json!({
+                            "id": model.id,
+                            "name": model.name,
+                            "image": model.image,
+                            "unverified": model.unverified,
+                        })).collect::<Vec<_>>(),
+                        "freeText": list.free_text,
+                        "note": list.note,
+                    }),
+                    Err(e) => json!({"models": [], "freeText": true, "error": e}),
+                },
+            ),
             Command::ProviderModels(a) => Ok(
                 match conrod_io::vlm::list_models(&a.provider, &a.host, &a.api_key) {
                     Ok(models) => json!({
@@ -991,6 +1006,9 @@ impl Desktop {
     fn save_settings(&self, updates: &Map<String, Value>) -> Result<Value> {
         let mut stored = lock(&self.settings);
         let mut next = stored.clone().apply(updates);
+        // One spelling of the moment strategy, whatever the screen sent.
+        next.moments_strategy =
+            conrod_core::settings::moments_strategy_word(&next.moments_strategy).to_string();
         // The wizard's answers: known shoot types, known switches, nothing
         // else. An album's copy never lives in the global file.
         next.user_profile = conrod_core::user_profile::UserProfile::sanitize(&next.user_profile);

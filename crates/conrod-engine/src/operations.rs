@@ -98,6 +98,10 @@ fn merged(d: &Desktop, job: i64) -> Result<(Settings, Option<bool>)> {
             // An album stored before vision had a per-album switch holds only a
             // stale copy of the global one: it follows the global.
             conrod_core::settings::follow_global_vlm(&mut map);
+            // An album from before moment services holds the retired transport
+            // fields; synthesise the list once so the rest of the read is the
+            // same shape as a new album's.
+            conrod_core::settings::migrate_moments_services(&mut map);
             choice = conrod_core::settings::album_vlm_choice(&map);
             current.clone().apply(&map)
         })
@@ -108,6 +112,12 @@ fn merged(d: &Desktop, job: i64) -> Result<(Settings, Option<bool>)> {
     s.vlm_extra_hosts = current.vlm_extra_hosts;
     s.vlm_services = current.vlm_services;
     s.vlm_strategy = current.vlm_strategy;
+    // Moment services, their keys and their strategy are current too: an
+    // album's copy is only ever stale. Its threshold stays its own.
+    s.moments_services = current.moments_services;
+    s.moments_strategy = current.moments_strategy;
+    s.moments_vlm_fallback = current.moments_vlm_fallback;
+    s.moments_services_scale = current.moments_services_scale;
     Ok((s, choice))
 }
 
