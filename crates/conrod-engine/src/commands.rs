@@ -157,6 +157,33 @@ pub struct IdentifyArgs {
 /// read it: the album counts as identified as it stands.
 pub type SkipIdentifyArgs = JobArgs;
 
+/// The pipeline stages a manual rerun can name, in the order the scan runs them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RerunStage {
+    Detect,
+    Rate,
+    Identify,
+    Moments,
+    Pick,
+}
+
+/// Run one stage again on an album that is already scanned, without redoing the
+/// whole album. `full` and `scope` apply to `identify` only: by default a rerun
+/// reads just the subjects nobody has read yet (the incremental run), and `full`
+/// reads every unaccepted subject again.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RerunStageArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    pub stage: RerunStage,
+    #[serde(default)]
+    pub full: bool,
+    #[serde(default)]
+    pub scope: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkArgs {
@@ -486,6 +513,9 @@ pub enum Command {
     Group(JobArgs),
     /// The old name for `group`, kept so an older window still works.
     Regroup(JobArgs),
+    /// Run one pipeline stage again on a finished album, on demand: detect,
+    /// rate, identify, moments or pick. Only that stage runs; the rest stays.
+    RerunStage(RerunStageArgs),
     BulkEdit(BulkArgs),
     RenameJob(RenameArgs),
     UpdateJobSettings(UpdateJobSettingsArgs),
@@ -861,6 +891,44 @@ mod tests {
             panic!()
         };
         assert_eq!(a.label, None);
+    }
+
+    #[test]
+    fn a_stage_rerun_names_one_stage_and_defaults_to_incremental_identify() {
+        for (word, stage) in [
+            ("detect", RerunStage::Detect),
+            ("rate", RerunStage::Rate),
+            ("identify", RerunStage::Identify),
+            ("moments", RerunStage::Moments),
+            ("pick", RerunStage::Pick),
+        ] {
+            let Ok(Command::RerunStage(a)) =
+                Command::parse("rerun_stage", json!({"jobId": 3, "stage": word}))
+            else {
+                panic!("stage {word} should parse")
+            };
+            assert_eq!(a.job_id, 3);
+            assert_eq!(a.stage, stage);
+            assert!(
+                !a.full,
+                "identify defaults to reading only the new subjects"
+            );
+            assert_eq!(a.scope, None);
+        }
+        let Ok(Command::RerunStage(a)) = Command::parse(
+            "rerun_stage",
+            json!({"jobId": 3, "stage": "identify", "full": true, "scope": "everything"}),
+        ) else {
+            panic!()
+        };
+        assert!(a.full);
+        assert_eq!(a.scope.as_deref(), Some("everything"));
+        assert!(
+            Command::parse("rerun_stage", json!({"jobId": 3})).is_err(),
+            "stage is required"
+        );
+        assert!(Command::parse("rerun_stage", json!({"jobId": 3, "stage": "group"})).is_err());
+        assert!(Command::parse("rerun_stage", json!({"jobId": 0, "stage": "pick"})).is_err());
     }
 
     #[test]

@@ -2203,6 +2203,7 @@ mod tests {
             &cfg,
             &cfg.lanes(),
             "keepers",
+            false,
         )
         .unwrap();
         assert_eq!(
@@ -2227,7 +2228,8 @@ mod tests {
                 &task,
                 &cfg,
                 &cfg.lanes(),
-                "keepers"
+                "keepers",
+                false,
             )
             .unwrap(),
             0

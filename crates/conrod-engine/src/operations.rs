@@ -1,4 +1,4 @@
-﻿//! The slower identification and metadata lanes. Work is visible and cancellable.
+//! The slower identification and metadata lanes. Work is visible and cancellable.
 use crate::analyze::{self, Context, Readers};
 use crate::desktop::{rows, Desktop, Result};
 use crate::err;
@@ -564,6 +564,19 @@ pub fn skip_identify(d: &Desktop, job: i64) -> Result<Value> {
 }
 
 pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool) -> Result<Value> {
+    identify_with_kind(d, job, scope, only_new, "Identifying")
+}
+
+/// [`identify`] under a chosen operation name. The scan and the Identify command
+/// use "Identifying"; a manual stage rerun uses "Rerunning identify" so the busy
+/// guard and the screen can tell a rerun from the first read.
+pub(crate) fn identify_with_kind(
+    d: &Arc<Desktop>,
+    job: i64,
+    scope: Option<&str>,
+    only_new: bool,
+    kind: &str,
+) -> Result<Value> {
     let settings = settings(d, job)?;
     let vision_off = vision_off(d, job)?;
     let lanes = settings.lanes();
@@ -582,7 +595,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool)
     } else {
         ""
     };
-    launch(d, job, "Identifying", move |d, stop, task| {
+    launch(d, job, kind, move |d, stop, task| {
         if !wait_for_cull(d, stop, task) {
             return Ok(());
         }
@@ -592,7 +605,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool)
                 task.detail(format!("Prepared {faces} faces for name suggestions"));
             }
             // No vehicles to read, but the shoot may still have moments to judge.
-            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope)? > 0 {
+            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope, false)? > 0 {
                 crate::passes::pick_keepers(d, job)?;
             }
             return Ok(());
@@ -628,7 +641,7 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool)
             } else {
                 "No keepers need identification"
             });
-            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope)? > 0 {
+            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope, false)? > 0 {
                 crate::passes::pick_keepers(d, job)?;
             }
             note_identify_stale(d, job, false);
@@ -729,7 +742,8 @@ pub fn identify(d: &Arc<Desktop>, job: i64, scope: Option<&str>, only_new: bool)
         let moments: Mutex<Option<Result<usize>>> = Mutex::new(None);
         std::thread::scope(|s| {
             s.spawn(|| {
-                let result = crate::moments::run(d, job, stop, task, &settings, &lanes, scope);
+                let result =
+                    crate::moments::run(d, job, stop, task, &settings, &lanes, scope, false);
                 *lock(&moments) = Some(result);
             });
             for lane in 0..workers {

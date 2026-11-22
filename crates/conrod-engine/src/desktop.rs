@@ -769,6 +769,7 @@ impl Desktop {
                 "rename_job",
                 "update_job_settings",
                 "regroup",
+                "rerun_stage",
                 "reset_all",
                 "reset_album",
                 "reset_detections",
@@ -873,6 +874,9 @@ impl Desktop {
             Command::TasteRank(a) => crate::taste::taste_rank(self, a.job_id, a.force),
             Command::Group(a) => crate::passes::group(self, a.job_id),
             Command::Regroup(a) => self.regroup(a.job_id),
+            Command::RerunStage(a) => {
+                crate::rerun::rerun_stage(self, a.job_id, a.stage, a.full, a.scope.as_deref())
+            }
             Command::BulkEdit(a) => crate::edits::bulk_edit(self, &a),
             Command::RenameJob(a) => crate::library::rename_job(self, &a),
             Command::UpdateJobSettings(a) => {
@@ -2478,8 +2482,7 @@ impl Desktop {
         for s in &f.subjects {
             insert_subject(&tx, image, s)?;
         }
-        let rating = f.rating;
-        tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=?,lens=?,iso=?,file_size=?,af_x1=COALESCE(?,af_x1),af_y1=COALESCE(?,af_y1),af_x2=COALESCE(?,af_x2),af_y2=COALESCE(?,af_y2),af_mode=CASE WHEN ? THEN ? ELSE af_mode END,af_sharpness=CASE WHEN ? THEN ? ELSE af_sharpness END WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,f.lens,f.exif.iso,f.file_size,f.af.map(|a| a.x1),f.af.map(|a| a.y1),f.af.map(|a| a.x2),f.af.map(|a| a.y2),f.af.is_some(),f.af.and_then(|a| a.mode).map(i64::from),f.af.is_some(),f.af_sharpness,image]).map_err(err)?;
+        write_frame_measurements(&tx, image, f, &thumb)?;
         tx.commit().map_err(err)?;
         if report {
             self.report_frame(image, &thumb, f, settings);
@@ -2876,6 +2879,21 @@ fn eyes_json(open: [Option<f32>; 2]) -> Option<String> {
     open.iter()
         .any(Option::is_some)
         .then(|| json!({"eyes_open": open, "eyes_closed": crate::eyes_closed(open)}).to_string())
+}
+
+/// Store one frame's measured columns (size, sharpness, rating, exposure, EXIF,
+/// focus area) without touching its detections or anything a person decided
+/// (stars, picked, rejected). The scan's `persist_frame` writes this after
+/// replacing the detections; a detect rerun writes it while merging the new
+/// boxes into the old rows, so the two cannot disagree about the frame itself.
+pub(crate) fn write_frame_measurements(
+    tx: &rusqlite::Connection,
+    image: i64,
+    f: &crate::FrameResult,
+    thumb: &Path,
+) -> Result<()> {
+    tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=?,lens=?,iso=?,file_size=?,af_x1=COALESCE(?,af_x1),af_y1=COALESCE(?,af_y1),af_x2=COALESCE(?,af_x2),af_y2=COALESCE(?,af_y2),af_mode=CASE WHEN ? THEN ? ELSE af_mode END,af_sharpness=CASE WHEN ? THEN ? ELSE af_sharpness END WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,f.rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,f.lens,f.exif.iso,f.file_size,f.af.map(|a| a.x1),f.af.map(|a| a.y1),f.af.map(|a| a.x2),f.af.map(|a| a.y2),f.af.is_some(),f.af.and_then(|a| a.mode).map(i64::from),f.af.is_some(),f.af_sharpness,image]).map_err(err)?;
+    Ok(())
 }
 
 pub(crate) fn insert_subject(
