@@ -99,6 +99,8 @@ function makeDb(): Db {
     { id: 3, label: 'Sunday hillclimb', root: 'D:\\Photos\\2026\\09\\Hillclimb', status: 'scanning', total: 120, done: 62, created_at: 1789900000 },
     { id: 4, label: 'Wakefield twilight', root: 'D:\\Photos\\2026\\07\\Wakefield', status: 'stopped', total: 340, done: 118, created_at: 1783000000 },
   ];
+  // QA only: ?mock=1&empty seeds no albums so the empty state can be screenshotted.
+  if (params().has('empty')) jobs.length = 0;
   const known: KnownVehicle[] = CARS.map(([make, model, colour, team, race_number, plate]) => ({ plate, make, model, colour, team, race_number }));
   const settings: Settings = {
     scan_profile: params().get('profile') ?? 'motorsport', detect_conf: 0.35, min_box_fraction: 0.04, max_vehicles_per_frame: 8, include_cars: true, include_bikes: true, include_trucks: false,

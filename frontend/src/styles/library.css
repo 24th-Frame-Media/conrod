@@ -1,0 +1,108 @@
+/* ── Library redesign (docs/plans/library-redesign.md) ────────────────────────
+   Deliberately its own file, with every class lib- prefixed, so it never
+   collides with the shared screens.css that other screens / branches edit.
+   Only global theme tokens from base.css are used. */
+
+/* The .screen scroll container owns the sticky strip; each zone pads itself. */
+.lib { padding: 0; }
+
+/* 1. Start zone — a page header, not a card. */
+.lib-start {
+  display: flex; align-items: center; gap: 18px;
+  padding: 24px 28px 20px;
+}
+.lib-start-text { flex: 1; min-width: 0; }
+.lib-start h1 { margin: 0; font-size: 23px; font-weight: 600; letter-spacing: -.015em; }
+.lib-helper { margin: 4px 0 0; color: var(--text-mute); font-size: 13px; }
+.lib-import { flex: none; display: inline-flex; align-items: center; gap: 7px; }
+
+/* 2. Status strip — one full-width 40px row, sticky at the top of .screen. */
+.lib-strip {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 14px;
+  min-height: 40px; padding: 0 28px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+}
+.lib-work { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; color: var(--text-dim); }
+.lib-work-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-work .lib-link { flex: none; }
+.lib-work--busy { color: var(--text); }
+.lib-work--bad { color: var(--bad); }
+.lib-strip-right { display: flex; align-items: center; gap: 10px; flex: none; white-space: nowrap; color: var(--text-mute); }
+.lib-link { font: inherit; font-size: 12.5px; font-weight: 500; color: var(--primary); background: none; border: 0; padding: 0; border-radius: 0; cursor: pointer; text-decoration: none; }
+.lib-link:hover { text-decoration: underline; text-underline-offset: 3px; border: 0; }
+.lib-sep { color: var(--text-mute); }
+
+/* 3. Albums zone — one filter row above two labelled groups. */
+.lib-zone { padding: 20px 28px 44px; }
+.lib-filters { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; flex-wrap: wrap; }
+.lib-search { width: 220px; }
+.lib-filters select { width: 168px; cursor: pointer; }
+.lib-count { margin-left: auto; color: var(--text-mute); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.lib-group + .lib-group { margin-top: 28px; }
+.lib-group-head { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: .01em; }
+.lib-group-head .lib-group-count { color: var(--text-mute); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* The cover wall: 3:2 native RAW ratio, capped at 300px tall. */
+.lib-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+.lib-card { cursor: pointer; position: relative; min-width: 0; border-radius: var(--radius); animation: stage-in .22s var(--ease) backwards; }
+.lib-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.lib-shot {
+  position: relative; width: 100%;
+  aspect-ratio: 3 / 2; max-height: 300px;
+  border-radius: var(--radius); border: 1px solid var(--line-soft);
+  overflow: hidden; transition: border-color .12s var(--ease);
+}
+.lib-card:hover .lib-shot { border-color: var(--line-hover); }
+.lib-cover { width: 100%; height: 100%; object-fit: cover; object-position: center 55%; display: block; transition: transform .18s var(--ease); }
+.lib-card:hover .lib-cover { transform: scale(1.02); }
+.lib-placeholder { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; color: var(--text-mute); font-size: 12.5px; }
+.lib-placeholder .lib-ph { opacity: .7; }
+
+/* Status chip + overflow + badge + cover bar all overlay the cover, always visible. */
+.lib-chip {
+  position: absolute; top: 10px; left: 10px; z-index: 2;
+  display: inline-flex; align-items: center; gap: 6px;
+  max-width: calc(100% - 58px);
+  font-size: 11px; font-weight: 600; line-height: 1.3;
+  padding: 4px 9px; border-radius: 999px;
+  background: rgba(16, 16, 20, .78); border: 1px solid var(--overlay-line);
+  backdrop-filter: blur(6px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lib-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.lib-chip--ready { color: var(--overlay-text-dim); }
+.lib-chip--busy { color: #8ab4f8; }
+.lib-chip--warn { color: var(--overlay-warn); }
+.lib-chip--bad { color: var(--overlay-bad); }
+
+.lib-overflow { position: absolute; top: 10px; right: 10px; z-index: 3; }
+.lib-overflow-btn {
+  width: 28px; height: 28px; padding: 0; display: grid; place-items: center;
+  font-size: 17px; line-height: 1;
+  background: rgba(16, 16, 20, .78); color: var(--overlay-text);
+  border: 1px solid var(--overlay-line); border-radius: 7px; backdrop-filter: blur(6px);
+}
+.lib-overflow-btn:hover { border-color: var(--line-hover); color: #fff; }
+.lib-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 6;
+  min-width: 168px; padding: 4px; display: grid; gap: 2px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow);
+}
+.lib-menu-item { text-align: left; font-size: 12.5px; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--bad); }
+.lib-menu-item:hover { background: var(--surface-3); }
+
+.lib-badge { position: absolute; left: 10px; bottom: 10px; z-index: 2; background: rgba(0, 0, 0, .62); backdrop-filter: blur(4px); border-radius: 6px; padding: 3px 8px; font-size: 11px; font-weight: 500; color: var(--overlay-text); }
+.lib-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; z-index: 2; background: rgba(0, 0, 0, .35); }
+.lib-bar-fill { height: 100%; background: var(--scan); }
+
+.lib-name { margin: 10px 2px 2px; font-weight: 500; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-meta { margin: 0 2px; color: var(--text-mute); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-height: 18px; }
+.lib-primary { display: block; width: 100%; margin-top: 10px; padding: 9px 12px; font-size: 13px; font-weight: 500; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text); }
+.lib-primary:hover { background: var(--surface-3); border-color: var(--line-hover); color: var(--text); }
+.lib-hint { margin: 6px 2px 0; color: var(--text-mute); font-size: 11.5px; }
+
+.lib-no-match { padding: 40px 16px 64px; }
+.lib-clear { margin-top: 4px; }

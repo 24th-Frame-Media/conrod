@@ -7,7 +7,7 @@ import { WhatsNewSheet } from './components/WhatsNewSheet';
 import { call, engine, inTauri, mocked } from './lib/api';
 import { filename } from './lib/review';
 import { queueLabel } from './lib/format';
-import { healthStatus } from './lib/health.mjs';
+import { healthStatus, modelGroups } from './lib/health.mjs';
 import { classifyScanError, type ScanFailure } from './lib/scanError.mjs';
 import { subjectExcluded } from './review.mjs';
 import { vlmModelLabel } from './lib/vlm';
@@ -70,6 +70,14 @@ export function App() {
   const view: Page = page;
   const running = jobId != null && status.activeJob === jobId && (scanLive[jobId]?.progress.state ?? 'running') === 'running';
   const health = healthStatus({ tasks: status.tasks, models: eng.models });
+  // The Library strip's "Setup needed" line: model readiness, computed here so the
+  // screen itself no longer needs the models / health props the old rail used.
+  const { local: libraryLocal } = modelGroups(eng.models);
+  const librarySetup = {
+    needed: libraryLocal.some((m) => !m.ready),
+    ready: libraryLocal.filter((m) => m.ready).length,
+    total: libraryLocal.length,
+  };
   const goPage = (next: Page) => {
     if (next === 'Scan' && status.activeJob != null) setJobId(status.activeJob);
     if (next === 'Identify') {
@@ -229,19 +237,15 @@ export function App() {
       <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} health={health} actions={actions} popoverOpen={dev?.popover ?? false} />
       <main className="stage" key={view}>
         {view === 'Library' && (
-          <Library jobs={eng.jobs} models={eng.models} health={health} scanning={scanning} live={scanLive} activeJob={status.activeJob} queue={status.queue ?? []} onOpen={(j) => openJob(j.id)} onNewScan={() => setShowImport(true)}
-            onIdentify={(j) => identify(j.id)} onResume={(j) => void startScan({ jobId: j.id })}
-            onUnqueue={actions.unqueue}
+          <Library jobs={eng.jobs} scanning={scanning} live={scanLive} activeJob={status.activeJob} queue={status.queue ?? []}
+            setup={librarySetup} onOpen={(j) => openJob(j.id)} onNewScan={() => setShowImport(true)}
+            onResume={(j) => void startScan({ jobId: j.id })} onUnqueue={actions.unqueue}
+            onOpenSettings={() => visionAction('service')}
             onDelete={(j) => void run(async () => {
               await engine.deleteJob(j.id);
               await eng.refreshJobs();
               if (jobId === j.id) setJobId(null);
               toast('Album deleted');
-            })}
-            onToggleIncludePeople={(j) => void run(async () => {
-              const result = await engine.setIncludePeople(j.id, !j.include_people);
-              await eng.refreshJobs();
-              toast(result.ok ? 'Album settings updated' : 'Could not update album settings', { tone: result.ok ? 'ok' : 'error' });
             })} />
         )}
         {view === 'Scan' && (
