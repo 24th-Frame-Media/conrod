@@ -1,287 +1,818 @@
 {
   "_help": "Hand-written release-note wording. 'commits' is keyed by a commit hash (7+ characters): a string is the note (in the section its commit type implies), 'skip' leaves the commit out, { section, text } picks the section (New, Improved, Fixed), and an array gives several notes. Several commits may share one sentence; repeats collapse. 'versions' is keyed by version (or 'Unreleased'): 'highlights' is the one-line summary, 'add' is extra notes for work that has no commit of its own, 'date' overrides the tag date. Write for a photographer: say what changed in their workflow, not how.",
   "versions": {
-    "0.6.0": { "highlights": "Conrod remembers the plates it has already read." },
-    "0.6.1": { "highlights": "Each car is learned once, not once per frame." },
-    "0.6.2": { "highlights": "Frames with no vehicle in them are measured again too." },
-    "0.6.3": { "highlights": "A watched folder no longer keeps scanning after you delete its album." },
-    "0.6.4": { "highlights": "Updates install even when last time's folder will not go away." },
-    "0.7.0": { "highlights": "Big shoots open in seconds; thumbnails and details fill in behind." },
-    "0.8.0": { "highlights": "Faster capture-time reading, and vision work can spread over several machines." },
+    "0.6.0": {
+      "highlights": "Conrod remembers the plates it has already read."
+    },
+    "0.6.1": {
+      "highlights": "Each car is learned once, not once per frame."
+    },
+    "0.6.2": {
+      "highlights": "Frames with no vehicle in them are measured again too."
+    },
+    "0.6.3": {
+      "highlights": "A watched folder no longer keeps scanning after you delete its album."
+    },
+    "0.6.4": {
+      "highlights": "Updates install even when last time's folder will not go away."
+    },
+    "0.7.0": {
+      "highlights": "Big shoots open in seconds; thumbnails and details fill in behind."
+    },
+    "0.8.0": {
+      "highlights": "Faster capture-time reading, and vision work can spread over several machines."
+    },
     "1.0.0-beta.1": {
       "highlights": "Conrod is now a native Windows app. The Python version is retired; your library and settings carry over.",
       "add": [
-        { "section": "New", "text": "A native app with an installer and a portable zip: no Python to install, and it starts much faster." },
-        { "section": "New", "text": "Everything is rebuilt natively: reading RAW files, finding cars, rating sharpness, grouping bursts, reading plates and race numbers, and writing XMP files for Lightroom." },
-        { "section": "New", "text": "Updates arrive through the app itself." }
+        {
+          "section": "New",
+          "text": "A native app with an installer and a portable zip: no Python to install, and it starts much faster."
+        },
+        {
+          "section": "New",
+          "text": "Everything is rebuilt natively: reading RAW files, finding cars, rating sharpness, grouping bursts, reading plates and race numbers, and writing XMP files for Lightroom."
+        },
+        {
+          "section": "New",
+          "text": "Updates arrive through the app itself."
+        }
       ]
     },
-    "1.0.0-beta.2": { "highlights": "A clearer view of a scan while it runs." },
-    "1.0.0-beta.3": { "highlights": "A shorter path from import to a finished cull." },
-    "1.0.0-beta.4": { "highlights": "A main button that always offers the next step, shoot settings, and a rebuilt Review table." },
-    "1.0.0-beta.5": { "highlights": "Lightroom-style zoom and pan, and a redesigned Settings screen with update status." },
-    "1.0.0-beta.6": { "highlights": "Safer update and metadata handling, and one version number across the app." },
-    "1.0.0-beta.7": { "highlights": "Use several vision servers at once, compare vision models on your own photos, and cull shoots with people in them." },
-    "1.0.0-beta.8": { "highlights": "A much smarter cull: sharpness measured on the subject itself, better pans and bursts, top-three picks, undo, a light theme and live identification." },
+    "1.0.0-beta.2": {
+      "highlights": "A clearer view of a scan while it runs."
+    },
+    "1.0.0-beta.3": {
+      "highlights": "A shorter path from import to a finished cull."
+    },
+    "1.0.0-beta.4": {
+      "highlights": "A main button that always offers the next step, shoot settings, and a rebuilt Review table."
+    },
+    "1.0.0-beta.5": {
+      "highlights": "Lightroom-style zoom and pan, and a redesigned Settings screen with update status."
+    },
+    "1.0.0-beta.6": {
+      "highlights": "Safer update and metadata handling, and one version number across the app."
+    },
+    "1.0.0-beta.7": {
+      "highlights": "Use several vision servers at once, compare vision models on your own photos, and cull shoots with people in them."
+    },
+    "1.0.0-beta.8": {
+      "highlights": "A much smarter cull: sharpness measured on the subject itself, better pans and bursts, top-three picks, undo, a light theme and live identification."
+    },
     "Unreleased": {
       "highlights": "Culling works with the camera's own focus point, Conrod talks to Lightroom, ingest is one live screen, and a crash no longer loses your place.",
       "add": [
-        { "section": "New", "text": "An optional decision model, switched on in Settings, answers yes/no questions about your frames on your own graphics card. It is a large one-time download and stays off until you choose it; with it off, or on a card without enough video memory, nothing changes." }
+        {
+          "section": "New",
+          "text": "An optional decision model, switched on in Settings, answers yes/no questions about your frames on your own graphics card. It is a large one-time download and stays off until you choose it; with it off, or on a card without enough video memory, nothing changes."
+        }
       ]
     }
   },
   "commits": {
-    "27b763b": { "section": "Improved", "text": "The car finder is the new YOLO26 model — it found every car in our hardest test set where the old one missed a few." },
-    "2c25478": "skip",
-    "9dd9356": { "section": "New", "text": "The moments job can now use several services and shares work between them; if one is down the next takes over." },
-    "5a19523": "skip",
-    "92b6f0d": { "section": "Improved", "text": "Conrod now recommends qwen3-vl 8B for local car reading — it beat every cloud model on accuracy in our latest test." },
-    "181257d": { "section": "Improved", "text": "The Library is now a wall of your albums' covers, grouped into Needs attention and Ready to review, with one clear action on every album and a strip that keeps a running scan in view." },
-    "de9ac90": { "section": "Fixed", "text": "Zooming a tall photo now shows the whole photo: it keeps its own shape instead of being cropped to a wide box." },
-    "66dd39d": { "section": "New", "text": "Every stage of a scan can be run again by hand: find cars again, check sharpness again, read cars again, judge moments again, pick the best of each burst again — one stage at a time, never touching your own picks or ratings." },
-    "35e9734": { "section": "Improved", "text": "Each step of a scan now has its own Run again button in Review, with a short message while it runs and the counts when it is done." },
-    "917e942": { "section": "Fixed", "text": "An album you've identified stays identified: only cars that turn up later are offered, and Skip leaves the old readings alone." },
-    "4c553fe0": { "section": "New", "text": "The Lightroom plug-in is now optional; Conrod writes stars, picks and colour labels to your photos by default." },
-    "8b733a3": [
-      { "section": "New", "text": "Moments can be judged in the cloud by OpenCode's decision model JEV, which looks at the photo itself: add an OpenCode key or reuse the one a vision server already has. Settings offers JEV Free and the paid JEV, and a Test OpenCode key button checks the key without spending a request." }
+    "2156244": [
+      {
+        "section": "Fixed",
+        "text": "If Conrod crashes or is closed mid-scan, the next start tidies up and the album shows what really happened."
+      },
+      {
+        "section": "Fixed",
+        "text": "A scan that finishes with problem frames says done with errors and lists them, instead of looking clean."
+      },
+      {
+        "section": "Fixed",
+        "text": "Resuming a scan carries on from the stage it reached."
+      },
+      {
+        "section": "Fixed",
+        "text": "Importing a folder you have already imported adds only the new photos and tells you how many were already there, instead of making a second album."
+      }
     ],
+    "3197952": {
+      "section": "New",
+      "text": "Focus areas are now read from Sony, Nikon, Fujifilm, OM System and Panasonic cameras too, so the camera's own focus point can pick the subject there as it does for Canon."
+    },
+    "3985500": {
+      "section": "New",
+      "text": "A short first-run setup asks what you shoot, who is in your pictures, what to read, how picky to be and whether to use the on-device decision model, then tunes Conrod to match. Every step can be skipped, and Settings > Set up Conrod again reopens it."
+    },
     "5130167": [
-      { "section": "New", "text": "Settings has one AI models page: every model Conrod can use, in plain words, with where it runs, whether it is ready and a switch to turn it on or off." },
-      { "section": "New", "text": "The decision model can run on your graphics card or through OpenRouter, with a key field and a test button; OpenRouter can also read cars as a vision service and share that key." },
-      { "section": "Improved", "text": "The separate vision and decision sections, and the duplicate model list in the side panel, are gone, so there is one place to see and switch each model." }
+      {
+        "section": "New",
+        "text": "Settings has one AI models page: every model Conrod can use, in plain words, with where it runs, whether it is ready and a switch to turn it on or off."
+      },
+      {
+        "section": "New",
+        "text": "The decision model can run on your graphics card or through OpenRouter, with a key field and a test button; OpenRouter can also read cars as a vision service and share that key."
+      },
+      {
+        "section": "Improved",
+        "text": "The separate vision and decision sections, and the duplicate model list in the side panel, are gone, so there is one place to see and switch each model."
+      }
     ],
-    "1ae40f2": { "section": "New", "text": "OpenRouter is available as a vision service, so a cloud model can read make, model, colour and team, with its key checked without spending a request." },
-    "9aa30a4": { "section": "Fixed", "text": "An album you've identified stays identified. If new cars turn up, Conrod reads just those, and you can skip identifying altogether." },
+    "27b763b": {
+      "section": "Improved",
+      "text": "The car finder is the new YOLO26 model — it found every car in our hardest test set where the old one missed a few."
+    },
+    "2c25478": "skip",
+    "9dd9356": {
+      "section": "New",
+      "text": "The moments job can now use several services and shares work between them; if one is down the next takes over."
+    },
+    "5a19523": "skip",
+    "92b6f0d": {
+      "section": "Improved",
+      "text": "Conrod now recommends qwen3-vl 8B for local car reading — it beat every cloud model on accuracy in our latest test."
+    },
+    "181257d": {
+      "section": "Improved",
+      "text": "The Library is now a wall of your albums' covers, grouped into Needs attention and Ready to review, with one clear action on every album and a strip that keeps a running scan in view."
+    },
+    "de9ac90": {
+      "section": "Fixed",
+      "text": "Zooming a tall photo now shows the whole photo: it keeps its own shape instead of being cropped to a wide box."
+    },
+    "66dd39d": {
+      "section": "New",
+      "text": "Every stage of a scan can be run again by hand: find cars again, check sharpness again, read cars again, judge moments again, pick the best of each burst again — one stage at a time, never touching your own picks or ratings."
+    },
+    "35e9734": {
+      "section": "Improved",
+      "text": "Each step of a scan now has its own Run again button in Review, with a short message while it runs and the counts when it is done."
+    },
+    "917e942": {
+      "section": "Fixed",
+      "text": "An album you've identified stays identified: only cars that turn up later are offered, and Skip leaves the old readings alone."
+    },
+    "4c553fe0": {
+      "section": "New",
+      "text": "The Lightroom plug-in is now optional; Conrod writes stars, picks and colour labels to your photos by default."
+    },
+    "8b733a3": [
+      {
+        "section": "New",
+        "text": "Moments can be judged in the cloud by OpenCode's decision model JEV, which looks at the photo itself: add an OpenCode key or reuse the one a vision server already has. Settings offers JEV Free and the paid JEV, and a Test OpenCode key button checks the key without spending a request."
+      }
+    ],
+    "1ae40f2": {
+      "section": "New",
+      "text": "OpenRouter is available as a vision service, so a cloud model can read make, model, colour and team, with its key checked without spending a request."
+    },
+    "9aa30a4": {
+      "section": "Fixed",
+      "text": "An album you've identified stays identified. If new cars turn up, Conrod reads just those, and you can skip identifying altogether."
+    },
     "91d27b3": [
-      { "section": "Fixed", "text": "The live import screen keeps its header and pipeline in place: the worker cards scroll in their own panel instead of the whole page moving." },
-      { "section": "Fixed", "text": "The list of detections in Review's side panel scrolls again when a frame has more than fit." }
+      {
+        "section": "Fixed",
+        "text": "The live import screen keeps its header and pipeline in place: the worker cards scroll in their own panel instead of the whole page moving."
+      },
+      {
+        "section": "Fixed",
+        "text": "The list of detections in Review's side panel scrolls again when a frame has more than fit."
+      }
     ],
-    "13a0374": { "section": "New", "text": "You can add another album while a scan runs: it waits in line and starts by itself when the first finishes. Waiting albums show their place and can be taken out of the line." },
+    "13a0374": {
+      "section": "New",
+      "text": "You can add another album while a scan runs: it waits in line and starts by itself when the first finishes. Waiting albums show their place and can be taken out of the line."
+    },
     "d050e70": [
-      { "section": "Improved", "text": "Faces are now off by default for track days, rallies and burnouts, since drivers sit behind helmets. People are still looked for (pit lane, paddock, crowds), and Faces & eyes is one tick away on any album." },
-      { "section": "New", "text": "Field and court sports read jersey numbers off the players, so a player can be found by number." },
-      { "section": "New", "text": "Tell Conrod what you shoot and it remembers your own defaults for each shoot type. New albums start from them, and any album can still change any switch." }
+      {
+        "section": "Improved",
+        "text": "Faces are now off by default for track days, rallies and burnouts, since drivers sit behind helmets. People are still looked for (pit lane, paddock, crowds), and Faces & eyes is one tick away on any album."
+      },
+      {
+        "section": "New",
+        "text": "Field and court sports read jersey numbers off the players, so a player can be found by number."
+      },
+      {
+        "section": "New",
+        "text": "Tell Conrod what you shoot and it remembers your own defaults for each shoot type. New albums start from them, and any album can still change any switch."
+      }
     ],
-    "3985500": { "section": "New", "text": "A short first-run setup asks what you shoot, who is in your pictures, what to read, how picky to be and whether to use the on-device decision model, then tunes Conrod to match. Every step can be skipped, and Settings > Set up Conrod again reopens it." },
-    "cc6ade8": { "section": "Fixed", "text": "On the import screen, the live frames fill their card instead of sitting to the left." },
-    "05afd77": { "section": "Fixed", "text": "The setup summary reads clearly, and the models list no longer trips a warning." },
-    "ce2cf14": { "section": "Improved", "text": "The start-up screen says it is checking for unfinished scans, so a scan you stopped or closed mid-way is ready to resume." },
-    "bce9f44": { "section": "New", "text": "Conrod remembers what each plate turned out to be, so a car it has seen before is not read again (and not read differently)." },
-    "c2287b1": { "section": "Fixed", "text": "A car is learned once, not once per frame, so one car no longer ends up with several different model names." },
-    "9d87b98": { "section": "Fixed", "text": "Close-ups and frames with no vehicle in them are measured for sharpness again." },
-    "748ad4f": { "section": "Fixed", "text": "A watched folder stops scanning when its album is deleted, instead of rescanning forever." },
-    "5ff22ca": { "section": "Fixed", "text": "Updates install even when a leftover folder from the last update is still in the way." },
-    "b367fc6": { "section": "Improved", "text": "A new album opens in about a second, with thumbnails and details filling in behind it, instead of making you wait while everything is read first." },
-    "695e1ab": { "section": "Improved", "text": "Capture times are read much faster, especially from external drives and cards." },
-    "cebaac7": { "section": "New", "text": "Vision work can be spread across more than one computer running Ollama, so a spare GPU on your network helps." },
+    "cc6ade8": {
+      "section": "Fixed",
+      "text": "On the import screen, the live frames fill their card instead of sitting to the left."
+    },
+    "05afd77": {
+      "section": "Fixed",
+      "text": "The setup summary reads clearly, and the models list no longer trips a warning."
+    },
+    "ce2cf14": {
+      "section": "Improved",
+      "text": "The start-up screen says it is checking for unfinished scans, so a scan you stopped or closed mid-way is ready to resume."
+    },
+    "bce9f44": {
+      "section": "New",
+      "text": "Conrod remembers what each plate turned out to be, so a car it has seen before is not read again (and not read differently)."
+    },
+    "c2287b1": {
+      "section": "Fixed",
+      "text": "A car is learned once, not once per frame, so one car no longer ends up with several different model names."
+    },
+    "9d87b98": {
+      "section": "Fixed",
+      "text": "Close-ups and frames with no vehicle in them are measured for sharpness again."
+    },
+    "748ad4f": {
+      "section": "Fixed",
+      "text": "A watched folder stops scanning when its album is deleted, instead of rescanning forever."
+    },
+    "5ff22ca": {
+      "section": "Fixed",
+      "text": "Updates install even when a leftover folder from the last update is still in the way."
+    },
+    "b367fc6": {
+      "section": "Improved",
+      "text": "A new album opens in about a second, with thumbnails and details filling in behind it, instead of making you wait while everything is read first."
+    },
+    "695e1ab": {
+      "section": "Improved",
+      "text": "Capture times are read much faster, especially from external drives and cards."
+    },
+    "cebaac7": {
+      "section": "New",
+      "text": "Vision work can be spread across more than one computer running Ollama, so a spare GPU on your network helps."
+    },
     "b9668c1": "skip",
-    "85bfe33": { "section": "Fixed", "text": "Bulk actions in Review work again." },
-
-    "f5c1a91": { "section": "Improved", "text": "A clearer view of what a scan is doing while it runs, and a tidier review screen." },
-    "aeae627": { "section": "Improved", "text": "Reviewing an album takes fewer steps from import to a finished cull." },
-
+    "85bfe33": {
+      "section": "Fixed",
+      "text": "Bulk actions in Review work again."
+    },
+    "f5c1a91": {
+      "section": "Improved",
+      "text": "A clearer view of what a scan is doing while it runs, and a tidier review screen."
+    },
+    "aeae627": {
+      "section": "Improved",
+      "text": "Reviewing an album takes fewer steps from import to a finished cull."
+    },
     "b2ce9c0": [
-      { "section": "Improved", "text": "Capture times include fractions of a second, so frames from fast bursts keep their true order." },
-      { "section": "Fixed", "text": "Star ratings and colour labels in the XMP files use the spelling Lightroom expects." },
-      { "section": "New", "text": "Several vehicles can be edited at once." }
+      {
+        "section": "Improved",
+        "text": "Capture times include fractions of a second, so frames from fast bursts keep their true order."
+      },
+      {
+        "section": "Fixed",
+        "text": "Star ratings and colour labels in the XMP files use the spelling Lightroom expects."
+      },
+      {
+        "section": "New",
+        "text": "Several vehicles can be edited at once."
+      }
     ],
-    "088fe2a": { "section": "New", "text": "Review and Known vehicles are rebuilt: a compact table of what was found, with crop thumbnails, plates you can edit in place, and a way to merge two entries for the same car." },
+    "088fe2a": {
+      "section": "New",
+      "text": "Review and Known vehicles are rebuilt: a compact table of what was found, with crop thumbnails, plates you can edit in place, and a way to merge two entries for the same car."
+    },
     "e4d0373": "Panned shots stay together as one burst when the camera angle changes during the pan.",
     "9c34ad0": "Race numbers are no longer invented from licence plates, calendar years or a vision model's guess.",
     "7d1596f": [
-      { "section": "New", "text": "One main button always offers the next step in the flow, with the other steps in a menu beside it." },
-      { "section": "New", "text": "Settings for a single shoot, including a switch for reading race numbers." },
-      { "section": "New", "text": "A Manage shoot menu clears ratings, identifications or detections, asking first." },
-      { "section": "New", "text": "The inspector panel can be resized and remembers its width." },
-      { "section": "Improved", "text": "The status light simply says Ready or Error, and the Cars filter is now called Vehicles." }
+      {
+        "section": "New",
+        "text": "One main button always offers the next step in the flow, with the other steps in a menu beside it."
+      },
+      {
+        "section": "New",
+        "text": "Settings for a single shoot, including a switch for reading race numbers."
+      },
+      {
+        "section": "New",
+        "text": "A Manage shoot menu clears ratings, identifications or detections, asking first."
+      },
+      {
+        "section": "New",
+        "text": "The inspector panel can be resized and remembers its width."
+      },
+      {
+        "section": "Improved",
+        "text": "The status light simply says Ready or Error, and the Cars filter is now called Vehicles."
+      }
     ],
-
-    "97934c1": { "section": "Improved", "text": "The zoom view uses the full-resolution preview and jumps straight to the subject." },
-    "9cf5fc5": { "section": "New", "text": "Zoom and pan work like Lightroom's inspection controls." },
+    "97934c1": {
+      "section": "Improved",
+      "text": "The zoom view uses the full-resolution preview and jumps straight to the subject."
+    },
+    "9cf5fc5": {
+      "section": "New",
+      "text": "Zoom and pan work like Lightroom's inspection controls."
+    },
     "81b1876": [
-      { "section": "Improved", "text": "Checking for updates no longer fails when one source is unavailable." },
-      { "section": "New", "text": "Conrod finds the models installed on your Ollama server for you." }
+      {
+        "section": "Improved",
+        "text": "Checking for updates no longer fails when one source is unavailable."
+      },
+      {
+        "section": "New",
+        "text": "Conrod finds the models installed on your Ollama server for you."
+      }
     ],
     "a6ad394": "Settings is split into category tabs, and dropdown text is no longer cut off.",
-    "edfcd03": { "section": "New", "text": "Settings has a side panel with your version, library numbers and update status." },
-
+    "edfcd03": {
+      "section": "New",
+      "text": "Settings has a side panel with your version, library numbers and update status."
+    },
     "9f32f59": [
-      { "section": "Fixed", "text": "Text read from photos can no longer be used to tamper with the metadata tool, and the update check fails safe." },
-      { "section": "Improved", "text": "One version number across the app and its installer." }
+      {
+        "section": "Fixed",
+        "text": "Text read from photos can no longer be used to tamper with the metadata tool, and the update check fails safe."
+      },
+      {
+        "section": "Improved",
+        "text": "One version number across the app and its installer."
+      }
     ],
-
     "ab09637": [
-      { "section": "New", "text": "Use several vision servers at once, local or cloud. Conrod sends each crop to whichever is least busy, round-robin or at random, and moves on if one fails." },
-      { "section": "New", "text": "A model benchmark in Settings lets you compare vision models on your own sharp photos." },
-      { "section": "New", "text": "Identify one frame from Review without storing the result." },
-      { "section": "New", "text": "An Includes people option for motorsport shoots, with a face and eye pass for existing albums. Review adapts to portrait, motorsport and mixed albums." },
-      { "section": "Improved", "text": "Album covers follow the shoot type, with vehicle crops for motorsport." }
+      {
+        "section": "New",
+        "text": "Use several vision servers at once, local or cloud. Conrod sends each crop to whichever is least busy, round-robin or at random, and moves on if one fails."
+      },
+      {
+        "section": "New",
+        "text": "A model benchmark in Settings lets you compare vision models on your own sharp photos."
+      },
+      {
+        "section": "New",
+        "text": "Identify one frame from Review without storing the result."
+      },
+      {
+        "section": "New",
+        "text": "An Includes people option for motorsport shoots, with a face and eye pass for existing albums. Review adapts to portrait, motorsport and mixed albums."
+      },
+      {
+        "section": "Improved",
+        "text": "Album covers follow the shoot type, with vehicle crops for motorsport."
+      }
     ],
-
     "303c19a": [
-      { "section": "New", "text": "Press P to pick a frame you love; it is written as a Pick keyword, and a frame cannot be both picked and rejected." },
-      { "section": "New", "text": "Grid, loupe and compare views (G, E, C), a filmstrip for each burst, and keyboard movement within and between bursts. F zooms to the car, plate or face." },
-      { "section": "New", "text": "Near-duplicate shots are stacked across the whole shoot." },
-      { "section": "New", "text": "A closed eye is flagged as a reason to cull, and a People tab groups the faces in a shoot." },
-      { "section": "New", "text": "Hover a flagged frame to see why, and filter to Needs a look." },
-      { "section": "New", "text": "An optional aesthetic score can break ties inside a burst (off by default)." }
+      {
+        "section": "New",
+        "text": "Press P to pick a frame you love; it is written as a Pick keyword, and a frame cannot be both picked and rejected."
+      },
+      {
+        "section": "New",
+        "text": "Grid, loupe and compare views (G, E, C), a filmstrip for each burst, and keyboard movement within and between bursts. F zooms to the car, plate or face."
+      },
+      {
+        "section": "New",
+        "text": "Near-duplicate shots are stacked across the whole shoot."
+      },
+      {
+        "section": "New",
+        "text": "A closed eye is flagged as a reason to cull, and a People tab groups the faces in a shoot."
+      },
+      {
+        "section": "New",
+        "text": "Hover a flagged frame to see why, and filter to Needs a look."
+      },
+      {
+        "section": "New",
+        "text": "An optional aesthetic score can break ties inside a burst (off by default)."
+      }
     ],
     "4e94c30": "Installing every model no longer switches on the optional aesthetic score.",
     "3a80916": "Finding near-duplicates is much faster on large shoots, and burst spacing has one default.",
     "44c0ef7": "Birds and other animals are found as subjects in every shoot type.",
     "31b0992": "skip",
-    "715a813": { "section": "New", "text": "Sharpness is judged on the subject itself, by measuring how crisp its edges are at full resolution, and shown on the familiar star scale." },
+    "715a813": {
+      "section": "New",
+      "text": "Sharpness is judged on the subject itself, by measuring how crisp its edges are at full resolution, and shown on the familiar star scale."
+    },
     "dd5d0f4": "Detail shots with no clear subject are rated on their in-focus area instead of being called blurry.",
     "a453291": "Star ratings change smoothly at the top end, and when two frames tie the sharper subject wins.",
-    "719b4cf": { "section": "New", "text": "A burst is split into separate moments by how the subject is framed, and among equally sharp frames the keeper favours the prominent, uncropped subject." },
+    "719b4cf": {
+      "section": "New",
+      "text": "A burst is split into separate moments by how the subject is framed, and among equally sharp frames the keeper favours the prominent, uncropped subject."
+    },
     "3553e62": "A frame whose framing changed stands on its own instead of joining the previous moment.",
-    "f05efb5": { "section": "New", "text": "Blur strictness per album: strict, moderate or lenient." },
-    "d3116ac": { "section": "New", "text": "Give an album its race entry list (CSV or JSON) and Conrod looks up each number it reads." },
-    "f779a2a": { "section": "New", "text": "The entry list fills in team, drivers, car and sponsor spellings from the number it reads." },
-    "aa5e66c": { "section": "Improved", "text": "Vehicles are read from visible text only, with racing hints and checks on plates." },
-    "7200a03": { "section": "New", "text": "Pans are recognised by a sharp subject against a streaked background." },
+    "f05efb5": {
+      "section": "New",
+      "text": "Blur strictness per album: strict, moderate or lenient."
+    },
+    "d3116ac": {
+      "section": "New",
+      "text": "Give an album its race entry list (CSV or JSON) and Conrod looks up each number it reads."
+    },
+    "f779a2a": {
+      "section": "New",
+      "text": "The entry list fills in team, drivers, car and sponsor spellings from the number it reads."
+    },
+    "aa5e66c": {
+      "section": "Improved",
+      "text": "Vehicles are read from visible text only, with racing hints and checks on plates."
+    },
+    "7200a03": {
+      "section": "New",
+      "text": "Pans are recognised by a sharp subject against a streaked background."
+    },
     "ddacc52": "Vehicle reading in the app now matches what the benchmark measured, and numbers from an entry list are trusted.",
-    "7a9c3f4": { "section": "New", "text": "Review marks the top three candidates in every burst and can filter to them." },
+    "7a9c3f4": {
+      "section": "New",
+      "text": "Review marks the top three candidates in every burst and can filter to them."
+    },
     "b538215": "Top-three ranks skip rejected frames, share one badge on the grid and filmstrip, and blur strictness can be changed from the keyboard.",
-    "0a4f759": { "section": "Improved", "text": "A calmer graphite look with an amber keeper mark, line icons and a filter tab for each type of shoot." },
-    "b5c675c": { "section": "Improved", "text": "How a subject is framed (size and position) now counts when ranking a burst." },
-    "5ec55d5": { "section": "Improved", "text": "Blown highlights and crushed shadows are measured and count when ranking a burst." },
+    "0a4f759": {
+      "section": "Improved",
+      "text": "A calmer graphite look with an amber keeper mark, line icons and a filter tab for each type of shoot."
+    },
+    "b5c675c": {
+      "section": "Improved",
+      "text": "How a subject is framed (size and position) now counts when ranking a burst."
+    },
+    "5ec55d5": {
+      "section": "Improved",
+      "text": "Blown highlights and crushed shadows are measured and count when ranking a burst."
+    },
     "d18efcf": "Portraits pick the softer eye and never a shut face, and frames with no subject are judged on their edges.",
-    "3f46864": { "section": "New", "text": "Sport shoots recognise the ball in play and the rider on the animal." },
-    "bea53b0": { "section": "Improved", "text": "Burst spacing is set per album, and existing albums are converted once." },
-    "6de788f": { "section": "New", "text": "Regrouping a shoot is instant and tells you how many bursts it made." },
+    "3f46864": {
+      "section": "New",
+      "text": "Sport shoots recognise the ball in play and the rider on the animal."
+    },
+    "bea53b0": {
+      "section": "Improved",
+      "text": "Burst spacing is set per album, and existing albums are converted once."
+    },
+    "6de788f": {
+      "section": "New",
+      "text": "Regrouping a shoot is instant and tells you how many bursts it made."
+    },
     "1dcb838": "skip",
-    "10675c8": { "section": "New", "text": "Expressions are read: eyes open, smile and head turn." },
+    "10675c8": {
+      "section": "New",
+      "text": "Expressions are read: eyes open, smile and head turn."
+    },
     "ad0b818": "Review filters work inside burst stacks, the selection no longer jumps, P sets the keeper, view choices are remembered per album, and large stacks scroll smoothly.",
     "a3d3935": "skip",
-    "c057f07": { "section": "New", "text": "Import is one sheet, and the scan screen shows the whole pipeline: a flowchart, a lane for each worker, live thumbnails and a summary." },
-    "9bea587": { "section": "Improved", "text": "Import choices belong to the album, and progress shows real queues with an overall percentage that adds up." },
-    "8210b8f": { "section": "Improved", "text": "Eyes, smiles, exposure and framing now feed the scan, the sets of related frames and the ranking." },
+    "c057f07": {
+      "section": "New",
+      "text": "Import is one sheet, and the scan screen shows the whole pipeline: a flowchart, a lane for each worker, live thumbnails and a summary."
+    },
+    "9bea587": {
+      "section": "Improved",
+      "text": "Import choices belong to the album, and progress shows real queues with an overall percentage that adds up."
+    },
+    "8210b8f": {
+      "section": "Improved",
+      "text": "Eyes, smiles, exposure and framing now feed the scan, the sets of related frames and the ranking."
+    },
     "dba683d": "skip",
     "5420c1a": "A closed eye is only ever confirmed, never invented, by the face model.",
     "afb4f44": "The shoot type's default blur setting reaches the app, so every preset culls as intended.",
     "a2afd36": "The time-left estimate is steadier, and the slowest step shows as an hourglass on its card.",
-    "54dd430": { "section": "New", "text": "An export sheet shows counts, offers a dry run and gives Lightroom instructions. Review shows a loading state instead of an empty album." },
-    "65e7597": { "section": "New", "text": "Ctrl+Z and Ctrl+Shift+Z undo and redo your last culling decision and take you back to that frame." },
+    "54dd430": {
+      "section": "New",
+      "text": "An export sheet shows counts, offers a dry run and gives Lightroom instructions. Review shows a loading state instead of an empty album."
+    },
+    "65e7597": {
+      "section": "New",
+      "text": "Ctrl+Z and Ctrl+Shift+Z undo and redo your last culling decision and take you back to that frame."
+    },
     "d8cba3c": "Animals are named (cow, horse, bird and so on) instead of all being called vehicles.",
-    "e5d5e9c": { "section": "New", "text": "Settings is rebuilt: culling first, a chip on each setting an album overrides, search, a footer that shows unsaved changes, and Known vehicles as a catalogue." },
-    "2098d66": { "section": "New", "text": "A learned taste order for sorting a burst by what you tend to like. It never overrides the keeper." },
+    "e5d5e9c": {
+      "section": "New",
+      "text": "Settings is rebuilt: culling first, a chip on each setting an album overrides, search, a footer that shows unsaved changes, and Known vehicles as a catalogue."
+    },
+    "2098d66": {
+      "section": "New",
+      "text": "A learned taste order for sorting a burst by what you tend to like. It never overrides the keeper."
+    },
     "c34c17a": "Lead room follows the direction of the pan, and the keeper order is consistent.",
     "344d496": "Six-letter personalised plates are read correctly.",
-    "82e6394": { "section": "Improved", "text": "Review opens faster on big albums." },
-    "6f5cd55": { "section": "New", "text": "A light theme, with a toggle in the header." },
-    "92c5858": { "section": "New", "text": "An identifications sheet shows what was read and lets you accept results one by one. Sheets only close when you click the backdrop." },
+    "82e6394": {
+      "section": "Improved",
+      "text": "Review opens faster on big albums."
+    },
+    "6f5cd55": {
+      "section": "New",
+      "text": "A light theme, with a toggle in the header."
+    },
+    "92c5858": {
+      "section": "New",
+      "text": "An identifications sheet shows what was read and lets you accept results one by one. Sheets only close when you click the backdrop."
+    },
     "dee13c0": "Identifications with a number or plate come first, and a livery with no number shows its words.",
-    "376302c": { "section": "New", "text": "OpenCode is available as a vision provider, with a list of its models." },
+    "376302c": {
+      "section": "New",
+      "text": "OpenCode is available as a vision provider, with a list of its models."
+    },
     "9e2b88f": "A pan stays one moment however far the car travels, even through frames the detector missed, and no longer swallows a static shot framed elsewhere.",
     "5198b8f": "A pan stays one moment however far the car travels, even through frames the detector missed, and no longer swallows a static shot framed elsewhere.",
     "1e03715": "A pan stays one moment however far the car travels, even through frames the detector missed, and no longer swallows a static shot framed elsewhere.",
     "b213ebc": "Frames with no subject but pan streaks are judged as pans.",
-    "c05c642": { "section": "New", "text": "Pans are rated on the picture, capped by how much of the frame is sharp, so most pans land at three stars." },
+    "c05c642": {
+      "section": "New",
+      "text": "Pans are rated on the picture, capped by how much of the frame is sharp, so most pans land at three stars."
+    },
     "673083b": "A pan is rated by its cap rather than its sharpest detail, and a re-score agrees with the scan.",
     "05dc9ae": "Re-scoring re-reads the pixels, so a stale pan rating really is replaced.",
-    "1c1853d": { "section": "New", "text": "Suggested keepers are green and take one click to accept." },
-    "d0ec245": { "section": "New", "text": "A burst with nothing above two stars has no keeper, and the grid says so instead of proposing the least bad frame." },
-    "873d31d": { "section": "New", "text": "Duplicate copies of a shot can be hidden." },
-    "c822db3": { "section": "New", "text": "A Critical blur setting for track work." },
-    "e059648": { "section": "New", "text": "Bursts are grouped by what the pictures look like, and a frame the detector missed is rated where the camera focused." },
+    "1c1853d": {
+      "section": "New",
+      "text": "Suggested keepers are green and take one click to accept."
+    },
+    "d0ec245": {
+      "section": "New",
+      "text": "A burst with nothing above two stars has no keeper, and the grid says so instead of proposing the least bad frame."
+    },
+    "873d31d": {
+      "section": "New",
+      "text": "Duplicate copies of a shot can be hidden."
+    },
+    "c822db3": {
+      "section": "New",
+      "text": "A Critical blur setting for track work."
+    },
+    "e059648": {
+      "section": "New",
+      "text": "Bursts are grouped by what the pictures look like, and a frame the detector missed is rated where the camera focused."
+    },
     "2d6b3d4": "The Close button in the viewer sits at the top right of the side panel.",
     "0e93c50": "skip",
-    "11c906f": { "section": "New", "text": "Composition labels: placement, balance, symmetry, leading lines and background clutter." },
-    "90cae7d": { "section": "New", "text": "Stacking can be tuned, the camera's focus area is shown, and a blurred subject the background cannot vouch for is caught." },
-    "661d348": { "section": "New", "text": "Keep and cull pills, decisions for a whole stack, composition labels, the autofocus box and arrows between stacks." },
+    "11c906f": {
+      "section": "New",
+      "text": "Composition labels: placement, balance, symmetry, leading lines and background clutter."
+    },
+    "90cae7d": {
+      "section": "New",
+      "text": "Stacking can be tuned, the camera's focus area is shown, and a blurred subject the background cannot vouch for is caught."
+    },
+    "661d348": {
+      "section": "New",
+      "text": "Keep and cull pills, decisions for a whole stack, composition labels, the autofocus box and arrows between stacks."
+    },
     "2a7f997": "skip",
-    "c89ec3a": { "section": "New", "text": "A re-score measures the subject inside the camera's focus box." },
+    "c89ec3a": {
+      "section": "New",
+      "text": "A re-score measures the subject inside the camera's focus box."
+    },
     "f331ea3": "skip",
     "fc02031": "A frame whose own crop looks soft no longer wins the burst.",
     "66a8142": "The Review toolbar is one row of controls at one height.",
-    "3c3c0ca": { "section": "New", "text": "An album can cull, identify, or do both, and the pipeline view follows your choice." },
-    "25b4dbe": { "section": "New", "text": "An album can cull, identify, or do both, and the pipeline view follows your choice." },
-    "caf8e5e": { "section": "New", "text": "Shoot statistics: lens, ISO and file size are stored for every frame." },
-    "82dd754": { "section": "New", "text": "A shoot statistics card, and shot details in the viewer." },
-    "c02ad13": { "section": "New", "text": "Library-wide statistics, and a freeze when opening an album with many keepers is gone." },
+    "3c3c0ca": {
+      "section": "New",
+      "text": "An album can cull, identify, or do both, and the pipeline view follows your choice."
+    },
+    "25b4dbe": {
+      "section": "New",
+      "text": "An album can cull, identify, or do both, and the pipeline view follows your choice."
+    },
+    "caf8e5e": {
+      "section": "New",
+      "text": "Shoot statistics: lens, ISO and file size are stored for every frame."
+    },
+    "82dd754": {
+      "section": "New",
+      "text": "A shoot statistics card, and shot details in the viewer."
+    },
+    "c02ad13": {
+      "section": "New",
+      "text": "Library-wide statistics, and a freeze when opening an album with many keepers is gone."
+    },
     "0315a34": "A patch with no detail is reported as unmeasured, not as perfectly sharp.",
-    "b65fde1": { "section": "New", "text": "Identification reads each burst's keeper by default, and shoot statistics open in their own dialog." },
+    "b65fde1": {
+      "section": "New",
+      "text": "Identification reads each burst's keeper by default, and shoot statistics open in their own dialog."
+    },
     "ae81dd7": "Race numbers keep the model's confidence, and the number in the car's side window is read.",
     "44e6805": "A driver name on the car can correct a misread number.",
-    "4524b4c": { "section": "New", "text": "Identification is live: watch each frame being read as it happens. Opencode Go is supported as a provider." },
-    "34da8d0": { "section": "New", "text": "Each identification worker has its own live page, action shots are read, and the viewer shows more." },
-    "88ee486": { "section": "New", "text": "A new connecting-rod C for the mark and the app icon." },
-
+    "4524b4c": {
+      "section": "New",
+      "text": "Identification is live: watch each frame being read as it happens. Opencode Go is supported as a provider."
+    },
+    "34da8d0": {
+      "section": "New",
+      "text": "Each identification worker has its own live page, action shots are read, and the viewer shows more."
+    },
+    "88ee486": {
+      "section": "New",
+      "text": "A new connecting-rod C for the mark and the app icon."
+    },
     "a756281": "Scrolling the grid is smoother, and dragging the inspector no longer leaves stray handlers behind.",
     "c120e46": "More robust CR3 reading, correct handling of rate-limited vision servers, and no silently lost database writes.",
     "9a14351": "A stack of one frame shows and opens like a normal frame.",
-    "1aff8ac": { "section": "New", "text": "Canon autofocus areas are read directly from the file." },
-    "cc95822": { "section": "New", "text": "Ingest is one live screen that follows an import through scanning and vision, with every worker on show." },
-    "f15df6b": { "section": "New", "text": "When the detector misses the subject, the camera's own focus area decides what the subject is." },
-    "f7ca467": { "section": "New", "text": "Bursts that look alike but were shot a few seconds apart can be joined into one." },
+    "1aff8ac": {
+      "section": "New",
+      "text": "Canon autofocus areas are read directly from the file."
+    },
+    "cc95822": {
+      "section": "New",
+      "text": "Ingest is one live screen that follows an import through scanning and vision, with every worker on show."
+    },
+    "f15df6b": {
+      "section": "New",
+      "text": "When the detector misses the subject, the camera's own focus area decides what the subject is."
+    },
+    "f7ca467": {
+      "section": "New",
+      "text": "Bursts that look alike but were shot a few seconds apart can be joined into one."
+    },
     "eadc217": "The join-look-alike-bursts choice made at import is now applied.",
     "34168fa": "The camera's in-focus point is used when the file names one.",
-    "7a2a4c7": { "section": "New", "text": "Conrod Bridge, a Lightroom Classic plug-in: Conrod's verdicts go into Lightroom, and Lightroom's flags come back." },
-    "9b3e08b": { "section": "New", "text": "Send your verdicts to Lightroom from the export sheet, and import its flags into Conrod." },
-    "259f849": { "section": "New", "text": "Send your verdicts to Lightroom from the export sheet, and import its flags into Conrod." },
-    "13f16ec": { "section": "New", "text": "Reset an album back to how it was just after import, discarding your decisions and results." },
+    "7a2a4c7": {
+      "section": "New",
+      "text": "Conrod Bridge, a Lightroom Classic plug-in: Conrod's verdicts go into Lightroom, and Lightroom's flags come back."
+    },
+    "9b3e08b": {
+      "section": "New",
+      "text": "Send your verdicts to Lightroom from the export sheet, and import its flags into Conrod."
+    },
+    "259f849": {
+      "section": "New",
+      "text": "Send your verdicts to Lightroom from the export sheet, and import its flags into Conrod."
+    },
+    "13f16ec": {
+      "section": "New",
+      "text": "Reset an album back to how it was just after import, discarding your decisions and results."
+    },
     "ff5515a": "A reset album shows as indexed, not as scanning.",
-    "9345a0c": { "section": "New", "text": "A new logo: a connecting rod with a low kink." },
-    "e952287": { "section": "New", "text": "A new logo: a connecting rod with a low kink." },
-    "be1df63": { "section": "Improved", "text": "The Train tab is gone. Sharpness is measured, not trained, so there was nothing left for it to do." },
-    "8fb3f4e": { "section": "New", "text": "The camera's focus grid is read when the detector only finds something small, such as a distant car." },
+    "9345a0c": {
+      "section": "New",
+      "text": "A new logo: a connecting rod with a low kink."
+    },
+    "e952287": {
+      "section": "New",
+      "text": "A new logo: a connecting rod with a low kink."
+    },
+    "be1df63": {
+      "section": "Improved",
+      "text": "The Train tab is gone. Sharpness is measured, not trained, so there was nothing left for it to do."
+    },
+    "8fb3f4e": {
+      "section": "New",
+      "text": "The camera's focus grid is read when the detector only finds something small, such as a distant car."
+    },
     "58bf5c3": "The camera's focus area can rescue a frame but never demotes one.",
-    "6f44d52": { "section": "Improved", "text": "Scanning and re-scoring are faster: sharpness is measured with less work, faces and expressions share their models across workers, and each RAW's focus data is read in parallel." },
-    "38232be": { "section": "Improved", "text": "Scanning and re-scoring are faster: sharpness is measured with less work, faces and expressions share their models across workers, and each RAW's focus data is read in parallel." },
-    "c9c5f7a": { "section": "Improved", "text": "Scanning and re-scoring are faster: sharpness is measured with less work, faces and expressions share their models across workers, and each RAW's focus data is read in parallel." },
-    "799df94": { "section": "Improved", "text": "Culling uses less memory on big shoots." },
-    "a309acf": { "section": "Improved", "text": "Big libraries open and save faster." },
-    "dec9dfd": { "section": "Improved", "text": "Regrouping no longer makes the rest of the app wait." },
-    "cfd2d77": { "section": "Improved", "text": "Security updates to the networking components." },
-    "18e04ca": { "section": "Improved", "text": "The app framework and its plug-ins are updated to their latest patch releases." },
+    "6f44d52": {
+      "section": "Improved",
+      "text": "Scanning and re-scoring are faster: sharpness is measured with less work, faces and expressions share their models across workers, and each RAW's focus data is read in parallel."
+    },
+    "38232be": {
+      "section": "Improved",
+      "text": "Scanning and re-scoring are faster: sharpness is measured with less work, faces and expressions share their models across workers, and each RAW's focus data is read in parallel."
+    },
+    "c9c5f7a": {
+      "section": "Improved",
+      "text": "Scanning and re-scoring are faster: sharpness is measured with less work, faces and expressions share their models across workers, and each RAW's focus data is read in parallel."
+    },
+    "799df94": {
+      "section": "Improved",
+      "text": "Culling uses less memory on big shoots."
+    },
+    "a309acf": {
+      "section": "Improved",
+      "text": "Big libraries open and save faster."
+    },
+    "dec9dfd": {
+      "section": "Improved",
+      "text": "Regrouping no longer makes the rest of the app wait."
+    },
+    "cfd2d77": {
+      "section": "Improved",
+      "text": "Security updates to the networking components."
+    },
+    "18e04ca": {
+      "section": "Improved",
+      "text": "The app framework and its plug-ins are updated to their latest patch releases."
+    },
     "2de0f04": [
-      { "section": "Fixed", "text": "Turning the vision model on in Settings now reaches every album, including one imported while it was off. An album can still be switched off or on for itself in its shoot settings." },
-      { "section": "Improved", "text": "When the vision model is off, the identify screen says why instead of naming a model called off, and offers to turn vision on for that album or to set up a vision service." }
+      {
+        "section": "Fixed",
+        "text": "Turning the vision model on in Settings now reaches every album, including one imported while it was off. An album can still be switched off or on for itself in its shoot settings."
+      },
+      {
+        "section": "Improved",
+        "text": "When the vision model is off, the identify screen says why instead of naming a model called off, and offers to turn vision on for that album or to set up a vision service."
+      }
     ],
-    "2156244": [
-      { "section": "Fixed", "text": "If Conrod crashes or is closed mid-scan, the next start tidies up and the album shows what really happened." },
-      { "section": "Fixed", "text": "A scan that finishes with problem frames says done with errors and lists them, instead of looking clean." },
-      { "section": "Fixed", "text": "Resuming a scan carries on from the stage it reached." },
-      { "section": "Fixed", "text": "Importing a folder you have already imported adds only the new photos and tells you how many were already there, instead of making a second album." }
-    ],
-    "f70f502": { "section": "Improved", "text": "Safer by design: the app only reads files you chose, a cloud key is no longer put in a web address, and stricter rules for what the app window may load." },
-    "8d37e10": { "section": "New", "text": "The ingest screen shows what each worker is doing right now, with live frames and counters that match what is actually done." },
+    "f70f502": {
+      "section": "Improved",
+      "text": "Safer by design: the app only reads files you chose, a cloud key is no longer put in a web address, and stricter rules for what the app window may load."
+    },
+    "8d37e10": {
+      "section": "New",
+      "text": "The ingest screen shows what each worker is doing right now, with live frames and counters that match what is actually done."
+    },
     "36d835f": "The autofocus label no longer lands on top of a detection label.",
-    "5e0d842": { "section": "New", "text": "Conrod tells you what's new: a short summary of each update opens by itself the first time, and Settings can reopen it any time." },
-    "85e6865": { "section": "New", "text": "Each kind of shoot (wedding, motorsport, wildlife, rodeo and so on) now has its own sensible way of culling, and you can see and change it per album." },
+    "5e0d842": {
+      "section": "New",
+      "text": "Conrod tells you what's new: a short summary of each update opens by itself the first time, and Settings can reopen it any time."
+    },
+    "85e6865": {
+      "section": "New",
+      "text": "Each kind of shoot (wedding, motorsport, wildlife, rodeo and so on) now has its own sensible way of culling, and you can see and change it per album."
+    },
     "bdd3ac6": "Turning a step on or off for one album, or for one kind of shoot, now takes effect in the whole import, not just on screen.",
-    "fdf2cb4": { "section": "New", "text": "When you import, Conrod lists what it will do for that kind of shoot, with a switch for each step, and the same list sits in the album's settings." },
-    "22e79d5": { "section": "New", "text": "Conrod can pick out the moments that matter for the shoot, like a first kiss, the ride's peak or a car in the air, and use them to choose between near-identical frames. It never keeps a blurry frame over a sharp one." },
-    "6c73e5a": { "section": "New", "text": "Review shows each moment on the frame, marks the less certain ones as maybe, tells you when a moment decided a pick, and lets you filter by moment. Moments have their own switches and a confidence setting." },
-    "e91848b": { "section": "New", "text": "Moments can be judged by the decision model running on your own graphics card, with no account or internet. Its questions and answers show live in the import flowchart, and on a smaller card it waits for the cull to finish rather than running out of video memory." },
-    "8558e23": { "section": "New", "text": "Conrod now keeps track of what it is doing as it starts up, such as opening your library, checking your models and looking for ExifTool." },
-    "e66496c": { "section": "New", "text": "The opening screen shows what Conrod is really doing while it starts, with the model it is checking, a progress bar and the steps already done. If a step has a problem it says so and the app still opens." },
+    "fdf2cb4": {
+      "section": "New",
+      "text": "When you import, Conrod lists what it will do for that kind of shoot, with a switch for each step, and the same list sits in the album's settings."
+    },
+    "22e79d5": {
+      "section": "New",
+      "text": "Conrod can pick out the moments that matter for the shoot, like a first kiss, the ride's peak or a car in the air, and use them to choose between near-identical frames. It never keeps a blurry frame over a sharp one."
+    },
+    "6c73e5a": {
+      "section": "New",
+      "text": "Review shows each moment on the frame, marks the less certain ones as maybe, tells you when a moment decided a pick, and lets you filter by moment. Moments have their own switches and a confidence setting."
+    },
+    "e91848b": {
+      "section": "New",
+      "text": "Moments can be judged by the decision model running on your own graphics card, with no account or internet. Its questions and answers show live in the import flowchart, and on a smaller card it waits for the cull to finish rather than running out of video memory."
+    },
+    "8558e23": {
+      "section": "New",
+      "text": "Conrod now keeps track of what it is doing as it starts up, such as opening your library, checking your models and looking for ExifTool."
+    },
+    "e66496c": {
+      "section": "New",
+      "text": "The opening screen shows what Conrod is really doing while it starts, with the model it is checking, a progress bar and the steps already done. If a step has a problem it says so and the app still opens."
+    },
     "3b727bc": [
-      { "section": "Fixed", "text": "Race numbers come from the vision model; text reading only fills in when it saw nothing, so far fewer wrong numbers." },
-      { "section": "Fixed", "text": "When a car shows several numbers, Conrod picks the race number using your entry list, the door or bonnet panel, and the rest of the burst." }
+      {
+        "section": "Fixed",
+        "text": "Race numbers come from the vision model; text reading only fills in when it saw nothing, so far fewer wrong numbers."
+      },
+      {
+        "section": "Fixed",
+        "text": "When a car shows several numbers, Conrod picks the race number using your entry list, the door or bonnet panel, and the rest of the burst."
+      }
     ],
-    "9323bb6": { "section": "Fixed", "text": "A vision service you switched off no longer shows up by name." },
-    "df01a8c": { "section": "Fixed", "text": "The decision model now looks at the whole photo as well as the car close-up, so it can spot a wheel off the ground instead of only seeing the car." },
+    "9323bb6": {
+      "section": "Fixed",
+      "text": "A vision service you switched off no longer shows up by name."
+    },
+    "df01a8c": {
+      "section": "Fixed",
+      "text": "The decision model now looks at the whole photo as well as the car close-up, so it can spot a wheel off the ground instead of only seeing the car."
+    },
     "d7e4704": [
-      { "section": "New", "text": "The decision model now works from the start of identification: its question and answer appear in the identifying screen along with the frames it has judged and the time each takes, instead of staying quiet until the end." },
-      { "section": "Improved", "text": "Waiting for the decision model no longer delays the end of identification, because it judges frames while the cars are being read." }
+      {
+        "section": "New",
+        "text": "The decision model now works from the start of identification: its question and answer appear in the identifying screen along with the frames it has judged and the time each takes, instead of staying quiet until the end."
+      },
+      {
+        "section": "Improved",
+        "text": "Waiting for the decision model no longer delays the end of identification, because it judges frames while the cars are being read."
+      }
     ],
-    "a6395a1": { "section": "Improved", "text": "A scan that stops now says why in plain words, such as the disk being full, the folder being gone or the network drive being offline, instead of showing the engine's own error." },
+    "a6395a1": {
+      "section": "Improved",
+      "text": "A scan that stops now says why in plain words, such as the disk being full, the folder being gone or the network drive being offline, instead of showing the engine's own error."
+    },
     "d3d7755": [
-      { "section": "New", "text": "A scan that fails keeps its reason on the ingest screen with a Resume button, instead of a message that disappears and leaves you guessing." },
-      { "section": "New", "text": "Review opens while a scan is still running: it shows the frames already measured with their scores and picks, says more are arriving and has a button back to the scan. Culling and identifying wait until the scan is done." },
-      { "section": "Improved", "text": "The status light tells one story: the header, its activity panel and the Library Setup card agree on Ready, Setup needed, Paused or Error, and a vision service that is switched off reads as Ready with vision off instead of looking broken." }
+      {
+        "section": "New",
+        "text": "A scan that fails keeps its reason on the ingest screen with a Resume button, instead of a message that disappears and leaves you guessing."
+      },
+      {
+        "section": "New",
+        "text": "Review opens while a scan is still running: it shows the frames already measured with their scores and picks, says more are arriving and has a button back to the scan. Culling and identifying wait until the scan is done."
+      },
+      {
+        "section": "Improved",
+        "text": "The status light tells one story: the header, its activity panel and the Library Setup card agree on Ready, Setup needed, Paused or Error, and a vision service that is switched off reads as Ready with vision off instead of looking broken."
+      }
     ],
-    "af678e0": { "section": "Improved", "text": "Install missing only counts Conrod's own models, so a vision model on Ollama or a cloud service is never something that button tries to fetch." },
+    "af678e0": {
+      "section": "Improved",
+      "text": "Install missing only counts Conrod's own models, so a vision model on Ollama or a cloud service is never something that button tries to fetch."
+    },
     "bbeb3c1": [
-      { "section": "Improved", "text": "The live view keeps its worker lanes usable on a small laptop screen instead of squeezing them into a narrow strip." },
-      { "section": "Improved", "text": "The time left now covers the whole album, scan and identification together, and says which part is running and how many cars are still to read." },
-      { "section": "Improved", "text": "Models are named by the job they do, so it is clear which one finds cars, checks focus, reads faces or makes the call." },
-      { "section": "New", "text": "The car the photo is judged on is marked MAIN · AF when the camera's focus point chose it, and MAIN · biggest when the largest car did." },
-      { "section": "Improved", "text": "The shoot-type list says what each type actually changes, so picking one for an album is easier to judge." }
+      {
+        "section": "Improved",
+        "text": "The live view keeps its worker lanes usable on a small laptop screen instead of squeezing them into a narrow strip."
+      },
+      {
+        "section": "Improved",
+        "text": "The time left now covers the whole album, scan and identification together, and says which part is running and how many cars are still to read."
+      },
+      {
+        "section": "Improved",
+        "text": "Models are named by the job they do, so it is clear which one finds cars, checks focus, reads faces or makes the call."
+      },
+      {
+        "section": "New",
+        "text": "The car the photo is judged on is marked MAIN · AF when the camera's focus point chose it, and MAIN · biggest when the largest car did."
+      },
+      {
+        "section": "Improved",
+        "text": "The shoot-type list says what each type actually changes, so picking one for an album is easier to judge."
+      }
     ],
-    "3197952": { "section": "New", "text": "Focus areas are now read from Sony, Nikon, Fujifilm, OM System and Panasonic cameras too, so the camera's own focus point can pick the subject there as it does for Canon." },
-    "a58c43f": { "section": "Improved", "text": "OpenCode vision reads and moment checks now use your pay-as-you-go Console credits, not the coding subscription, so a photography scan stays within OpenCode's terms." }
+    "a58c43f": {
+      "section": "Improved",
+      "text": "OpenCode vision reads and moment checks now use your pay-as-you-go Console credits, not the coding subscription, so a photography scan stays within OpenCode's terms."
+    },
+    "e7ccf555": {
+      "section": "Fixed",
+      "text": "The note about an album being identified now sits in one tidy row with its buttons grouped."
+    },
+    "ed729a05": {
+      "section": "Fixed",
+      "text": "A stray broken character no longer appears in the album list while work runs."
+    },
+    "a73cb3b9": {
+      "section": "Fixed",
+      "text": "The development preview shows real example cars instead of drawn placeholders."
+    }
   }
 }
