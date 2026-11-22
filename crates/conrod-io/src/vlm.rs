@@ -871,6 +871,8 @@ pub struct DecisionModels {
     /// The service exposes no decision marker, so the screen keeps a free-text
     /// model field (OpenRouter) instead of pretending to enumerate.
     pub free_text: bool,
+    /// A plain-words reason the list is empty or the known model is withheld.
+    pub note: Option<String>,
 }
 
 /// The input modalities a model's metadata lists, when it lists any.
@@ -916,6 +918,21 @@ fn image_capability(item: &Value) -> Option<bool> {
     })
 }
 
+/// One entry as a moment model, without requiring a decision marker.
+fn decision_model(item: &Value, image: Option<bool>) -> Option<DecisionModel> {
+    let id = item
+        .get("id")
+        .or_else(|| item.get("name"))
+        .and_then(Value::as_str)?;
+    let name = item.get("name").and_then(Value::as_str).unwrap_or(id);
+    Some(DecisionModel {
+        id: id.to_string(),
+        name: name.to_string(),
+        image,
+        unverified: image.is_none(),
+    })
+}
+
 /// One decision-typed entry as a moment model, or `None` when it is not a
 /// decision model or its own metadata says it takes no images.
 fn decision_entry(item: &Value) -> Option<DecisionModel> {
@@ -931,35 +948,52 @@ fn decision_entry(item: &Value) -> Option<DecisionModel> {
     if image == Some(false) {
         return None;
     }
-    let id = item
-        .get("id")
-        .or_else(|| item.get("name"))
-        .and_then(Value::as_str)?;
-    let name = item.get("name").and_then(Value::as_str).unwrap_or(id);
-    Some(DecisionModel {
-        id: id.to_string(),
-        name: name.to_string(),
-        image,
-        unverified: image.is_none(),
-    })
+    decision_model(item, image)
 }
 
 /// Parse a model-list reply for the moment lane. OpenCode marks each entry's
 /// type and input modalities, so only its `decision` models that take photos
 /// are offered. OpenRouter has no decision marker on its models (they describe
-/// chat models), so it keeps the free-text field and the known-good default
-/// rather than pretending to enumerate.
-pub fn decision_models_reply(provider: &str, body: &Value) -> Result<DecisionModels, String> {
+/// chat models), so it keeps the free-text field and the known-good default;
+/// when the configured model is on its list, its modality is reported, and a
+/// text-only model is withheld instead of offered as a broken default.
+pub fn decision_models_reply(
+    provider: &str,
+    body: &Value,
+    configured: &str,
+) -> Result<DecisionModels, String> {
     match provider.to_lowercase().as_str() {
-        "openrouter" => Ok(DecisionModels {
-            models: Vec::new(),
-            free_text: true,
-        }),
+        "openrouter" => {
+            let configured = configured.trim();
+            let mut models = Vec::new();
+            let mut note = None;
+            if !configured.is_empty() {
+                if let Some(item) = model_items(body).and_then(|list| {
+                    list.iter()
+                        .find(|item| item.get("id").and_then(Value::as_str) == Some(configured))
+                }) {
+                    match image_capability(item) {
+                        Some(false) => {
+                            note = Some(
+                                "No photo-capable decision model available for this service".into(),
+                            );
+                        }
+                        image => models.extend(decision_model(item, image)),
+                    }
+                }
+            }
+            Ok(DecisionModels {
+                models,
+                free_text: true,
+                note,
+            })
+        }
         "opencode" | "opencode-go" => {
             let list = model_items(body).ok_or("OpenCode replied without a model list")?;
             Ok(DecisionModels {
                 models: list.iter().filter_map(decision_entry).collect(),
                 free_text: false,
+                note: None,
             })
         }
         other => Err(format!(
@@ -974,14 +1008,24 @@ pub fn decision_models(
     provider: &str,
     host: &str,
     api_key: &str,
+    configured: &str,
 ) -> Result<DecisionModels, String> {
     let provider = provider.to_lowercase();
     match provider.as_str() {
-        "openrouter" => decision_models_reply(&provider, &Value::Null),
+        // No decision marker: free text. When a model is configured, check
+        // its entry so a text-only one is withheld.
+        "openrouter" if configured.trim().is_empty() => {
+            decision_models_reply(&provider, &Value::Null, configured)
+        }
+        "openrouter" => {
+            let (_, list) = fetch_model_items(&provider, host, api_key)?;
+            let body = json!({ "data": list });
+            decision_models_reply(&provider, &body, configured)
+        }
         "opencode" | "opencode-go" => {
             let (_, list) = fetch_model_items(&provider, host, api_key)?;
             let body = json!({ "data": list });
-            decision_models_reply(&provider, &body)
+            decision_models_reply(&provider, &body, configured)
         }
         other => Err(format!(
             "'{other}' does not list decision models; type the model name"
@@ -2776,7 +2820,7 @@ mod tests {
             {"id": "vision-model", "type": "vision",
              "input": ["text", "image/png"]}
         ]});
-        let list = decision_models_reply("opencode", &body).unwrap();
+        let list = decision_models_reply("opencode", &body, "").unwrap();
         assert!(!list.free_text, "OpenCode enumerates");
         let ids: Vec<&str> = list.models.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(
@@ -2817,14 +2861,36 @@ mod tests {
             {"id": "google/gemini-4-neon",
              "architecture": {"input_modalities": ["text", "image"]}}
         ]});
-        let list = decision_models_reply("openrouter", &body).unwrap();
-        assert!(list.free_text, "keep the free-text field");
+        // No configured model: free text, nothing checked yet.
+        let bare = decision_models_reply("openrouter", &body, "").unwrap();
+        assert!(bare.free_text, "keep the free-text field");
+        assert!(bare.models.is_empty());
+        assert!(bare.note.is_none());
+        // The known default is listed text-only: withhold it, with a reason.
+        let pplx = decision_models_reply(
+            "openrouter",
+            &body,
+            "perplexity/pplx-decider-flash-v1.3:free",
+        )
+        .unwrap();
+        assert!(pplx.free_text, "still free text");
         assert!(
-            list.models.is_empty(),
-            "never pretend a chat list is a decision list"
+            pplx.models.is_empty(),
+            "a text-only known model is hidden, not offered as a broken default"
         );
+        assert!(pplx
+            .note
+            .as_deref()
+            .unwrap_or("")
+            .contains("No photo-capable decision model"));
+        // A configured model whose metadata lists images is surfaced as verified.
+        let image = decision_models_reply("openrouter", &body, "google/gemini-4-neon").unwrap();
+        assert!(image.free_text);
+        assert_eq!(image.models.len(), 1);
+        assert_eq!(image.models[0].image, Some(true));
+        assert!(!image.models[0].unverified);
         // A provider without any decision list says so rather than guessing.
-        assert!(decision_models_reply("ollama", &body).is_err());
+        assert!(decision_models_reply("ollama", &body, "").is_err());
     }
 
     #[test]

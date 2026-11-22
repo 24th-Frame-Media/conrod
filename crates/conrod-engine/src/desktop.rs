@@ -833,7 +833,7 @@ impl Desktop {
             Command::Identified(a) => self.identified(a.job_id),
             Command::SkipIdentify(a) => crate::operations::skip_identify(self, a.job_id),
             Command::DecisionModels(a) => Ok(
-                match conrod_io::vlm::decision_models(&a.provider, &a.host, &a.api_key) {
+                match conrod_io::vlm::decision_models(&a.provider, &a.host, &a.api_key, &a.model) {
                     Ok(list) => json!({
                         "models": list.models.into_iter().map(|model| json!({
                             "id": model.id,
@@ -842,6 +842,7 @@ impl Desktop {
                             "unverified": model.unverified,
                         })).collect::<Vec<_>>(),
                         "freeText": list.free_text,
+                        "note": list.note,
                     }),
                     Err(e) => json!({"models": [], "freeText": true, "error": e}),
                 },

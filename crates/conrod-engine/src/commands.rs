@@ -382,6 +382,10 @@ pub struct ProviderModelsArgs {
     pub host: String,
     #[serde(default)]
     pub api_key: String,
+    /// The model already chosen on the card, for model checks that verify it
+    /// (the moment lane's free-text services). Ignored by a plain list.
+    #[serde(default)]
+    pub model: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
