@@ -94,7 +94,7 @@ function UpdateCard({ info, upToDate, error, checking, installing, progress, ver
           </button>
           <span className="sidebar-link-group">
             <button type="button" className="sidebar-ext-link" onClick={onOpenWhatsNew}>What's new</button>
-            <button type="button" className="sidebar-ext-link" onClick={() => void openUrl('https://github.com/kapsikkum/conrod/releases')}>
+            <button type="button" className="sidebar-ext-link" onClick={() => void openUrl('https://github.com/24th-Frame-Media/conrod/releases')}>
               Releases ↗
             </button>
           </span>

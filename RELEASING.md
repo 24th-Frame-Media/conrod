@@ -46,11 +46,15 @@ Licences are recorded per asset in `assets.json`; ExifTool's own licence files s
    With `--tag`, it also regenerates `CHANGELOG.md` and `frontend/src/lib/whatsNew.json` for the version
    just set (see below) and includes them in the release commit.
 2. On `main`, `git tag v1.0.0-beta.1 && git push origin v1.0.0-beta.1`.
-3. `.github/workflows/release.yml` fetches the pinned assets, generates the release notes (below), builds
-   the frontend, runs fmt, clippy and every test, builds the installer, assembles the portable folder,
-   **self-tests the shipped `Conrod.exe`** (`Conrod.exe --selftest report.txt`: models found and loaded, a
-   frame through detector + sharpness + OCR, ExifTool, database), checksums, and publishes the release (a
-   pre-release when the version has a suffix). A failing self-test fails the release.
+3. `.github/workflows/release.yml` first runs its `test` job — `cargo fmt --all --check`,
+   `cargo clippy --workspace --all-targets -- -D warnings`,
+   `cargo test --release --workspace --exclude conrod-app`, and `npm ci`/`npm run build`/`npm test` in
+   `frontend` — and the build job only starts once it passes. That job then fetches the pinned assets,
+   generates the release notes (below), builds the frontend and the installer, assembles the portable
+   folder, **self-tests the shipped `Conrod.exe`** (`Conrod.exe --selftest report.txt`: models found and
+   loaded, a frame through detector + sharpness + OCR, ExifTool, database), checksums, and publishes the
+   release (a pre-release when the version has a suffix). A failing test or self-test fails the release.
+   A manual `workflow_dispatch` run publishes only from `main`; tags publish as before.
 4. Check by hand on a clean profile: install, scan a folder, review, identify, write XMP on a copy.
 
 ## Release notes and "What's new"
