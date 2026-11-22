@@ -69,7 +69,7 @@
         },
         {
           "section": "Improved",
-          "text": "Photo helpers, in Settings, now groups the seven helpers into two zones — On this PC and Via a cloud service — and hides model names until you open a helper. A first-run choice offers to download the models (about 5 GB, free, works offline) or add a cloud key and pay as you go; OpenCode covers both car reading and moments, and OpenRouter covers both too, though its moments model cannot see photos yet. Car reading and moments each get their own service cards, a shared OpenCode key, a 'How work is shared' choice and a confidence threshold."
+          "text": "Each service gets its own card with a key or host field, a Test button and a cost estimate per photo. Vision and Decisions dropdowns are filled from that service's models, and a per-service Thinking switch keeps reads fast by default. One control shares work across every enabled service; switching a card off leaves the pool. Photo helpers are compact rows showing the model in use, with a small popup when several models serve one, and the built-in models download with one click."
         }
       ]
     }
