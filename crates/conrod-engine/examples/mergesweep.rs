@@ -288,6 +288,7 @@ fn album(db: &Connection, job: i64, exported: &HashSet<String>) -> Result<Vec<Ro
             camera: v.5.clone(),
             taken: v.2,
             burst: 0,
+            unit: 0,
         })
         .collect();
     assign_bursts(&mut frames, gap);

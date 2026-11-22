@@ -136,6 +136,7 @@ pub mod passes;
 pub mod progress;
 pub mod region_training;
 pub mod rescore;
+pub mod seed;
 pub mod selftest;
 pub mod setup;
 #[cfg(test)]

@@ -215,6 +215,7 @@ fn frame_origin_and_marks_match_on_normalised_path() {
         camera: "Canon-123".to_string(),
         taken: Some(1000.0),
         burst: 3,
+        unit: 0,
     };
     let updated = set_frame_origin(&conn, job_id, std::slice::from_ref(&frame)).unwrap();
     assert_eq!(updated, 1);

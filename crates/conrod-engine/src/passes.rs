@@ -1897,7 +1897,10 @@ pub fn consolidate(d: &Desktop, job: i64, task: &Task) -> Result<(usize, usize)>
         // group_colour_hex, never colour_hex: the per-frame sample is a
         // measurement and a second regroup must not average averages.
         tx.execute(
-            "UPDATE detections SET attributes=?,group_key=?,group_size=?,group_agreement=?,group_colour_hex=? WHERE id=?",
+            // A reading the photographer edited by hand is not the album
+            // pass's to correct: it may inform the consensus, never be
+            // overwritten by it.
+            "UPDATE detections SET attributes=?,group_key=?,group_size=?,group_agreement=?,group_colour_hex=? WHERE id=? AND reviewed=0",
             params![attrs, key, size, agreement, hex, id],
         )
         .map_err(err)?;
@@ -2594,6 +2597,52 @@ mod tests {
             .contains("2 cars from 3 vehicles"));
         // Grouping re-picked: one keeper per car.
         assert_eq!(picks(&lib), vec![a1, other]);
+    }
+
+    #[test]
+    fn group_never_overwrites_a_reading_the_photographer_reviewed() {
+        let lib = Lib::new("group-reviewed");
+        let (f1, f2) = (lib.frame("1.jpg", Some(1)), lib.frame("2.jpg", Some(1)));
+        let (typed, read) = (
+            lib.detection(f1, "vehicle", 0.9),
+            lib.detection(f2, "vehicle", 0.8),
+        );
+        look(&lib, typed, [1.0, 0.0, 0.0]);
+        look(&lib, read, [0.99, 0.14, 0.0]);
+        // The photographer typed this one by hand: the album pass may read it
+        // into the consensus, never write over it.
+        lib.sql(
+            "UPDATE detections SET attributes=?,reviewed=1 WHERE id=?",
+            params![
+                json!({"make": "Hand", "model": "Typed", "race_number": "007"}).to_string(),
+                typed
+            ],
+        );
+        lib.sql(
+            "UPDATE detections SET attributes=? WHERE id=?",
+            params![json!({"make": "Ford", "model": "Focus"}).to_string(), read],
+        );
+        lib.run("group", json!({"jobId": lib.job})).unwrap();
+        lib.wait_idle();
+        let raw: String = lib.one("SELECT attributes FROM detections WHERE id=?", [typed]);
+        let attrs: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(attrs["make"], "Hand");
+        assert_eq!(attrs["model"], "Typed");
+        assert_eq!(attrs["race_number"], "007");
+        assert!(
+            attrs.get("group_make").is_none(),
+            "the reviewed row keeps its own reading without a group rewrite: {attrs}"
+        );
+        let key: Option<i64> = lib.one("SELECT group_key FROM detections WHERE id=?", [typed]);
+        assert_eq!(key, None, "the guard skips the whole identity write");
+        let read_attrs: Value = serde_json::from_str(
+            &lib.one::<String>("SELECT attributes FROM detections WHERE id=?", [read]),
+        )
+        .unwrap();
+        assert_eq!(
+            read_attrs["group_make"], "Hand",
+            "a reviewed reading still informs the consensus, it is only never overwritten"
+        );
     }
 
     #[test]

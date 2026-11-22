@@ -950,6 +950,39 @@ mod tests {
     }
 
     #[test]
+    fn the_overall_eta_covers_the_stages_that_have_not_started() {
+        let progress = fake(7);
+        for stage in ["read", "detect", "sharpness"] {
+            progress.plan(stage, 100);
+            progress.advance(stage, 50);
+        }
+        // Vision has not started, but its work is still ahead.
+        progress.plan("identify", 100);
+        progress.plan("group", 100);
+        progress.plan("pick", 100);
+        // A rate needs two samples with work between them: the first snapshot
+        // starts the meter's clock.
+        let _ = progress.snapshot();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        for stage in ["read", "detect", "sharpness"] {
+            progress.advance(stage, 1);
+        }
+        let snap = progress.snapshot();
+        let cull_eta = snap
+            .pipeline
+            .stages
+            .iter()
+            .find(|stage| stage.id == "read")
+            .and_then(|stage| stage.eta_s)
+            .expect("the running stage has an ETA");
+        let overall = snap.overall.eta_s.expect("the whole scan has an ETA");
+        assert!(
+            overall > cull_eta,
+            "the header's ETA includes identify/group/pick: {overall} vs {cull_eta}"
+        );
+    }
+
+    #[test]
     fn a_pass_with_no_rate_of_its_own_does_not_hold_the_eta_back() {
         let progress = fake(7);
         for stage in ["read", "detect", "sharpness"] {

@@ -63,6 +63,11 @@ pub struct Exposure {
     /// as in the frame's tags, so an old album can backfill its lens column
     /// from [`exposure_meta`] without decoding a preview.
     pub lens: Option<String>,
+    /// The body, as [`bursts::camera_of`] names it: what the seed pass groups
+    /// by before any pixel is read.
+    pub camera: Option<String>,
+    /// When the shutter fired, as [`bursts::taken_at`] reads the same tags.
+    pub taken: Option<f64>,
 }
 
 impl Exposure {
@@ -85,7 +90,9 @@ impl Exposure {
             focus_distance,
             aeb,
             subsec,
-            lens
+            lens,
+            camera,
+            taken
         );
     }
 }
@@ -307,6 +314,35 @@ fn exposure_from_tiff(header: &[u8]) -> Exposure {
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(str::to_string);
+    // The same identity tags the preview reader offers, from the header alone:
+    // the seed pass groups frames before any pixel is decoded.
+    let mut tags = Tags::new();
+    if let Some(model) = ifd0.get(&tiff::MODEL).and_then(tiff::Value::text) {
+        tags.insert("Model".into(), Value::String(model.trim().to_string()));
+    }
+    for tag in [
+        tiff::DATE_TIME_ORIGINAL,
+        tiff::DATE_TIME_DIGITIZED,
+        tiff::DATE_TIME,
+    ] {
+        if let Some(stamp) = exif
+            .get(&tag)
+            .or_else(|| (tag == tiff::DATE_TIME).then(|| ifd0.get(&tag)).flatten())
+            .and_then(tiff::Value::text)
+        {
+            let name = if tag == tiff::DATE_TIME_ORIGINAL {
+                "DateTimeOriginal"
+            } else {
+                "DateTime"
+            };
+            tags.insert(name.into(), Value::String(stamp.trim().to_string()));
+        }
+    }
+    if let Some(sub) = &out.subsec {
+        tags.insert("SubSecTimeOriginal".into(), Value::String(sub.clone()));
+    }
+    out.camera = Some(bursts::camera_of(&tags, "")).filter(|camera| !camera.is_empty());
+    out.taken = bursts::taken_at(&tags);
     out
 }
 
@@ -325,21 +361,25 @@ fn rawler_metadata(path: &Path, tags: Option<&mut Tags>) -> Exposure {
         return out;
     };
     let exif = meta.exif;
-    if let Some(tags) = tags {
-        for (name, value) in [
-            ("SerialNumber", exif.serial_number.clone()),
-            ("DateTimeOriginal", exif.date_time_original.clone()),
-            ("SubSecTimeOriginal", exif.sub_sec_time_original.clone()),
-            ("LensModel", exif.lens_model.clone()),
-        ] {
-            if let Some(v) = value {
-                let v = v.trim_end_matches('\0').trim().to_string();
-                if !v.is_empty() {
-                    tags.insert(name.into(), Value::String(v));
-                }
+    let mut identity = Tags::new();
+    for (name, value) in [
+        ("SerialNumber", exif.serial_number.clone()),
+        ("DateTimeOriginal", exif.date_time_original.clone()),
+        ("SubSecTimeOriginal", exif.sub_sec_time_original.clone()),
+        ("LensModel", exif.lens_model.clone()),
+    ] {
+        if let Some(v) = value {
+            let v = v.trim_end_matches('\0').trim().to_string();
+            if !v.is_empty() {
+                identity.insert(name.into(), Value::String(v));
             }
         }
     }
+    if let Some(tags) = tags {
+        tags.extend(identity.clone());
+    }
+    out.camera = Some(bursts::camera_of(&identity, "")).filter(|camera| !camera.is_empty());
+    out.taken = bursts::taken_at(&identity);
     let ratio = |r: Option<rawler::formats::tiff::Rational>| {
         r.and_then(|r| (r.d != 0).then(|| f64::from(r.n) / f64::from(r.d)))
     };
