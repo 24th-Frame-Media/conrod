@@ -850,9 +850,7 @@ impl Desktop {
             Command::ProviderModels(a) => Ok(
                 match conrod_io::vlm::list_models(&a.provider, &a.host, &a.api_key) {
                     Ok(models) => json!({
-                        "models": models.into_iter()
-                            .map(|(id, name)| json!({"id": id, "name": name}))
-                            .collect::<Vec<_>>(),
+                        "models": models.iter().map(|model| model.to_json()).collect::<Vec<_>>(),
                     }),
                     Err(e) => json!({"models": [], "error": e}),
                 },
