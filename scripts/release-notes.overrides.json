@@ -31,6 +31,7 @@
     }
   },
   "commits": {
+    "181257d": { "section": "Improved", "text": "The Library is now a wall of your albums' covers, grouped into Needs attention and Ready to review, with one clear action on every album and a strip that keeps a running scan in view." },
     "de9ac90": { "section": "Fixed", "text": "Zooming a tall photo now shows the whole photo: it keeps its own shape instead of being cropped to a wide box." },
     "4c553fe0": { "section": "New", "text": "The Lightroom plug-in is now optional; Conrod writes stars, picks and colour labels to your photos by default." },
     "5130167": [
