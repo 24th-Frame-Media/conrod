@@ -1,18 +1,42 @@
-# Conrod
+<div align="center">
+  <img width="200" height="200" src="crates/conrod-app/icons/conrod.png" alt="Conrod app icon">
+</div>
 
-Conrod scans RAW and JPEG folders to find vehicles and people, cull frames, and write keywords to XMP sidecars.
+<div align="center">
+  <h1><b>Conrod</b></h1>
+  <p><i>Conrod scans RAW and JPEG folders to find vehicles and people, cull frames, and write keywords to XMP sidecars.</i></p>
+</div>
 
-Conrod is a native Windows app built with Rust, Tauri, and React. (The legacy Python release lives on the [`legacy-python`](../tree/legacy-python) branch).
+<h6 align="center">
+  <a href="https://github.com/24th-Frame-Media/conrod/releases">Releases</a> &nbsp;|&nbsp; <a href="docs/wiki/Home.md">Wiki</a> &nbsp;|&nbsp; <a href="LICENSE">License</a>
+</h6>
+
+<div align="center">
+  <a href="docs/images/screenshots/library.png"><img src="docs/images/screenshots/library.png" width="272" alt="Library — the cover wall"></a>
+  <a href="docs/images/screenshots/ingest.png"><img src="docs/images/screenshots/ingest.png" width="272" alt="Ingest — the live scan"></a>
+  <a href="docs/images/screenshots/review.png"><img src="docs/images/screenshots/review.png" width="272" alt="Review — the cull grid"></a>
+  <br>
+  <sub>Library · Ingest · Review — click any image to open it full size</sub>
+</div>
+
+---
 
 ## Installation
 
-Download the latest release from [Releases](../releases):
-- **Installer** (`Conrod-<v>-win64-setup.exe`): Per-user installation, no admin rights required.
-- **Portable** (`Conrod-<v>-win64.zip`): Unzip and launch `Conrod.exe`.
+Conrod is a native Windows app built with Rust, Tauri, and React. The legacy Python release lives on the [`legacy-python`](https://github.com/24th-Frame-Media/conrod/tree/legacy-python) branch.
+
+Download the latest release from [Releases](https://github.com/24th-Frame-Media/conrod/releases):
+
+| Build | File | Notes |
+|:---|:---|:---|
+| **Installer** | `Conrod-<v>-win64-setup.exe` | Per-user installation, no admin rights required. |
+| **Portable** | `Conrod-<v>-win64.zip` | Unzip and launch `Conrod.exe`. |
 
 *Note: Builds are not code-signed; Windows SmartScreen will ask for confirmation on first launch.*
 
-### Setup & Requirements
+---
+
+## Requirements
 
 - **Windows 10 or 11, 64-bit**, with the **WebView2** runtime (included in current Windows releases).
 - The detector, plate reader, OCR, face, grouping models, and ExifTool ship with the app or download on first run. The start-up splash shows each step.
@@ -22,34 +46,44 @@ Download the latest release from [Releases](../releases):
 - **Existing Users**: libraries in `%USERPROFILE%\.conrod` (database, settings, models, Lightroom bridge packages) open automatically.
 - See [`docs/user/ai-models.md`](docs/user/ai-models.md) for model choices, prices, and setup, and [`docs/wiki/`](docs/wiki/Home.md) for photographer-facing guides.
 
-## Key Features
+---
 
+## Features & Guides
+
+Step-by-step guides live in the [wiki](docs/wiki/Home.md). Each feature links to the page that walks through it.
+
+### [Getting started](docs/wiki/Getting-started.md)
+1. Install Conrod and launch it. The splash opens the library, checks models and ExifTool, and reads the graphics card.
+2. On first run, answer the setup wizard: the shoot types you photograph, how strict the blur check should be, and who is in your pictures.
+3. Press **New scan**, choose the folder, pick the shoot type, and start. Frames from memory cards can also be watched with **Folder watch**.
+4. When the scan finishes, Review opens on the suggested keepers. Rate, edit detections, then write XMP sidecars or export to Lightroom.
+
+### [Albums and scanning](docs/wiki/Albums-and-scanning.md)
+Start several albums; one scans at a time and the rest wait their turn. Pull a waiting album out with **Unqueue**, or pause, resume, and stop the running one. **Folder Watch** automatically processes new frames as they copy from memory cards.
+
+### [How culling works](docs/wiki/How-culling-works.md)
 - **Non-destructive**: RAW files are never modified; metadata is written to `.xmp` sidecars for Lightroom, Photo Mechanic, Bridge, and Capture One. JPEGs update in place.
-- **Scan queue**: start several albums; one scans at a time and the rest wait their turn. Pull a waiting album out with **Unqueue**, or pause, resume, and stop the running one.
 - **Sharpness scoring**: subject-level focus scoring distinguishes a soft frame from a sharp car against a streaked pan. Composition, moments, and burst suggestions never demote a sharp frame.
 - **AF-aware subject**: the car under the camera's autofocus area is the main subject; other cars in the frame are background and are dimmed in Review. Without usable AF data, the sharpest car is the subject.
 - **Bursts and moments**: per-camera time bursts, optional look-alike merging, and a suggested keeper per stack. Moments (tyre smoke, a first kiss, a jump apex) affect ranking only within a sharpness band.
-- **Identify**: race numbers, plates, make/model/colour/team, sponsor livery, and names. Works with local Ollama, OpenRouter, or OpenCode Go, and still reads plates and numbers with the vision model off.
-- **Entry List Matching**: drop in an event entry CSV (`number,driver,team,...`) to guarantee accurate keywords for competitors. (See [`samples/entries-example.csv`](samples/entries-example.csv)).
-- **Folder Watch**: automatically processes new frames as they copy from memory cards.
-- **Lightroom**: stars, picks, and colour labels written to your files; an optional plug-in applies them in Lightroom. Conrod can read flags from the plug-in or a `.lrcat` catalog.
 - **Formats**: tested on Canon `.cr3` and `.cr2`, alongside `.jpg` / `.jpeg`.
 
-For step-by-step guides, see [Getting started](docs/wiki/Getting-started.md), [How culling works](docs/wiki/How-culling-works.md), [Identify](docs/wiki/Identify.md), and [Lightroom integration](docs/wiki/Lightroom-integration.md).
+### [Identify](docs/wiki/Identify.md)
+Race numbers, plates, make/model/colour/team, sponsor livery, and names. Works with local Ollama, OpenRouter, or OpenCode Go, and still reads plates and numbers with the vision model off. **Entry List Matching**: drop in an event entry CSV (`number,driver,team,...`) to guarantee accurate keywords for competitors (see [`samples/entries-example.csv`](samples/entries-example.csv)).
 
-## Screens
+### [Lightroom integration](docs/wiki/Lightroom-integration.md)
+Stars, picks, and colour labels written to your files; an optional plug-in applies them in Lightroom. Conrod can read flags from the plug-in or a `.lrcat` catalog.
 
+### [Settings reference](docs/wiki/Settings-reference.md) · [Recommended setups](docs/wiki/Recommended-setups.md) · [Troubleshooting](docs/wiki/Troubleshooting.md) · [Roadmap](docs/wiki/Roadmap.md)
+Shoot defaults, AI models, identification, Lightroom, storage, and the vehicle registry all live in **Settings**.
+
+### Screens
 - **Library**: every album, its progress, queue position, and the one-click **New scan** / **Resume** actions.
 - **Ingest**: the live scan and the identification that follows it, with a flowchart of each stage and a log.
 - **Review**: the cull — stacks, keepers, sharpness verdicts, detections, moments, identification, and Lightroom export.
 - **Settings**: shoot defaults, AI models, identification, Lightroom, storage, and the vehicle registry.
 
-## Quick start
-
-1. Install Conrod and launch it. The splash opens the library, checks models and ExifTool, and reads the graphics card.
-2. On first run, answer the setup wizard: the shoot types you photograph, how strict the blur check should be, and who is in your pictures.
-3. Press **New scan**, choose the folder, pick the shoot type, and start. Frames from memory cards can also be watched with **Folder watch**.
-4. When the scan finishes, Review opens on the suggested keepers. Rate, edit detections, then write XMP sidecars or export to Lightroom.
+---
 
 ## Models
 
@@ -66,6 +100,10 @@ For step-by-step guides, see [Getting started](docs/wiki/Getting-started.md), [H
 Best free: **qwen3-vl:8b** on your own PC.  
 Best paid value: **gpt-6-luna** at about **$0.42 per 1,000 cars**.  
 [See all 10 models](#benchmark-details).
+
+---
+
+## Benchmark
 
 <details id="benchmark-details">
 <summary>Benchmark details (22 Nov 2026, 3 frames, 10 models)</summary>
@@ -98,7 +136,9 @@ Sponsors found = out of 16 across the three cars. Local rows use the reader's ow
 cloud rows are one provider's pay-as-you-go list rate, one image per car.
 </details>
 
-## Development & Build
+---
+
+## Building
 
 Prerequisites: Rust (MSVC), C++ Build Tools, Node.js, and WebView2.
 
@@ -122,6 +162,8 @@ Output installer: `target/release/bundle/nsis/`.
 
 See [`API.md`](API.md) for the internal command API and [`RELEASING.md`](RELEASING.md) for release workflows.
 
-## Licensing
+---
 
-Detection uses Ultralytics YOLO (**AGPL-3.0**). Plate detection is **MIT**. Full third-party licenses and model hashes are tracked in [`scripts/assets.json`](scripts/assets.json).
+## License
+
+Detection uses Ultralytics YOLO (**AGPL-3.0**). Plate detection is **MIT**. Because Conrod links an AGPL-3.0 detector, the project is **AGPL-3.0** as well; the full text is in [`LICENSE`](LICENSE). Full third-party licenses and model hashes are tracked in [`scripts/assets.json`](scripts/assets.json).

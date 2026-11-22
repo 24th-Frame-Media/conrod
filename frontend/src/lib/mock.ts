@@ -26,35 +26,25 @@ export function devStart(): DevStart {
   };
 }
 
-const CARS: [string, string, string, string, string, string, number][] = [
-  ['Ford', 'Mustang GT', 'red', 'Dick Johnson Racing', '17', 'DJR17', 8],
-  ['Chevrolet', 'Camaro ZL1', 'dodgerblue', 'Triple Eight', '88', 'TE88Z', 215],
-  ['Toyota', 'GR Supra', 'white', 'Team Toyota', '5', 'GR5FST', 30],
-  ['Porsche', '911 GT3 R', 'gold', 'Manthey', '911', 'MNT911', 45],
-  ['Mazda', 'MX-5', 'silver', 'Independent', '23', 'MZD23', 200],
-  ['BMW', 'M4 GT3', 'darkorange', 'Walkinshaw', '7', 'BMW777', 280],
+/* Plain, invented vehicle names for the dev mock — no real teams or clients. */
+const CARS: [string, string, string, string, string, string][] = [
+  ['Ford', 'Mustang GT', 'red', 'Trackside Motorsport', '17', 'TSM17'],
+  ['Chevrolet', 'Camaro ZL1', 'dodgerblue', 'Apex Racing', '88', 'APX88'],
+  ['Toyota', 'GR Supra', 'white', 'Club Competitors', '5', 'CLB5'],
+  ['Porsche', '911 GT3 R', 'gold', 'Garage 23', '911', 'G23911'],
+  ['Mazda', 'MX-5', 'silver', 'Privateer', '23', 'PRV23'],
+  ['BMW', 'M4 GT3', 'darkorange', 'Northside Racing', '7', 'NRT7'],
 ];
 const W = 6000, H = 4000;
 const COMP_MODES = ['centre', 'thirds', 'phi'] as const;
 
-/**
- * The mock's one tall frame. Its recorded size is the camera's (landscape), the way an album scanned
- * before the orientation fix looks: the photo is tall, the recorded shape is not. The viewer has to
- * follow the photo, so the dev mock keeps this frame to show that it does.
- */
-const TALL_FRAME = { id: 1000, width: 6000, height: 4000, previewW: 800, previewH: 1200 };
+/** One frame whose recorded size is landscape, as some cameras report it. */
+const TALL_FRAME = { id: 1000, width: 6000, height: 4000 };
 
-/** A landscape with a car in it, as a data URI; car box is x 0.5±s/2, y .40-.74 of the frame. */
-function scene(hue: number, cx: number, s: number, paint: string, w: number, h: number): string {
-  const x = (cx - s / 2) * w, cw = s * w, y = 0.5 * h, ch = 0.2 * h, r = ch * 0.3;
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' viewBox='0 0 ${w} ${h}'><defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>`
-    + `<stop offset='0' stop-color='hsl(${hue} 34% 30%)'/><stop offset='.66' stop-color='hsl(${hue} 22% 14%)'/><stop offset='.66' stop-color='#26262b'/><stop offset='1' stop-color='#111114'/></linearGradient></defs>`
-    + `<rect width='${w}' height='${h}' fill='url(#g)'/><rect x='0' y='${h * 0.66}' width='${w}' height='${h * 0.012}' fill='#3a3a42'/>`
-    + `<rect x='${x}' y='${y}' width='${cw}' height='${ch}' rx='${r}' fill='${paint}'/>`
-    + `<path d='M${x + cw * 0.2} ${y} L${x + cw * 0.3} ${y - ch * 0.5} L${x + cw * 0.72} ${y - ch * 0.5} L${x + cw * 0.86} ${y} Z' fill='${paint}' opacity='.85'/>`
-    + `<circle cx='${x + cw * 0.22}' cy='${y + ch}' r='${ch * 0.3}' fill='#0a0a0c'/><circle cx='${x + cw * 0.78}' cy='${y + ch}' r='${ch * 0.3}' fill='#0a0a0c'/></svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
+/** Real example frames (docs/images/benchmark_*.jpg) copied into public/mock/. The dev mock
+ *  shows these instead of drawn placeholders, so its covers and grids read like a real library. */
+const COVERS = ['/mock/gemini.jpg', '/mock/mustang.jpg', '/mock/datsun.jpg'];
+const photo = (k: number): string => COVERS[((k % COVERS.length) + COVERS.length) % COVERS.length];
 
 type Db = { jobs: Job[]; frames: Frame[]; dets: Detection[]; known: KnownVehicle[]; settings: Settings; ticks: number; identifySkipped: boolean };
 let cache: Db | undefined;
@@ -63,7 +53,7 @@ function makeDb(): Db {
   const frames: Frame[] = [], dets: Detection[] = [];
   const count = Math.max(8, Number(params().get('frames')) || 64);
   for (let i = 0; i < count; i += 1) {
-    const [make, model, colour, team, no, plate, hue] = CARS[i % CARS.length];
+    const [make, model, colour, team, no, plate] = CARS[i % CARS.length];
     // Burst 2 is all soft (two stars or less) and has no engine pick: the grid must
     // say "No keeper" there instead of proposing the least-bad frame.
     const soft = Math.floor(i / 5) === 2;
@@ -77,8 +67,8 @@ function makeDb(): Db {
     // Composition: frame 0 opens with a busy background on a pan, frame 3 is the clean pan the strip marks.
     const clutter = i === 3 ? 0.18 : i % 3 === 0 ? 0.85 + ((i * 11) % 9) / 100 : 0.4 + ((i * 17) % 24) / 100;
     frames.push({
-      id, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + i}.CR3`, status: i > count - 4 ? 'pending' : 'done',
-      thumb_path: scene(hue, cx, s, colour, tall ? TALL_FRAME.previewW : 420, tall ? TALL_FRAME.previewH : 280), preview_path: null, width: fw, height: fh, rating,
+      id, path: `D:\\Photos\\2026\\10\\Challenge Bathurst\\IMG_${4200 + i}.CR3`, status: i > count - 4 ? 'pending' : 'done',
+      thumb_path: photo(i), preview_path: null, width: fw, height: fh, rating,
       manual_stars: soft ? null : i % 9 === 4 ? 5 : i % 11 === 6 ? 2 : null, rejected: i % 13 === 8 ? 1 : 0, picked: i % 17 === 5 ? 1 : 0, burst_key: Math.floor(i / 5), error: null,
       moments: i % 7 === 3 ? JSON.stringify({ backend: 'decider', strength: 0.9, readings: [{ tag: 'tyre_smoke', p: 0.93, calibrated: true }, { tag: 'flames', p: 0.62, calibrated: true }] }) : null,
       comp_placement: 0.52 + ((i * 23) % 42) / 100, comp_mode: COMP_MODES[i % 3],
@@ -95,10 +85,10 @@ function makeDb(): Db {
     });
   }
   const jobs: Job[] = [
-    { id: 1, label: 'Bathurst 1000', root: 'D:\\Photos\\2026\\09\\Bathurst 1000', status: 'done', total: 1284, done: 1284, created_at: 1789000000 },
-    { id: 2, label: 'Phillip Island GP', root: 'D:\\Photos\\2026\\08\\Phillip Island', status: 'done', total: 612, done: 612, created_at: 1786000000 },
-    { id: 3, label: 'Sunday hillclimb', root: 'D:\\Photos\\2026\\09\\Hillclimb', status: 'scanning', total: 120, done: 62, created_at: 1789900000 },
-    { id: 4, label: 'Wakefield twilight', root: 'D:\\Photos\\2026\\07\\Wakefield', status: 'stopped', total: 340, done: 118, created_at: 1783000000 },
+    { id: 1, label: 'Challenge Bathurst', root: 'D:\\Photos\\2026\\10\\Challenge Bathurst', status: 'done', total: 1284, done: 1284, created_at: 1789000000 },
+    { id: 2, label: 'Island Classic', root: 'D:\\Photos\\2026\\08\\Island Classic', status: 'done', total: 612, done: 612, created_at: 1786000000 },
+    { id: 3, label: 'Hillclimb Sprint Day', root: 'D:\\Photos\\2026\\09\\Hillclimb Sprint', status: 'scanning', total: 120, done: 62, created_at: 1789900000 },
+    { id: 4, label: 'Summer Twilight Meet', root: 'D:\\Photos\\2026\\07\\Twilight Meet', status: 'stopped', total: 340, done: 118, created_at: 1783000000 },
   ];
   // QA only: ?mock=1&empty seeds no albums so the empty state can be screenshotted.
   if (params().has('empty')) jobs.length = 0;
@@ -149,16 +139,12 @@ export function subscribeDeciderProgress(cb: (p: DeciderLive) => void): () => vo
 const emitScan = (p: ScanProgress) => { lastProgress = p; for (const cb of listeners) cb(p); };
 const emitIdentify = (p: IdentifyLive) => { lastIdentify = p; for (const cb of identifyListeners) cb(p); };
 
-let thumbs: string[] | undefined;
-const mockThumb = (k: number): string => {
-  thumbs ??= Array.from({ length: 24 }, (_, i) => { const [, , colour, , , , hue] = CARS[i % CARS.length]; return scene(hue, 0.38 + ((i * 13) % 25) / 100, 0.5 + ((i * 7) % 20) / 100, colour, 420, 280); });
-  return thumbs[k % thumbs.length];
-};
+const mockThumb = (k: number): string => photo(k);
 
 function identifyItem(k: number, stage: IdentifyStage, startedAt: number): IdentifyItem {
   const [make, model, colour, team, no, plate] = CARS[k % CARS.length];
   return {
-    detection_id: 9000 + k, image_id: 1000 + k, path: `D:\\Photos\\2026\\09\\Bathurst 1000\\IMG_${4200 + k}.CR3`,
+    detection_id: 9000 + k, image_id: 1000 + k, path: `D:\\Photos\\2026\\10\\Challenge Bathurst\\IMG_${4200 + k}.CR3`,
     thumb_path: mockThumb(k), preview_path: null, crop_path: mockThumb(k + 2), stage,
     prompt: 'You are reading one competition car. Read the race number from the windscreen or side window first, then the door board. Take the make and model from badges or the body shape, and the team from the livery.',
     reply: { number: no, make, model, colour, team, plate: null },
@@ -214,12 +200,12 @@ function status(db: Db): Status {
     const done = Math.min(1458, 118 + db.ticks * 7);
     return { tasks: [{ id: 3, label: 'Identifying · album 1', detail: `IMG_${5289 + db.ticks}.CR3 · motorcycle`, state: 'running', done, total: 1458, eta: 420, error: null }], log: [`Reading vehicle ${done}`], activeJob: null, operations: ['Identifying:1'] };
   }
-  if (!params().has('scan')) return { tasks: [{ id: 1, label: 'Identify Bathurst 1000', detail: 'Done', state: 'done', done: 300, total: 300, eta: null, error: null }], log: ['12:02:11 scan finished', '12:04:40 identified 300 vehicles'], activeJob: null, operations: [] };
+  if (!params().has('scan')) return { tasks: [{ id: 1, label: 'Identify Challenge Bathurst', detail: 'Done', state: 'done', done: 300, total: 300, eta: null, error: null }], log: ['12:02:11 scan finished', '12:04:40 identified 300 vehicles'], activeJob: null, operations: [] };
   db.ticks += 1;
   const done = Math.min(120, 62 + db.ticks);
   return {
-    tasks: [{ id: 2, label: 'Scanning Sunday hillclimb', detail: `IMG_${3900 + done}.CR3`, state: 'running', done, total: 120, eta: (120 - done) * 1.4, error: null },
-      { id: 1, label: 'Identify Bathurst 1000', detail: 'Done', state: 'done', done: 300, total: 300, eta: null, error: null }],
+    tasks: [{ id: 2, label: 'Scanning Hillclimb Sprint Day', detail: `IMG_${3900 + done}.CR3`, state: 'running', done, total: 120, eta: (120 - done) * 1.4, error: null },
+      { id: 1, label: 'Identify Challenge Bathurst', detail: 'Done', state: 'done', done: 300, total: 300, eta: null, error: null }],
     log: ['12:31:02 indexing 120 frames', `12:31:${20 + db.ticks} measured IMG_${3900 + done}.CR3`], activeJob: 3, operations: [],
   };
 }
@@ -231,7 +217,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
   switch (action) {
     case 'watch_status': return out({active: false, jobId: null});
     case 'set_watch': return out(a);
-    case 'cover': return out({path: db.frames[0]?.thumb_path});
+    case 'cover': return out({ path: photo((Number(a.jobId) || 1) - 1) });
     case 'health': return out([{name: 'Detector', ready: true}, {name: 'Vision model', ready: false, detail: 'Ollama is not running'}, {name: 'Decision model', ready: mockDeciderStatus().state === 'ready', optional: true, detail: mockDeciderStatus().message}]);
     case 'decider_status': return out(mockDeciderStatus());
     case 'install_decider': return out({operation: 'Installing decision model'});
@@ -287,7 +273,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       } satisfies ShootStats);
     }
     case 'lightroom_export': {
-      const name = `bathurst-1000-${Math.floor(Date.now() / 1000)}`;
+      const name = `challenge-bathurst-${Math.floor(Date.now() / 1000)}`;
       return out({
         package: name,
         photos: db.frames.length,
@@ -298,8 +284,8 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       if (String(a.dir ?? 'in') !== 'in') return out({ packages: [] });
       return out({
         packages: [
-          { name: 'bathurst-1000-1763600000', album: 'Bathurst 1000', photos: db.frames.length, age_s: 420 },
-          { name: 'phillip-island-gp-1763550000', album: 'Phillip Island GP', photos: 37, age_s: 7200 },
+          { name: 'challenge-bathurst-1763600000', album: 'Challenge Bathurst', photos: db.frames.length, age_s: 420 },
+          { name: 'island-classic-1763550000', album: 'Island Classic', photos: 37, age_s: 7200 },
         ],
       });
     }
@@ -476,14 +462,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       if (d) { const attrs = JSON.parse(d.attributes || '{}') as Record<string, unknown>; const { detectionId, ...rest } = a; void detectionId; d.attributes = JSON.stringify({ ...attrs, ...rest }); }
       return out(null);
     }
-    case 'preview': {
-      // The preview follows the photo, not the recorded shape: a tall frame previews tall.
-      const pf = db.frames.find((x) => x.id === Number(a.imageId));
-      if (pf?.id === TALL_FRAME.id) return out(scene(20, 0.5, 0.6, 'crimson', TALL_FRAME.previewW, TALL_FRAME.previewH));
-      const par = pf?.width && pf?.height ? pf.width / pf.height : 3 / 2;
-      const ph = 1200;
-      return out(scene(20, 0.5, 0.6, 'crimson', Math.round(ph * par), ph));
-    }
+    case 'preview': return out(photo(Number(a.imageId) || 0));
     case 'known': return out(db.known);
     case 'save_known': { const v = args as KnownVehicle; db.known = [...db.known.filter((k) => k.plate !== v.plate), v].sort((p, q) => p.plate.localeCompare(q.plate)); return out(null); }
     case 'delete_known': db.known = db.known.filter((k) => k.plate !== a.plate); return out(null);

@@ -31,13 +31,14 @@ export const call = async <T = unknown>(action: string, args: unknown = {}): Pro
 };
 
 export const chooseFolder = async (): Promise<string | null> => {
-  if (import.meta.env.DEV && mocked) return 'D:\\Photos\\2026\\09\\Bathurst 1000';
+  if (import.meta.env.DEV && mocked) return 'D:\\Photos\\2026\\10\\Challenge Bathurst';
   return invoke<string | null>('choose_folder');
 };
 
-/** Local file path (or a data: URI from the mock) to something an <img> can load. */
+/** Local file path (or a data: URI, or a dev-mock URL) to something an <img> can load.
+ *  In the browser mock the assets are served by vite, so they need no Tauri conversion. */
 export const asset = (path: string | null | undefined): string | undefined =>
-  !path ? undefined : path.startsWith('data:') ? path : convertFileSrc(path);
+  !path ? undefined : path.startsWith('data:') || mocked ? path : convertFileSrc(path);
 
 export const engine = {
   bootstrap: () => call<Bootstrap>('bootstrap'),
