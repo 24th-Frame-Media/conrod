@@ -212,7 +212,7 @@ button.small { padding: 4px 12px; font-size: 12px; }
 .zoom-pan { position: relative; width: 100%; height: 100%; overflow: hidden; touch-action: none; cursor: zoom-in; background: #08080a; user-select: none; }
 .zoom-pan.zoomed { cursor: grab; }
 .zoom-pan.zoomed:active, .zoom-pan.zoomed.dragging { cursor: grabbing; }
-.zoom-content { position: absolute; inset: 0; transform-origin: center; will-change: transform; }
+.zoom-content { position: absolute; left: 50%; top: 50%; transform-origin: center; will-change: transform; }
 .zoom-content .image-load > img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; pointer-events: none; }
 
 .zoom-tools {

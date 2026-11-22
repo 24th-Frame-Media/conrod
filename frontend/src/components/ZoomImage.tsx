@@ -1,6 +1,7 @@
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { boxOf, plateBoxOf } from '../lib/review';
 import { afBox } from '../lib/viewer.mjs';
+import { stageRatio } from '../lib/zoom.mjs';
 import { ZoomPanImage, type ZoomPanRef } from './Media';
 import { getCategory, type CategoryFilter } from './DetectionsTable';
 import type { Detection, Frame } from '../lib/types';
@@ -36,6 +37,11 @@ export const ZoomImage = forwardRef<ZoomImageHandle, Props>(function ZoomImage(
   const zoomRef = useRef<ZoomPanRef>(null);
   const [showLabels, setShowLabels] = useState(true);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
+  /** The photo's own shape once the file is decoded: the stage takes it, so a tall photo is never
+      cropped to a wide box. It belongs to the frame it was measured on. */
+  const [shape, setShape] = useState<{ id: number; ratio: number | null }>({ id: frame.id, ratio: null });
+  const photoRatio = shape.id === frame.id ? shape.ratio : null;
+  const onAspect = (ratio: number | null) => setShape({ id: frame.id, ratio });
 
   const visibleBoxes = useMemo(() => dets.filter((d) => {
     const cat = getCategory(d);
@@ -72,7 +78,7 @@ export const ZoomImage = forwardRef<ZoomImageHandle, Props>(function ZoomImage(
     },
   }), [focusBoxes, focusIndex]);
 
-  const ratio = frame.width && frame.height ? frame.width / frame.height : 3 / 2;
+  const ratio = photoRatio ?? stageRatio(frame.width, frame.height, 0, 0);
   const af = afBox(frame);
 
   // One click target for the whole photo: a press on a box selects that detection, then either way the click
@@ -87,7 +93,7 @@ export const ZoomImage = forwardRef<ZoomImageHandle, Props>(function ZoomImage(
 
   return (
     <div className="stage-inner" style={{ '--ar': ratio } as CSSProperties}>
-      <ZoomPanImage ref={zoomRef} src={src} alt={alt} onSurfaceClick={surfaceClick}>
+      <ZoomPanImage ref={zoomRef} src={src} alt={alt} onAspect={onAspect} onSurfaceClick={surfaceClick}>
         {showBoxes && (
           <div className="overlay">
             {af && (

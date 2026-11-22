@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type WheelEvent,
 } from 'react';
+import { clampPan, fitScaleAndSize, focusView, zoomToPoint } from '../lib/zoom.mjs';
 
 type ImageProps = ImgHTMLAttributes<HTMLImageElement> & { src?: string };
 
@@ -53,60 +54,20 @@ type ZoomProps = {
   onZoomChange?: (zoomed: boolean) => void;
   focusBox?: [number, number, number, number] | null;
   /**
+   * The loaded photo's own shape (width / height), or null while it is unknown. The stage takes the
+   * photo's shape, so a tall photo is never cropped to a wide box when it is zoomed.
+   */
+  onAspect?: (ratio: number | null) => void;
+  /**
    * A single click on the photo that was not a drag: `target` is what was pressed (a detection box, or the
    * stage). When set, the owner handles the click-to-zoom toggle itself instead of the default one.
    */
   onSurfaceClick?: (clientX: number, clientY: number, target: HTMLElement | null) => void;
 };
 
-function getFitScaleAndSize(containerW: number, containerH: number, naturalW: number, naturalH: number) {
-  if (!containerW || !containerH || !naturalW || !naturalH) {
-    return { scale1to1: 2.5, imageW: containerW || 800, imageH: containerH || 600 };
-  }
-  const imgAspect = naturalW / naturalH;
-  const contAspect = containerW / containerH;
-  let imageW = containerW;
-  let imageH = containerH;
-  if (imgAspect > contAspect) {
-    imageW = containerW;
-    imageH = containerW / imgAspect;
-  } else {
-    imageH = containerH;
-    imageW = containerH * imgAspect;
-  }
-  const scale1to1 = Math.max(1, naturalW / imageW);
-  return { scale1to1, imageW, imageH };
-}
-
-function clampPan(val: number, scale: number, imageDimension: number, containerDimension: number) {
-  const max = Math.max(0, (imageDimension * scale - containerDimension) / 2);
-  return Math.max(-max, Math.min(max, val));
-}
-
-/** Scale + pan that centers `box` (fractional 0..1 of the image) in the container. */
-function focusView(
-  box: [number, number, number, number],
-  containerW: number,
-  containerH: number,
-  imageW: number,
-  imageH: number,
-  scale1to1: number,
-) {
-  const [x1, y1, x2, y2] = box;
-  const cx = (x1 + x2) / 2;
-  const cy = (y1 + y2) / 2;
-  const bw = Math.max(0.01, x2 - x1);
-  const bh = Math.max(0.01, y2 - y1);
-  const fitSubjectScale = 0.75 / Math.max(bw, bh);
-  const scale = Math.max(scale1to1, Math.min(scale1to1 * 2, fitSubjectScale));
-  const rawX = -(cx - 0.5) * imageW * scale;
-  const rawY = -(cy - 0.5) * imageH * scale;
-  return { scale, x: clampPan(rawX, scale, imageW, containerW), y: clampPan(rawY, scale, imageH, containerH) };
-}
-
 /** Lightroom-inspired zoom & pan: single-click toggle, true 1:1 resolution, bounded panning, presets. */
 export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanImage(
-  { src, alt, children, className = '', zoomed, onZoomChange, focusBox, onSurfaceClick },
+  { src, alt, children, className = '', zoomed, onZoomChange, focusBox, onAspect, onSurfaceClick },
   ref,
 ) {
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
@@ -128,6 +89,20 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
     target: HTMLElement | null;
   } | null>(null);
 
+  /** The owner's callback, kept in a ref so a new function every render never restarts the load. */
+  const aspectRef = useRef(onAspect);
+  aspectRef.current = onAspect;
+
+  // The stage changes size when the window moves or the photo's shape arrives: measure it again.
+  const [, setBoxTick] = useState(0);
+  useEffect(() => {
+    const el = root.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setBoxTick((tick) => tick + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const getDimensions = useCallback(() => {
     const box = root.current?.getBoundingClientRect();
     const containerW = box?.width || 800;
@@ -135,7 +110,7 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
     const img = root.current?.querySelector('img');
     const natW = img?.naturalWidth || naturalSize?.width || 0;
     const natH = img?.naturalHeight || naturalSize?.height || 0;
-    const { scale1to1, imageW, imageH } = getFitScaleAndSize(containerW, containerH, natW, natH);
+    const { scale1to1, imageW, imageH } = fitScaleAndSize(containerW, containerH, natW, natH);
     return { containerW, containerH, scale1to1, imageW, imageH };
   }, [naturalSize]);
 
@@ -155,31 +130,21 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
         return;
       }
 
-      let targetX = 0;
-      let targetY = 0;
       const box = root.current?.getBoundingClientRect();
+      const offsetX = box && clientX != null ? clientX - (box.left + box.width / 2) : null;
+      const offsetY = box && clientY != null ? clientY - (box.top + box.height / 2) : null;
 
-      if (box && clientX != null && clientY != null) {
-        const clickOffsetX = clientX - (box.left + box.width / 2);
-        const clickOffsetY = clientY - (box.top + box.height / 2);
-        const imgX = (clickOffsetX - view.x) / view.scale;
-        const imgY = (clickOffsetY - view.y) / view.scale;
-
-        if (isClickToCenter || view.scale <= 1.01) {
-          targetX = -imgX * scale;
-          targetY = -imgY * scale;
-        } else {
-          targetX = clickOffsetX - imgX * scale;
-          targetY = clickOffsetY - imgY * scale;
-        }
-      } else {
-        targetX = (view.x / view.scale) * scale;
-        targetY = (view.y / view.scale) * scale;
-      }
-
-      const clampedX = clampPan(targetX, scale, imageW, containerW);
-      const clampedY = clampPan(targetY, scale, imageH, containerH);
-      setView({ scale, x: clampedX, y: clampedY });
+      setView(zoomToPoint({
+        offsetX,
+        offsetY,
+        view,
+        scale,
+        imageW,
+        imageH,
+        containerW,
+        containerH,
+        centre: isClickToCenter,
+      }));
       onZoomChange?.(true);
     },
     [getDimensions, onZoomChange, reset, view],
@@ -297,7 +262,7 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
     zoomTo(view.scale * factor, event.clientX, event.clientY);
   };
 
-  const { scale1to1 } = getDimensions();
+  const { scale1to1, imageW, imageH } = getDimensions();
   const isFit = view.scale <= 1.02;
   const is1to1 = !isFit && Math.abs(view.scale - scale1to1) / scale1to1 < 0.05;
   const is2to1 = !isFit && Math.abs(view.scale - scale1to1 * 2) / (scale1to1 * 2) < 0.05;
@@ -313,9 +278,15 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
       onPointerUp={up}
       onPointerCancel={up}
     >
+      {/* The photo's own box, centred in the stage: the whole frame is visible at rest, and the
+          detection boxes on top of it sit where they belong, on the photo and not on the stage. */}
       <div
         className="zoom-content"
         style={{
+          width: imageW,
+          height: imageH,
+          marginLeft: -imageW / 2,
+          marginTop: -imageH / 2,
           transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
           transition: isDragging || isWheeling ? 'none' : 'transform 0.16s cubic-bezier(0.2, 0, 0.2, 1)',
         }}
@@ -328,6 +299,7 @@ export const ZoomPanImage = forwardRef<ZoomPanRef, ZoomProps>(function ZoomPanIm
             const img = e.currentTarget;
             if (img.naturalWidth && img.naturalHeight) {
               setNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
+              aspectRef.current?.(img.naturalWidth / img.naturalHeight);
             }
           }}
         />
