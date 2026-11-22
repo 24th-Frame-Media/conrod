@@ -670,6 +670,7 @@ fn gemini_thinking_off(model: &str) -> Option<Value> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn ollama_request(
     host: &str,
     model: &str,
@@ -677,10 +678,12 @@ pub fn ollama_request(
     images: &[String],
     schema: &Value,
     num_predict: i64,
-) -> ProviderRequest {
+) -> Result<ProviderRequest, VlmError> {
     let host = host.trim_end_matches('/');
-    ProviderRequest {
-        url: format!("{host}/api/generate"),
+    let url = format!("{host}/api/generate");
+    guard_remote(&url, "vlm_host")?;
+    Ok(ProviderRequest {
+        url,
         headers: vec![],
         query: vec![],
         json: json!({
@@ -696,7 +699,7 @@ pub fn ollama_request(
                 "num_ctx": OLLAMA_NUM_CTX,
             },
         }),
-    }
+    })
 }
 
 pub fn openai_request(
@@ -824,16 +827,7 @@ fn models_url(provider: &str, host: &str) -> Result<(String, bool), String> {
             if host.is_empty() {
                 return Ok((OPENCODE_MODELS_URL.to_string(), true));
             }
-            if !is_http_url(host) {
-                return Err(format!(
-                    "'{provider}' needs an http(s) model-list URL, not {host:?}"
-                ));
-            }
-            if !host.to_ascii_lowercase().starts_with("https://") && !is_local_host(host) {
-                return Err(format!(
-                    "'{provider}' sends the API key, so a plain http URL must be localhost or a private-network address; use https for {host:?}"
-                ));
-            }
+            guard_remote(host, "vlm_host").map_err(|e| e.to_string())?;
             let url = if host.ends_with("/models") {
                 host.to_string()
             } else {
@@ -853,6 +847,29 @@ fn is_http_url(url: &str) -> bool {
     url.parse::<ureq::http::Uri>()
         .map(|uri| matches!(uri.scheme_str(), Some("http" | "https")) && uri.authority().is_some())
         .unwrap_or(false)
+}
+
+/// The one rule every request that carries a user-supplied address obeys: an
+/// https URL is always fine, and so is a plain-http URL that stays on the
+/// user's own machine or private network (Ollama, a LAN gateway). Everything
+/// else -- plain http to a remote host, `file:`, a UNC path, a bare host name
+/// -- is refused with a `Misconfigured` error naming the setting to fix, and
+/// refused *before* a key is attached or a socket is opened. A public
+/// plain-http host would put the API key (and the photo) on the wire in clear
+/// text, and a request to any host a setting names is an SSRF primitive.
+pub fn guard_remote(url: &str, setting: &str) -> Result<(), VlmError> {
+    let url = url.trim();
+    if !is_http_url(url) {
+        return Err(VlmError::Misconfigured(format!(
+            "{setting} must be an http(s) address, not {url:?}"
+        )));
+    }
+    if !url.to_ascii_lowercase().starts_with("https://") && !is_local_host(url) {
+        return Err(VlmError::Misconfigured(format!(
+            "{setting} is {url:?}: the key only goes to a secure or local address, so use https for a remote host, or http://127.0.0.1, http://localhost, or a private-network address"
+        )));
+    }
+    Ok(())
 }
 
 /// `localhost`, a loopback address, or a private-network address (RFC 1918,
@@ -1254,6 +1271,7 @@ pub fn openrouter_key_at(url: &str, key: &str) -> Result<Value, String> {
     if key.is_empty() {
         return Err("Add an OpenRouter key first".into());
     }
+    guard_remote(url, "OpenRouter endpoint").map_err(|e| e.to_string())?;
     let agent = models_agent();
     let mut reply = agent
         .get(url)
@@ -1316,6 +1334,7 @@ pub fn opencode_key_at(url: &str, key: &str) -> Result<Value, String> {
     if key.is_empty() {
         return Err("Add an OpenCode key first".into());
     }
+    guard_remote(url, "OpenCode endpoint").map_err(|e| e.to_string())?;
     let agent = models_agent();
     let mut reply = agent
         .get(url)
@@ -1355,8 +1374,12 @@ fn opencode_url(host: &str, default: &str) -> String {
     }
 }
 
-pub fn opencode_chat_url(host: &str) -> String {
-    opencode_url(host, OPENCODE_CHAT_URL)
+/// The chat URL for an OpenCode service, guarded like every other address a
+/// setting names: https, or plain http on the user's own machine or LAN only.
+pub fn opencode_chat_url(host: &str) -> Result<String, VlmError> {
+    let url = opencode_url(host, OPENCODE_CHAT_URL);
+    guard_remote(&url, "vlm_host")?;
+    Ok(url)
 }
 
 /// Claude Code's tokens are prefixed distinctly enough to recognise, which
@@ -1499,7 +1522,7 @@ pub fn build_request(
             images,
             schema,
             num_predict,
-        ),
+        )?,
         "openai" => openai_request(
             &settings.vlm_model,
             &settings.vlm_api_key,
@@ -1531,7 +1554,7 @@ pub fn build_request(
             // is only an alias from older settings; it never reaches the Go
             // subscription base, whose allowance is for coding assistants.
             let mut request = openai_request_at(
-                &opencode_chat_url(&settings.vlm_host),
+                &opencode_chat_url(&settings.vlm_host)?,
                 false,
                 &settings.vlm_model,
                 &settings.vlm_api_key,
@@ -1793,14 +1816,22 @@ impl VlmClient {
             // waiting out.
             let pool = self.hosts.pool_for(settings.ollama_hosts());
             let host = pool.acquire();
-            let mut req = ollama_request(
+            let mut req = match ollama_request(
                 &host,
                 &settings.vlm_model,
                 prompt,
                 images,
                 schema,
                 num_predict,
-            );
+            ) {
+                Ok(req) => req,
+                // The host was refused before a socket was opened: hand the
+                // pool token back instead of leaking it on the error path.
+                Err(e) => {
+                    pool.release(host);
+                    return Err(e);
+                }
+            };
             apply_reasoning(
                 &mut req,
                 "ollama",
@@ -3324,14 +3355,67 @@ mod tests {
 
     #[test]
     fn an_opencode_endpoint_is_completed_with_the_chat_path() {
-        assert_eq!(opencode_chat_url(""), OPENCODE_CHAT_URL);
+        assert_eq!(opencode_chat_url("").unwrap(), OPENCODE_CHAT_URL);
         assert_eq!(
-            opencode_chat_url("https://proxy.local/v1/"),
+            opencode_chat_url("https://proxy.local/v1/").unwrap(),
             "https://proxy.local/v1/chat/completions"
         );
         assert_eq!(
-            opencode_chat_url("https://proxy.local/v1/chat/completions"),
+            opencode_chat_url("https://proxy.local/v1/chat/completions").unwrap(),
             "https://proxy.local/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn a_plain_http_remote_chat_host_is_refused_but_https_and_local_are_allowed() {
+        assert!(
+            matches!(
+                opencode_chat_url("http://evil.example/v1"),
+                Err(VlmError::Misconfigured(_))
+            ),
+            "a public plain-http host must be refused before the key is attached"
+        );
+        assert!(opencode_chat_url("https://proxy.example/v1").is_ok());
+        for local in [
+            "http://127.0.0.1:11434",
+            "http://localhost:11434",
+            "http://192.168.1.9:11434",
+            "http://10.0.0.5:11434",
+            "http://172.20.3.4:11434",
+        ] {
+            assert!(opencode_chat_url(local).is_ok(), "{local}");
+        }
+        assert!(matches!(
+            opencode_chat_url("file:///etc/passwd"),
+            Err(VlmError::Misconfigured(_))
+        ));
+        assert!(matches!(
+            opencode_chat_url("http://169.254.169.254/latest"),
+            Err(VlmError::Misconfigured(_))
+        ));
+    }
+
+    #[test]
+    fn the_vision_request_refuses_a_plain_http_remote_host() {
+        let cloud = Settings {
+            vlm_provider: "opencode".into(),
+            vlm_model: "jev-1".into(),
+            vlm_api_key: "sk-test".into(),
+            vlm_host: "http://evil.example".into(),
+            ..Default::default()
+        };
+        let err = build_request(&cloud, "x", &[], &json!({}), 10).unwrap_err();
+        assert!(
+            matches!(err, VlmError::Misconfigured(ref m) if m.contains("vlm_host")),
+            "{err}"
+        );
+
+        let ollama = Settings {
+            vlm_provider: "ollama".into(),
+            vlm_host: "http://evil.example:11434".into(),
+            ..Default::default()
+        };
+        let err = build_request(&ollama, "x", &[], &json!({}), 10).unwrap_err();
+        assert!(matches!(err, VlmError::Misconfigured(_)), "{err}");
     }
 }
