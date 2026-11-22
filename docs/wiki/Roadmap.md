@@ -4,7 +4,7 @@
 
 [Home](Home) · Previous: [Troubleshooting](Troubleshooting)
 
-This page separates what is **built** from what is only **planned**. Plans change; nothing here is a promise of a date.
+This page separates shipped work from plans. No dates are promised.
 
 ## Built and in main
 

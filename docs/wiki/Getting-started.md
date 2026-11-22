@@ -11,13 +11,13 @@ Download the latest release:
 - **Installer** (`Conrod-<v>-win64-setup.exe`): per-user install, no admin rights.
 - **Portable** (`Conrod-<v>-win64.zip`): unzip and run `Conrod.exe`.
 
-Builds are not code-signed, so Windows SmartScreen asks once. Choose **More info > Run anyway**.
+Builds are not code-signed. When SmartScreen appears, choose **More info > Run anyway**.
 
 Conrod keeps its database, settings, models, and Lightroom bridge packages in `%USERPROFILE%\.conrod`.
 
 ## 2. First launch
 
-The splash reports real work, not a decorative progress bar:
+The splash shows these steps:
 
 1. **Library** — opens the database and applies updates.
 2. **Unfinished albums** — albums a crash or a close left half-scanned are put back to *stopped* and named, so you can resume them.
@@ -25,7 +25,7 @@ The splash reports real work, not a decorative progress bar:
 4. **ExifTool** — finds the bundled ExifTool.
 5. **Graphics card** — reads its memory so Conrod can plan vision and decision work.
 
-The detector, face, similarity, and quality models are not loaded at start-up; they load on the first scan. The splash never pretends otherwise.
+The detector, face, similarity, and quality models load on the first scan, not at start-up.
 
 ## 3. The setup wizard
 
@@ -36,7 +36,7 @@ On first run the wizard asks:
 - who is in your pictures, for each motorsport type;
 - whether moments should be spotted and whether they may lift ranking.
 
-Your answers are stored as global defaults and copied into each new album. A skipped wizard changes nothing and never opens by itself again. **Settings > Set up Conrod again** runs it later.
+Your answers become global defaults copied into each new album. Skipping the wizard changes no defaults and it will not open again automatically. Run it later from **Settings > Set up Conrod again**.
 
 ## 4. Your first scan
 
@@ -46,7 +46,7 @@ Your answers are stored as global defaults and copied into each new album. A ski
 4. Leave **Scan and cull** on for a normal first pass. **Cull only** skips identification; **Identify only** skips the automatic cull.
 5. Press **Start**.
 
-The **Ingest** tab shows the live flowchart and the scan log. When the scan ends, **Review** opens on the suggested keepers. The first scan of a large album is the slow one; later passes reuse what is stored.
+The **Ingest** tab shows the live flowchart and scan log. When the scan ends, **Review** opens on the suggested keepers. The first scan of a large album takes longest; later passes reuse stored results.
 
 ## 5. What you get
 
@@ -58,7 +58,7 @@ The **Ingest** tab shows the live flowchart and the scan log. When the scan ends
 
 ## 6. Optional: Lightroom
 
-Conrod writes stars, picks, and colour labels into your files by default, so Lightroom sees them after **Read Metadata from File** or on import. The plug-in is optional: turn on Settings > **Lightroom** > **Install the Conrod Bridge plug-in**, restart Lightroom Classic, then use **Library > Plug-in Extras**. See [Lightroom integration](Lightroom-integration).
+Conrod writes stars, picks, and colour labels into your files. Lightroom reads them with **Read Metadata from File** or on import. To use the optional plug-in, turn on Settings > **Lightroom** > **Install the Conrod Bridge plug-in**, restart Lightroom Classic, then open **Library > Plug-in Extras**. See [Lightroom integration](Lightroom-integration).
 
 ## 7. Optional: a vision model
 
@@ -69,4 +69,4 @@ For make, model, colour, team, and stronger race-number reads, add a vision serv
 
 Open **Settings > Identification > AI models**. The model guidance, costs, and privacy notes are in [AI models in Conrod](../user/ai-models.md).
 
-Without a vision model, nothing breaks: Conrod still finds cars, measures sharpness, groups bursts, suggests keepers, and reads plates and numbers with OCR.
+Without a vision model, Conrod still finds cars, measures sharpness, groups bursts, suggests keepers, and reads plates and numbers with OCR.

@@ -4,7 +4,7 @@
 
 [Home](Home) · Previous: [How culling works](How-culling-works) · Next: [Lightroom integration](Lightroom-integration)
 
-Identify is the second lane: it reads what a culling run found. It can run automatically after a scan, on demand from Review, or on its own for an album scanned with **Cull only**.
+Identify reads the subjects found during culling. It runs after a scan, from Review, or on its own for an album scanned with **Cull only**.
 
 ## What it reads
 
@@ -40,13 +40,13 @@ Add one or more servers in **Settings > Identification > AI models**:
 - **OpenRouter** with an API key. **Test key** checks the key without spending a model call.
 - **OpenCode Go** with a subscription key.
 
-You can enable several. **Load balancing** chooses least busy, round robin, or random. The model named on the identify screen is the one that will answer.
+Enable several servers if you want. **Load balancing** chooses least busy, round robin, or random. The identify screen names the model answering each run.
 
 A built-in vision model is planned, not shipped. See [Recommended setups](Recommended-setups) and [AI models in Conrod](../user/ai-models.md).
 
 ## OCR's role
 
-Whole-crop OCR is the weakest number read. It can take digits out of a sponsor's livery, so it is demoted:
+Whole-crop OCR is the weakest number reader and can mistake sponsor text for a number:
 
 - If the vision model ran, the shoot is not a race shoot, and OCR disagrees with the model, the OCR number is discarded.
 - If you have an entry list, an OCR number that is not on the list is treated as livery or sponsor text, not a number.
@@ -64,28 +64,28 @@ A car can show several numbers: door, nose, windscreen. Conrod reconciles them:
 4. A unique **driver name** on the car can correct the number: car 2's nose board saying 1 loses to "Wood" and "Evans" on the windscreen. A team alone proves nothing, because a team runs two cars.
 5. Across a burst, the number read most often on the most prominent panels settles a tie. This keeps one car's identity consistent through the pass.
 
-Every read leaves a trace in the identify feed: what the model said, what OCR said, what the entry list matched, and what was merged.
+The identify feed records the model and OCR reads, entry-list matches, and merged result.
 
 ## Scopes
 
 - **Keepers (suggested)** — the default. Reads the frame you picked by hand, or, when a burst has no hand pick, the engine's suggested keeper. A hand star alone is not a keeper.
 - **Everything** — every unreviewed, non-bystander subject, culled or not. Use it when you want metadata on frames you did not keep.
 
-The scope is an album setting, and a single run can override it.
+Scope is an album setting; a run can override it.
 
 ## Identify new only
 
-After a redetect, a re-import, or **Skip identify**, some subjects are already read and some are not. **Identify new only** reads only the subjects nobody has read yet. A full identify reads the eligible subjects again.
+After a redetect, re-import, or **Skip identify**, some subjects may be unread. **Identify new only** reads those subjects; a full identify reads eligible subjects again.
 
 ## Skip identify
 
-**Skip identify** accepts the album's identifications as they stand: every unread vehicle or person subject is marked read without a model call, so Review opens. Nothing is deleted. Subjects found later still count as unread and can be read with **Identify new only**.
+**Skip identify** marks every unread vehicle or person as read without a model call, so Review opens. It deletes nothing. Subjects found later remain unread and can be read with **Identify new only**.
 
 ## Watching a run
 
 The Identify screen draws one panel per worker and a flowchart: LOAD, CROP, READ, VISION, ENTRY LIST, RESULT. The DECIDER node shows the decision model's questions and probabilities while the cars are read.
 
-The feed survives after the run so you can read the summary. The next run replaces it. Failures are collected once, not repeated per crop.
+The feed remains after the run; the next run replaces it. Each failure appears once, not once per crop.
 
 ## Reset
 

@@ -4,7 +4,7 @@
 
 [Home](Home) · Previous: [Settings reference](Settings-reference) · Next: [Troubleshooting](Troubleshooting)
 
-These are the same recommendations as [AI models in Conrod](../user/ai-models.md), in short. Prices and limits there were checked on 22 November 2026.
+For prices and limits, see [AI models in Conrod](../user/ai-models.md). Checked 22 November 2026.
 
 ## (a) A good graphics card: everything on this PC
 
@@ -19,7 +19,7 @@ For **12 GB of video memory or more**. Free to run; nothing leaves the PC.
 For **under about 6 GB of video memory**, or no graphics card. Cloud reads cars quickly and costs cents.
 
 1. Add **OpenRouter** or **OpenCode Go** as the vision server.
-2. Leave the decision model off. The cloud vision model judges moments, or the moment lane is skipped; neither demotes a frame.
+2. Leave the on-device decision model off. You can select JEV through OpenCode Go for moment checks; otherwise the vision model may judge them or the lane is skipped. Neither choice demotes a frame.
 3. Detection runs on the processor if there is no card, which is slower. Conrod tells you at start-up.
 
 With no card and no key, Conrod still reads plates and race numbers with OCR, but not make or model.
@@ -34,11 +34,13 @@ For many gaming laptops. The vision and decision models are each too big to sit 
 
 Conrod chooses between these when a scan starts and tells you what it chose.
 
-## Choosing a cloud model
+## Cloud models
+
+Try OpenCode Go first: it is probably the best bang for your buck. Its subscription allowance covers car reads and JEV moment checks (free or paid) with one key, instead of per-token billing.
 
 - **OpenRouter**: `z-ai/glm-5.3-flash` is the cheapest sensible start. Prices per 1,000 photos are in the main guide.
 - **OpenCode Go**: use **GLM-5.3-Flash** (`glm-5.3-flash`). Do not use DeepSeek V4.1 Flash for cars; it kept thinking and never answered in testing.
-- Test a new model on the first 20 readings before trusting a whole shoot.
+- Check a new model's first 20 readings before using it for a whole shoot.
 
 ## Privacy
 

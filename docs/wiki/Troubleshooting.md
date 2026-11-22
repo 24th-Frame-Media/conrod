@@ -60,4 +60,4 @@
 | Disk filling up | Thumbnails, previews, and crops | Settings > System > cache: clear previews or orphaned files. |
 | I shared `settings.json` | Keys are stored unencrypted | Delete the provider keys on the provider's site. |
 
-If a problem is not here, the scan log and the identify feed usually name the failing step: LOAD, CROP, READ, VISION, ENTRY LIST, or RESULT.
+If a problem is not listed, check the scan log and identify feed for the failing step: LOAD, CROP, READ, VISION, ENTRY LIST, or RESULT.

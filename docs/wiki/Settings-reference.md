@@ -4,7 +4,7 @@
 
 [Home](Home) · Previous: [Lightroom integration](Lightroom-integration) · Next: [Recommended setups](Recommended-setups)
 
-Settings has five tabs: **Culling**, **Identification**, **Metadata**, **Lightroom**, and **System**. Most values have a global default and can be overridden per album. The vehicle registry lives here too.
+Settings has five tabs: **Culling**, **Identification**, **Metadata**, **Lightroom**, and **System**. Most values have global defaults and per-album overrides. The vehicle registry is here too.
 
 ## Culling
 
@@ -23,7 +23,7 @@ Settings has five tabs: **Culling**, **Identification**, **Metadata**, **Lightro
 
 ### AI models card
 
-Every model has a row with a plain description, where it runs, its state, and a switch:
+Each model row shows its job, where it runs, its state, and a switch:
 
 | Row | What it does | Where it runs |
 |---|---|---|
@@ -37,7 +37,7 @@ Every model has a row with a plain description, where it runs, its state, and a 
 
 The vision row takes **+ Add server** (Ollama, OpenRouter, or OpenCode Go), a model name, and a switch. **Use a vision model** is the global on/off. The decision row takes **Use the decision model**, a precision choice (8-bit or 4-bit), and, for the OpenRouter transport, a key and model.
 
-Full provider steps, prices, and privacy notes: [AI models in Conrod](../user/ai-models.md).
+See [AI models in Conrod](../user/ai-models.md) for provider setup, prices, and privacy.
 
 ### Readers and text
 
@@ -59,7 +59,7 @@ These two change what the next scan or identify run does; they do not regroup an
 
 ## Metadata
 
-Controls what **Write** puts in the sidecar: rating, label, keywords, prefixes for keeper/cull/burst, whether to embed in RAW, and the XMP fields to write. A dry run logs the proposed keywords without changing files or written timestamps.
+Controls what **Write** puts in the sidecar: rating, label, keywords, keeper/cull/burst prefixes, whether to embed in RAW, and XMP fields. A dry run logs proposed keywords without changing files or written timestamps.
 
 ## Lightroom
 
@@ -77,14 +77,14 @@ See [Lightroom integration](Lightroom-integration).
 
 ## Per-album overrides
 
-Open an album's **Shoot settings** to override any per-album value. An override belongs to that album; clearing it follows the photographer's default, then the shoot type's policy. The default shown on each row is the value that applies when the override is empty.
+Open an album's **Shoot settings** to override a value. Clearing an override follows the photographer's default, then the shoot type's policy. Each row shows the active default.
 
-Rules that matter:
+Rules:
 
 - Changing a guard/grouping value regroups the album in place.
 - Changing **workflow mode** or **identify scope** does not regroup; it affects the next run.
 - An album takes a copy of the wizard defaults when it is created or its shoot type changes. Changing the global profile later does not move existing albums.
-- Older albums have no copy and behave exactly as they did.
+- Older albums have no copy and keep their previous behaviour.
 
 ## Where settings live
 

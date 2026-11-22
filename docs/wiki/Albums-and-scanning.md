@@ -6,20 +6,20 @@
 
 ## An album is a folder
 
-Each album points at one folder tree. The folder name becomes the album name; you can rename the album without touching the folder. An album stores its own shoot type, switches, grouping choices, and results. Original photographs are never moved or changed.
+Each album points to one folder tree. Its name starts as the folder name; renaming the album does not rename the folder. The album stores its shoot type, switches, grouping choices, and results. Conrod never moves or changes the original photographs.
 
-**New scan** creates an album and starts it. Reopening an album lets you resume, rescan, redetect, regroup, identify, or write, without importing the frames again.
+**New scan** creates and starts an album. Reopen it to resume, rescan, redetect, regroup, identify, or write without importing frames again.
 
 ## Shoot types
 
-The shoot type is the biggest switch. It decides:
+The shoot type decides:
 
 - what Conrod looks for (cars, bikes, people, faces, animals);
 - what it reads (race numbers, plates, make/model, livery, names);
 - which moments matter (tyre smoke, a first kiss, a jump apex);
 - how strictly blur is judged and whether panning is forgiven.
 
-The full per-type table is in [Shoot types](../shoot-types.md). In short:
+See the full table in [Shoot types](../shoot-types.md). Key defaults:
 
 - **Motorsport** types look for cars and people. Faces are off until you ask, because helmets hide drivers. People stay on: crowds, pit lane, paddock.
 - **Field and court sports** read jersey numbers from person boxes. Court sports also read names from faces.
@@ -29,7 +29,7 @@ You can change any switch for one album, or clear it to follow the shoot type ag
 
 ## The scan queue
 
-Only one album scans at a time. Starting a second album puts it in the queue:
+Only one album scans at a time. Other albums wait in the queue:
 
 - The Library shows each album's status: *queued*, *scanning*, *stopped*, or *done*.
 - The queue runs first come, first served.
@@ -47,23 +47,23 @@ While a scan runs:
 - **Resume** continues from where it stopped.
 - **Stop** ends the run. Frames already done stay done; the rest can be scanned later.
 
-A stopped album is not a broken album. Nothing is lost.
+Stopping an album does not lose its results.
 
 ## Unfinished scans
 
-If Conrod closes or crashes mid-scan, the album is left half-scanned. On the next start the splash finds these albums, puts them back to *stopped*, and tells you how many. Open the album and press **Resume** to finish it.
+If Conrod closes or crashes mid-scan, the next start finds unfinished albums and returns them to *stopped*. Open one and press **Resume** to finish it.
 
 ## Folder watch
 
-**Folder watch** watches a folder and scans new frames as they settle, which is useful while cards are copying. It uses the album's selected stage: a cull album stays cull-only, an identify album stays identify-only. Disabling the watch removes its saved configuration.
+**Folder watch** scans new frames as they settle while cards copy. It uses the album's selected stage: a cull album stays cull-only, an identify album stays identify-only. Disabling the watch removes its saved configuration.
 
 ## Copies and re-imports
 
-The same frame can arrive twice under different names. **Collapse copies** hides the extra import as a copy; bursts, picks, counts, and writes ignore it. **Restore copies** shows them again and regroups.
+The same frame can arrive twice under different names. **Collapse copies** hides the duplicate; bursts, picks, counts, and writes ignore it. **Restore copies** shows it again and regroups.
 
 ## Re-running work
 
-An album keeps its measurements, so you can ask for one pass again:
+Run one pass again without re-importing:
 
 - **Rescan** re-reads every photo and measures sharpness inside the stored boxes.
 - **Redetect** runs the detector lower on frames where it found nothing.
