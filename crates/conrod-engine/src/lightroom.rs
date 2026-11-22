@@ -1949,7 +1949,14 @@ mod tests {
         assert_eq!(before["installed"], false);
         assert_eq!(before["needsUpdate"], false, "nothing installed yet");
         assert_eq!(before["bundled"], true);
-        assert_eq!(before["enabled"], true, "the bridge starts on");
+        // The plug-in follows the Lightroom setting, whose default the
+        // file-based change turned off; the test tracks the default instead
+        // of hard-coding either way.
+        let bridge_default = conrod_core::settings::Settings::default().lightroom_bridge;
+        assert_eq!(
+            before["enabled"], bridge_default,
+            "status follows the Lightroom setting's default"
+        );
 
         let first = install(Some(&modules), Some(&source)).unwrap();
         assert_eq!(
