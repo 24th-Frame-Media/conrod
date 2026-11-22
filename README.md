@@ -136,6 +136,41 @@ Sponsors found = out of 16 across the three cars. Local rows use the reader's ow
 cloud rows are one provider's pay-as-you-go list rate, one image per car.
 </details>
 
+<details><summary>Other reader models we tried (Nov 2026)</summary>
+
+Nothing in the small class can name a car — the free local qwen3-vl:8b keeps the job.
+
+| Model | Where | Cars | Numbers | Sponsors | Note |
+|---|---|---|---|---|---|
+| qwen3-vl:8b (local) | Your PC | 2/3 | 3/3 | 10/16 | Winner, free |
+| qwen3.8-flash | Cloud (credits) | 2/3 | 3/3 | 8/16 | Same numbers as the winner, $0.87 per 1,000 cars |
+| qwen3-vl:4b | Your PC | 0/3 | 2/3 | 10/16 | Refuses to name cars |
+| qwen3-vl:2b | Your PC | 0/3 | 0/3 | 8/16 | Cannot answer in the required format |
+| gemma4:e4b | Your PC | 0/3 | 3/3 | 7/16 | Calls the Datsun a 240Z |
+| gemma3:4b | Your PC | 0/3 | 3/3 | 6/16 | — |
+| minicpm-v:8b | Your PC | 0/3 | 0/3 | 3/16 | Fails the answer format |
+| granite3.2-vision:2b | Your PC | 0/3 | 2/3 | 0/16 | — |
+| moondream | Your PC | 0/3 | 1/3 | 0/16 | — |
+| openclaw-qwen3vl-8b finetune | Your PC | 1/3 | 2/3 | 3/16 | Slower and worse than its base model |
+
+23 Nov 2026, 3 Challenge Bathurst frames, one crop per car.
+</details>
+
+<details><summary>Car-finder upgrade (Nov 2026)</summary>
+
+YOLO26m found every car in the hardest 40-frame set; it replaces YOLO11s as the default.
+
+| Model | Hard frames found | Confidence on the hardest | Speed vs old | Note |
+|---|---|---|---|---|
+| yolo11s (old) | 36/40 | 0.38 | — | Kept as a fallback |
+| yolo11m | 37/40 | 0.67 | +30% | — |
+| yolo11l | 39/40 | 0.58 | +50% | — |
+| yolo26m | 40/40 | 0.85 | +30% | New default |
+| yolo26l | 40/40 | 0.85 | +60% | No gain over yolo26m |
+
+23 Nov 2026, 40 hardest frames from a real album: cars the finder missed, low-confidence finds, and tiny distant cars.
+</details>
+
 ---
 
 ## Building
