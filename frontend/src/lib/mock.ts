@@ -93,20 +93,34 @@ function makeDb(): Db {
   // QA only: ?mock=1&empty seeds no albums so the empty state can be screenshotted.
   if (params().has('empty')) jobs.length = 0;
   const known: KnownVehicle[] = CARS.map(([make, model, colour, team, race_number, plate]) => ({ plate, make, model, colour, team, race_number }));
+  // `&ai=empty|configured|decision|local` seed the two-zone Photo helpers card's
+  // screenshot states: nothing set up, cloud key saved, decision panel, local models.
+  const ai = params().get('ai');
+  const openCodeKey = 'oc_sk_live_7f3a';
+  const servicesForAi = () => {
+    if (ai === 'empty') return { vlm_services: [], moments_services: [], use_decider: false };
+    if (ai === 'local') return {
+      vlm_services: [],
+      moments_services: [{ id: 'moments-local', provider: 'in_process', model: 'in_process', host: '', api_key: '', enabled: true }],
+      use_decider: true,
+    };
+    return {
+      vlm_services: [{ id: 'vlm-opencode', provider: 'opencode', model: 'glm-5.3-flash', host: '', api_key: openCodeKey, enabled: true }],
+      moments_services: [{ id: 'moments-opencode', provider: 'opencode', model: 'jev-1.13', host: '', api_key: openCodeKey, enabled: true }],
+      use_decider: false,
+    };
+  };
   const settings: Settings = {
     scan_profile: params().get('profile') ?? 'motorsport', detect_conf: 0.35, min_box_fraction: 0.04, max_vehicles_per_frame: 8, include_cars: true, include_bikes: true, include_trucks: false,
     sharp_at: 0.8, blurred_below: 0.5, blur_strictness: 'moderate', entry_list: '', auto_reject_below_stars: 0, cull_blurred: true, burst_gap: 1.5, read_plates: true, read_numbers: true, read_text: true,
     use_vlm: true, vlm_provider: 'ollama', vlm_model: 'qwen2.5vl:7b', vlm_host: 'http://localhost:11434', vlm_extra_hosts: '', vlm_api_key: '', vlm_timeout: 120,
-    // The real file keeps legacy fields beside the services; the enabled one is
-    // what the UI and engine must name, never the ollama rows that are off.
-    ...({ vlm_services: [
-      { id: 'vlm-1', provider: 'ollama', model: 'qwen2.5vl:7b', host: 'http://localhost:11434', enabled: false },
-      { id: 'vlm-2', provider: 'ollama', model: 'qwen2.5vl:7b', host: 'http://192.168.1.100:11434', enabled: false },
-      { id: 'vlm-3', provider: 'opencode', model: 'glm-5.3-flash', enabled: true },
-    ] } as unknown as Settings),
+    ...(servicesForAi() as unknown as Settings),
+    // Moment + vision wiring the two-zone card writes back to the engine.
+    moments_strategy: 'least_busy', moments_vlm_fallback: true, moments_threshold: 0.85,
+    vlm_strategy: 'least_busy', vlm_reasoning: false, use_quality_score: true, include_people: true,
     workflow_mode: 'both', identify_scope: 'keepers',
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
-    overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', use_decider: true, decider_quant: 'auto', close_to_tray: false,
+    overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', decider_quant: 'auto', close_to_tray: false,
   };
   return { jobs, frames, dets, known, settings, ticks: 0, identifySkipped: false };
 }
@@ -236,14 +250,31 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     });
     case 'provider_models': {
       const provider = String(a.provider ?? '');
-      if (provider !== 'openai' && provider !== 'opencode' && provider !== 'opencode-go') {
+      const listable = ['openai', 'opencode', 'opencode-go', 'openrouter'];
+      if (!listable.includes(provider)) {
         return out({ models: [], error: `'${provider}' does not list models; type the model name` });
       }
-      const models = provider === 'openai'
-        ? [{ id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }, { id: 'o4-mini', name: 'o4-mini' }]
-        : [{ id: 'qwen3.8-max', name: 'qwen3.8-max' }, { id: 'deepseek-v4.1-flash', name: 'deepseek-v4.1-flash' }, { id: 'kimi-k2', name: 'kimi-k2' }];
+      let models: { id: string; name: string }[];
+      if (provider === 'openai') models = [{ id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }, { id: 'o4-mini', name: 'o4-mini' }];
+      else if (provider === 'openrouter') models = [{ id: 'qwen/qwen2.5-vl-72b-instruct', name: 'qwen/qwen2.5-vl-72b-instruct' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' }];
+      else models = [{ id: 'glm-5.3-flash', name: 'glm-5.3-flash' }, { id: 'glm-4.6v', name: 'glm-4.6v' }, { id: 'qwen3-vl:8b', name: 'qwen3-vl:8b' }];
       return out({ models });
     }
+    case 'decision_models': {
+      const provider = String(a.provider ?? '');
+      if (provider === 'openrouter') {
+        return out({ models: [], freeText: true, note: 'No photo-capable decision model available for this service' });
+      }
+      if (provider === 'opencode' || provider === 'opencode-go') {
+        return out({ models: [
+          { id: 'jev-1.13', name: 'jev-1.13', image: true, unverified: false },
+          { id: 'jev-1.13-free', name: 'jev-1.13-free', image: true, unverified: false },
+        ], freeText: false, note: null });
+      }
+      return out({ models: [], freeText: true, error: `'${provider}' does not list decision models` });
+    }
+    case 'openrouter_check': return out({ ok: true, label: 'Conrod dev key', limit: null, usage: null });
+    case 'openCodeCheck': return out({ ok: true, label: 'OpenCode Console (JEV enabled)' });
     case 'summary': return out({images: {scanned: db.frames.length, written: 0, errors: 0}, counts: {numbered: 48, plated: 48, to_review: 12}});
     case 'shoot_stats': {
       const frames = db.frames.length;
