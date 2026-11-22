@@ -7,7 +7,7 @@
 # AI models in Conrod: what they do and how to set them up
 
 Conrod uses several models to cull and label photos. Most run on your PC and need no setup. The larger **vision model**
-can run in the cloud. The **on-device decision model** runs on your PC; OpenCode Go can also provide JEV for moment checks.
+can run in the cloud. The **on-device decision model** runs on your PC; OpenCode's pay-as-you-go credits can also provide JEV for moment checks.
 (coming) The vision model can also do the decision model's job, so you do not need both.
 
 You can turn off every model and still get sharpness checks, bursts, and suggested keepers. Models add vehicle detection,
@@ -28,8 +28,8 @@ Prices and limits were checked on **22 November 2026**. Check the provider's pag
 | **Number/text reader (OCR)** | Reads race numbers, signs and sponsor boards as text. It fills in a number only when the vision model did not see one. | Your PC | About 15 MB, installed automatically. |
 | **Faces/eyes** | Finds faces and checks whether eyes are open, so a shut eye can lower a portrait's rating. It can also help suggest names. Nothing leaves your PC. | Your PC | About 43 MB, installed automatically. Turn on with **People**. |
 | **Sharpness/quality** | Checks how sharp the subject is. The main sharpness check is a measurement of the picture itself and needs no download. The optional quality model scores a subject's technical quality and is used only to choose between two equally sharp frames. | Your PC | The optional model is a small extra download. Off by default. |
-| **Vision model** | Looks at a cropped picture of a car and reads **make, model, colour, team and race number**. This is the model that "knows what a car is". It is the slowest part of a scan. | (coming) **Built into Conrod** ("This PC (built-in)"), no extra program needed. Or your PC through **Ollama** (a free program you install yourself). Or the cloud (OpenRouter, OpenCode Go, and others). | Built-in: about 5.2 GB of download and about 6 GB of free video memory (the graphics card's own memory). Ollama: about 6 GB of each. Cloud: a key. |
-| **Decision model** | Answers yes/no questions about a photo: tyre smoke? a kiss? the peak of a jump? It helps choose between equally sharp frames. Optional. | On-device: your PC's graphics card. Cloud moments: JEV through OpenCode Go. | About 5.5 GB download and about 6.5 GB of free video memory for the on-device model (or about 4.5 GB in the smaller "4-bit" version). |
+| **Vision model** | Looks at a cropped picture of a car and reads **make, model, colour, team and race number**. This is the model that "knows what a car is". It is the slowest part of a scan. | (coming) **Built into Conrod** ("This PC (built-in)"), no extra program needed. Or your PC through **Ollama** (a free program you install yourself). Or the cloud (OpenRouter, OpenCode credits, and others). | Built-in: about 5.2 GB of download and about 6 GB of free video memory (the graphics card's own memory). Ollama: about 6 GB of each. Cloud: a key. |
+| **Decision model** | Answers yes/no questions about a photo: tyre smoke? a kiss? the peak of a jump? It helps choose between equally sharp frames. Optional. | On-device: your PC's graphics card. Cloud moments: JEV through OpenCode credits. | About 5.5 GB download and about 6.5 GB of free video memory for the on-device model (or about 4.5 GB in the smaller "4-bit" version). |
 
 **The vision model can stand in for the decision model.** (coming) If the on-device model does not fit or you do not want
 its download, the vision model can answer the same yes/no questions using the full photo and car crop in the car-reading
@@ -63,7 +63,7 @@ The cloud models listed below are mostly **untested** by us; only one has been t
 | Detector, plates, text reader, faces/eyes, sharpness, grouping | Always | Never |
 | **Vision model** | If you pick "this PC" (built-in or Ollama) | A **cropped picture of one car** (up to about 1,500 pixels on its long side), plus a short instruction. At shoots where Conrod reads jersey numbers, the crop is of a **person**. (coming) If the cloud vision model also answers the yes/no moment questions, it gets a **small copy of the whole photo** (about 640 pixels wide) as well. |
 | **On-device decision model** | Always. | Never |
-| **JEV moment checks** | Never | Through OpenCode Go, if enabled. |
+| **JEV moment checks** | Never | Through OpenCode credits, if enabled. |
 | Your key | Stored on your PC in Conrod's settings file, **not encrypted** | Sent to the company that owns it, to prove it is you |
 
 If you shoot weddings, children, or anything with a privacy agreement, keep the vision model on your PC or turn it
@@ -90,10 +90,10 @@ Large shoots take time; leave Conrod running.
 
 For under about 6 GB of video memory or no graphics card. Cloud reads are quick and cost cents.
 
-Try OpenCode Go first: it is probably the best bang for your buck. Its subscription allowance covers vision reads and JEV moment checks (`jev-1.13` or `jev-1.13-free`) with one key, instead of per-token billing.
+Try OpenCode first: it may be the best value. Its **pay-as-you-go credit balance** covers vision reads and JEV moment checks (`jev-1.13` or `jev-1.13-free`) with one key, and you add money only when you need it. **Do not use the OpenCode Go coding subscription** for Conrod: Go is sold for coding assistants, and spending its allowance from a photo app breaks OpenCode's terms.
 
-1. Set up **OpenRouter** (section 4) or **OpenCode Go** (section 5) as your vision server.
-2. Leave the on-device **decision model** off if you do not want its download. You can select JEV through OpenCode Go for
+1. Set up **OpenRouter** (section 4) or **OpenCode credits** (section 5) as your vision server.
+2. Leave the on-device **decision model** off if you do not want its download. You can select JEV through OpenCode credits for
    moment checks; the cloud vision model can also judge moments (coming).
 
 Detection will run on the processor if there is no graphics card, which is slower: Conrod tells you at start-up.
@@ -103,7 +103,7 @@ With no graphics card and no key, Conrod still reads plates and race numbers, bu
 
 For an 8 GB card, common in gaming laptops. The vision and decision models do not both fit on the card. If you have a key:
 
-1. Vision model in the **cloud** (OpenRouter or OpenCode Go), so the card is free for the detector.
+1. Vision model in the **cloud** (OpenRouter or OpenCode credits), so the card is free for the detector.
 2. Decision model on your **graphics card**, in the smaller 4-bit version if Conrod offers it. Or skip it and let the
    cloud vision model answer the moment questions (a bit less precise, much faster).
 
@@ -165,7 +165,7 @@ OpenRouter's public list on 22 November 2026, plus the 5.5% fee on the money you
 ### 4.5 The on-device decision model is not available through OpenRouter
 
 The on-device **decision model** runs on your graphics card. OpenRouter's Perplexity decision model accepts text and JSON,
-not images, so Conrod does not send photos to it. OpenCode Go supports JEV for moment checks with the same key used for
+not images, so Conrod does not send photos to it. OpenCode credits support JEV for moment checks with the same key used for
 vision reads.
 ### 4.6 Privacy
 
@@ -187,61 +187,72 @@ vision reads.
 4. Press **Add**, make sure **Use a vision model** is switched on, then press **Save changes**.
 ---
 
-## 5. OpenCode Go (a monthly subscription)
+## 5. OpenCode credits (pay as you go)
 
 ### 5.1 What it is
 
-OpenCode Go is a **fixed monthly price** for a set of models, sold mainly to people who use AI coding assistants.
-The monthly allowance replaces per-photo billing. Conrod can use Go for vision reads and JEV moment checks.
+OpenCode Console is a **pay-as-you-go** gateway: you add credit to your workspace and each request is charged to that
+balance at the model's list price. There is no monthly allowance and no coding-assistant requirement. Conrod uses it for
+vision reads and JEV moment checks.
 
-| Plan | Price | |
-|---|---|---|
-| **Go** | **$10 a month** | Enough for Conrod many times over |
-| Go Plus | $40 a month | Higher limits |
-| Go Teams | $20 per person per month, 2 people minimum | Each person has their own limits |
+**Do not use OpenCode Go (the $10/month coding subscription) for Conrod.** Go is sold for coding assistants and its
+usage limits are meant for that traffic; spending them from a photo app breaks OpenCode's terms. Conrod never calls the
+Go endpoint, so a Console key used here is charged to credits.
 
-### 5.2 How to get a key
+### 5.2 One key, no separate "credits key"
 
-1. Go to **opencode.ai/go** and sign in to the **OpenCode Console**.
-2. Subscribe to **Go** and add your billing details.
-3. Copy your **API key** from the Console.
+There is **no special credits key type**. A Console key starts `oc_sk_…` and the **endpoint** decides what it bills:
 
-### 5.3 Which models can read photos
+- `https://opencode.ai/inference/...` (the base Conrod uses) charges your **credit balance**. OpenCode's own cost report
+  labels these requests `billing_source: "balance"`.
+- `https://opencode.ai/inference/go/...` draws on the **Go subscription**. Conrod does not use it, and the Settings
+  **Endpoint** field exists only for a proxy: leave it blank unless you run one.
 
-Not every model in Go can look at pictures. Pictures work with, among others: **GLM-5.3-Flash**, **Qwen3.8 Flash**,
-**Qwen3.7 Plus**, **MiMo-V2.6-Flash**, **MiniMax M3.1 Flash**, **Claude Haiku 5.5**, **GPT-6 Luna** and **Gemini 4 Argon**.
+The same key can therefore serve the vision model and JEV, because both go through the credits base.
 
-Use **GLM-5.3-Flash** (`glm-5.3-flash`). It is the only one Conrod's team has tried; it read a test car's number correctly.
-For moment checks, OpenCode Go offers JEV as `jev-1.13` and `jev-1.13-free`.
+### 5.3 How to get a key and add credit
+
+1. Go to **opencode.ai/console** and sign in.
+2. **Settings, Billing**: add a payment method and press **Add credits** ($10, $50, $100 or another amount). A
+   processing fee of 4.6% + $0.31 is added on top; the full amount goes to your balance.
+3. **Account, Personal API keys**: press **Add API key**, name it "Conrod", and copy the key. OpenCode shows it only once.
+4. Optional: set a **budget** for the key or workspace so a mistake cannot cost more than that.
+
+### 5.4 Which models can read photos, and what they cost
+
+Prices are per **1 million tokens**, checked 22 November 2026 (Console pricing page). Pictures work with, among others:
+**GLM-5.3-Flash**, **Qwen3.8 Flash**, **Claude Haiku 5.5**, **GPT-6 Luna** and **Gemini 4 Argon**.
+
+Use **GLM-5.3-Flash** (`glm-5.3-flash`): $0.15 in / $0.50 out. It is the only one Conrod's team has tried; it read a test
+car's number correctly. At our assumed 1,900 tokens in and 150 out per read it is about **0.04 cents per read**, or
+**about 6 cents per 1,000 photos** for keepers only (about 160 reads). Reading every car in a burst is about 12 cents.
 **Do not use DeepSeek V4.1 Flash for cars:** in our test it kept thinking and never gave an answer.
 
-### 5.4 Limits and cost
+For moment checks, use JEV: `jev-1.13` costs **$0.042 per million input tokens**, output free; `jev-1.13-free` is free
+for a limited time. A check is about 1,100 tokens, so roughly **0.005 cents each**, and about **1.5 cents per 1,000
+photos** if the vision model also answers moment questions. Real bills vary with image size and model behaviour; watch
+**Activity** in the Console after the first scan.
 
-- Your plan has a monthly allowance measured in dollars at the models' list prices. On Go, it is **$60 of GLM-5.3-Flash use**
-  a month. The allowance also has a **5-hour** window (a fifth of the month) and a **weekly** window (half the month, resets
-  Monday 00:00 UTC).
-- At our assumed 1,900 tokens in and 150 out per read, GLM-5.3-Flash is about **0.04 cents per read** on Go, so $60 covers well
-  over **100,000 reads** a month, far more than one photographer needs. OpenCode's own estimate for the model is about
-  6,300 requests per 5 hours (that figure is for coding-style requests).
-- If you reach a limit you can keep using free models, or turn on **Extra Usage** (it spends credit you added).
+### 5.5 Limits and privacy
 
-### 5.5 Be aware
-
-- Go is sold for **coding assistants**. OpenCode says clients must identify themselves and send a session ID, and that
-  traffic is monitored. Conrod does both, and it worked in our test on 18 November 2026. OpenCode does **not** promise a photo
-  app is supported, and its rules may change. If Go stops working, use OpenRouter instead.
-- **Privacy:** by default, Go blocks models that train on your requests, and allows regions in **Europe and the United
-  States**. GLM-5.3-Flash is listed with zero data retention. Check **Settings, Privacy** in the OpenCode Console.
+- Requests fail with **402** when the balance is empty. The balance never goes negative. Auto-recharge can top it up.
+- **Privacy:** Console models are hosted in the US and EU, and the providers keep zero data retention except where the
+  Console pricing page says otherwise. **GLM-5.3-Flash is listed at 0 days**, so it does not train on or keep your
+  requests. JEV is a TypeSafe AI model on the same zero-retention terms.
+- Conrod sends only a cropped car picture (and a short instruction) for a vision read, or a small copy of the frame plus
+  the crop for a JEV check. Whole files never leave your PC.
 
 ### 5.6 Put it into Conrod
 
 1. **Settings**, **Identification** tab, **AI models**, **Vision model** row, **+ Add server**.
-2. For **Type** choose **OpenCode Go (subscription)**. Paste the key.
+2. For **Type** choose **OpenCode (pay-as-you-go credits)**. Paste the key. Do not paste a Go subscription key you also
+   use for coding.
 3. For **Model**, press the refresh arrow: if a list of models appears, your key works. Pick **GLM-5.3-Flash**.
 4. Press **Add**, make sure **Use a vision model** is on, and press **Save changes**.
+5. For moments, choose **OpenCode (JEV)** under **Where it runs**. Leave the OpenCode key blank there to reuse the vision
+   server's key, or paste the same key.
 
-There is no separate "Test" button for OpenCode Go. A model list that loads is the check. (Do not choose plain
-**OpenCode (Console credits)**: that one bills per use and stops when your credit runs out.)
+The key test loads OpenCode's model list and spends no model credit.
 
 ---
 
@@ -252,7 +263,7 @@ There is no separate "Test" button for OpenCode Go. A model list that loads is t
 - **Built-in vision model:** (coming) the same model, Qwen2.5-VL 7B, built into Conrod. It has not been measured yet: we
   expect 5 to 8 seconds per car and about 6 GB of video memory, and we will only make it the default once its readings match
   Ollama's.
-- **Cloud:** only `glm-5.3-flash` through OpenCode Go has been tried, on one car. Everything else in the tables is a
+- **Cloud:** only `glm-5.3-flash` through OpenCode credits has been tried, on one car. Everything else in the tables is a
   sensible guess from price and model family. If you try one, spot-check the first 20 readings.
 
 ---
@@ -283,12 +294,12 @@ There is no separate "Test" button for OpenCode Go. A model list that loads is t
 | "Vision model: Not set up" | No server added, or the switch is off | Add a server (section 4.7 or 5.6) and switch **Use a vision model** on |
 | "Ollama offline at http://localhost:11434" | The Ollama program is not running | Start Ollama (it sits in the system tray), then press the refresh arrow |
 | "No auth", **401**, "key refused" | The key is wrong, has a space on the end, was deleted, or hit its credit limit | Copy it again; check the key on the provider's website |
-| **402**, "insufficient credits" | No money left | Add credits (OpenRouter), or turn on Extra Usage or top up (OpenCode) |
-| **429**, "rate limit" | Too many requests too fast, or a free-model daily limit | Wait a few minutes. On OpenRouter, buy $10 of credits to raise the free limit. On Go, you reached a 5-hour or weekly window |
+| **402**, "insufficient credits" | No money left | Add credits (OpenRouter or the OpenCode Console) |
+| **429**, "rate limit" | Too many requests too fast, or a free-model daily limit | Wait a few minutes. On OpenRouter, buy $10 of credits to raise the free limit. On OpenCode, check the key's budget |
 | "does not support images" or empty answers | The model cannot look at pictures | Pick one from the tables above, or filter by **Input: Image** on openrouter.ai/models |
-| **400**, "MissingSessionID" (Go) | A very old Conrod, or the wrong OpenCode type | Update Conrod; choose **OpenCode Go (subscription)**, not plain OpenCode |
+| **400**, "MissingSessionID" | A custom **Endpoint** points at OpenCode's Go base | Clear **Endpoint** so Conrod uses the credits base |
 | Numbers say "Number read by OCR only" | Vision is off or failed for that car | Check the vision switch and server; the scan screen says why |
-| "Not enough video memory: X free, needs Y" (decision model) | Another program (a game, a video, Ollama) is using the card, or the card is too small for both models | Close it, choose the 4-bit version, or leave the on-device model off. You can select JEV through OpenCode Go for moments. (coming) The vision model can answer moment questions too. The scan works without either |
+| "Not enough video memory: X free, needs Y" (decision model) | Another program (a game, a video, Ollama) is using the card, or the card is too small for both models | Close it, choose the 4-bit version, or leave the on-device model off. You can select JEV through OpenCode credits for moments. (coming) The vision model can answer moment questions too. The scan works without either |
 | (coming) "Built-in vision model: not enough video memory" | The card has under about 6 GB free | Close other programs that use the graphics card, use a cloud vision server, or leave vision off |
 | (coming) The built-in vision model download stops or fails | A dropped connection or full disk (it needs about 5.2 GB free) | Press download again: it carries on where it stopped and checks the file when done |
 | "No graphics card was found" | Detection runs on the processor | Fine, just slower. Cloud vision still works |
@@ -296,8 +307,8 @@ There is no separate "Test" button for OpenCode Go. A model list that loads is t
 | The bill is bigger than expected | A "thinking" model, a big model, or "read everything" | Check **Activity** on openrouter.ai; set a **credit limit** on the key; switch to `z-ai/glm-5.3-flash`; read keepers only |
 | A scan is slow | Local vision is about 10 seconds per car | Use a cloud server for the vision model, or leave it running |
 
-Your key is saved in Conrod's settings file on your PC without encryption. Use a key with a **credit limit**, and delete
-the key on the provider's website if you ever share the file or the PC.
+Your key is saved in Conrod's settings file on your PC without encryption. Use a key with a **credit limit** or a
+workspace **budget**, and delete the key on the provider's website if you ever share the file or the PC.
 
 ---
 
@@ -308,6 +319,7 @@ the key on the provider's website if you ever share the file or the PC.
 - OpenRouter free-model and rate limits: openrouter.ai/docs/api/reference/limits
 - Why the decision model is not offered through OpenRouter (images not yet supported): openrouter.ai/perplexity/pplx-decider-flash-v1.3
 - Built-in vision model files and sizes: huggingface.co/ggml-org/Qwen2.5-VL-7B-Instruct-GGUF (Apache-2.0)
-- OpenCode Go plans, limits, privacy: opencode.ai/go and opencode.ai/docs/go
-- OpenCode Go model list (which accept pictures, prices): opencode.ai/inference/go/v1/models
-- Conrod's own test numbers: the project's model notes (qwen2.5vl:7b rounds 1 and 2; GLM-5.3-Flash through Go on 18 November 2026)
+- OpenCode Console plans, credits, fees and privacy: opencode.ai/docs/console/billing, opencode.ai/docs/console/models
+- OpenCode credits vs Go: the Console inference base charges the balance (`billing_source: "balance"`); `/inference/go` draws the Go coding subscription: opencode.ai/docs/console/api/inference, opencode.ai/docs/console/go
+- OpenCode model list and JEV endpoint (which accept pictures, prices): opencode.ai/inference/v1/models and opencode.ai/docs/console/models
+- Conrod's own test numbers: the project's model notes (qwen2.5vl:7b rounds 1 and 2; GLM-5.3-Flash through OpenCode on 18 November 2026)

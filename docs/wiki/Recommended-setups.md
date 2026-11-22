@@ -18,8 +18,8 @@ For **12 GB of video memory or more**. Free to run; nothing leaves the PC.
 
 For **under about 6 GB of video memory**, or no graphics card. Cloud reads cars quickly and costs cents.
 
-1. Add **OpenRouter** or **OpenCode Go** as the vision server.
-2. Leave the on-device decision model off. You can select JEV through OpenCode Go for moment checks; otherwise the vision model may judge them or the lane is skipped. Neither choice demotes a frame.
+1. Add **OpenRouter** or **OpenCode credits** as the vision server.
+2. Leave the on-device decision model off. You can select JEV through OpenCode credits for moment checks; otherwise the vision model may judge them or the lane is skipped. Neither choice demotes a frame.
 3. Detection runs on the processor if there is no card, which is slower. Conrod tells you at start-up.
 
 With no card and no key, Conrod still reads plates and race numbers with OCR, but not make or model.
@@ -28,7 +28,7 @@ With no card and no key, Conrod still reads plates and race numbers with OCR, bu
 
 For many gaming laptops. The vision and decision models are each too big to sit on the card together.
 
-1. Put the **vision model in the cloud** (OpenRouter or OpenCode Go), leaving the card for the detector.
+1. Put the **vision model in the cloud** (OpenRouter or OpenCode credits), leaving the card for the detector.
 2. Put the **decision model on the card**, in the smaller 4-bit version if offered. Or skip it and let the cloud vision model judge moments.
 3. With no key: keep vision local, and let the same model judge moments. It is slow but fits.
 
@@ -36,18 +36,18 @@ Conrod chooses between these when a scan starts and tells you what it chose.
 
 ## Cloud models
 
-Try OpenCode Go first: it is probably the best bang for your buck. Its subscription allowance covers car reads and JEV moment checks (free or paid) with one key, instead of per-token billing.
+OpenCode credits are a good first cloud choice: pay as you go from a Console balance, and one key covers car reads and JEV moment checks (free or paid). **Do not use the OpenCode Go coding subscription** for Conrod; Go is sold for coding assistants, and using its allowance here breaks OpenCode's terms.
 
 - **OpenRouter**: `z-ai/glm-5.3-flash` is the cheapest sensible start. Prices per 1,000 photos are in the main guide.
-- **OpenCode Go**: use **GLM-5.3-Flash** (`glm-5.3-flash`). Do not use DeepSeek V4.1 Flash for cars; it kept thinking and never answered in testing.
+- **OpenCode credits**: use **GLM-5.3-Flash** (`glm-5.3-flash`, $0.15/$0.50 per million tokens; about 6 cents per 1,000 photos). JEV is $0.042 per million input tokens. Do not use DeepSeek V4.1 Flash for cars; it kept thinking and never answered in testing.
 - Check a new model's first 20 readings before using it for a whole shoot.
 
 ## Privacy
 
 - Photo files never leave the PC.
 - Cloud vision sends one cropped car (or person) at a time, plus a short instruction.
-- The decision model always runs on this PC.
-- Keys are stored unencrypted in `settings.json`. Use a credit limit.
+- The decision model runs on this PC or, if you choose, through OpenCode's JEV in the cloud.
+- Keys are stored unencrypted in `settings.json`. Use a credit limit, or an OpenCode workspace budget.
 
 For weddings, children, or anything under a privacy agreement, keep vision local or off.
 

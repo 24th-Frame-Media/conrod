@@ -74,17 +74,17 @@ export const FIELDS = {
   },
   moments_transport: {
     label: 'Where it runs', kind: 'segmented',
-    hint: 'Local uses this PC’s graphics card, with no account or internet. OpenCode sends each question to JEV, its decision model, in the cloud. OpenRouter sends them to a smaller decision model.',
+    hint: 'Local uses this PC’s graphics card, with no account or internet. OpenCode sends each question to JEV, its decision model, in the cloud, charged per use to your OpenCode credits. OpenRouter sends them to a smaller decision model.',
     options: [{ id: 'auto', name: 'Auto' }, { id: 'in_process', name: 'Local (this PC)' }, { id: 'opencode', name: 'OpenCode (JEV)' }, { id: 'openrouter', name: 'OpenRouter' }],
   },
   moments_openrouter_model: { label: 'OpenRouter model', kind: 'text', hint: 'Model id used for the decision model through OpenRouter, e.g. perplexity/pplx-decider-flash-v1.3:free.' },
   moments_openrouter_key: { label: 'OpenRouter key', kind: 'text', hint: 'Shared with an OpenRouter vision service if you add one. Stored in your settings file; never written to logs.' },
   moments_opencode_model: {
     label: 'JEV model', kind: 'segmented',
-    hint: 'JEV is OpenCode’s decision model and reads a photo as well as text. Free costs nothing but OpenCode only allows it after you turn on free endpoints that train on request data; the paid model works straight away.',
+    hint: 'JEV is OpenCode’s decision model and reads a photo as well as text. Paid is charged to your Console credits ($0.042 per million input tokens; output free). Free costs nothing but OpenCode only allows it after you turn on free endpoints that train on request data; the paid model works straight away.',
     options: [{ id: 'jev-1.13-free', name: 'JEV Free' }, { id: 'jev-1.13', name: 'JEV Paid' }],
   },
-  moments_opencode_key: { label: 'OpenCode key', kind: 'text', hint: 'Leave blank to reuse the key of an OpenCode vision service. Stored in your settings file; never written to logs.' },
+  moments_opencode_key: { label: 'OpenCode key', kind: 'text', hint: 'The OpenCode Console key, charged per use to your pay-as-you-go credits. Do not paste an OpenCode Go coding-subscription key. Leave blank to reuse the key of an OpenCode vision service. Stored in your settings file; never written to logs.' },
   read_plates: {
     label: 'Read licence plates', kind: 'toggle', album: true,
     hint: 'OCR registration plates.',

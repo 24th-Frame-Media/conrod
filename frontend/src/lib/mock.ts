@@ -112,7 +112,7 @@ function makeDb(): Db {
     ...({ vlm_services: [
       { id: 'vlm-1', provider: 'ollama', model: 'qwen2.5vl:7b', host: 'http://localhost:11434', enabled: false },
       { id: 'vlm-2', provider: 'ollama', model: 'qwen2.5vl:7b', host: 'http://192.168.1.100:11434', enabled: false },
-      { id: 'vlm-3', provider: 'opencode-go', model: 'glm-5.3-flash', enabled: true },
+      { id: 'vlm-3', provider: 'opencode', model: 'glm-5.3-flash', enabled: true },
     ] } as unknown as Settings),
     workflow_mode: 'both', identify_scope: 'keepers',
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
