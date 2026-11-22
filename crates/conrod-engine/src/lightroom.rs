@@ -1949,7 +1949,10 @@ mod tests {
         assert_eq!(before["installed"], false);
         assert_eq!(before["needsUpdate"], false, "nothing installed yet");
         assert_eq!(before["bundled"], true);
-        assert_eq!(before["enabled"], true, "the bridge starts on");
+        assert_eq!(
+            before["enabled"], false,
+            "the bridge is off until the photographer turns it on"
+        );
 
         let first = install(Some(&modules), Some(&source)).unwrap();
         assert_eq!(
