@@ -1108,9 +1108,12 @@ dialog.viewer {
 .identify-targets { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; font-size: 11px; }
 .identify-targets > span { margin-right: 3px; color: var(--text-mute); }
 .identify-targets em { padding: 3px 7px; border: 1px solid var(--line); border-radius: 6px; color: var(--text-dim); background: var(--surface-3); font-style: normal; }
-.identify-footer { display: flex; align-items: center; gap: 12px; }
+/* The "already identified, read what's new" banner is one row: message left, both actions grouped right,
+   vertically centred in the banner's own background (as in the Ingest scan-failure banner). */
+.identify-again { display: flex; align-items: center; gap: 16px; padding: 14px 16px; }
+.identify-again .identify-copy { flex: 1; min-width: 0; padding: 0; gap: 4px; }
+.identify-again .identify-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .identify-models { color: var(--text-mute); }
-.identify-footer button { margin-left: auto; white-space: nowrap; }
 .identify-progress { height: 3px; background: var(--surface-3); }
 .identify-progress i { display: block; height: 100%; background: var(--text-dim); transition: width .25s var(--ease); }
 .suspect-grid { flex: 1; min-width: 0; overflow: auto; padding: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); align-content: start; gap: 10px; }
