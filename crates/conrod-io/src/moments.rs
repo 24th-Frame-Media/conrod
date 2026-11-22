@@ -264,6 +264,8 @@ impl DecisionTransport for OpenRouterTransport {
         if self.key.trim().is_empty() {
             return Err("No OpenRouter key is set for the decision model".into());
         }
+        vlm::guard_remote(OPENROUTER_URL, "OpenRouter decision endpoint")
+            .map_err(|e| e.to_string())?;
         let agent = ureq::Agent::new_with_config(
             ureq::Agent::config_builder()
                 .http_status_as_error(false)
@@ -302,6 +304,7 @@ impl OpenCodeTransport {
         if self.key.trim().is_empty() {
             return Err("No OpenCode key is set for the decision model".into());
         }
+        vlm::guard_remote(url, "OpenCode decision endpoint").map_err(|e| e.to_string())?;
         let agent = ureq::Agent::new_with_config(
             ureq::Agent::config_builder()
                 .http_status_as_error(false)

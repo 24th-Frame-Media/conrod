@@ -13,11 +13,13 @@ pub fn vision(settings: &Settings, enabled: bool) -> Value {
         .build()
         .into();
     let result = (|| -> Result<bool, String> {
+        let url = format!("{}/api/tags", settings.vlm_host.trim_end_matches('/'));
+        // Never probe a host the settings only allow over https: a health
+        // check is still a request, and plain http to a remote host would
+        // leak the photo and the key.
+        crate::vlm::guard_remote(&url, "vlm_host").map_err(|e| e.to_string())?;
         let v: Value = agent
-            .get(format!(
-                "{}/api/tags",
-                settings.vlm_host.trim_end_matches('/')
-            ))
+            .get(url)
             .call()
             .map_err(|e| e.to_string())?
             .body_mut()
@@ -128,6 +130,19 @@ pub fn ollama_models(host: &str) -> Value {
         .build()
         .into();
     let url = format!("{}/api/tags", host_str.trim_end_matches('/'));
+    // A model list is a GET to whatever host the settings name: refuse a
+    // remote plain-http host before the socket is opened, and answer with an
+    // empty list rather than anything the refused host might have returned.
+    if let Err(e) = crate::vlm::guard_remote(&url, "ollama host") {
+        return json!({
+            "ok": false,
+            "host": host_str,
+            "online": false,
+            "error": e.to_string(),
+            "note": e.to_string(),
+            "models": []
+        });
+    }
     let resp = match agent.get(&url).call() {
         Ok(mut r) => {
             if r.status().as_u16() != 200 {
@@ -240,5 +255,25 @@ mod tests {
         assert_eq!(rows[0]["detail"], "No vision service enabled");
         assert_eq!(rows[0]["ready"], false);
         assert!(!rows[0].to_string().contains("qwen2.5vl"));
+    }
+
+    #[test]
+    fn ollama_models_refuses_a_remote_plain_http_host_with_an_empty_list() {
+        // No socket is opened: the guard answers before the GET is built, so
+        // this test cannot hang on a host it must not reach.
+        let answer = super::ollama_models("http://evil.example:11434");
+        assert_eq!(answer["ok"], false);
+        assert_eq!(answer["online"], false);
+        assert_eq!(answer["models"], json!([]));
+        let note = answer["note"].as_str().unwrap_or("");
+        assert!(note.contains("ollama host"), "{note}");
+        assert!(note.contains("https"), "{note}");
+
+        let local = super::ollama_models("http://127.0.0.1:1");
+        // A refused-connection local host is an error, but never the guard's.
+        assert!(!local["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("only go to a secure or local address"));
     }
 }
