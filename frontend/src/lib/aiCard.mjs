@@ -331,3 +331,371 @@ export function setCapModel(settings, cap, id, model) {
   if (!done) next.push(baseRow(id, cap, { model }));
   return { [key]: next };
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   Services-plan view — approved mock conrod-notes/mocks/ai-settings/
+   services-plan/index.html. Pure data + derivations: no React, no engine.
+   Snapshot prices are $ per million input/output tokens; one photo is estimated
+   at ~900 tokens in + ~250 out. An unknown live model's price is reported as
+   "varies" rather than invented. The legacy two-zone helpers above are kept so
+   the existing test suite (and any other caller) stays valid; the rebuilt card
+   uses only the exports below.
+   ════════════════════════════════════════════════════════════════════════ */
+
+export const IN_TOK = 900, OUT_TOK = 250;
+
+/** The six addable services. `kind: 'key'` = API key, `kind: 'host'` = a
+ *  per-host Ollama server (one card per host). `decisions` = offers a Decisions
+ *  dropdown; `thinking` = offers a per-card Thinking toggle. `pM`/`cM` are
+ *  $/million input/output tokens (-1 = varies, 0 = free tier). */
+export const SERVICE_TYPES = {
+  opencode: {
+    name: 'OpenCode', tag: '¢ per photo', dot: 'amber', kind: 'key', decisions: true, thinking: true,
+    keyPlaceholder: 'Paste your OpenCode key',
+    note: 'Buy credits in the OpenCode Console. Conrod never logs your key.',
+    models: [
+      { id: 'glm-5.3-flash', role: 'vision', img: true, pM: 0.15, cM: 0.5, efforts: ['low', 'high', 'max'], def: 'high', on: true },
+      { id: 'jev-1.13', role: 'decisions', img: true, pM: 0.042, cM: 0, on: true },
+      { id: 'jev-1.13-free', role: 'decisions', img: true, pM: 0, cM: 0, on: false },
+      { id: 'gemini-decision-1', role: 'decisions', img: true, pM: 0.1, cM: 0, on: true },
+      { id: 'gpt-6-luna-decision', role: 'decisions', img: true, pM: 0.1, cM: 0, on: false },
+    ],
+  },
+  openrouter: {
+    name: 'OpenRouter', tag: '¢ per photo', dot: 'amber', kind: 'key', decisions: true, thinking: true,
+    keyPlaceholder: 'Paste your OpenRouter key',
+    note: 'One key, many model makers. The decision routers can see photos too.',
+    models: [
+      { id: 'qwen/qwen2.5-vl-72b-instruct', role: 'vision', img: true, pM: 0.8, cM: 1, on: true },
+      { id: 'qwen/qwen3-vl-30b-a3b-instruct', role: 'vision', img: true, pM: 0.15, cM: 0.6, on: false },
+      { id: 'tencent/hy4', role: 'vision', img: true, pM: 0.417, cM: 1.2505, efforts: ['high', 'low', 'none'], def: 'high', on: false },
+      { id: 'typesafe/jev-router', role: 'decisions', img: true, pM: -1, cM: -1, efforts: ['auto', 'low', 'medium', 'high'], def: 'auto', on: true },
+      { id: 'openrouter/auto', role: 'decisions', img: true, pM: -1, cM: -1, efforts: ['auto', 'low', 'medium', 'high'], def: 'auto', on: false },
+      { id: 'openrouter/free', role: 'decisions', img: true, pM: 0, cM: 0, on: false },
+    ],
+  },
+  ollama: {
+    name: 'Local Ollama', tag: 'Your network', dot: 'amber', kind: 'host', decisions: false, thinking: true,
+    note: 'A host on your network. Its vision models join car reading and moments.',
+    models: [
+      { id: 'qwen3-vl:8b', role: 'vision', local: true, img: true, variants: ['q4_K_M', 'q8_0'], on: true },
+      { id: 'qwen3-vl:4b', role: 'vision', local: true, img: true, variants: ['q8_0'], on: true },
+      { id: 'llava:7b', role: 'vision', local: true, img: true, variants: ['v1.6'], on: false },
+    ],
+  },
+  gemini: {
+    name: 'Gemini', tag: '¢ per photo', dot: 'amber', kind: 'key', decisions: true, thinking: true,
+    keyPlaceholder: 'Paste your Google AI key',
+    note: "Google's models, billed to your Google AI key. They read photos and decide.",
+    models: [
+      { id: 'gemini-4-hydrogen', role: 'both', img: true, pM: 1.5, cM: 7.5, efforts: ['xhigh', 'high', 'medium', 'low'], def: 'medium', on: true },
+      { id: 'gemini-3.8-flash', role: 'both', img: true, pM: 0.825, cM: 4.125, efforts: ['high', 'medium', 'low'], def: 'medium', on: false },
+    ],
+  },
+  anthropic: {
+    name: 'Anthropic', tag: '¢ per photo', dot: 'amber', kind: 'key', decisions: true, thinking: true,
+    keyPlaceholder: 'Paste your Anthropic key',
+    note: 'Claude models, billed to your Anthropic key. They read photos and decide.',
+    models: [
+      { id: 'claude-haiku-5.5', role: 'both', img: true, pM: 0.1, cM: 0.5, efforts: ['max', 'xhigh', 'high', 'medium', 'low', 'none'], def: 'medium', on: true },
+      { id: 'claude-sonnet-5.5', role: 'both', img: true, pM: 2, cM: 10, efforts: ['max', 'xhigh', 'high', 'medium', 'low'], def: 'high', on: false },
+    ],
+  },
+  openai: {
+    name: 'OpenAI', tag: '¢ per photo', dot: 'amber', kind: 'key', decisions: true, thinking: true,
+    keyPlaceholder: 'Paste your OpenAI key',
+    note: 'GPT models, billed to your OpenAI key. They read photos and decide.',
+    models: [
+      { id: 'gpt-6-luna', role: 'both', img: true, pM: 0.1, cM: 0.5, efforts: ['max', 'xhigh', 'high', 'medium', 'low', 'none'], def: 'medium', on: true },
+      { id: 'gpt-6.1-terra', role: 'both', img: true, pM: 1, cM: 5, efforts: ['max', 'xhigh', 'high', 'medium', 'low', 'none'], def: 'medium', on: false },
+    ],
+  },
+};
+
+export const ADD_ORDER = ['opencode', 'openrouter', 'ollama', 'gemini', 'anthropic', 'openai'];
+export const ADD_DESC = {
+  opencode: 'Credits key · many makers', openrouter: 'One key · many makers',
+  ollama: 'One card per host · vision only', gemini: 'Google AI key',
+  anthropic: 'Anthropic key', openai: 'OpenAI key',
+};
+export const THINK_HINT = 'Models reason step by step before answering. Off keeps reads fast and cheap.';
+
+/** The always-present built-in card: Conrod's own bundled models on this PC. */
+export const BUILTIN = {
+  name: 'Built-in models (This PC)', tag: 'Own PC',
+  note: 'Ready on this PC. Nothing is uploaded.',
+  models: [
+    { id: 'qwen3-vl:8b', role: 'vision', group: 'Reads photos', variants: ['q4_K_M', 'q8_0'], on: true },
+    { id: 'pplx-decider-local', role: 'decisions', group: 'Makes decisions', dl: '~5 GB', on: false },
+  ],
+};
+
+/** One global "How work is shared" control. Its value is the engine's
+ *  round_robin / least_busy / random and is written to BOTH strategy keys. */
+export const SHARING = [
+  { id: 'round_robin', name: 'Round robin' },
+  { id: 'least_busy', name: 'Load balance' },
+  { id: 'random', name: 'Random' },
+];
+export const SHARING_HINT = 'Across every enabled service and picked model. Switched-off cards sit out.';
+export function sharingValue(settings) {
+  const v = String((settings && settings.vlm_strategy) || 'round_robin');
+  return SHARING.some((s) => s.id === v) ? v : 'round_robin';
+}
+/** Pure: the settings patch for choosing a work-sharing mode. Both keys move. */
+export function setSharing(value) {
+  const v = SHARING.some((s) => s.id === value) ? value : 'round_robin';
+  return { vlm_strategy: v, moments_strategy: v };
+}
+
+/* ---- price snapshot, indexed by the model ids the dropdowns offer ---- */
+export const PRICE_BY_ID = (() => {
+  const out = {};
+  for (const def of Object.values(SERVICE_TYPES))
+    for (const m of def.models)
+      if (typeof m.pM === 'number') out[m.id] = { pM: m.pM, cM: m.cM };
+  return out;
+})();
+
+export function fmtUsd(v, deep) {
+  if (deep) return v < 0.0001 ? v.toFixed(5) : v.toFixed(4);
+  return v < 0.01 ? v.toFixed(4) : v.toFixed(2);
+}
+/** One picked model's cost object, or null when it is a local model. */
+export function photoCost(id) {
+  if (PRICE_BY_ID[id] === undefined) return { varies: true }; // honest: unknown price
+  const m = PRICE_BY_ID[id];
+  if (m.pM === 0 && m.cM === 0) return { free: true };
+  if (m.pM < 0 || m.cM < 0) return { varies: true };
+  return { usd: (IN_TOK * m.pM + OUT_TOK * m.cM) / 1e6 };
+}
+/** Card cost line: per photo AND per 1,000, always "est." unless free.
+ *  `picked` = [{ id, local }]. */
+export function costLine(picked = []) {
+  if (!picked.length) return 'No models picked yet — no cost.';
+  if (picked.every((p) => p.local)) return 'Free — runs on your own hardware.';
+  const costs = picked.filter((p) => !p.local).map((p) => photoCost(p.id));
+  if (costs.some((c) => c && c.varies)) return 'est. varies per photo · varies per 1,000 photos — the router’s pick sets the price.';
+  const usd = costs.reduce((s, c) => s + (c && c.usd ? c.usd : 0), 0);
+  if (usd === 0) return 'est. $0 per photo · $0 per 1,000 photos (free tier).';
+  return 'est. $' + fmtUsd(usd, true) + ' per photo · $' + fmtUsd(usd * 1000, false) + ' per 1,000 photos';
+}
+
+/* ---- a service card, with a per-card Thinking flag that defaults OFF ---- */
+export function visionModels(type) {
+  const def = SERVICE_TYPES[type];
+  if (!def) return [];
+  return def.models.filter((m) => m.img && (m.role === 'vision' || m.role === 'both'));
+}
+export function decisionModels(type) {
+  const def = SERVICE_TYPES[type];
+  if (!def || !def.decisions) return [];
+  return def.models.filter((m) => m.role === 'decisions' || m.role === 'both');
+}
+export function makeCard(type, opts = {}) {
+  const def = SERVICE_TYPES[type];
+  const c = {
+    key: type === 'ollama' ? `ollama-${opts.hostIndex ?? 1}` : type,
+    type, enabled: true, thinking: false, reasoning: false, sel: { vision: 'none', decisions: 'none' }, opts: {},
+    apiKey: '', url: opts.url ?? (type === 'ollama' ? 'http://localhost:11434' : ''),
+    tested: false,
+  };
+  const vPick = visionModels(type).find((m) => m.on) || visionModels(type)[0];
+  const dPick = decisionModels(type).find((m) => m.on && m.role === 'decisions');
+  if (vPick) c.sel.vision = vPick.id;
+  if (dPick) c.sel.decisions = dPick.id;
+  return c;
+}
+/** The Thinking default for every card. */
+export function defaultThinking() { return false; }
+export function cardReady(card) {
+  const def = SERVICE_TYPES[card && card.type];
+  if (!def) return false;
+  if (def.kind === 'key') return Boolean(card.apiKey);
+  return Boolean(card.tested) || (Array.isArray(card.liveModels) && card.liveModels.length > 0);
+}
+
+/* ---- which live models fill each dropdown (all honest about gaps) ---- */
+export function visionCandidates(type, live = []) {
+  if (type === 'ollama') return live.filter((m) => m.vision).map((m) => ({ id: m.name, name: m.name }));
+  let list = live;
+  if (type === 'openrouter') {
+    // Decision routers are capable models too, but they belong in the
+    // Decisions dropdown, not Vision (matching the service's own model roles).
+    const decisionIds = new Set(decisionModels('openrouter').map((m) => m.id));
+    list = live.filter((m) => !decisionIds.has(m.id || m.name));
+  }
+  const out = list.map((m) => ({ id: m.id || m.name, name: m.name || m.id }));
+  // A provider that cannot list models still gets its known capable ones.
+  if (!out.length && SERVICE_TYPES[type]) return visionModels(type).map((m) => ({ id: m.id, name: m.id }));
+  return out;
+}
+export function decisionCandidates(type, live = [], decisionLive = []) {
+  const def = SERVICE_TYPES[type];
+  if (!def || !def.decisions) return { models: [], freeText: false };
+  const named = (m) => ({ id: m.id || m.model || m.name, name: m.name || m.id || m.model });
+  // TODO(engine, backend-owned): OpenRouter's decision enumeration is a
+  // decision_models command returning the same shape as OpenCode
+  // ({ id/model, sees_photos, note? }); both render through this same path.
+  // Until that command lands, we fall back to matching decision-capable ids
+  // from the live model list, then to an honest free-text row when none match.
+  if (type === 'opencode' || type === 'openrouter') {
+    const ms = decisionLive.map(named);
+    if (ms.length) return { models: ms, freeText: false };
+    if (type === 'openrouter') {
+      const matches = live
+        .filter((m) => /decision|decider|jev/i.test((m.id || '') + ' ' + (m.name || '')))
+        .map(named);
+      return { models: matches, freeText: matches.length === 0 };
+    }
+    return { models: decisionModels('opencode').map((m) => ({ id: m.id, name: m.id })), freeText: false };
+  }
+  // gemini / anthropic / openai: every offered model both sees and decides.
+  const out = live.map(named);
+  return { models: out.length ? out : decisionModels(type).map((m) => ({ id: m.id, name: m.id })), freeText: false };
+}
+
+/* ---- settings wire helpers (vlm_services / moments_services) ----
+   TODO(engine, backend-owned): every service entry now carries a `reasoning`
+   boolean (per-service thinking, default false). The backend applies it when it
+   builds the VLM request; this UI only reads and writes the field on the two
+   service lists. ---- */
+export const SERVICE_PROVIDER_OF = {
+  opencode: 'opencode', openrouter: 'openrouter', ollama: 'ollama',
+  gemini: 'gemini', anthropic: 'anthropic', openai: 'openai',
+};
+export function providerToType(provider) {
+  const p = String(provider || '').toLowerCase();
+  if (p === 'opencode-go') return 'opencode';
+  return SERVICE_PROVIDER_OF[p] || null; // in_process / local = built-in (separate)
+}
+export function cardKeyFor(entry) {
+  const type = providerToType(entry && entry.provider);
+  if (!type) return null;
+  if (type === 'ollama') return String(entry.id || entry.host || 'ollama');
+  return type;
+}
+/** Derive the added service cards from the real settings draft. One card per
+ *  service type; one card per host for Ollama. */
+export function cardsFromDraft(settings = {}) {
+  const groups = new Map();
+  const add = (s, cap) => {
+    const key = cardKeyFor(s);
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, { key, type: providerToType(s.provider), vlm: null, moments: null });
+    groups.get(key)[cap] = s;
+  };
+  arr(settings.vlm_services).forEach((s) => add(s, 'vlm'));
+  arr(settings.moments_services).forEach((s) => add(s, 'moments'));
+  return [...groups.values()].map((g) => ({
+    key: g.key, type: g.type,
+    apiKey: String((g.vlm || g.moments || {}).api_key || ''),
+    host: String((g.vlm || g.moments || {}).host || ''),
+    enabled: (g.vlm || g.moments).enabled !== false,
+    // Per-service thinking: the persisted `reasoning` flag (default false).
+    reasoning: Boolean((g.vlm || g.moments || {}).reasoning),
+    visionSel: String((g.vlm || {}).model || 'none'),
+    decisionSel: String((g.moments || {}).model || 'none'),
+  }));
+}
+/** Add a service: seed both service lists with its default picked models. */
+export function addService(settings, type, opts = {}) {
+  const def = SERVICE_TYPES[type];
+  const vlm = arr(settings.vlm_services), moments = arr(settings.moments_services);
+  if (!def) return { vlm_services: vlm.slice(), moments_services: moments.slice() };
+  const card = makeCard(type, opts);
+  const id = type === 'ollama' ? (opts.id || `ollama-${Date.now()}-${Math.floor(Math.random() * 1e4)}`) : type;
+  const host = type === 'ollama' ? card.url : '';
+  const vRow = { id: type === 'ollama' ? id : `vlm-${type}`, provider: SERVICE_PROVIDER_OF[type], model: card.sel.vision, host, api_key: '', enabled: true, reasoning: false };
+  const mRow = { id: type === 'ollama' ? id : `moments-${type}`, provider: SERVICE_PROVIDER_OF[type], model: card.sel.decisions, host, api_key: '', enabled: true, reasoning: false };
+  return {
+    vlm_services: [...vlm, vRow],
+    moments_services: def.decisions ? [...moments, mRow] : moments.slice(),
+  };
+}
+/** Remove a card (all its vlm + moments rows). */
+export function removeService(settings, key) {
+  const drop = (list) => arr(list).filter((s) => cardKeyFor(s) !== key);
+  return { vlm_services: drop(settings.vlm_services), moments_services: drop(settings.moments_services) };
+}
+/** Patch one card's key/host/enabled or a picked model. Pure. */
+export function patchService(settings, key, patch = {}) {
+  const map = (list, cap) => arr(list).map((s) => {
+    if (cardKeyFor(s) !== key) return s;
+    const next = { ...s };
+    if ('apiKey' in patch) next.api_key = String(patch.apiKey);
+    if ('host' in patch) next.host = String(patch.host);
+    if ('enabled' in patch) next.enabled = Boolean(patch.enabled);
+    if ('reasoning' in patch) next.reasoning = Boolean(patch.reasoning);
+    if (cap === 'vlm' && 'visionSel' in patch) next.model = String(patch.visionSel);
+    if (cap === 'moments' && 'decisionSel' in patch) next.model = String(patch.decisionSel);
+    return next;
+  });
+  return { vlm_services: map(settings.vlm_services, 'vlm'), moments_services: map(settings.moments_services, 'moments') };
+}
+
+/* ---- helpers: who serves each one, and the anchored popup data ---- */
+export const VISION_HELPER = 'reads-cars';
+export const DECISION_HELPER = 'moments';
+/** ctx = { builtinVision:[ids], builtinDecisions:[ids],
+ *  cards:[{type,enabled,visionSel,decisionSel,apiKey,tested,liveModels}],
+ *  bundled:{ helperId:[{id,ready}] } }. */
+export function servingFor(helperId, ctx = {}) {
+  const list = [];
+  const push = (id, ready) => { if (id && !list.some((x) => x.id === id)) list.push({ id, ready: Boolean(ready) }); };
+  const cards = (ctx.cards || []).filter((c) => c.enabled);
+  if (helperId === DECISION_HELPER) {
+    (ctx.builtinDecisions || []).forEach((id) => push(id, true));
+    for (const c of cards) {
+      const ready = cardReady(c);
+      if (c.decisionSel && c.decisionSel !== 'none') push(c.decisionSel, ready);
+      else if (c.type === 'ollama' && c.visionSel && c.visionSel !== 'none') push(c.visionSel, ready);
+    }
+  } else if (helperId === VISION_HELPER) {
+    (ctx.builtinVision || []).forEach((id) => push(id, true));
+    for (const c of cards) if (c.visionSel && c.visionSel !== 'none') push(c.visionSel, cardReady(c));
+  } else {
+    // Non-AI helpers run on Conrod's own bundled models, never a cloud provider.
+    (ctx.bundled && ctx.bundled[helperId] ? ctx.bundled[helperId] : []).forEach((m) => push(m.id, m.ready));
+  }
+  return list;
+}
+/** Data for the compact "model in use" line + its anchored popup. */
+export function modelLine(list) {
+  if (!list.length) return { head: null, rest: [], all: [], noModel: true };
+  const all = list.map((x) => x.id);
+  return { head: all[0], rest: all.slice(1), all, noModel: false };
+}
+/** Status for a helper row (no location tags, no AI-cloud wording). */
+export function helperStatus(on, list) {
+  if (!on) return { text: 'Off', cls: 'off', dot: 'off' };
+  if (list.some((x) => x.ready)) return { text: 'Ready', cls: '', dot: 'ok' };
+  if (list.length) return { text: 'Needs a key', cls: 'locked', dot: 'amber' };
+  return { text: 'No model', cls: 'off', dot: 'off' };
+}
+
+/* ---- pool count + one-line summary strip ---- */
+export function poolCount(ctx = {}) {
+  let n = (ctx.builtinVision || []).length + (ctx.builtinDecisions || []).length;
+  let svc = n ? 1 : 0;
+  for (const c of (ctx.cards || [])) {
+    if (!c.enabled) continue;
+    let joined = 0;
+    if (c.visionSel && c.visionSel !== 'none') joined++;
+    if (c.decisionSel && c.decisionSel !== 'none') joined++;
+    if (joined) { svc++; n += joined; }
+  }
+  return { n, svc };
+}
+export function poolLabel(p) {
+  return p.n
+    ? `<b>${p.n}</b> model${p.n === 1 ? '' : 's'} in the pool · ${p.svc} service${p.svc === 1 ? '' : 's'}`
+    : 'Nothing in the pool yet';
+}
+export function summaryText(ctx = {}) {
+  const p = poolCount(ctx);
+  const routing = (SHARING.find((s) => s.id === ctx.routing) || SHARING[0]).name.toLowerCase();
+  if (!p.n) return { text: 'No models in the pool. Enable a service and pick its models.', dot: 'amber' };
+  return { text: `${p.n} model${p.n === 1 ? '' : 's'} ready across ${p.svc} service${p.svc === 1 ? '' : 's'}, shared ${routing}.`, dot: 'ok' };
+}
+
