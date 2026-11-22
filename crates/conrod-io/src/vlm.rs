@@ -40,7 +40,7 @@ pub const OPENCODE_MODELS_URL: &str = "https://opencode.ai/inference/v1/models";
 /// stable session id, and a client user agent rather than a library default.
 pub const OPENCODE_GO_CHAT_URL: &str = "https://opencode.ai/inference/go/v1/chat/completions";
 pub const OPENCODE_GO_MODELS_URL: &str = "https://opencode.ai/inference/go/v1/models";
-const OPENCODE_USER_AGENT: &str = concat!("conrod/", env!("CARGO_PKG_VERSION"));
+pub(crate) const OPENCODE_USER_AGENT: &str = concat!("conrod/", env!("CARGO_PKG_VERSION"));
 pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 const GEMINI_URL: &str =
@@ -887,6 +887,70 @@ pub fn openrouter_key_check(key: &str) -> Result<Value, String> {
     openrouter_key_at(OPENROUTER_KEY_URL, key)
 }
 
+/// Parse OpenCode's model list as a key check: the list proves the key works,
+/// and says whether the decision model JEV is on it. A non-2xx is an error
+/// carrying OpenCode's own message, never the key.
+pub fn opencode_key_reply(status: u16, body: &Value) -> Result<Value, String> {
+    if !(200..300).contains(&status) {
+        let said = body
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or("no message");
+        return Err(format!("OpenCode answered {status}: {said}"));
+    }
+    let list = body
+        .get("data")
+        .or_else(|| body.get("models"))
+        .and_then(Value::as_array)
+        .ok_or("OpenCode replied without a model list")?;
+    let jev = list.iter().any(|model| {
+        model
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("jev-"))
+    });
+    Ok(json!({
+        "ok": true,
+        "label": format!(
+            "{} models, decision model {}",
+            list.len(),
+            if jev { "JEV ready" } else { "JEV not listed" }
+        ),
+    }))
+}
+
+/// Ask OpenCode for its model list with a key, without spending a model call.
+/// `opencode_key_at` takes its URL so a test can point it at a local server.
+pub fn opencode_key_at(url: &str, key: &str) -> Result<Value, String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("Add an OpenCode key first".into());
+    }
+    let agent = models_agent();
+    let mut reply = agent
+        .get(url)
+        .header("Authorization", &format!("Bearer {key}"))
+        .header("User-Agent", OPENCODE_USER_AGENT)
+        .header("x-opencode-session", opencode_session())
+        .call()
+        .map_err(|e| {
+            format!(
+                "OpenCode could not be reached: {}",
+                e.to_string().replace(key, "***")
+            )
+        })?;
+    let status = reply.status().as_u16();
+    let body: Value = reply
+        .body_mut()
+        .read_json()
+        .map_err(|e| format!("OpenCode replied without JSON: {e}"))?;
+    opencode_key_reply(status, &body)
+}
+
+pub fn opencode_key_check(key: &str) -> Result<Value, String> {
+    opencode_key_at(OPENCODE_MODELS_URL, key)
+}
+
 /// Where an OpenCode service talks: the configured endpoint if there is one
 /// (a proxy, or a self-hosted gateway), else the default for this provider. An
 /// endpoint given without a path is completed with `/chat/completions`.
@@ -914,7 +978,7 @@ pub fn opencode_go_chat_url(host: &str) -> String {
 /// it to route one client's requests and reuse its prompt cache. One per process
 /// is what "per conversation" means here -- Conrod keeps one long conversation
 /// with the model for the whole session.
-fn opencode_session() -> &'static str {
+pub(crate) fn opencode_session() -> &'static str {
     static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     SESSION.get_or_init(|| {
         let nanos = std::time::SystemTime::now()
@@ -2510,6 +2574,34 @@ mod tests {
             openrouter_key_reply(401, &json!({"error": {"message": "No auth"}})).unwrap_err();
         assert!(denied.contains("401") && denied.contains("No auth"));
         assert!(!denied.contains("sk-"));
+    }
+
+    #[test]
+    fn an_opencode_key_check_reads_the_model_list_and_spots_jev() {
+        let body = json!({
+            "data": [
+                {"id": "jev-1.13", "name": "Jev 1.13"},
+                {"id": "jev-1.13-free", "name": "Jev 1.13 Free"},
+                {"id": "glm-5.3", "name": "GLM"}
+            ]
+        });
+        let reply = opencode_key_reply(200, &body).unwrap();
+        assert_eq!(reply["ok"], true);
+        assert!(
+            reply["label"].as_str().unwrap().contains("JEV ready"),
+            "{:?}",
+            reply["label"]
+        );
+        let no_jev = json!({"data": [{"id": "glm-5.3"}]});
+        assert!(opencode_key_reply(200, &no_jev).unwrap()["label"]
+            .as_str()
+            .unwrap()
+            .contains("JEV not listed"));
+        let denied =
+            opencode_key_reply(401, &json!({"error": {"message": "Invalid API key"}})).unwrap_err();
+        assert!(denied.contains("401") && denied.contains("Invalid API key"));
+        assert!(opencode_key_reply(200, &json!({"nope": true})).is_err());
+        assert!(opencode_key_check("  ").is_err(), "a blank key is not sent");
     }
 
     #[test]

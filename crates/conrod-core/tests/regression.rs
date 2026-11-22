@@ -1202,6 +1202,8 @@ fn settings_match_snapshot() {
             "moments_transport",
             "moments_openrouter_model",
             "moments_openrouter_key",
+            "moments_opencode_model",
+            "moments_opencode_key",
         ] {
             m.remove(key); // Rust-only: moment judge
         }

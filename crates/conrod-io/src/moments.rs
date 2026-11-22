@@ -3,14 +3,14 @@
 //! clearly visible and how sure it is.
 //!
 //! Two backends: `vlm`, the vision model already in the identify lane (it names
-//! tags but has no calibrated probability), and `decider`, Perplexity's
-//! decision model, which answers calibrated probabilities through a
-//! [`DecisionTransport`] (OpenRouter's Decisions API, or an in-process model).
-//! A failure is an `Err`; callers treat it as "no moment" and never block a
-//! scan or demote a frame because of it.
+//! tags but has no calibrated probability), and `decider`, a decision model
+//! that answers calibrated probabilities through a [`DecisionTransport`]
+//! (OpenCode's System One model JEV, OpenRouter's Decisions API, or an
+//! in-process model). A failure is an `Err`; callers treat it as "no moment"
+//! and never block a scan or demote a frame because of it.
 
 use crate::settings::Settings as IoSettings;
-use crate::vlm::VlmClient;
+use crate::vlm::{self, VlmClient};
 use conrod_core::decision::{self, DecisionTransport, InProcess, Request, Response};
 use conrod_core::moments::{Moment, MomentReading, MomentVerdict};
 use conrod_core::settings::Settings;
@@ -197,10 +197,14 @@ impl MomentJudge for DeciderJudge {
 }
 
 pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/alpha/decisions";
+/// OpenCode's System One endpoint: JEV, a typed decision model that also takes
+/// PNG/JPEG images as `image_url` parts inside `state`. Billed to the OpenCode
+/// balance, so it is on the pay-as-you-go host, not the Go plan host.
+pub const OPENCODE_DECISION_URL: &str = "https://opencode.ai/inference/systemone/v1/systemone";
 
-/// OpenRouter's Decisions API: the same request, with the images moved into
-/// `state` as `image_url` parts (a top-level `images` field is rejected 400).
-pub fn openrouter_body(model: &str, request: &Request) -> Value {
+/// The [`Request`] as both decision APIs take it: the images moved into `state`
+/// as `image_url` parts (a top-level `images` field is rejected 400).
+pub fn decisions_body(model: &str, request: &Request) -> Value {
     let state = if request.images.is_empty() {
         request.state.clone()
     } else {
@@ -216,16 +220,16 @@ pub fn openrouter_body(model: &str, request: &Request) -> Value {
     json!({"model": model, "state": state, "questions": request.questions})
 }
 
-/// An OpenRouter reply as a [`Response`]; a non-2xx says why, never the key.
-pub fn parse_openrouter(status: u16, body: &[u8]) -> Result<Response, String> {
+/// A decision API's reply as a [`Response`]; a non-2xx says why, never the key.
+pub fn parse_decisions(provider: &str, status: u16, body: &[u8]) -> Result<Response, String> {
     let value: Value = serde_json::from_slice(body)
-        .map_err(|_| format!("OpenRouter answered {status} with no JSON"))?;
+        .map_err(|_| format!("{provider} answered {status} with no JSON"))?;
     if !(200..300).contains(&status) {
         let said = value
             .pointer("/error/message")
             .and_then(Value::as_str)
             .unwrap_or("no message");
-        return Err(format!("OpenRouter answered {status}: {said}"));
+        return Err(format!("{provider} answered {status}: {said}"));
     }
     // Answers sit at the top level, or under `data` on some gateways.
     let answers = if value.get("answers").is_some() {
@@ -233,7 +237,15 @@ pub fn parse_openrouter(status: u16, body: &[u8]) -> Result<Response, String> {
     } else {
         value.get("data").cloned().unwrap_or(value)
     };
-    serde_json::from_value(answers).map_err(|e| format!("OpenRouter reply was not a decision: {e}"))
+    serde_json::from_value(answers).map_err(|e| format!("{provider} reply was not a decision: {e}"))
+}
+
+pub fn parse_openrouter(status: u16, body: &[u8]) -> Result<Response, String> {
+    parse_decisions("OpenRouter", status, body)
+}
+
+pub fn parse_opencode(status: u16, body: &[u8]) -> Result<Response, String> {
+    parse_decisions("OpenCode", status, body)
 }
 
 pub struct OpenRouterTransport {
@@ -260,7 +272,7 @@ impl DecisionTransport for OpenRouterTransport {
         let mut reply = agent
             .post(OPENROUTER_URL)
             .header("Authorization", &format!("Bearer {}", self.key.trim()))
-            .send_json(openrouter_body(&self.model, request))
+            .send_json(decisions_body(&self.model, request))
             .map_err(|e| {
                 format!(
                     "OpenRouter could not be reached: {}",
@@ -273,15 +285,76 @@ impl DecisionTransport for OpenRouterTransport {
     }
 }
 
+/// OpenCode's System One endpoint, whose decision model is JEV. It takes the
+/// same body as OpenRouter's Decisions API; the Go plan headers are not needed
+/// because JEV is billed to the OpenCode balance.
+pub struct OpenCodeTransport {
+    pub key: String,
+    pub model: String,
+    pub timeout: Duration,
+}
+
+impl DecisionTransport for OpenCodeTransport {
+    fn name(&self) -> &'static str {
+        "opencode"
+    }
+
+    fn decide(&self, request: &Request) -> Result<Response, String> {
+        if self.key.trim().is_empty() {
+            return Err("No OpenCode key is set for the decision model".into());
+        }
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .timeout_global(Some(self.timeout))
+                .build(),
+        );
+        let mut reply = agent
+            .post(OPENCODE_DECISION_URL)
+            .header("Authorization", &format!("Bearer {}", self.key.trim()))
+            .header("User-Agent", vlm::OPENCODE_USER_AGENT)
+            .header("x-opencode-session", vlm::opencode_session())
+            .send_json(decisions_body(&self.model, request))
+            .map_err(|e| {
+                format!(
+                    "OpenCode could not be reached: {}",
+                    e.to_string().replace(self.key.trim(), "***")
+                )
+            })?;
+        let status = reply.status().as_u16();
+        let body = reply.body_mut().read_to_vec().map_err(|e| e.to_string())?;
+        parse_opencode(status, &body)
+    }
+}
+
+/// The OpenCode key the decider uses: its own, else the key of an enabled
+/// OpenCode vision service, so one OpenCode account serves both lanes.
+fn opencode_key(settings: &Settings) -> String {
+    let own = settings.moments_opencode_key.trim();
+    if !own.is_empty() {
+        return own.to_string();
+    }
+    settings
+        .vlm_services
+        .iter()
+        .filter(|s| s.enabled && s.provider.starts_with("opencode"))
+        .map(|s| s.api_key.trim())
+        .find(|key| !key.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
 /// Which transport carries the decision model's questions, from the album's
 /// `moments_transport`: `auto` (the default) prefers the in-process model when
-/// one is seated, else OpenRouter when a key is set; `in_process` and
-/// `openrouter` are strict. `Err` says what is missing.
+/// one is seated, else OpenCode when a key is set, else OpenRouter; `auto`,
+/// `in_process`, `opencode` and `openrouter` are otherwise strict. `Err` says
+/// what is missing.
 fn transport_for(
     settings: &Settings,
     in_process: InProcess,
 ) -> Result<Arc<dyn DecisionTransport>, String> {
-    let has_key = !settings.moments_openrouter_key.trim().is_empty();
+    let openrouter_key = settings.moments_openrouter_key.trim().to_string();
+    let opencode_key = opencode_key(settings);
     let openrouter = || -> Arc<dyn DecisionTransport> {
         Arc::new(OpenRouterTransport {
             key: settings.moments_openrouter_key.clone(),
@@ -289,16 +362,32 @@ fn transport_for(
             timeout: Duration::from_secs(60),
         })
     };
+    let opencode = || -> Arc<dyn DecisionTransport> {
+        Arc::new(OpenCodeTransport {
+            key: opencode_key.clone(),
+            model: if settings.moments_opencode_model.trim().is_empty() {
+                "jev-1.13".into()
+            } else {
+                settings.moments_opencode_model.clone()
+            },
+            timeout: Duration::from_secs(60),
+        })
+    };
     match settings.moments_transport.as_str() {
         "in_process" => Ok(Arc::new(in_process)),
-        "openrouter" if has_key => Ok(openrouter()),
+        "openrouter" if !openrouter_key.is_empty() => Ok(openrouter()),
         "openrouter" => {
             Err("Add an OpenRouter key to judge moments with the decision model".into())
         }
+        "opencode" if !opencode_key.is_empty() => Ok(opencode()),
+        "opencode" => {
+            Err("Add an OpenCode key to judge moments with JEV".into())
+        }
         _ if in_process.is_available() => Ok(Arc::new(in_process)),
-        _ if has_key => Ok(openrouter()),
+        _ if !opencode_key.is_empty() => Ok(opencode()),
+        _ if !openrouter_key.is_empty() => Ok(openrouter()),
         _ => Err(
-            "Turn on the decision model in Settings (or add an OpenRouter key) to judge moments with it"
+            "Turn on the decision model in Settings (or add an OpenCode or OpenRouter key) to judge moments with it"
                 .into(),
         ),
     }
@@ -555,7 +644,7 @@ mod tests {
         let vocab = vocabulary(ShootPreset::Wedding);
         let req =
             decision::moment_request("Weddings.", vocab, vec!["data:image/jpeg;base64,AA".into()]);
-        let body = openrouter_body("perplexity/pplx-decider-flash-v1.3:free", &req);
+        let body = decisions_body("perplexity/pplx-decider-flash-v1.3:free", &req);
         assert!(body.get("images").is_none());
         assert_eq!(body["model"], "perplexity/pplx-decider-flash-v1.3:free");
         let state = body["state"].as_array().unwrap();
@@ -564,7 +653,7 @@ mod tests {
         assert_eq!(state[1]["image_url"]["url"], "data:image/jpeg;base64,AA");
         assert_eq!(body["questions"]["m_first_kiss"]["type"], "noul");
         // Text only: the state stays a string.
-        let bare = openrouter_body("m", &decision::moment_request("x", vocab, vec![]));
+        let bare = decisions_body("m", &decision::moment_request("x", vocab, vec![]));
         assert!(bare["state"].is_string());
     }
 
@@ -596,6 +685,101 @@ mod tests {
             .decide(&req)
             .unwrap_err()
             .contains("No OpenRouter key"));
+    }
+
+    #[test]
+    fn opencode_jev_takes_images_inside_state_and_both_model_ids() {
+        let vocab = vocabulary(ShootPreset::MotorsportTrack);
+        let req = decision::moment_request(
+            "Track day.",
+            vocab,
+            vec![
+                "data:image/jpeg;base64,FRAME".into(),
+                "data:image/jpeg;base64,CROP".into(),
+            ],
+        );
+        for model in ["jev-1.13", "jev-1.13-free"] {
+            let body = decisions_body(model, &req);
+            assert!(body.get("images").is_none(), "{model}");
+            assert_eq!(body["model"], model);
+            let state = body["state"].as_array().unwrap();
+            assert!(state[0].as_str().unwrap().contains("whole photograph"));
+            assert_eq!(state[1]["type"], "image_url");
+            assert_eq!(state[1]["image_url"]["url"], "data:image/jpeg;base64,FRAME");
+            assert_eq!(state[2]["image_url"]["url"], "data:image/jpeg;base64,CROP");
+        }
+    }
+
+    #[test]
+    fn opencode_replies_parse_and_errors_never_echo_a_key() {
+        // The shape JEV actually answers with, including a score's legend.
+        let ok = br#"{"model":"jev-1.13","answers":{"m_waving":{"type":"noul","noul":0.98},"strength":{"type":"score","score":2,"confidence":0.7,"legend":{"0":"none","1":"weak","2":"moderate","3":"strong"},"probabilities":{"0":0.01,"1":0.13,"2":0.71,"3":0.15}}},"usage":{"input_tokens":375,"output_tokens":86}}"#;
+        let reply = parse_opencode(200, ok).unwrap();
+        assert_eq!(reply.answers["m_waving"].noul, Some(0.98));
+        assert_eq!(reply.answers["strength"].score, Some(2.0));
+        assert_eq!(reply.usage.unwrap().input_tokens, 375);
+        let denied = parse_opencode(
+            401,
+            br#"{"error":{"type":"invalid_request_error","message":"Invalid API key"}}"#,
+        )
+        .unwrap_err();
+        assert!(denied.contains("401") && denied.contains("Invalid API key"));
+        assert!(parse_opencode(502, b"<html>")
+            .unwrap_err()
+            .contains("OpenCode"));
+        let transport = OpenCodeTransport {
+            key: " ".into(),
+            model: "jev-1.13-free".into(),
+            timeout: Duration::from_secs(1),
+        };
+        let req = decision::moment_request("x", vocabulary(ShootPreset::Wedding), vec![]);
+        assert!(transport
+            .decide(&req)
+            .unwrap_err()
+            .contains("No OpenCode key"));
+    }
+
+    #[test]
+    fn the_opencode_key_is_its_own_or_the_vision_services() {
+        let mut s = Settings::default();
+        assert_eq!(
+            s.moments_opencode_model, "jev-1.13",
+            "the paid id works as is"
+        );
+        assert_eq!(opencode_key(&s), "", "no key anywhere");
+        s.vlm_services.push(conrod_core::settings::VlmService {
+            id: "vlm-1".into(),
+            provider: "opencode-go".into(),
+            model: "glm-5.3-flash".into(),
+            host: String::new(),
+            api_key: "oc_sk_shared".into(),
+            key_kind: "auto".into(),
+            enabled: true,
+        });
+        assert_eq!(
+            opencode_key(&s),
+            "oc_sk_shared",
+            "one OpenCode account serves vision and moments"
+        );
+        s.vlm_services[0].enabled = false;
+        assert_eq!(opencode_key(&s), "", "a service that is off shares nothing");
+        s.moments_opencode_key = " oc_sk_own ".into();
+        assert_eq!(opencode_key(&s), "oc_sk_own", "its own key wins");
+        // Auto prefers JEV over OpenRouter once a key exists.
+        s.moments_backend = "decider".into();
+        s.moments_openrouter_key = "or".into();
+        assert_eq!(
+            transport_for(&s, InProcess::unavailable()).unwrap().name(),
+            "opencode"
+        );
+        // Explicit opencode without a key says what is missing.
+        s.moments_opencode_key.clear();
+        s.moments_transport = "opencode".into();
+        let err = match transport_for(&s, InProcess::unavailable()) {
+            Ok(_) => panic!("opencode without a key has no transport"),
+            Err(e) => e,
+        };
+        assert!(err.contains("OpenCode key"));
     }
 
     #[test]

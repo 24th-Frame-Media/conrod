@@ -74,11 +74,17 @@ export const FIELDS = {
   },
   moments_transport: {
     label: 'Where it runs', kind: 'segmented',
-    hint: 'Local uses this PC’s graphics card, with no account or internet. OpenRouter sends each question to the cloud with your key.',
-    options: [{ id: 'auto', name: 'Auto' }, { id: 'in_process', name: 'Local (this PC)' }, { id: 'openrouter', name: 'OpenRouter' }],
+    hint: 'Local uses this PC’s graphics card, with no account or internet. OpenCode sends each question to JEV, its decision model, in the cloud. OpenRouter sends them to a smaller decision model.',
+    options: [{ id: 'auto', name: 'Auto' }, { id: 'in_process', name: 'Local (this PC)' }, { id: 'opencode', name: 'OpenCode (JEV)' }, { id: 'openrouter', name: 'OpenRouter' }],
   },
   moments_openrouter_model: { label: 'OpenRouter model', kind: 'text', hint: 'Model id used for the decision model through OpenRouter, e.g. perplexity/pplx-decider-flash-v1.3:free.' },
   moments_openrouter_key: { label: 'OpenRouter key', kind: 'text', hint: 'Shared with an OpenRouter vision service if you add one. Stored in your settings file; never written to logs.' },
+  moments_opencode_model: {
+    label: 'JEV model', kind: 'segmented',
+    hint: 'JEV is OpenCode’s decision model and reads a photo as well as text. Free costs nothing but OpenCode only allows it after you turn on free endpoints that train on request data; the paid model works straight away.',
+    options: [{ id: 'jev-1.13-free', name: 'JEV Free' }, { id: 'jev-1.13', name: 'JEV Paid' }],
+  },
+  moments_opencode_key: { label: 'OpenCode key', kind: 'text', hint: 'Leave blank to reuse the key of an OpenCode vision service. Stored in your settings file; never written to logs.' },
   read_plates: {
     label: 'Read licence plates', kind: 'toggle', album: true,
     hint: 'OCR registration plates.',
@@ -218,14 +224,25 @@ export const AI_MODELS = [
   },
   {
     id: 'decision', title: 'Decision model',
-    does: 'Judges moments and answers many yes/no questions about a frame, on your graphics card or through OpenRouter.',
+    does: 'Judges moments and answers many yes/no questions about a frame, on your graphics card, through OpenCode’s JEV, or through OpenRouter.',
     where: 'dynamic',
-    keys: ['use_decider', 'decider_quant', 'moments_transport', 'moments_openrouter_model', 'moments_openrouter_key'],
+    keys: ['use_decider', 'decider_quant', 'moments_transport', 'moments_openrouter_model', 'moments_openrouter_key', 'moments_opencode_model', 'moments_opencode_key'],
     switches: ['use_decider'],
   },
 ];
 
 const enabledServices = (settings) => (Array.isArray(settings?.vlm_services) ? settings.vlm_services.filter((s) => s.enabled) : []);
+
+/**
+ * The OpenCode key the decider uses: its own, else the key of an enabled
+ * OpenCode vision service, so one account serves both lanes.
+ */
+export function decisionOpenCodeKey(settings = {}) {
+  const own = String(settings.moments_opencode_key ?? '').trim();
+  if (own) return own;
+  const service = enabledServices(settings).find((s) => String(s.provider ?? '').startsWith('opencode') && String(s.api_key ?? '').trim());
+  return service ? String(service.api_key).trim() : '';
+}
 
 /** The row's primary switch: the detector is always on; text needs either reader. */
 function modelOn(model, settings) {
@@ -253,7 +270,8 @@ export function aiModelWhere(model, settings = {}) {
   if (model.id === 'decision') {
     if (settings.moments_transport === 'in_process') return "This PC's graphics card";
     if (settings.moments_transport === 'openrouter') return 'Cloud (OpenRouter)';
-    return "This PC's graphics card or OpenRouter";
+    if (settings.moments_transport === 'opencode') return 'Cloud (OpenCode JEV)';
+    return "This PC's graphics card or cloud";
   }
   return 'This PC';
 }
@@ -277,11 +295,13 @@ export function aiModelStatus(model, { settings = {}, models = [] } = {}) {
     : rows.find((m) => (model.modelNames ?? []).includes(m.name));
   if (model.id === 'decision') {
     const transport = settings.moments_transport ?? 'auto';
-    const key = String(settings.moments_openrouter_key ?? '').trim();
+    const openRouterKey = String(settings.moments_openrouter_key ?? '').trim();
+    const openCodeKey = decisionOpenCodeKey(settings);
     // A cloud key is configured, not tested: the settings' own test button
     // checks it when the photographer asks.
-    if (transport === 'openrouter') return key ? 'ready' : 'not set up';
-    if (transport === 'auto' && key) return 'ready';
+    if (transport === 'openrouter') return openRouterKey ? 'ready' : 'not set up';
+    if (transport === 'opencode') return openCodeKey ? 'ready' : 'not set up';
+    if (transport === 'auto' && (openCodeKey || openRouterKey)) return 'ready';
   }
   if (!row) return 'not set up';
   if (row.ready) return 'ready';
@@ -312,12 +332,13 @@ export function aiModelStatusLabel(state) {
   {
     id: 'ai-models', tab: 'identification', title: 'AI models',
     hint: 'Every model Conrod can use, what each does, where it runs and whether it is ready. A switch turns each one on or off.',
-    keys: [
+     keys: [
       'include_cars', 'include_bikes', 'include_trucks',
       'read_plates', 'read_numbers', 'read_text', 'include_people',
       'use_quality_score', 'use_vlm', 'read_action', 'vlm_strategy',
       'use_decider', 'decider_quant', 'moments_transport',
       'moments_openrouter_model', 'moments_openrouter_key',
+      'moments_opencode_model', 'moments_opencode_key',
     ],
   },
   {

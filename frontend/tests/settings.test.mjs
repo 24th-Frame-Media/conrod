@@ -99,6 +99,7 @@ test('a model row says where it runs and whether it is ready', () => {
   assert.equal(aiModelWhere(detector, {}), 'This PC');
   assert.equal(aiModelWhere(decision, { moments_transport: 'in_process' }), "This PC's graphics card");
   assert.equal(aiModelWhere(decision, { moments_transport: 'openrouter' }), 'Cloud (OpenRouter)');
+  assert.equal(aiModelWhere(decision, { moments_transport: 'opencode' }), 'Cloud (OpenCode JEV)');
   assert.equal(aiModelWhere(vision, { vlm_services: [{ enabled: true, provider: 'ollama' }] }), 'This PC');
   assert.equal(aiModelWhere(vision, { vlm_services: [{ enabled: true, provider: 'openrouter' }] }), 'Cloud');
 
@@ -125,6 +126,23 @@ test('a model row says where it runs and whether it is ready', () => {
   );
   assert.equal(
     aiModelStatus(decision, { settings: { moments_backend: 'decider', moments_transport: 'openrouter' }, models: [] }),
+    'not set up',
+  );
+  assert.equal(
+    aiModelStatus(decision, { settings: { moments_backend: 'decider', moments_transport: 'opencode', moments_opencode_key: 'oc_sk-x' }, models: [] }),
+    'ready',
+    'JEV with its own key',
+  );
+  assert.equal(
+    aiModelStatus(decision, {
+      settings: { moments_backend: 'decider', moments_transport: 'opencode', vlm_services: [{ enabled: true, provider: 'opencode-go', api_key: 'oc_sk-shared' }] },
+      models: [],
+    }),
+    'ready',
+    'JEV borrowing an OpenCode vision service key',
+  );
+  assert.equal(
+    aiModelStatus(decision, { settings: { moments_backend: 'decider', moments_transport: 'opencode' }, models: [] }),
     'not set up',
   );
 });

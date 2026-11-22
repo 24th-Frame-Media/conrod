@@ -337,12 +337,18 @@ pub struct Settings {
     /// can lift a frame's rank; below it (down to 0.5) it is a "maybe".
     pub moments_threshold: f64,
     /// The decider's transport: "auto" (the in-process model when it is ready,
-    /// else OpenRouter when a key is set), "in_process" or "openrouter".
+    /// else OpenCode, else OpenRouter when a key is set), "in_process",
+    /// "opencode" or "openrouter".
     pub moments_transport: String,
     /// OpenRouter model id for the decider.
     pub moments_openrouter_model: String,
     /// OpenRouter API key for the decider. Never logged.
     pub moments_openrouter_key: String,
+    /// OpenCode's decision model id for the decider: JEV.
+    pub moments_opencode_model: String,
+    /// OpenCode API key for the decider. Empty reuses the key of an enabled
+    /// OpenCode vision service. Never logged.
+    pub moments_opencode_key: String,
 }
 
 impl Default for Settings {
@@ -461,6 +467,8 @@ impl Default for Settings {
             moments_transport: "auto".into(),
             moments_openrouter_model: "perplexity/pplx-decider-flash-v1.3:free".into(),
             moments_openrouter_key: String::new(),
+            moments_opencode_model: "jev-1.13".into(),
+            moments_opencode_key: String::new(),
         }
     }
 }

@@ -82,4 +82,5 @@ export const engine = {
   providerModels: (provider: string, host?: string, apiKey?: string) =>
     call<import('./types').ProviderModelsResponse>('provider_models', { provider, host, apiKey }),
   openRouterCheck: (key: string) => call<import('./types').OpenRouterCheck>('openrouter_check', { key }),
+  openCodeCheck: (key: string) => call<import('./types').OpenCodeCheck>('openCodeCheck', { key }),
 };

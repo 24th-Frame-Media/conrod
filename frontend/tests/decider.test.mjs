@@ -132,7 +132,14 @@ test('the settings page has the decision toggle and precision override in the AI
   const section = SECTIONS.find((s) => s.id === 'ai-models');
   assert.ok(section.keys.includes('use_decider') && section.keys.includes('decider_quant'));
   assert.ok(section.keys.includes('moments_transport'), 'and where it runs');
+  assert.ok(section.keys.includes('moments_opencode_model'), 'and the JEV model');
+  assert.ok(section.keys.includes('moments_opencode_key'), 'and its key');
   assert.equal(FIELDS.use_decider.kind, 'toggle');
   assert.deepEqual(FIELDS.decider_quant.options.map((o) => o.id), ['auto', 'int8', 'int4']);
-  assert.deepEqual(FIELDS.moments_transport.options.map((o) => o.id), ['auto', 'in_process', 'openrouter']);
+  assert.deepEqual(FIELDS.moments_transport.options.map((o) => o.id), ['auto', 'in_process', 'opencode', 'openrouter']);
+  assert.deepEqual(
+    FIELDS.moments_opencode_model.options.map((o) => o.id),
+    ['jev-1.13-free', 'jev-1.13'],
+    'both JEV ids are offered, the free one first',
+  );
 });
