@@ -116,6 +116,11 @@ export function App() {
       setDev(d);
       if (d.page) setPage(d.page);
       if (d.jobId) setJobId(d.jobId);
+      // QA only: `?page=settings&tab=identification` opens a tab directly for screenshots.
+      if (d.page === 'Settings') {
+        const tab = new URLSearchParams(location.search).get('tab');
+        if (tab) setSettingsTab({ id: tab as SettingsTabId, nonce: 1 });
+      }
     });
   }, []);
   useEffect(() => {

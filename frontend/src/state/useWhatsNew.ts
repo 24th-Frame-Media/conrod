@@ -33,8 +33,11 @@ export function useWhatsNew(): WhatsNew {
 
   const [seen, setSeen] = useState<string | null>(() => readSeen(localStorage));
   const [openedManually, setOpenedManually] = useState(false);
+  // QA only: `?mock=1&whatsnew=0` keeps the sheet out of the way for screenshots.
   // Set by `markSeen` before the app version is known; the mark is written as soon as it is.
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(() => Boolean(
+    mocked && new URLSearchParams(location.search).get('whatsnew') === '0',
+  ));
 
   const autoOpen = useMemo(() => shouldShowWhatsNew({ current, lastSeen: seen, entries: ENTRIES }), [current, seen]);
   const { fresh, earlier } = useMemo(() => splitEntries({ entries: ENTRIES, current, lastSeen: seen }), [current, seen]);

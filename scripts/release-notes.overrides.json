@@ -66,6 +66,10 @@
         {
           "section": "New",
           "text": "An optional decision model, switched on in Settings, answers yes/no questions about your frames on your own graphics card. It is a large one-time download and stays off until you choose it; with it off, or on a card without enough video memory, nothing changes."
+        },
+        {
+          "section": "Improved",
+          "text": "Photo helpers, in Settings, now groups the seven helpers into two zones — On this PC and Via a cloud service — and hides model names until you open a helper. A first-run choice offers to download the models (about 5 GB, free, works offline) or add a cloud key and pay as you go; OpenCode covers both car reading and moments, and OpenRouter covers both too, though its moments model cannot see photos yet. Car reading and moments each get their own service cards, a shared OpenCode key, a 'How work is shared' choice and a confidence threshold."
         }
       ]
     }
