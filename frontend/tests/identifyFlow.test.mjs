@@ -4,6 +4,8 @@ import {
   FLOW_NODES, IDENTIFY_STAGES, actionLabel, activeStage, confidencePercent, confidenceTone, deciderStepNode, displayItem,
   displayPath, elapsed, flowNodes, phaseLabel, prettyReply, progressPercent, rateLabel, sourceLabel, workerLanes,
 } from '../src/lib/identifyFlow.mjs';
+import { SUBJECT_WORDS } from '../src/lib/subjects.mjs';
+const vehicles = SUBJECT_WORDS.vehicles;
 
 test('the stages are the engine contract, in flow order', () => {
   assert.deepEqual(IDENTIFY_STAGES, ['read', 'crop', 'vision', 'merge', 'done']);
@@ -28,7 +30,7 @@ test('flow nodes mark done, active and pending; vision lights both AI nodes', ()
   assert.deepEqual(nodes.map((node) => node.state), ['done', 'done', 'active', 'active', 'pending', 'pending']);
   assert.equal(nodes[2].label, 'READ');
   assert.equal(nodes[3].label, 'VISION');
-  assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b')[3].sub, 'Reading cars — Qwen2.5-VL · this PC', 'the VISION node says what it does and names the model plainly');
+  assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b', null, vehicles)[3].sub, 'Reading vehicles — Qwen2.5-VL · this PC', 'the VISION node says what it does and names the model plainly');
   assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b')[2].sub, 'plate + OCR', 'the other sublines stay put');
 });
 
@@ -173,8 +175,8 @@ test('elapsed and rate read like a stopwatch, not a debug dump', () => {
   assert.equal(elapsed(3723000), '1 h 02 min');
   assert.equal(elapsed(null), '');
   assert.equal(elapsed(-5), '');
-  assert.equal(rateLabel(12, 30000), '24 cars/min');
-  assert.equal(rateLabel(1, 8000), '8.0 s/car');
+  assert.equal(rateLabel(12, 30000, vehicles), '24 vehicles/min');
+  assert.equal(rateLabel(1, 8000, vehicles), '8.0 s/vehicle');
   assert.equal(rateLabel(0, 8000), '');
 });
 

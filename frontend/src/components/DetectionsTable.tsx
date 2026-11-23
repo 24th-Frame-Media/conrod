@@ -11,7 +11,7 @@ import {
   type KnownVehicle,
 } from '../lib/types';
 
-export type CategoryFilter = 'all' | 'vehicles' | 'people' | 'landmarks';
+export type CategoryFilter = 'all' | 'vehicles' | 'animals' | 'people' | 'landmarks';
 
 export const LABELS: Record<string, string> = {
   plate: 'Plate',
@@ -28,19 +28,25 @@ export const LABELS: Record<string, string> = {
 
 const EVIDENCE_FIELDS = ['plate', 'race_number', 'make', 'model', 'team', 'driver', 'country'] as const;
 
-export function getCategory(d: Detection): 'vehicle' | 'person' | 'plate' | 'landmark' {
+/** The COCO animal class names: a bull or a horse is a subject, never a vehicle. */
+const ANIMAL_CLASSES = new Set(['bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'animal']);
+
+export function getCategory(d: Detection): 'vehicle' | 'animal' | 'person' | 'plate' | 'landmark' {
   const cls = (d.cls || '').toLowerCase();
   const reg = (d.region_type || '').toLowerCase();
   if (cls === 'eye' || reg === 'eye') return 'landmark';
   if (cls === 'plate' || reg === 'plate') return 'plate';
   if (cls === 'person' || cls === 'face' || reg === 'person' || reg === 'face') return 'person';
+  if (ANIMAL_CLASSES.has(cls)) return 'animal';
   return 'vehicle';
 }
 
-function categoryIcon(cat: 'vehicle' | 'person' | 'plate' | 'landmark'): IconName {
+function categoryIcon(cat: 'vehicle' | 'animal' | 'person' | 'plate' | 'landmark'): IconName {
   switch (cat) {
     case 'vehicle':
       return 'car';
+    case 'animal':
+      return 'paw';
     case 'person':
       return 'person';
     case 'plate':
@@ -83,17 +89,19 @@ export function DetectionsTable({
 }: Props) {
   const counts = useMemo(() => {
     let vehicles = 0;
+    let animals = 0;
     let people = 0;
     let landmarks = 0;
     let plates = 0;
     for (const d of detections) {
       const cat = getCategory(d);
       if (cat === 'vehicle') vehicles++;
+      else if (cat === 'animal') animals++;
       else if (cat === 'person') people++;
       else if (cat === 'plate') plates++;
       else landmarks++;
     }
-    return { all: detections.length, vehicles, people, landmarks, plates };
+    return { all: detections.length, vehicles, animals, people, landmarks, plates };
   }, [detections]);
 
   const filtered = useMemo(() => {
@@ -103,6 +111,9 @@ export function DetectionsTable({
         const cat = getCategory(d);
         return cat === 'vehicle' || cat === 'plate';
       });
+    }
+    if (categoryFilter === 'animals') {
+      return detections.filter((d) => getCategory(d) === 'animal');
     }
     if (categoryFilter === 'people') {
       return detections.filter((d) => getCategory(d) === 'person');
@@ -212,6 +223,16 @@ export function DetectionsTable({
               title="Show vehicle detections"
             >
               Vehicles <span className="det-count">{counts.vehicles}</span>
+            </button>
+          )}
+          {counts.animals > 0 && (
+            <button
+              type="button"
+              className={`det-tab tab-animals${categoryFilter === 'animals' ? ' active' : ''}`}
+              onClick={() => onFilterChange('animals')}
+              title="Show animal detections"
+            >
+              Animals <span className="det-count">{counts.animals}</span>
             </button>
           )}
           {counts.people > 0 && (

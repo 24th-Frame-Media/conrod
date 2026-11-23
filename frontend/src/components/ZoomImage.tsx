@@ -46,9 +46,10 @@ export const ZoomImage = forwardRef<ZoomImageHandle, Props>(function ZoomImage(
   const visibleBoxes = useMemo(() => dets.filter((d) => {
     const cat = getCategory(d);
     if (categoryFilter === 'vehicles') return cat === 'vehicle' || cat === 'plate';
+    if (categoryFilter === 'animals') return cat === 'animal';
     if (categoryFilter === 'people') return cat === 'person';
     if (categoryFilter === 'landmarks') return cat === 'landmark';
-    // 'all': show vehicles, people, and plates; landmarks (eyes) are hidden unless selected/hovered.
+    // 'all': show vehicles, animals, people, and plates; landmarks (eyes) are hidden unless selected/hovered.
     if (cat === 'landmark') return selectedDetId === d.id || hoveredDetId === d.id;
     return true;
   }), [dets, categoryFilter, selectedDetId, hoveredDetId]);

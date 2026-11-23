@@ -7,7 +7,7 @@ export type Rate = { perMin: number; secondsPerCar: number };
 export const IDENTIFY_STAGES: readonly IdentifyStage[];
 export const FLOW_NODES: readonly Omit<FlowNode, 'state'>[];
 export function activeStage(stage: string | null | undefined): number;
-export function flowNodes(live: IdentifyLive | null | undefined, model?: string | null, stage?: IdentifyStage | null): FlowNode[];
+export function flowNodes(live: IdentifyLive | null | undefined, model?: string | null, stage?: IdentifyStage | null, subject?: import('./subjects.mjs').SubjectWords | null): FlowNode[];
 export type IdentifyPhase = {
   name: 'moments' | 'peaks' | string;
   done: number;
@@ -34,6 +34,6 @@ export function confidenceTone(conf: number | null | undefined): 'good' | 'warn'
 export function progressPercent(done: number | null | undefined, total: number | null | undefined): number;
 export function elapsed(ms: number | null | undefined): string;
 export function rate(done: number | null | undefined, elapsedMs: number | null | undefined): Rate | null;
-export function rateLabel(done: number | null | undefined, elapsedMs: number | null | undefined): string;
+export function rateLabel(done: number | null | undefined, elapsedMs: number | null | undefined, subject?: import('./subjects.mjs').SubjectWords | null): string;
 export function prettyReply(reply: unknown): string;
 export function sourceLabel(source: string | null | undefined): string;

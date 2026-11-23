@@ -2125,6 +2125,27 @@ mod tests {
             .contains(&2));
     }
 
+    /// A rodeo is a bull and the rider on it: the detector is asked for people and
+    /// animals, never for a car, and the identify run it starts is the moments judge.
+    #[test]
+    fn a_rodeo_asks_for_the_rider_and_the_animal_not_for_cars() {
+        let settings = album("sport-rodeo", "{}");
+        let o = detect_options(&settings);
+        assert!(o.classes.contains(&detect::PERSON));
+        for class in detect::ANIMALS {
+            assert!(
+                o.classes.contains(&class),
+                "class {class} is asked for on a rodeo album"
+            );
+        }
+        assert!(
+            detect::VEHICLES.iter().all(|c| !o.classes.contains(c)),
+            "a rodeo asks for no vehicle class"
+        );
+        let lanes = settings.lanes();
+        assert!(!lanes.identifies() && lanes.moments_detect);
+    }
+
     #[test]
     fn the_readers_a_preset_does_not_need_are_off_in_the_resolved_settings() {
         let on = |s: &Settings| (s.read_plates, s.read_numbers, s.identify_make_model);

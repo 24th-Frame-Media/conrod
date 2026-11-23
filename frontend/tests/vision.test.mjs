@@ -6,6 +6,7 @@ import {
 } from '../src/lib/vision.mjs';
 import { flowNodes } from '../src/lib/identifyFlow.mjs';
 import { identifyNodes, ingestNodes } from '../src/lib/ingest.mjs';
+import { SUBJECT_WORDS } from '../src/lib/subjects.mjs';
 
 const job = (settings) => ({ settings_json: JSON.stringify(settings) });
 
@@ -62,10 +63,10 @@ test('the flow row and the ingest flowchart show the reason where the model name
   assert.equal(node.off, true);
   assert.doesNotMatch(node.meta, /qwen|off/, 'no model name, and "off" is never one');
   assert.match(node.meta, /3 workers/);
-  const on = ingestNodes({ stages, identify: { ...live, model: 'glm-5.3-flash', vision_off_reason: null }, model: 'x' }).find((n) => n.id === 'vision');
-  assert.equal(on.sub, 'Reading cars — glm-5.3-flash');
+  const on = ingestNodes({ stages, identify: { ...live, model: 'glm-5.3-flash', vision_off_reason: null }, model: 'x', subject: SUBJECT_WORDS.vehicles }).find((n) => n.id === 'vision');
+  assert.equal(on.sub, 'Reading vehicles — glm-5.3-flash');
   assert.equal(on.off, false);
-  assert.match(on.meta, /3 \/ 12 cars/);
+  assert.match(on.meta, /3 \/ 12 vehicles/);
 
   const row = identifyNodes(live, 'qwen').find((n) => n.id === 'vision');
   assert.equal(row.sub, 'off for this album');

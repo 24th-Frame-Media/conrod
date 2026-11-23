@@ -6,6 +6,8 @@ import {
   selectLanes, stageOfStep, starsText, stepIndex, stripItems, verdictText, visionExpected, tagFits, tagWidth, afLabel, afTagSpot, failedWords,
   TAG_HEIGHT,
 } from '../src/lib/ingest.mjs';
+import { SUBJECT_WORDS } from '../src/lib/subjects.mjs';
+const vehicles = SUBJECT_WORDS.vehicles;
 
 const stage = (id, done, total, busy = 0, workers = 2, extra = {}) => ({ id, label: id[0].toUpperCase() + id.slice(1), model: `${id}-model`, device: 'CPU', workers_total: workers, workers_busy: busy, queue_len: 0, done, total, rate_per_s: 0, eta_s: null, ...extra });
 const worker = (stage, worker_index, state = 'busy', extra = {}) => ({ stage, worker_index, state, waiting_for: null, file: null, step: null, ms_in_step: 0, ...extra });
@@ -20,11 +22,11 @@ test('steps map onto the flowchart stage they belong to', () => {
 
 test('the merged flowchart runs read to pick, then vision, then done', () => {
   const stages = [stage('read', 847, 847, 0), stage('detect', 412, 847, 2), stage('sharpness', 380, 847, 1), stage('faces', 0, 847, 0), stage('group', 0, 847, 0, 1), stage('pick', 0, 847, 0, 1), stage('identify', 0, 60, 0, 3)];
-  const nodes = ingestNodes({ stages });
+  const nodes = ingestNodes({ stages, subject: vehicles });
   assert.deepEqual(nodes.map((n) => n.label), ['READ', 'DETECT', 'SHARPNESS', 'FACES', 'GROUP', 'PICK', 'VISION', 'DONE']);
   assert.deepEqual(nodes.map((n) => n.number), ['01', '02', '03', '04', '05', '06', '07', '08']);
   assert.deepEqual(nodes.map((n) => n.state), ['done', 'active', 'active', 'pending', 'pending', 'pending', 'pending', 'pending']);
-  assert.equal(nodes[1].sub, 'Car and person detector', 'the box says the job, not the model file');
+  assert.equal(nodes[1].sub, 'Vehicles and people detector', 'the box says the job, not the model file');
   assert.match(nodes[1].meta, /412 \/ 847/);
   assert.match(nodes[1].meta, /2\/2 busy/);
   assert.match(nodes[1].meta, /detect-model/);
@@ -36,15 +38,15 @@ test('the merged flowchart runs read to pick, then vision, then done', () => {
 test('the vision node takes its count from the identify run once it reports', () => {
   const stages = [stage('read', 10, 10), stage('identify', 0, 60, 0, 3)];
   const live = { state: 'running', done: 12, total: 60, workers: 3, model: 'qwen2.5vl:7b', stage: 'vision', current: null, active: [], recent: [], errors: [] };
-  const vision = ingestNodes({ stages, identify: live }).find((n) => n.id === 'vision');
+  const vision = ingestNodes({ stages, identify: live, subject: vehicles }).find((n) => n.id === 'vision');
   assert.equal(vision.state, 'active');
-  assert.equal(vision.sub, 'Reading cars — Qwen2.5-VL · this PC');
+  assert.equal(vision.sub, 'Reading vehicles — Qwen2.5-VL · this PC');
   assert.match(vision.meta, /3 workers/);
-  assert.match(vision.meta, /12 \/ 60 cars/);
+  assert.match(vision.meta, /12 \/ 60 vehicles/);
   assert.match(vision.title, /qwen2\.5vl:7b/, 'the raw file stays in the tooltip');
-  const idle = ingestNodes({ stages }).find((n) => n.id === 'vision');
+  const idle = ingestNodes({ stages, subject: vehicles }).find((n) => n.id === 'vision');
   assert.equal(idle.state, 'pending');
-  assert.equal(idle.sub, 'Reading cars — identify-model');
+  assert.equal(idle.sub, 'Reading vehicles — identify-model');
 });
 
 test('no vision node when the run does not identify, and an off stage is dimmed', () => {
@@ -69,10 +71,10 @@ test('before the first snapshot every node is drawn pending; a finished run is a
 });
 
 test('the identify-only chart keeps the six identify nodes and none is a filter', () => {
-  const nodes = identifyNodes({ stage: 'vision', state: 'running' }, 'qwen');
+  const nodes = identifyNodes({ stage: 'vision', state: 'running' }, 'qwen', null, null, vehicles);
   assert.deepEqual(nodes.map((n) => n.label), ['LOAD', 'CROP', 'READ', 'VISION', 'ENTRY LIST', 'RESULT']);
   assert.ok(nodes.every((n) => n.filter === null));
-  assert.equal(nodes[3].sub, 'Reading cars — Qwen · this PC');
+  assert.equal(nodes[3].sub, 'Reading vehicles — Qwen · this PC');
 });
 
 test('the phase follows the scan, then the identify run', () => {
@@ -374,12 +376,12 @@ test('the camera-focus car is main, and every other car is background', () => {
 
 test('the time left names the scan and the identify pass separately', () => {
   assert.deepEqual(etaLines({ scanEta: 300, scanStable: true }), ['about 5 min left']);
-  const both = etaLines({ vision: true, scanEta: 300, scanStable: true, identify: { state: 'running', done: 0, total: 3000 } });
+  const both = etaLines({ vision: true, scanEta: 300, scanStable: true, identify: { state: 'running', done: 0, total: 3000 }, subject: vehicles });
   assert.equal(both.length, 2);
   assert.equal(both[0], 'about 5 min left');
-  assert.match(both[1], /^Then identify estimating… \(3,000 cars\)$/);
-  const reading = etaLines({ vision: true, scanDone: true, identify: { state: 'running', done: 10, total: 30, elapsed_ms: 20000 } });
+  assert.match(both[1], /^Then identify estimating… \(3,000 vehicles\)$/);
+  const reading = etaLines({ vision: true, scanDone: true, identify: { state: 'running', done: 10, total: 30, elapsed_ms: 20000 }, subject: vehicles });
   assert.equal(reading[0], 'Scan done');
-  assert.match(reading[1], /^Identify about 40 s left \(30 cars\)$/);
+  assert.match(reading[1], /^Identify about 40 s left \(30 vehicles\)$/);
   assert.deepEqual(etaLines({ vision: true, scanDone: true, identify: { state: 'done', done: 30, total: 30 } }), ['Scan done', 'Identify done']);
 });

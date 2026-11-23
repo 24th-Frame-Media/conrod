@@ -1458,6 +1458,29 @@ mod tests {
         );
     }
 
+    /// A rodeo and an equestrian shoot read the animal and the rider on it: no
+    /// vehicle lane of their own, no reader that needs one, and the judge works
+    /// the moments. The switches still answer both ways per album.
+    #[test]
+    fn a_rodeo_and_an_equestrian_read_the_rider_and_the_animal() {
+        for preset in [SportRodeo, SportEquestrian] {
+            let l = lanes(preset);
+            assert!(!l.vehicles, "{preset:?} has a vehicle lane by default");
+            assert!(l.animals && l.people, "{preset:?}");
+            assert!(l.faces && l.names, "{preset:?} suggests names from faces");
+            assert!(!l.identifies_vehicles(), "{preset:?}");
+            assert!(!l.identifies(), "{preset:?} reads nothing off a vehicle");
+            assert!(l.moments_detect && l.moments_rank, "{preset:?}");
+            // The album can switch vehicles on, the reader included.
+            let o = with(preset, Feature::Vehicles, true);
+            assert!(o.vehicles, "{preset:?}");
+            assert!(
+                !o.identifies_vehicles(),
+                "{preset:?} still reads nothing off it"
+            );
+        }
+    }
+
     #[test]
     fn every_detector_and_reader_overrides_both_ways_on_every_preset() {
         for preset in ShootPreset::ALL {
