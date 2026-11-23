@@ -15,17 +15,13 @@ export function suggestionSizes(frames: StackFrame[], facts: Facts): Map<number,
 export function isSingleton(stack: Pick<Stack, 'frames'> & { total?: number }): boolean;
 /** Ids of the frames that sit alone in their burst. */
 export function singletonIds(frames: StackFrame[]): Set<number>;
-/** The star rating a burst must reach for the engine to keep one of its frames. */
-export const KEEPER_STARS: number;
-/** Bursts with no keeper because every frame is below `KEEPER_STARS`, keyed by burst key. */
+/** Bursts with no keeper because every frame is below the keeper star threshold, keyed by burst key. */
 export function softBursts(frames: StackFrame[], facts: Facts): Map<number, { size: number; best: number }>;
 export function groupKeyOf(frame: StackFrame, dupes?: boolean): string;
 export function keeperIds(frames: StackFrame[], facts: Facts): Set<number>;
-export function leadOf<F extends StackFrame>(frames: F[], keepers: F[], facts: Facts): F;
 export function makeStack<F extends StackFrame>(key: string, frames: F[], opts: { facts: Facts; keepers: Set<number>; total?: number }): Stack<F>;
 export function buildStacks<F extends StackFrame>(frames: F[], opts: { facts: Facts; keepers: Set<number>; all?: F[]; dupes?: boolean }): Stack<F>[];
 
-export function stackIndexOf(stacks: Stack[], id: number | null): number;
 export function stepInStack(stacks: Stack[], id: number | null, delta: number): number | null;
 export function stepStack(stacks: Stack[], id: number | null, delta: number): number | null;
 export function stepFlat(frames: StackFrame[], id: number | null, delta: number): number | null;

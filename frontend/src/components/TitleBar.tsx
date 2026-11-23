@@ -5,8 +5,7 @@ import { etaText, pct, plural } from '../lib/format';
 import { applyTheme, storedTheme } from '../lib/theme.mjs';
 import { modelGroups, modelWord, workLabel, type HealthStatus } from '../lib/health.mjs';
 import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
-import type { DevInfo, DropdownJob, Job, JobChip, ModelInfo, Page, ReloadState, RunSnapshot, Status } from '../lib/types';
-import { profileLabel } from '../lib/types';
+import type { DevInfo, DropdownJob, Job, ModelInfo, Page, ReloadState, RunSnapshot, Status, Task } from '../lib/types';
 import { DevCluster } from './DevStatus';
 import { Icon, Mark } from './basics';
 
@@ -69,8 +68,13 @@ function WindowControls() {
   );
 }
 
-/** The health light of the Python header, grown into a popover: tasks, pause / stop, cancel, event log. */
-function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { status: Status; jobs: Job[]; models: ModelInfo[]; health: HealthStatus; actions: StatusActions; defaultOpen: boolean }) {
+/** The health light of the Python header, grown into a popover: active tasks, live scans list, pause / stop, models, event log. */
+function StatusPill({
+  status, jobs, models, health, actions, defaultOpen, scanRows, activeJobId, onOpenJob,
+}: {
+  status: Status; jobs: Job[]; models: ModelInfo[]; health: HealthStatus; actions: StatusActions; defaultOpen: boolean;
+  scanRows?: DropdownJob[]; activeJobId?: number | null; onOpenJob?: (id: number) => void;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   const [stopping, setStopping] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -99,6 +103,33 @@ function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { st
   const activeJob = jobs.find((job) => job.id === status.activeJob);
   const waiting = (status.queue ?? []).map((id) => jobs.find((job) => job.id === id)).filter((job): job is Job => Boolean(job));
   const tone = health.tone;
+  const hasScansList = Boolean(scanRows && onOpenJob);
+  const activeInScans = Boolean(hasScansList && activeJobId != null && scanRows?.some((row) => row.id === activeJobId));
+  const isScanTask = (task: Task): boolean => {
+    if (!activeJob) return false;
+    const label = task.label ?? '';
+    if (/^(Scanning|Culling|Grouping|Loading|Indexing)\b/i.test(label)) return true;
+    if (activeJob.label && label.includes(activeJob.label)) return true;
+    const m = label.match(/\balbum\s+(\d+)\b/i);
+    return Boolean(m && Number(m[1]) === activeJob.id);
+  };
+  const activeScanTask = activeJob
+    ? (activeTasks.find(isScanTask) ?? activeTasks.find((t) => !/^(Writing|Rerunning|Exporting|Importing|Installing)\b/i.test(t.label ?? '')))
+    : undefined;
+  const summaryTask = activeScanTask ?? active;
+  const shownActiveTasks = activeInScans && activeJob != null && activeScanTask
+    ? activeTasks.filter((t) => t.id !== activeScanTask.id)
+    : activeTasks;
+  const showRunningNow = !hasScansList || shownActiveTasks.length > 0 || status.operations.length > 0;
+  const activeMeta = (() => {
+    if (!activeScanTask) return '';
+    if (activeScanTask.error) return activeScanTask.error;
+    const parts: string[] = [];
+    if (activeScanTask.total > 0) parts.push(`${activeScanTask.done.toLocaleString()} of ${activeScanTask.total.toLocaleString()}`);
+    else if (activeScanTask.detail) parts.push(activeScanTask.detail);
+    if (activeScanTask.eta != null) parts.push(etaText(activeScanTask.eta));
+    return parts.join(' · ');
+  })();
 
   useEffect(() => {
     if (!open) return;
@@ -121,12 +152,11 @@ function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { st
         <div className="popover activity-dashboard" role="dialog" aria-label="Notifications and activity" ref={popover}>
           <div className="popover-head"><h3>Background work</h3><span className={`state ${tone === 'busy' ? 'running' : tone === 'error' ? 'failed' : tone === 'warn' ? 'paused' : 'done'}`}>{health.label}</span></div>
           <div className="activity-summary">
-            <div><b>{activeJob && active?.total ? `${active.done.toLocaleString()} / ${active.total.toLocaleString()}` : '—'}</b><small>{activeJob ? activeJob.label : 'No active scan'}</small></div>
+            <div><b>{activeJob && summaryTask?.total ? `${summaryTask.done.toLocaleString()} / ${summaryTask.total.toLocaleString()}` : '—'}</b><small>{activeJob ? activeJob.label : 'No active scan'}</small></div>
             <div><b>{readyModels} / {local.length}</b><small>Models ready</small></div>
-            <div><b>{status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').length}</b><small>Active tasks</small></div>
+            <div><b>{activeTasks.length}</b><small>Active tasks</small></div>
           </div>
-          {activeJob && active?.total ? <div className="bar scan-overall" title="Overall scan progress"><div className="fill" style={{ width: `${pct(active.done, active.total)}%` }} /></div> : null}
-          {waiting.length > 0 && (
+          {!hasScansList && waiting.length > 0 && (
             <>
               <div className="activity-section"><span>Waiting to scan</span><span>{waiting.length}</span></div>
               <p className="muted activity-empty">Next: {waiting[0].label}, {waiting.length} waiting</p>
@@ -138,25 +168,134 @@ function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { st
               ))}
             </>
           )}
-          <div className="activity-section"><span>Running now</span><span>{activeTasks.length}</span></div>
-          {activeTasks.length === 0 && <p className="muted activity-empty">No background tasks</p>}
-          {activeTasks.map((t) => (
-            <div className="task" key={t.id}>
-              <div className="task-row"><b>{workLabel(t.label)}</b><span className={`state ${t.state}`}>{t.state}</span></div>
-              {t.total > 0 && <div className="bar"><div className="fill" style={{ width: `${pct(t.done, t.total)}%` }} /></div>}
-              <small className="muted">{t.error || (t.detail ? `Now: ${t.detail}` : t.total > 0 ? `${t.done.toLocaleString()} of ${t.total.toLocaleString()}` : '')}{t.eta != null && ` · ${etaText(t.eta)}`}</small>
-            </div>
-          ))}
-          {(status.activeJob != null || status.operations.length > 0) && (
-            <div className="popover-actions">
-              {status.activeJob != null && (
-                <>
-                  <button className="ghost small" onClick={active?.state === 'paused' ? actions.resume : actions.pause}>{active?.state === 'paused' ? 'Resume' : 'Pause'}</button>
-                  <button className="ghost small danger" disabled={stopping} onClick={() => { setStopping(true); actions.stop(); }}>{stopping ? 'Stopping…' : 'Stop scan'}</button>
-                </>
+          {showRunningNow && (
+            <>
+              <div className="activity-section"><span>Running now</span><span>{shownActiveTasks.length || status.operations.length}</span></div>
+              {shownActiveTasks.length === 0 && status.operations.length === 0 && <p className="muted activity-empty">No background tasks</p>}
+              {shownActiveTasks.map((t) => (
+                <div className="task" key={t.id}>
+                  <div className="task-row"><b>{workLabel(t.label)}</b><span className={`state ${t.state}`}>{t.state}</span></div>
+                  {t.total > 0 && <div className="bar"><div className="fill" style={{ width: `${pct(t.done, t.total)}%` }} /></div>}
+                  <small className="muted">{t.error || (t.detail ? `Now: ${t.detail}` : t.total > 0 ? `${t.done.toLocaleString()} of ${t.total.toLocaleString()}` : '')}{t.eta != null && ` · ${etaText(t.eta)}`}</small>
+                </div>
+              ))}
+              {((!activeInScans && status.activeJob != null) || status.operations.length > 0) && (
+                <div className="popover-actions">
+                  {!activeInScans && status.activeJob != null && (
+                    <>
+                      <button className="ghost small" onClick={summaryTask?.state === 'paused' ? actions.resume : actions.pause}>{summaryTask?.state === 'paused' ? 'Resume' : 'Pause'}</button>
+                      <button className="ghost small danger" disabled={stopping} onClick={() => { setStopping(true); actions.stop(); }}>{stopping ? 'Stopping…' : 'Stop scan'}</button>
+                    </>
+                  )}
+                  {status.operations.map((key) => <button key={key} className="ghost small" onClick={() => actions.cancel(key)}>Cancel {key}</button>)}
+                </div>
               )}
-              {status.operations.map((key) => <button key={key} className="ghost small" onClick={() => actions.cancel(key)}>Cancel {key}</button>)}
-            </div>
+            </>
+          )}
+          {scanRows && onOpenJob && (
+            <>
+              <div className="activity-section"><span>Scans</span><span>{scanRows.length}</span></div>
+              {scanRows.length === 0 ? (
+                <p className="muted activity-empty">No albums yet. Import a folder to start one.</p>
+              ) : (
+                <div className="activity-scans" role="list" aria-label="Scans">
+                  {scanRows.map((row) => {
+                    const isActive = row.id === activeJobId;
+                    if (isActive) {
+                      const isPaused = activeScanTask?.state === 'paused' || row.chip.state === 'paused';
+                      return (
+                        <div key={row.id} role="listitem" className="jobs-row jobs-row-card active">
+                          <button
+                            type="button"
+                            className="jobs-row-main"
+                            onClick={() => { onOpenJob(row.id); setOpen(false); }}
+                          >
+                            <span className="jobs-row-top">
+                              <b className="jobs-row-label">{row.label}</b>
+                              <span className={`jobs-chip ${row.chip.tone}`}>{row.chip.word}</span>
+                            </span>
+                            {row.chip.progress != null && (
+                              <span className="jobs-bar" aria-label={`${Math.round(row.chip.progress * 100)} percent`}>
+                                <span className={`jobs-bar-fill ${row.chip.tone}`} style={{ width: `${Math.max(0, Math.min(100, Math.round(row.chip.progress * 100)))}%` }} />
+                              </span>
+                            )}
+                            {activeMeta && (
+                              <span className="jobs-row-meta muted" title={activeScanTask?.detail || undefined}>{activeMeta}</span>
+                            )}
+                          </button>
+                          {status.activeJob != null && (
+                            <div className="jobs-row-actions">
+                              <button type="button" className="ghost small" onClick={isPaused ? actions.resume : actions.pause}>
+                                {isPaused ? 'Resume' : 'Pause'}
+                              </button>
+                              <button
+                                type="button"
+                                className="ghost small danger"
+                                disabled={stopping}
+                                onClick={() => { setStopping(true); actions.stop(); }}
+                              >
+                                {stopping ? 'Stopping…' : 'Stop scan'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+                    const queuedJob = row.chip.state === 'queued' ? jobs.find((j) => j.id === row.id) : undefined;
+                    if (queuedJob) {
+                      return (
+                        <div key={row.id} role="listitem" className="jobs-row jobs-row-card queued">
+                          <button
+                            type="button"
+                            className="jobs-row-main"
+                            onClick={() => { onOpenJob(row.id); setOpen(false); }}
+                          >
+                            <span className="jobs-row-top">
+                              <b className="jobs-row-label">{row.label}</b>
+                              <span className={`jobs-chip ${row.chip.tone}`}>{row.chip.word}</span>
+                            </span>
+                            {row.chip.progress != null && row.chip.progress > 0 && (
+                              <span className="jobs-bar" aria-label={`${Math.round(row.chip.progress * 100)} percent`}>
+                                <span className={`jobs-bar-fill ${row.chip.tone}`} style={{ width: `${Math.max(0, Math.min(100, Math.round(row.chip.progress * 100)))}%` }} />
+                              </span>
+                            )}
+                          </button>
+                          <div className="jobs-row-actions">
+                            <button
+                              type="button"
+                              className="ghost small"
+                              aria-label={`Remove ${queuedJob.label} from queue`}
+                              onClick={() => actions.unqueue(queuedJob)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <button
+                        type="button"
+                        key={row.id}
+                        role="listitem"
+                        className="jobs-row"
+                        onClick={() => { onOpenJob(row.id); setOpen(false); }}
+                      >
+                        <span className="jobs-row-top">
+                          <b className="jobs-row-label">{row.label}</b>
+                          <span className={`jobs-chip ${row.chip.tone}`}>{row.chip.word}</span>
+                        </span>
+                        {row.chip.progress != null && (
+                          <span className="jobs-bar" aria-label={`${Math.round(row.chip.progress * 100)} percent`}>
+                            <span className={`jobs-bar-fill ${row.chip.tone}`} style={{ width: `${Math.max(0, Math.min(100, Math.round(row.chip.progress * 100)))}%` }} />
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
           <div className="activity-section"><span>Setup models</span><span>{readyModels}/{local.length}</span></div>
           <ul className="activity-models">
@@ -192,70 +331,17 @@ function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { st
   );
 }
 
-/**
- * The jobs dropdown (plan §6.7). Lists recent/active jobs with a LIVE status chip
- * and progress, derived from the ONE run snapshot — the same status poll/push that
- * drives every screen, with NO second poll loop. It updates while closed: a pushed
- * status or a live event changes `rows`/`badge` on the next render. One click opens
- * that job's run view via the existing openJob routing (hydrate, then live).
- */
-function JobsDropdown({ rows, badge, activeJob, onOpenJob }: { rows: DropdownJob[]; badge: JobChip; activeJob: number | null; onOpenJob: (id: number) => void }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    window.addEventListener('pointerdown', away);
-    window.addEventListener('keydown', esc);
-    return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
-  }, [open]);
-  return (
-    <div className="jobs" ref={box}>
-      <button type="button" className={`jobs-trigger ${badge.tone}`} aria-expanded={open} aria-haspopup="menu"
-        aria-label={`Scans — ${badge.word}`} title="Your scans — opens a job's live run" onClick={() => setOpen((v) => !v)}>
-        <Icon name="images" size={15} />
-        <span>Scans</span>
-        {badge.state === 'running' && <i className="jobs-live" aria-label="running" />}
-        <span className={`jobs-chip ${badge.tone}`}>{badge.word}</span>
-        <Icon name="chevron" size={13} />
-      </button>
-      {open && (
-        <div className="jobs-pop" role="menu" aria-label="Scans">
-          <div className="jobs-pop-head"><b>Scans</b><small className="muted">updates live</small></div>
-          {rows.length === 0 && <p className="muted jobs-empty">No albums yet. Import a folder to start one.</p>}
-          {rows.map((row) => (
-            <button type="button" key={row.id} role="menuitem" className={`jobs-row${row.id === activeJob ? ' active' : ''}`}
-              onClick={() => { onOpenJob(row.id); setOpen(false); }}>
-              <span className="jobs-row-top">
-                <b className="jobs-row-label">{row.label}</b>
-                <span className={`jobs-chip ${row.chip.tone}`}>{row.chip.word}</span>
-              </span>
-              {row.chip.progress != null && (
-                <span className="jobs-bar" aria-label={`${Math.round(row.chip.progress * 100)} percent`}>
-                  <span className={`jobs-bar-fill ${row.chip.tone}`} style={{ width: `${Math.max(0, Math.min(100, Math.round(row.chip.progress * 100)))}%` }} />
-                </span>
-              )}
-            </button>
-          ))}
-          <p className="muted jobs-pop-foot">One click opens the run — it hydrates, then goes live.</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 type Props = {
-  page: Page; setPage: (page: Page) => void; jobs: Job[]; models: ModelInfo[]; status: Status; profile: string;
+  page: Page; setPage: (page: Page) => void; jobs: Job[]; models: ModelInfo[]; status: Status;
   health: HealthStatus; actions: StatusActions; popoverOpen: boolean; dev: DevInfo | null; reloadState: ReloadState;
-  /** The single run snapshot (plan §6.1): badge + jobs dropdown both read from it. */
+  /** The single run snapshot: live scan rows in the activity popover read from it. */
   runSnapshot?: RunSnapshot;
-  /** Open a job's run view (hydrate-then-live); the dropdown's one-click entry. */
+  /** Open a job's run view (hydrate-then-live); one-click entry from the Scans section. */
   onOpenJob?: (id: number) => void;
 };
 
-/** Topbar and title bar in one: brand, tabs, stats, scan type, status pill, window controls. Drag it to move the window. */
-export function TitleBar({ page, setPage, jobs, models, status, profile, health, actions, popoverOpen, dev, reloadState, runSnapshot, onOpenJob }: Props) {
+/** Topbar and title bar in one: brand, tabs, stats, status pill, window controls. Drag it to move the window. */
+export function TitleBar({ page, setPage, jobs, models, status, health, actions, popoverOpen, dev, reloadState, runSnapshot, onOpenJob }: Props) {
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const photos = jobs.reduce((n, j) => n + j.total, 0);
   const [theme, setTheme] = useState(storedTheme);
@@ -296,10 +382,17 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, health,
       >
         <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
       </button>
-      {runSnapshot && onOpenJob && (
-        <JobsDropdown rows={runSnapshot.jobs} badge={runSnapshot.badge} activeJob={runSnapshot.activeJob} onOpenJob={onOpenJob} />
-      )}
-      <StatusPill status={status} jobs={jobs} models={models} health={health} actions={actions} defaultOpen={popoverOpen} />
+      <StatusPill
+        status={status}
+        jobs={jobs}
+        models={models}
+        health={health}
+        actions={actions}
+        defaultOpen={popoverOpen}
+        scanRows={runSnapshot?.jobs}
+        activeJobId={runSnapshot?.activeJob ?? status.activeJob}
+        onOpenJob={onOpenJob}
+      />
       <WindowControls />
       {active && active.total > 0 && <i className="topbar-progress" style={{ width: `${pct(active.done, active.total)}%` }} />}
     </header>

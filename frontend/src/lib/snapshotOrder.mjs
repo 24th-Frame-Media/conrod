@@ -1,4 +1,4 @@
-// Ordering guard for the ONE run snapshot (plan §6.1, audit 4-fe-state P2-1 / P2-6).
+// Ordering guard for run snapshot streams (status polls, hydration reads, and live events).
 //
 // The bug: a slow `status` / `scan_status` poll resolves AFTER a newer pushed
 // live event, but `setStatus` / the `at` comparison was unconditional (and `at`

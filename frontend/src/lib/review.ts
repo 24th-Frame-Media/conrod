@@ -253,7 +253,7 @@ export function visibleFrames(frames: Frame[], facts: Map<number, FrameFacts>, f
 const uncertainty = (f: Frame) => (f.manual_stars != null ? 10 : Math.abs(frameStars(f) - 3));
 const byName = (a: Frame, b: Frame) => filename(a.path).localeCompare(filename(b.path), undefined, { numeric: true }) || a.id - b.id;
 
-export function sortFrames(frames: Frame[], sort: Sort, keepers: Set<number>): Frame[] {
+function sortFrames(frames: Frame[], sort: Sort, keepers: Set<number>): Frame[] {
   const list = [...frames];
   if (sort === 'review') return list.sort((a, b) => uncertainty(a) - uncertainty(b));
   if (sort === 'best') return list.sort((a, b) => frameStars(b) - frameStars(a) || byName(a, b));
@@ -319,7 +319,7 @@ export function vehicleGroups(review: Review, visible: Set<number>, identifying:
 }
 
 /** Candidate rank 1..3 per frame id for one burst; the keeper is always rank 1. Frames beyond 3 are absent. */
-export function burstRanksOf(group: Frame[], keepers: Set<number>): Map<number, number> {
+function burstRanksOf(group: Frame[], keepers: Set<number>): Map<number, number> {
   return burstTopRanks(group, (f: Frame) => keepers.has(f.id));
 }
 

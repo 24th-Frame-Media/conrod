@@ -1,41 +1,38 @@
-// The ONE run snapshot (plan §6.1). Pure, so `node --test` pins it.
+// Normalized run snapshot built purely from engine status and live progress.
 //
-// Everything a screen draws about a run — flowchart nodes, lane grid, header
-// counters, the TitleBar badge and the jobs dropdown — reads from the object
-// `buildRunSnapshot` returns. Nothing here invents or defaults a stage, a worker
-// or a status: the engine's `scan_status` + live events (hydrate-then-live) are
-// the authority, and every stage id the snapshot carries is rendered as-is so
-// B1's new OCR/DECISION/VISION stages drop in without a change here.
+// Flowchart nodes, worker lanes, header counters, the TitleBar badge, and the
+// jobs dropdown all read from `buildRunSnapshot`. Nothing here invents or
+// defaults a stage, worker, or status: `scan_status` plus live events are the
+// authority, and stage ids are carried through stage-agnostically.
 //
-// Cross-cutting concerns that used to be scattered (and disagree) also live
-// here: the ordering guard (snapshotOrder.mjs), the worker lifecycle (§6.4),
-// error-to-job binding (§6.6) and the shared status vocabulary (§6.7).
+// Also houses cross-cutting snapshot logic: ordering guards (snapshotOrder.mjs),
+// worker lifecycle classification, error-to-job binding, and shared status labels.
 import { orderWins, makeClock, applySnapshot } from './snapshotOrder.mjs';
 import { scanView } from './scanStatus.mjs';
 import { orderStages, stageStatus } from './scan.mjs';
 import { selectLanes } from './ingest.mjs';
-import { buildSurface } from './surface.mjs';
+import { buildSurface, stageFailureReason, toneFor } from './surface.mjs';
 
-// Re-export the ordering primitives so consumers/tests need one import.
-export { orderWins, makeClock, applySnapshot };
+// Re-export ordering and shared surface primitives so consumers need one import.
+export { orderWins, makeClock, applySnapshot, stageFailureReason, toneFor };
 
-/** Generous last-report window (plan §9): a cloud vision ask can take 30 s+. Slow is not dead. */
+/** Generous last-report window before flagging a worker stalled: cloud vision requests can take 30 s+. */
 export const STALL_MS = 45000;
 
 /** A worker whose engine `state` is terminal has finished and LEAVES the grid. */
 const TERMINAL_WORKER = new Set(['done', 'failed']);
 
 /**
- * Normalise one worker to the honest lifecycle the grid may draw (§6.4).
- * Contract B1 emits `state` working | paused | done | failed, `step`,
- * `last_report_at` (epoch ms), `lane`/`worker_index`. Legacy engines emit
- * busy | waiting | idle | paused, which stay working here.
- *  - done / failed  -> lifecycle 'done' | 'failed' (result goes to the feed);
+ * Normalise a worker into the lifecycle state the lane grid draws.
+ * Current engines emit `state` (working | paused | done | failed), `step`,
+ * `last_report_at` (epoch ms), and `lane`/`worker_index`; legacy engines emit
+ * busy | waiting | idle | paused, which map to working.
+ *  - done / failed  -> lifecycle 'done' | 'failed' (leaves the grid; result goes to the feed);
  *  - paused         -> 'paused' (a parked worker is never "stalled");
- *  - any active worker past the generous window -> 'stalled' with its last step;
+ *  - any active worker past the stall window -> 'stalled' with its last step;
  *  - otherwise      -> 'working'.
- * Done-vs-stalled is decided by the ENGINE's `state`; the UI only flags stalled
- * past the window, and only when the engine supplies `last_report_at`.
+ * Done-vs-stalled is decided by the engine's `state`; the UI only flags stalled
+ * past the window when `last_report_at` is supplied.
  */
 export function workerLifecycle(worker, now = Date.now(), stallMs = STALL_MS) {
   if (!worker) return { state: 'idle', step: null, lifecycle: 'done', stalled: false };
@@ -72,7 +69,7 @@ export function activeWorkers(workers, options = {}) {
   return { lanes: picked.lanes, hidden: picked.hidden, stalled };
 }
 
-// ---- One status vocabulary, used by the flowchart, badge and dropdown (§6.7) ----
+// ---- Shared status vocabulary for flowchart, badge, and dropdown ----
 
 export const RUN_WORDS = Object.freeze({
   running: 'Running', queued: 'Queued', paused: 'Paused', stopped: 'Stopped',
@@ -84,19 +81,6 @@ export const RUN_WORDS = Object.freeze({
 /** The one canonical short word for a run state. */
 export function runStateWord(state) {
   return RUN_WORDS[String(state ?? '').toLowerCase()] ?? 'Idle';
-}
-
-/** The colour/tone class for a state, shared by every chip and node. */
-export function toneFor(state) {
-  switch (String(state ?? '').toLowerCase()) {
-    case 'running': return 'running';
-    case 'paused': return 'paused';
-    case 'queued': return 'queued';
-    case 'failed': case 'error': return 'error';
-    case 'done': case 'done_errors': return 'done';
-    case 'stopped': case 'scanning': case 'indexed': case 'incomplete': return 'stopped';
-    default: return 'idle';
-  }
 }
 
 /**
@@ -133,31 +117,18 @@ export function dropdownRows(jobs, { activeJob = null, queue = [], liveByJob = {
   return sorted.slice(0, limit).map((j) => ({ id: j.id, label: j.label, chip: jobChip(j, { activeJob, queue, liveByJob, pausedJobIds }) }));
 }
 
-// ---- Errors are never silent (§6.6) ----
+// ---- Error binding and stage failures ----
 
 /**
  * Bind a scan-failure seed to the album on screen. A seed with a null jobId (an
- * import that failed BEFORE an album existed) is shown ONLY while no album is
- * selected; it can NEVER match every album (audit 4-fe-state P2-2). A seed with
- * an id shows only on that exact album, so album B never shows album A's banner
- * and "Retry" never replays the wrong folder's args.
+ * import that failed before an album existed) is shown only while no album is
+ * selected so it never leaks onto unrelated albums. A seed with an id shows only
+ * on that exact album, preventing cross-album banners or misdirected retries.
  */
 export function scanSeedFor(seed, jobId) {
   if (!seed) return null;
   if (seed.jobId == null) return jobId == null ? seed : null;
   return seed.jobId === jobId ? seed : null;
-}
-
-/** A plain reason for a stage that failed, or '' when the stage is fine.
- *  B1's wire shape carries `status: 'failed'` + `error`; older payloads used
- *  `state`/`failed`/`reason`. Both are read so a failure is never silent. */
-export function stageFailureReason(stage) {
-  if (!stage) return '';
-  const raw = String(stage.status ?? stage.state ?? '').toLowerCase();
-  if (raw === 'failed' || stage.failed === true) {
-    return String(stage.reason ?? stage.error ?? 'This stage stopped with an error.').trim() || 'This stage stopped with an error.';
-  }
-  return '';
 }
 
 export function stageFailed(stage) {
@@ -174,21 +145,21 @@ export function failedStages(stages) {
 // ---- The single snapshot ----
 
 /**
- * Build the ONE normalized run snapshot from the engine's authoritative data.
- * `status` is the single `status` poll/push (useEngine); `liveByJob` is the
- * scan-progress event map; `hydrate` is the open album's scan_status read;
- * `seed` is a failed `startScan`. `jobId` is the album currently on screen.
+ * Build the normalized run snapshot from authoritative engine data.
+ * `status` is the engine status poll/push; `liveByJob` is the scan-progress
+ * event map; `hydrate` is the open album's `scan_status` read; `seed` is a
+ * failed `startScan`; `jobId` is the album currently on screen.
  *
- * The active run's view is decided by `scanView` (hydrate-then-live, with the
- * ordering guard). Stages, workers and counters are taken verbatim from that
- * view's progress — stage-agnostic, so new stages need no change here.
+ * The active run's view is resolved via `scanView` (hydrate-then-live with the
+ * ordering guard). Stages, workers, and counters are taken verbatim from that
+ * view's progress so new stages pass through stage-agnostically.
  *
- * `settings` is the album's RESOLVED settings, `album` is its job record
- * (B1's type suggestion), `identifyVram` is B3's fit contract, `decisionService`
- * names the serving decision model and `subject` is the album's subject words.
- * Together with the snapshot they build `surface` (surface.mjs), the one model
- * every flowchart node, greyed step, control, VRAM warning and suggestion reads
- * (B5). Nothing downstream invents a stage, a worker or a status (§6.1).
+ * `settings` is the album's resolved settings, `album` is its job record
+ * (carrying any type suggestion), `identifyVram` is the GPU VRAM fit info,
+ * `decisionService` names the serving decision model, and `subject` holds the
+ * album's subject words. Together with the snapshot they build `surface`
+ * (surface.mjs) for flowchart nodes, disabled steps, controls, VRAM warnings,
+ * and type suggestions.
  *
  * @param {{ status?: any, jobs?: any[], liveByJob?: any, hydrate?: any, seed?: any, jobId?: number|null, now?: number, stallMs?: number, settings?: any, album?: any, identifyVram?: any, decisionService?: string|null, subject?: any }} [options]
  */
@@ -204,9 +175,11 @@ export function buildRunSnapshot(options = {}) {
   const paused = tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(String(t.label ?? '')));
   const pausedJobIds = paused && activeJob != null ? [activeJob] : [];
 
-  const live = activeJob != null ? liveByJob[activeJob] : undefined;
+  const targetJobId = jobId ?? activeJob;
+  const live = targetJobId != null ? liveByJob[targetJobId] : undefined;
+  const targetRecord = targetJobId != null ? jobs.find((j) => j.id === targetJobId) ?? null : null;
   const activeJobRecord = activeJob != null ? jobs.find((j) => j.id === activeJob) ?? null : null;
-  const view = scanView({ job: activeJobRecord, live, hydrate, activeJob });
+  const view = scanView({ job: targetRecord, live, hydrate, activeJob });
   const progress = view.progress ?? null;
 
   // Whatever stages the snapshot carries, in flow order; nothing is invented.
@@ -215,12 +188,15 @@ export function buildRunSnapshot(options = {}) {
   const overall = progress?.overall ?? progress ?? {};
   const counters = {
     done: Number(overall.done ?? progress?.done ?? 0) || 0,
-    total: Number(overall.total ?? progress?.total ?? activeJobRecord?.total ?? 0) || 0,
+    total: Number(overall.total ?? progress?.total ?? targetRecord?.total ?? 0) || 0,
     fraction: Number.isFinite(overall.fraction) ? Math.max(0, Math.min(1, overall.fraction)) : null,
     stage: progress?.stage ?? null,
   };
 
   const runActive = view.state === 'running';
+  const badge = activeJobRecord
+    ? jobChip(activeJobRecord, { activeJob, queue, liveByJob, pausedJobIds })
+    : { word: runStateWord(view.state), state: view.state, tone: toneFor(view.state), progress: counters.fraction };
   const base = {
     activeJob,
     paused,
@@ -230,20 +206,23 @@ export function buildRunSnapshot(options = {}) {
     workers,            // authoritative, for activeWorkers()
     counters,           // header counters, one source
     runActive,          // run end / stage transition clears stale lanes
-    badge: { word: runStateWord(view.state), state: view.state, tone: toneFor(view.state), progress: counters.fraction },
+    badge,
     jobs: dropdownRows(jobs, { activeJob, queue, liveByJob, pausedJobIds }),  // TitleBar dropdown
     failedStages: failedStages(stages),  // failed nodes + plain reasons + retry
     error: scanSeedFor(seed, jobId),     // run error banner bound to the correct job
     now,
     stallMs,
   };
-  // B5: the ONE surface model, built on this snapshot (never bypassing it).
-  base.surface = buildSurface(base, {
-    settings, album, identifyVram, decisionService,
-    subject: subject ?? undefined, jobId: activeJob ?? jobId,
-  });
+  // Build the UI surface model directly from this snapshot.
+  base.surface = buildSurface(
+    { ...base, paused: targetJobId === activeJob ? paused : false },
+    {
+      settings, album, identifyVram, decisionService,
+      subject: subject ?? undefined, jobId: targetJobId,
+    },
+  );
   return base;
 }
 
 /** Export stageStatus for callers that want the snapshot's per-stage word. */
-export { stageStatus };
+export { stageStatus, buildSurface };

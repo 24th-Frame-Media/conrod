@@ -160,8 +160,8 @@ export function startIngestSim(deps: IngestDeps, opts: IngestOptions): IngestSim
     const pick = !afterGroup ? 0 : phase === 'pick' ? (pickT / PICK_S) * total : total;
     const idDone = state === 'done' ? cars : phase === 'vision' || phase === 'done' || phase === 'stopped' ? visionSnap().done : 0;
     const vision = cars > 0;
-    // B1's nine first-class stages. The old single `identify` stage is gone:
-    // OCR → DECISION → VISION, each with its own status word (§2, §6.8).
+    // The nine grouped-run pipeline stages, with Identify split into OCR,
+    // Decision, and Vision, each carrying its own status word.
     const word = (done: number, tot: number, busy: number) => done >= tot && tot > 0 ? 'done' : busy > 0 || done > 0 ? 'running' : 'pending';
     const stages: PipelineStage[] = (['read', 'detect', 'sharpness', 'faces'] as const).map((id) => {
       const m = STAGE_META[id], done = passed[id];

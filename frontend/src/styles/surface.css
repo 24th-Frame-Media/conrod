@@ -1,6 +1,6 @@
-/* ── B5 SURFACE: flowchart sub-nodes, per-stage controls, greyed steps,
-   the type suggestion, and the Settings concurrency / VRAM card (plan §6).
-   All colours come from the theme variables, so dark + light both work. ── */
+/* ── Run surface: flowchart sub-nodes, per-stage controls, disabled steps,
+   shoot-type suggestions, and the Settings concurrency / VRAM card.
+   All colours derive from theme variables for dark and light themes. ── */
 
 /* ── flowchart nodes ── */
 .ing-flow .id-flow-cell { min-width: 138px; }
@@ -19,7 +19,7 @@
 .id-flow .id-node.skipped { border-style: dashed; opacity: .7; }
 .id-flow .id-node.failed { border-color: color-mix(in srgb, var(--bad) 55%, transparent); background: color-mix(in srgb, var(--bad) 8%, var(--surface)); }
 
-/* ── per-stage controls (B2) ── */
+/* ── per-stage controls ── */
 .flow-controls { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .flow-ctl {
   font: inherit; font-size: 10px; padding: 2px 6px; border-radius: 5px;
@@ -30,7 +30,7 @@
 .flow-ctl-skip:hover:not(:disabled) { color: var(--warn2); border-color: color-mix(in srgb, var(--warn2) 45%, transparent); }
 .flow-ctl-rerun:hover:not(:disabled) { color: var(--scan); border-color: color-mix(in srgb, var(--scan) 45%, transparent); }
 
-/* Skip shows its plain consequence before confirming (§4). */
+/* Inline confirmation box showing the plain consequence before skipping a stage. */
 .flow-confirm {
   margin-top: 6px; padding: 7px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--warn2) 45%, transparent);
   background: color-mix(in srgb, var(--warn2) 9%, var(--surface)); position: relative; z-index: 3;
@@ -38,7 +38,7 @@
 .flow-confirm-line { display: block; font-size: 10.5px; line-height: 1.4; color: var(--text); }
 .flow-confirm-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
 
-/* ── greyed disabled steps (§6.3) ── */
+/* ── disabled steps ── */
 .id-flow .id-node.flow-node.off {
   opacity: .62; background: var(--surface-2); border-style: dashed; border-color: var(--line-hover);
 }
@@ -50,7 +50,7 @@
 }
 .flow-shortcut:hover { background: var(--surface-3); }
 
-/* ── type suggestion on the DECISION node (§3b, §6.8) ── */
+/* ── shoot-type suggestion on the Decision node ── */
 .flow-suggestion {
   display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding: 7px;
   border-radius: 6px; border: 1px solid color-mix(in srgb, var(--scan) 40%, transparent);
@@ -65,10 +65,18 @@
 }
 .flow-suggestion-accept:hover { filter: brightness(1.08); }
 
-/* ── Settings: identify concurrency + VRAM warning (§5, §6.8) ── */
+/* ── Settings: local-model concurrency and VRAM fit warning ── */
 .identify-concurrency { margin-top: 4px; }
+.identify-concurrency.embedded {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
 .identify-concurrency h3 { display: flex; align-items: center; gap: 7px; }
-.id-concurrency-lede { font-size: 12px; margin: 0 0 10px; }
+.identify-concurrency.embedded h3 { font-size: 13.5px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
+.identify-concurrency .id-concurrency-lede { font-size: 12px; margin: 0 0 10px; }
 .id-vram-warning {
   display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; border-radius: var(--radius);
   border: 1px solid color-mix(in srgb, var(--warn2) 50%, transparent);
@@ -77,13 +85,13 @@
 .id-vram-warning-head { display: flex; align-items: center; gap: 8px; color: var(--warn2); }
 .id-vram-warning-head b { font-size: 12px; font-weight: 600; color: var(--text); }
 .id-vram-warning .muted { font-size: 11.5px; }
-.id-vram-numbers { font-family: var(--mono); font-size: 11px; display: block; margin-bottom: 10px; }
+.identify-concurrency .id-vram-numbers { font-family: var(--mono); font-size: 11px; display: block; margin: 0 0 10px; }
 .id-seats { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 10px; }
 .id-seat { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .id-seat b { font-weight: 500; }
-.id-seat input { width: 84px; }
+.identify-concurrency .id-seat input { width: 84px; padding: 6px 10px; }
 .id-seat small { font-size: 10.5px; color: var(--text-mute); }
-.id-concurrency-mode { font-size: 11.5px; margin: 0; }
+.identify-concurrency .id-concurrency-mode { font-size: 11.5px; margin: 0; }
 
 /* Manage shoot: the three identify-step toggles. */
 .shoot-stage-lede { font-size: 11.5px; margin: 0 0 8px; }

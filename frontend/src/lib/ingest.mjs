@@ -24,7 +24,7 @@ export function stepIndex(step) {
 
 /**
  * Where the head stage sits among the steps that ACTUALLY RUN: greyed-off
- * nodes (§6.3) never count, and the trailing DONE card is not a stage. The
+ * nodes never count, and the trailing DONE card is not a stage. The
  * header says "Stage 5 of 6", never "Stage 8 of 6" on an album with three
  * steps turned off.
  */
@@ -58,8 +58,8 @@ const two = (i) => String(i + 1).padStart(2, '0');
 /** Is a vision phase part of this run: the identify run reports in, or the scan lists an identify stage that is on. */
 export function visionExpected(stages, identify) {
   if (identify) return true;
-  // B1 split `identify` into three first-class stages; an older snapshot still
-  // carries the single `identify` id. Either means a vision phase is planned.
+  // `identify` is split into per-lane stages (`identify:*`); older snapshots
+  // still carry the single `identify` id. Either means a vision phase is planned.
   return (Array.isArray(stages) ? stages : []).some((s) => (s.id === 'identify' || String(s.id).startsWith('identify:')) && stageStatus(s) !== 'off');
 }
 
@@ -72,8 +72,8 @@ export function failedWords(errors) {
 function scanNode(id, stage, finished, subject, failures = {}) {
   const status = stage ? stageStatus(stage) : 'pending';
   const off = status === 'off';
-  // A stage the engine marked failed draws a FAILED node with the plain reason
-  // (§6.6), whatever its id — stage-agnostic so B1's new stages work unchanged.
+  // A stage the engine marked failed draws a FAILED node with the plain reason,
+  // whatever its id — stage-agnostic so all identify sub-stages work unchanged.
   const reason = failures[id] ?? '';
   const isFailed = Boolean(reason) && !off;
   const state = isFailed ? 'failed' : off ? 'pending' : finished ? 'done' : status === 'done' ? 'done' : status === 'active' ? 'active' : 'pending';
@@ -168,8 +168,8 @@ export function ingestPhase({ mode = 'ingest', scan, identify = null, identifyin
   if (state === 'idle' || state === 'starting' || state === 'error' || state === 'stopped') return state;
   if (state === 'running') {
     if (scan.stage === 'group' || scan.stage === 'pick') return scan.stage;
-    // B1's `identify:ocr|decision|vision` are first-class PIPELINE stages now,
-    // not the standalone vision run: they stay in the scan phase. The old single
+    // `identify:ocr|decision|vision` are first-class pipeline stages, not the
+    // standalone vision run, so they stay in the scan phase. The legacy single
     // `identify` id and a live identify event still mean the vision phase.
     if (scan.stage === 'identify' || identify?.state === 'running') return comparingBursts(identify) ? 'peaks' : 'vision';
     return 'scan';
@@ -256,7 +256,7 @@ export function laneNumber(worker) {
  */
 export function laneState(worker, paused = false) {
   if (!worker || worker.state === 'idle') return 'idle';
-  // A stalled worker is honest, never busy (plan §6.4). The engine decides
+  // A stalled worker is reported honestly, never busy. The engine decides
   // done-vs-stalled; past the window the UI only flags it, showing its last step.
   if (worker.state === 'stalled') return 'stalled';
   if (worker.state === 'paused' || worker.waiting_for === 'paused' || paused) return 'paused';

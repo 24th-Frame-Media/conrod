@@ -1,7 +1,7 @@
 // Per-album Review view preferences and album-level settings; pure so node tests can reach them.
-export const GROUPINGS = ['bursts', 'vehicles', 'dupes', 'flat'];
-export const SORTS = ['review', 'best', 'worst', 'frame', 'pick', 'taste'];
-export const VIEWS = ['all', 'keepers', 'undecided', 'rejected', 'top3', 'review', 'needsLook'];
+const GROUPINGS = ['bursts', 'vehicles', 'dupes', 'flat'];
+const SORTS = ['review', 'best', 'worst', 'frame', 'pick', 'taste'];
+const VIEWS = ['all', 'keepers', 'undecided', 'rejected', 'top3', 'review', 'needsLook'];
 /** View ids from older builds, mapped to the closest current one. */
 const LEGACY_VIEWS = { kept: 'keepers', picks: 'keepers', stacks: 'all', vehicles: 'all' };
 

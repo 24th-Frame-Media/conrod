@@ -1,17 +1,17 @@
-// Pure model for the "Photo helpers" card (Version C — Two zones).
+// Pure model for the AI services & Photo helpers card (`AiSettingsCard.tsx`).
 // No React and no engine calls live here: the component passes the settings
 // draft and the model lists it enumerated from the engine, and every answer
 // below is deterministic so it can be unit-tested. Setting names are the
 // engine's wire format and must never change here.
+//
+// Snapshot prices are $ per million input/output tokens; one photo is estimated
+// at ~900 tokens in + ~250 out. An unknown live model's price is reported as
+// "varies" rather than invented.
 
-export const ZONE_TITLES = { pc: 'On this PC', cloud: 'Via a cloud service' };
-export const ZONE_EMPTY = {
-  cloud: 'Add a cloud key or download the models to move car reading and moments here.',
-};
-export const NOT_SET_UP = 'Not set up — add a key or download the models';
+const arr = (value) => (Array.isArray(value) ? value : []);
 
 /** The seven helpers, in reading order. `capability` marks the two whose
- * models are unlocked by a configured service; the rest always run on this PC. */
+ *  models are served by configured AI services; the rest always run on this PC. */
 export const HELPERS = [
   { id: 'cars-people', title: 'Finds cars & people', desc: 'Spots the cars, bikes, trucks and people to check in each photo.', keys: ['include_cars', 'include_bikes', 'include_trucks'] },
   { id: 'sharpness', title: 'Checks sharpness', desc: 'Flags soft photos and helps choose the sharpest frame in a burst.', keys: ['use_quality_score'] },
@@ -22,7 +22,7 @@ export const HELPERS = [
   { id: 'moments', title: 'Spots moments', desc: 'Finds things like tyre smoke, a kiss or the peak of a jump, to help choose between sharp frames.', capability: 'decision' },
 ];
 
-/** The on/off switches shown in a simple helper's expanded panel (real keys). */
+/** The real settings keys each Photo helper switch reads and writes. */
 export const SIMPLE_CONTROLS = {
   'cars-people': [
     { key: 'include_cars', label: 'Cars' },
@@ -36,316 +36,9 @@ export const SIMPLE_CONTROLS = {
     { key: 'read_numbers', label: 'Read race numbers' },
     { key: 'read_text', label: 'Also read signs and sponsor boards' },
   ],
+  'reads-cars': [{ key: 'use_vlm', label: 'Use a vision model' }],
+  moments: [{ key: 'identify_decision', label: 'Judge moments' }],
 };
-
-export const SERVICE_IDS = ['local', 'ollama', 'openrouter', 'opencode'];
-/** Where each provider-neutral service runs and what its price tag says. */
-export const SERVICE_META = {
-  local: { name: 'Built-in models (This PC)', short: 'This PC', tag: 'Own PC', zone: 'pc' },
-  ollama: { name: 'Ollama hosts', short: 'Ollama', tag: 'Your network', zone: 'pc' },
-  openrouter: { name: 'OpenRouter', short: 'OpenRouter', tag: '¢ per photo', zone: 'cloud' },
-  opencode: { name: 'OpenCode', short: 'OpenCode', tag: '¢ per photo', zone: 'cloud' },
-};
-
-export const STRATS = [
-  { id: 'least_busy', name: 'Least busy' },
-  { id: 'round_robin', name: 'Round robin' },
-  { id: 'random', name: 'Random' },
-];
-export const STRATS_HINT = 'Least busy uses the service with the shortest queue; Round robin takes turns.';
-
-/** Exact empty-state ("fork") copy. The two paths lead into AI services. */
-export const EMPTY_FORK = {
-  heading: 'Two ways to let Conrod read your photos',
-  lead: 'Pick the one that suits your PC. You can add the other any time.',
-  download: {
-    title: 'Download the models',
-    sub: 'Free · needs a PC with a decent graphics card (about 5 GB) · works offline',
-  },
-  cloud: {
-    title: 'Use a cloud service',
-    sub: 'Add a key and pay as you go · works on any PC.',
-    note: 'OpenCode covers both car reading and moments; OpenRouter does too, though its moments model can’t see photos yet.',
-  },
-  cloudFormTitle: 'Add a key to get started',
-  opencodeNote: 'Buy credits in the OpenCode Console.',
-  openrouterNote: 'Its moments model can’t see photos yet.',
-};
-
-export const SUMMARY_LINES = {
-  both: 'Reading on this PC and through a cloud service. Your setup is ready.',
-  local: 'Reading on this PC. The built-in models are ready.',
-  cloud: 'Reading through a cloud service. Your key is saved.',
-};
-
-export const LOCKED_REASON = {
-  vision: 'Reading cars needs a service that can read a photo.',
-  decision: 'Moments need a service that can judge a photo.',
-};
-
-const arr = (value) => (Array.isArray(value) ? value : []);
-
-/** Fold the engine's provider ids onto the four provider-neutral services. */
-export function providerGroup(provider) {
-  const p = String(provider || '').toLowerCase();
-  if (p === 'in_process' || p === 'local') return 'local';
-  if (p === 'opencode-go') return 'opencode';
-  return p;
-}
-
-/** Derive the four services' configuration from the real settings draft.
- * Keys and hosts live on vlm_services / moments_services (the same wire
- * shape); the built-in models are switched on by `use_decider`. */
-export function serviceConfig(settings = {}) {
-  const vlm = arr(settings.vlm_services);
-  const moments = arr(settings.moments_services);
-  const all = [...vlm, ...moments];
-  const rowsFor = (id) => all.filter((s) => providerGroup(s.provider) === id);
-  const keyFor = (id) => {
-    const withKey = rowsFor(id).filter((s) => String(s.api_key || '').trim());
-    return withKey.length ? String(withKey[withKey.length - 1].api_key).trim() : '';
-  };
-  const enabledFor = (id) => rowsFor(id).some((s) => s.enabled);
-  const localOn = Boolean(settings.use_decider);
-  return {
-    local: { downloaded: localOn, enabled: localOn },
-    ollama: {
-      hosts: [...new Set(vlm.filter((s) => providerGroup(s.provider) === 'ollama').map((s) => String(s.host || '')).filter(Boolean))],
-      enabled: enabledFor('ollama'),
-    },
-    openrouter: { key: keyFor('openrouter'), enabled: enabledFor('openrouter') },
-    opencode: { key: keyFor('opencode'), enabled: enabledFor('opencode') },
-  };
-}
-
-/** A service "serves" a capability only when it is configured and enabled. */
-export function serving(id, config) {
-  const s = config?.[id];
-  if (!s) return false;
-  if (id === 'local') return Boolean(s.downloaded && s.enabled);
-  if (id === 'ollama') return s.hosts.length > 0 && Boolean(s.enabled);
-  return Boolean(s.key && s.enabled);
-}
-
-export function anyServing(config) {
-  return SERVICE_IDS.some((id) => serving(id, config));
-}
-export function countOn(config) {
-  return SERVICE_IDS.filter((id) => serving(id, config)).length;
-}
-export function isEmpty(config) {
-  return !anyServing(config);
-}
-
-/** The service groups that can serve a capability, with the models the engine
- * enumerated for each. `modelLists[cap][id] = { models:[{id,name}], freeText }`. */
-export function capGroups(cap, config, modelLists) {
-  const lists = (modelLists && modelLists[cap]) || {};
-  return SERVICE_IDS.filter((id) => serving(id, config)).map((id) => {
-    const meta = SERVICE_META[id];
-    const entry = lists[id] || {};
-    const models = entry.models || [];
-    const disabledNote = cap === 'decision' && id === 'openrouter' ? 'Not available for photos yet' : null;
-    return {
-      id,
-      name: meta.short,
-      tag: meta.tag,
-      zone: meta.zone,
-      key: (id === 'openrouter' || id === 'opencode') ? config[id].key : null,
-      models: disabledNote ? [] : models,
-      disabledNote,
-      freeText: !disabledNote && (models.length === 0 || Boolean(entry.freeText)),
-      testable: id !== 'local',
-    };
-  });
-}
-
-/** A capability is usable once a service that can actually look at a photo is
- * configured. OpenRouter's moments model cannot see photos yet, so it does not
- * unlock the decision lane. Readiness never waits on the (async) model list. */
-export function capUsable(cap, config) {
-  const photo = cap === 'decision'
-    ? ['local', 'ollama', 'opencode']
-    : ['local', 'ollama', 'openrouter', 'opencode'];
-  return photo.some((id) => serving(id, config));
-}
-
-/** One-line status for a capability: ready, or not set up. */
-export function capStatus(cap, config, modelLists) {
-  if (!capUsable(cap, config)) return { text: NOT_SET_UP, tone: 'locked', tag: 'Needs setup' };
-  const hasLocal = serving('local', config) || serving('ollama', config);
-  const hasCloud = serving('openrouter', config) || serving('opencode', config);
-  if (hasLocal && hasCloud) return { text: 'Ready on this PC + cloud', tone: 'ok', tag: 'This PC + cloud' };
-  if (hasLocal) return { text: 'Ready on this PC', tone: 'ok', tag: 'This PC' };
-  const names = capGroups(cap, config, modelLists)
-    .filter((g) => g.zone === 'cloud' && !g.disabledNote)
-    .map((g) => g.name);
-  return { text: 'Ready via ' + (names.length ? names.join(' and ') : 'a cloud service'), tone: 'ok', tag: 'Cloud' };
-}
-
-function simpleHelperOn(helper, settings) {
-  if (!helper.keys) return true;
-  return helper.keys.some((key) => Boolean(settings?.[key]));
-}
-
-/** `ctx` = { settings, config, modelLists }. The row's slim status. */
-export function statusOf(helper, ctx) {
-  const { config, modelLists, settings } = ctx;
-  if (helper.capability) return capStatus(helper.capability, config, modelLists);
-  if (!simpleHelperOn(helper, settings)) return { text: 'Off', tone: 'off', tag: 'This PC' };
-  return { text: 'Ready on this PC', tone: 'ok', tag: 'This PC' };
-}
-
-/** Helpers are slotted by where they actually run: simple ones on this PC,
- * capability ones in the cloud zone only when they run purely via a cloud
- * service. A not-set-up helper stays on this PC so the fork can lead it. */
-export function zoneOf(helper, ctx) {
-  if (!helper.capability) return 'pc';
-  return capStatus(helper.capability, ctx.config, ctx.modelLists).tag === 'Cloud' ? 'cloud' : 'pc';
-}
-
-export function groupByZone(ctx) {
-  const pc = HELPERS.filter((h) => zoneOf(h, ctx) === 'pc');
-  const cloud = HELPERS.filter((h) => zoneOf(h, ctx) === 'cloud');
-  return [
-    { id: 'pc', title: ZONE_TITLES.pc, helpers: pc, empty: '' },
-    { id: 'cloud', title: ZONE_TITLES.cloud, helpers: cloud, empty: ZONE_EMPTY.cloud },
-  ];
-}
-
-/** Why a capability is locked, and what unlocks it. */
-export function unlockReason(helper, ctx) {
-  const cap = helper?.capability;
-  if (!cap) return { locked: false };
-  const { config } = ctx;
-  if (capUsable(cap, config)) return { locked: false };
-  let sub = LOCKED_REASON[cap] + ' Add a key or download the built-in models, then pick a model here.';
-  if (cap === 'decision' && serving('openrouter', config) && !serving('opencode', config) && !serving('local', config)) {
-    sub = 'OpenRouter’s moments model can’t see photos yet. Add an OpenCode key or download the built-in models.';
-  }
-  return { locked: true, reason: NOT_SET_UP, sub };
-}
-
-export function summaryLine(config) {
-  const hasLocal = serving('local', config) || serving('ollama', config);
-  const hasCloud = serving('openrouter', config) || serving('opencode', config);
-  if (hasLocal && hasCloud) return SUMMARY_LINES.both;
-  if (hasLocal) return SUMMARY_LINES.local;
-  return SUMMARY_LINES.cloud;
-}
-
-/** Convenience: build the whole derived view the component renders. */
-export function buildAiView(settings, modelLists) {
-  const config = serviceConfig(settings);
-  const ctx = { settings, config, modelLists };
-  return {
-    config,
-    ctx,
-    groups: groupByZone(ctx),
-    isEmpty: isEmpty(config),
-    summary: summaryLine(config),
-    countOn: countOn(config),
-  };
-}
-
-/* ── wiring helpers: keep the provider-neutral services in sync with the two
-   real service lists the engine reads (vlm_services / moments_services). ── */
-
-const PROVIDER_OF = { local: 'in_process', ollama: 'ollama', openrouter: 'openrouter', opencode: 'opencode' };
-const DEFAULT_MODELS = {
-  vision: { local: 'Built-in car reader', ollama: 'qwen2.5vl:7b', openrouter: 'qwen/qwen2.5-vl-72b-instruct', opencode: 'glm-5.3-flash' },
-  decision: { local: 'in_process', ollama: 'qwen2.5vl:7b', openrouter: 'perplexity/pplx-decider-flash-v1.3:free', opencode: 'jev-1.13' },
-};
-let idCounter = 0;
-const newId = (cap, id) => `${cap}-${id}-${Date.now()}-${idCounter++}`;
-
-function baseRow(id, cap, patch) {
-  return {
-    id: newId(cap, id),
-    provider: PROVIDER_OF[id],
-    model: DEFAULT_MODELS[cap][id],
-    host: id === 'ollama' ? String(patch.host ?? patch.addHost ?? '') : '',
-    api_key: 'key' in patch ? String(patch.key) : '',
-    enabled: 'enabled' in patch ? Boolean(patch.enabled) : true,
-  };
-}
-
-const groupRows = (list, id) => list.filter((s) => providerGroup(s.provider) === id);
-const ensureGroup = (list, id, make) =>
-  groupRows(list, id).length ? list : [...list, make()];
-
-/** Apply one config-panel edit. Returns the settings keys to write back:
- * { vlm_services, moments_services, use_decider }. Pure. */
-export function setService(settings, id, patch = {}) {
-  const copy = (value) => arr(value).map((s) => ({ ...s }));
-  let vlm = copy(settings.vlm_services);
-  let moments = copy(settings.moments_services);
-  let use_decider = Boolean(settings.use_decider);
-
-  if (id === 'local') {
-    if (patch.download) use_decider = true;
-    if ('enabled' in patch) use_decider = Boolean(patch.enabled);
-    moments = ensureGroup(moments, 'local', () => ({ id: 'moments-local', provider: 'in_process', model: 'in_process', host: '', api_key: '', enabled: true }));
-    moments = moments.map((s) => providerGroup(s.provider) === 'local' ? { ...s, enabled: use_decider } : s);
-    return { vlm_services: vlm, moments_services: moments, use_decider };
-  }
-
-  if (patch.removeHost != null) {
-    const host = String(patch.removeHost);
-    const drop = (list) => list.filter((s) => !(providerGroup(s.provider) === 'ollama' && String(s.host || '') === host));
-    return { vlm_services: drop(vlm), moments_services: drop(moments), use_decider };
-  }
-  if (patch.addHost) {
-    const host = String(patch.addHost).trim();
-    if (host) {
-      const next = { ...patch, host };
-      vlm = [...vlm, baseRow(id, 'vision', next)];
-      moments = [...moments, baseRow(id, 'decision', next)];
-    }
-    return { vlm_services: vlm, moments_services: moments, use_decider };
-  }
-
-  vlm = ensureGroup(vlm, id, () => baseRow(id, 'vision', patch));
-  moments = ensureGroup(moments, id, () => baseRow(id, 'decision', patch));
-  const apply = (s) => {
-    const next = { ...s };
-    if ('key' in patch) next.api_key = String(patch.key);
-    if ('enabled' in patch) next.enabled = Boolean(patch.enabled);
-    if ('model' in patch) next.model = String(patch.model);
-    return next;
-  };
-  vlm = vlm.map((s) => providerGroup(s.provider) === id ? apply(s) : s);
-  moments = moments.map((s) => providerGroup(s.provider) === id ? apply(s) : s);
-  return { vlm_services: vlm, moments_services: moments, use_decider };
-}
-
-/** Write a Version (model id) back to the matching service in one lane. */
-export function setCapModel(settings, cap, id, model) {
-  const key = cap === 'vision' ? 'vlm_services' : 'moments_services';
-  const list = arr(settings[key]).map((s) => ({ ...s }));
-  // The built-in reader is not a service row. Writing it into vlm_services once
-  // put `in_process` there and made every car read fail with "unknown vision
-  // provider 'in_process'". The decider's seat is a moments row, so only the
-  // vision lane refuses it.
-  if (cap === 'vision' && id === 'local') return { [key]: list };
-  let done = false;
-  const next = list.map((s) => {
-    if (providerGroup(s.provider) === id && !done) { done = true; return { ...s, model: String(model) }; }
-    return s;
-  });
-  if (!done) next.push(baseRow(id, cap, { model }));
-  return { [key]: next };
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   Services-plan view — approved mock conrod-notes/mocks/ai-settings/
-   services-plan/index.html. Pure data + derivations: no React, no engine.
-   Snapshot prices are $ per million input/output tokens; one photo is estimated
-   at ~900 tokens in + ~250 out. An unknown live model's price is reported as
-   "varies" rather than invented. The legacy two-zone helpers above are kept so
-   the existing test suite (and any other caller) stays valid; the rebuilt card
-   uses only the exports below.
-   ════════════════════════════════════════════════════════════════════════ */
 
 export const IN_TOK = 900, OUT_TOK = 250;
 
@@ -359,7 +52,7 @@ export const SERVICE_TYPES = {
     keyPlaceholder: 'Paste your OpenCode key',
     note: 'Buy credits in the OpenCode Console. Conrod never logs your key.',
     models: [
-      { id: 'glm-5.3-flash', role: 'vision', img: true, pM: 0.15, cM: 0.5, efforts: ['low', 'high', 'max'], def: 'high', on: true },
+      { id: 'glm-5.3-flash', role: 'vision', img: true, pM: 0.15, cM: 0.5, on: true },
       { id: 'jev-1.13', role: 'decisions', img: true, pM: 0.042, cM: 0, on: true },
       { id: 'jev-1.13-free', role: 'decisions', img: true, pM: 0, cM: 0, on: false },
       { id: 'gemini-decision-1', role: 'decisions', img: true, pM: 0.1, cM: 0, on: true },
@@ -373,9 +66,9 @@ export const SERVICE_TYPES = {
     models: [
       { id: 'qwen/qwen2.5-vl-72b-instruct', role: 'vision', img: true, pM: 0.8, cM: 1, on: true },
       { id: 'qwen/qwen3-vl-30b-a3b-instruct', role: 'vision', img: true, pM: 0.15, cM: 0.6, on: false },
-      { id: 'tencent/hy4', role: 'vision', img: true, pM: 0.417, cM: 1.2505, efforts: ['high', 'low', 'none'], def: 'high', on: false },
-      { id: 'typesafe/jev-router', role: 'decisions', img: true, pM: -1, cM: -1, efforts: ['auto', 'low', 'medium', 'high'], def: 'auto', on: true },
-      { id: 'openrouter/auto', role: 'decisions', img: true, pM: -1, cM: -1, efforts: ['auto', 'low', 'medium', 'high'], def: 'auto', on: false },
+      { id: 'tencent/hy4', role: 'vision', img: true, pM: 0.417, cM: 1.2505, on: false },
+      { id: 'typesafe/jev-router', role: 'decisions', img: true, pM: -1, cM: -1, on: true },
+      { id: 'openrouter/auto', role: 'decisions', img: true, pM: -1, cM: -1, on: false },
       { id: 'openrouter/free', role: 'decisions', img: true, pM: 0, cM: 0, on: false },
     ],
   },
@@ -383,9 +76,9 @@ export const SERVICE_TYPES = {
     name: 'Local Ollama', tag: 'Your network', dot: 'amber', kind: 'host', decisions: false, thinking: true,
     note: 'A host on your network. Its vision models join car reading and moments.',
     models: [
-      { id: 'qwen3-vl:8b', role: 'vision', local: true, img: true, variants: ['q4_K_M', 'q8_0'], on: true },
-      { id: 'qwen3-vl:4b', role: 'vision', local: true, img: true, variants: ['q8_0'], on: true },
-      { id: 'llava:7b', role: 'vision', local: true, img: true, variants: ['v1.6'], on: false },
+      { id: 'qwen3-vl:8b', role: 'vision', local: true, img: true, on: true },
+      { id: 'qwen3-vl:4b', role: 'vision', local: true, img: true, on: true },
+      { id: 'llava:7b', role: 'vision', local: true, img: true, on: false },
     ],
   },
   gemini: {
@@ -393,8 +86,8 @@ export const SERVICE_TYPES = {
     keyPlaceholder: 'Paste your Google AI key',
     note: "Google's models, billed to your Google AI key. They read photos and decide.",
     models: [
-      { id: 'gemini-4-hydrogen', role: 'both', img: true, pM: 1.5, cM: 7.5, efforts: ['xhigh', 'high', 'medium', 'low'], def: 'medium', on: true },
-      { id: 'gemini-3.8-flash', role: 'both', img: true, pM: 0.825, cM: 4.125, efforts: ['high', 'medium', 'low'], def: 'medium', on: false },
+      { id: 'gemini-4-hydrogen', role: 'both', img: true, pM: 1.5, cM: 7.5, on: true },
+      { id: 'gemini-3.8-flash', role: 'both', img: true, pM: 0.825, cM: 4.125, on: false },
     ],
   },
   anthropic: {
@@ -402,8 +95,8 @@ export const SERVICE_TYPES = {
     keyPlaceholder: 'Paste your Anthropic key',
     note: 'Claude models, billed to your Anthropic key. They read photos and decide.',
     models: [
-      { id: 'claude-haiku-5.5', role: 'both', img: true, pM: 0.1, cM: 0.5, efforts: ['max', 'xhigh', 'high', 'medium', 'low', 'none'], def: 'medium', on: true },
-      { id: 'claude-sonnet-5.5', role: 'both', img: true, pM: 2, cM: 10, efforts: ['max', 'xhigh', 'high', 'medium', 'low'], def: 'high', on: false },
+      { id: 'claude-haiku-5.5', role: 'both', img: true, pM: 0.1, cM: 0.5, on: true },
+      { id: 'claude-sonnet-5.5', role: 'both', img: true, pM: 2, cM: 10, on: false },
     ],
   },
   openai: {
@@ -411,8 +104,8 @@ export const SERVICE_TYPES = {
     keyPlaceholder: 'Paste your OpenAI key',
     note: 'GPT models, billed to your OpenAI key. They read photos and decide.',
     models: [
-      { id: 'gpt-6-luna', role: 'both', img: true, pM: 0.1, cM: 0.5, efforts: ['max', 'xhigh', 'high', 'medium', 'low', 'none'], def: 'medium', on: true },
-      { id: 'gpt-6.1-terra', role: 'both', img: true, pM: 1, cM: 5, efforts: ['max', 'xhigh', 'high', 'medium', 'low', 'none'], def: 'medium', on: false },
+      { id: 'gpt-6-luna', role: 'both', img: true, pM: 0.1, cM: 0.5, on: true },
+      { id: 'gpt-6.1-terra', role: 'both', img: true, pM: 1, cM: 5, on: false },
     ],
   },
 };
@@ -433,12 +126,19 @@ export const BUILTIN = {
   note: 'Ready on this PC. Nothing is uploaded.',
   models: [
     {
-      id: 'qwen3-vl:8b', role: 'vision', group: 'Reads photos', variants: ['q4_K_M', 'q8_0'], on: true,
+      id: 'qwen3-vl:8b', role: 'vision', group: 'Reads photos', on: true,
       dl: '~6 GB', assets: ['Qwen3VL-8B-Instruct-Q4_K_M.gguf', 'mmproj-Qwen3VL-8B-Instruct-F16.gguf'],
     },
     { id: 'pplx-decider-local', role: 'decisions', group: 'Makes decisions', dl: '~5 GB', on: false, assets: null },
   ],
 };
+
+/** Real `decider_quant` precision choices for the built-in local decision model. */
+export const DECIDER_QUANTS = [
+  { id: 'auto', name: 'Auto' },
+  { id: 'int8', name: '8-bit' },
+  { id: 'int4', name: '4-bit' },
+];
 
 /** The engine row id each built-in card row reads (never a fuzzy name match:
  *  a cloud "Vision model" health row is NOT the built-in vision model). */
@@ -466,7 +166,7 @@ export function setSharing(value) {
 }
 
 /* ---- price snapshot, indexed by the model ids the dropdowns offer ---- */
-export const PRICE_BY_ID = (() => {
+const PRICE_BY_ID = (() => {
   const out = {};
   for (const def of Object.values(SERVICE_TYPES))
     for (const m of def.models)
@@ -478,7 +178,7 @@ export function fmtUsd(v, deep) {
   if (deep) return v < 0.0001 ? v.toFixed(5) : v.toFixed(4);
   return v < 0.01 ? v.toFixed(4) : v.toFixed(2);
 }
-/** One picked model's cost object, or null when it is a local model. */
+/** One picked model's cost object. */
 export function photoCost(id) {
   if (PRICE_BY_ID[id] === undefined) return { varies: true }; // honest: unknown price
   const m = PRICE_BY_ID[id];
@@ -506,7 +206,7 @@ export function costLine(picked = []) {
 }
 
 /* ---- a service card, with a per-card Thinking flag that defaults OFF ---- */
-export function visionModels(type) {
+function visionModels(type) {
   const def = SERVICE_TYPES[type];
   if (!def) return [];
   return def.models.filter((m) => m.img && (m.role === 'vision' || m.role === 'both'));
@@ -517,7 +217,6 @@ export function decisionModels(type) {
   return def.models.filter((m) => m.role === 'decisions' || m.role === 'both');
 }
 export function makeCard(type, opts = {}) {
-  const def = SERVICE_TYPES[type];
   const c = {
     key: type === 'ollama' ? `ollama-${opts.hostIndex ?? 1}` : type,
     type, enabled: true, thinking: false, reasoning: false, sel: { vision: 'none', decisions: 'none' }, opts: {},
@@ -532,7 +231,7 @@ export function makeCard(type, opts = {}) {
 }
 /** The Thinking default for every card. */
 export function defaultThinking() { return false; }
-export function cardReady(card) {
+function cardReady(card) {
   const def = SERVICE_TYPES[card && card.type];
   if (!def) return false;
   if (def.kind === 'key') return Boolean(card.apiKey);
@@ -584,7 +283,7 @@ export function decisionCandidates(type, live = [], decisionLive = []) {
    boolean (per-service thinking, default false). The backend applies it when it
    builds the VLM request; this UI only reads and writes the field on the two
    service lists. ---- */
-export const SERVICE_PROVIDER_OF = {
+const SERVICE_PROVIDER_OF = {
   opencode: 'opencode', openrouter: 'openrouter', ollama: 'ollama',
   gemini: 'gemini', anthropic: 'anthropic', openai: 'openai',
 };
@@ -593,7 +292,7 @@ export function providerToType(provider) {
   if (p === 'opencode-go') return 'opencode';
   return SERVICE_PROVIDER_OF[p] || null; // in_process / local = built-in (separate)
 }
-export function cardKeyFor(entry) {
+function cardKeyFor(entry) {
   const type = providerToType(entry && entry.provider);
   if (!type) return null;
   if (type === 'ollama') return String(entry.id || entry.host || 'ollama');
@@ -659,7 +358,7 @@ export function patchService(settings, key, patch = {}) {
 }
 
 /* ---- helpers: who serves each one, and the anchored popup data ---- */
-export const VISION_HELPER = 'reads-cars';
+const VISION_HELPER = 'reads-cars';
 export const DECISION_HELPER = 'moments';
 /** ctx = { builtinVision:[ids], builtinDecisions:[ids],
  *  cards:[{type,enabled,visionSel,decisionSel,apiKey,tested,liveModels}],
@@ -754,11 +453,6 @@ export function poolCount(ctx = {}) {
   }
   return { n, svc };
 }
-export function poolLabel(p) {
-  return p.n
-    ? `<b>${p.n}</b> model${p.n === 1 ? '' : 's'} in the pool · ${p.svc} service${p.svc === 1 ? '' : 's'}`
-    : 'Nothing in the pool yet';
-}
 export function summaryText(ctx = {}) {
   const p = poolCount(ctx);
   const routing = (SHARING.find((s) => s.id === ctx.routing) || SHARING[0]).name.toLowerCase();
@@ -848,4 +542,3 @@ export function downloadProgress(done, total) {
   const pct = Math.max(0, Math.min(100, Math.round((d / t) * 100)));
   return { known: true, pct, label: `${gb(d)} GB of ${gb(t)} GB · ${pct}%` };
 }
-

@@ -13,7 +13,7 @@ import { albumSetting } from '../lib/album.mjs';
 import { albumVisionChoice, albumVisionOn } from '../lib/vision.mjs';
 import { WORKFLOW_OPTIONS, pipelineSteps, workflowIncludesCull, workflowIncludesIdentify, workflowLabel, workflowModeOf, type PipelineStep } from '../lib/workflow.mjs';
 import { everythingCount, hasReadings, identifyActionLabel, identifyNewLabel, identifyScopeOf, keeperCount } from '../lib/identify.mjs';
-import { RERUN_STAGES, anyRerunRunning, rerunDoneText, rerunHint, rerunKey, rerunLabel, rerunStartedText, runningRerun, type RerunStage } from '../lib/rerun.mjs';
+import { RERUN_STAGES, anyRerunRunning, rerunDoneText, rerunHint, rerunLabel, rerunStartedText, runningRerun, type RerunStage } from '../lib/rerun.mjs';
 import { call, engine } from '../lib/api';
 import { applyLine } from '../lib/apply.mjs';
 import { etaText, pct } from '../lib/format';
@@ -132,8 +132,8 @@ type Props = {
   onJobsChanged: () => Promise<unknown> | void;
   /** Dev start only (`?mock=1&lightroom=…`): open the sheet or dialog a screenshot needs. */
   lightroomDev?: 'export' | 'sent' | 'import' | 'imported' | 'stats';
-  /** B5: a greyed flowchart node's shortcut opens this album's Manage shoot.
-   *  A changing nonce reopens it even when the modal was already open. */
+  /** Nonce incremented by a disabled flowchart node's shortcut to open this
+   *  album's shoot settings modal, even if it was opened previously. */
   openShootSettings?: number;
 };
 
@@ -196,7 +196,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const [known, setKnown] = useState<KnownVehicle[]>([]);
   const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'reset_album' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
-  // A greyed node's shortcut (§6.3) opens Manage shoot from any screen.
+  // Open shoot settings when triggered from a disabled flowchart node shortcut.
   useEffect(() => { if (openShootSettings) setShootSettingsOpen(true); }, [openShootSettings]);
   const [statsOpen, setStatsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -241,8 +241,8 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const albumOverrides = overridesOf(albumSetting(currentJob, 'overrides', settings));
   const userDefaults = overridesOf(albumSetting(currentJob, 'user_defaults', settings));
   const policy = usePresetPolicy(currentProfile, albumOverrides, userDefaults);
-  // The album's own subject words, from resolved settings (§6.1). Nothing here
-  // hardcodes a car: a rodeo reads subjects, a motorsport album vehicles.
+  // Derive subject wording for this album from its resolved shoot policy rather
+  // than hardcoding a single shoot type.
   const subject = subjectWords(policy);
   const vehicleBrowse = facetsFor(currentProfile, { ...userDefaults, ...albumOverrides }).some((k) => k === 'number' || k === 'plate' || k === 'make');
   const groupingNow = grouping === 'vehicles' && !vehicleBrowse ? 'bursts' : grouping;
@@ -288,7 +288,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const expandedKey = expandedStack != null && !isSingleton(expandedStack) ? expandedStack.key : null;
   const selectedKey = selected != null ? shownOf.get(selected)?.key ?? null : null;
 
-  // 1.3: which of grid / loupe (Viewer) / compare is showing; G/E/C reach this through `verbs`.
+  // Active review layout (grid, loupe viewer, or compare); switched via G/E/C hotkeys through `verbs`.
   const [view, setView] = useState<ReviewView>('grid');
   const [idsOpen, setIdsOpen] = useState(false);
   const [comparePane, setComparePane] = useState<'left' | 'right'>('left');
@@ -519,8 +519,9 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     : 'mixed';
   const albumSettings: Settings = {
     ...settings,
-    // B5: the three identify-step toggles follow this album's own values.
+    // Per-album identify-step switches (OCR, decision, vision).
     identify_ocr: albumSetting(currentJob, 'identify_ocr', settings) as boolean | undefined ?? true,
+    identify_decision: albumSetting(currentJob, 'identify_decision', settings) as boolean | undefined ?? true,
     use_decider: albumSetting(currentJob, 'use_decider', settings) as boolean | undefined ?? Boolean(settings.use_decider),
     read_numbers: albumSetting(currentJob, 'read_numbers', settings) as boolean | undefined ?? true,
     read_plates: albumSetting(currentJob, 'read_plates', settings) as boolean | undefined ?? true,
@@ -532,6 +533,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     grouping_keep_pans: albumSetting(currentJob, 'grouping_keep_pans', settings) as boolean | undefined ?? true,
     grouping_focus_anchor: albumSetting(currentJob, 'grouping_focus_anchor', settings) as boolean | undefined ?? true,
     identify_scope: identifyScopeOf(albumSetting(currentJob, 'identify_scope', settings)),
+    moments_threshold: thresholdOf(albumSetting(currentJob, 'moments_threshold', settings)),
     use_vlm: albumVisionOn(currentJob, settings),
   };
   /** Album-scoped changes go to this album only; the global defaults are edited in Settings. */
@@ -539,12 +541,6 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     await engine.updateJobSettings(jobId, patch);
     await onJobsChanged();
     await rv.refresh();
-  };
-  const switchFeature = async (feature: string, value: boolean) => {
-    const result = await engine.setFeature(jobId, feature, value);
-    await onJobsChanged();
-    await rv.refresh();
-    if (result.needsRescan) toast('Rescan this album to look for it.');
   };
   const workflow = workflowModeOf(albumSetting(currentJob, 'workflow_mode', settings));
   // The stepper reads the album's own data, not `job.status`: a long-finished album can still say "scanning".
@@ -564,13 +560,37 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     moments: isOn(policy, 'moments_detect'),
     pick: scanned,
   };
-  const rerunItems: MenuItem[] = RERUN_STAGES.filter((stage) => rerunAvailable[stage]).map((stage) => ({
+  const rerunStageItems: MenuItem[] = RERUN_STAGES.filter((stage) => rerunAvailable[stage]).map((stage) => ({
     id: `rerun_${stage}`,
     label: rerunLabel(stage, { vehicles: vehicleBrowse }),
     hint: rerunHint(stage),
     disabled: rerunBusy,
     onClick: () => doRerun(stage),
   }));
+  const rerunItems: MenuItem[] = [
+    ...rerunStageItems,
+    ...(rerunStageItems.length > 0 ? [{ type: 'divider' as const }] : []),
+    {
+      id: 'group',
+      label: `Re-group ${subject.many}`,
+      hint: `Cluster matching ${subject.many} across different passes and bursts`,
+      disabled: rerunBusy,
+      onClick: () => {
+        void run(async () => {
+          await call('group', { jobId });
+          await rv.refresh();
+          toast(`${subject.title} re-grouped.`);
+        });
+      },
+    },
+    {
+      id: 'rescan',
+      label: 'Rescan from pixels…',
+      hint: 'Re-read every photo and re-measure sharpness; keeps your edits',
+      disabled: rerunBusy,
+      onClick: () => setConfirmReset('rescan'),
+    },
+  ];
   const pickWorkflow = (value: string) => {
     void run(async () => {
       await saveAlbum({ workflow_mode: workflowModeOf(value) });
@@ -681,57 +701,6 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       hint: 'List what would be written without touching files on disk',
       onClick: () => onWrite(true),
     },
-    { type: 'divider' },
-    { type: 'header', label: 'Reprocessing' },
-    {
-      id: 'rescore',
-      label: 'Re-score sharpness',
-      hint: 'Re-measure focus and sharpness across all frames',
-      onClick: () => {
-        void run(async () => {
-          await call('rescore', { jobId });
-          await rv.refresh();
-          toast('Sharpness re-scoring started. Progress in Activity.');
-        });
-      },
-    },
-    {
-      id: 'rescan',
-      label: 'Rescan from pixels…',
-      hint: 'Re-read every photo and re-measure sharpness; keeps your edits',
-      onClick: () => setConfirmReset('rescan'),
-    },
-    {
-      id: 'pick_keepers',
-      label: 'Re-pick burst keepers',
-      hint: 'Select the best sharpest photo in each burst sequence',
-      onClick: () => {
-        void run(async () => {
-          await call('pick_keepers', { jobId });
-          await rv.refresh();
-          toast('Burst keepers updated.');
-        });
-      },
-    },
-    {
-      id: 'group',
-      label: 'Re-group vehicles',
-      hint: 'Cluster matching vehicles across different passes and bursts',
-      onClick: () => {
-        void run(async () => {
-          await call('group', { jobId });
-          await rv.refresh();
-          toast('Vehicles re-grouped.');
-        });
-      },
-    },
-    {
-      id: 'reset_all',
-      label: 'Reset all…',
-      danger: true,
-      hint: 'Back to the moment this album was created. Deletes every measurement, star, pick and identification here.',
-      onClick: () => setConfirmReset('reset_album'),
-    },
   ];
 
   const manageItems: MenuItem[] = [
@@ -740,34 +709,6 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       label: 'Shoot settings & preset…',
       hint: `Preset: ${profileLabel(currentProfile)}`,
       onClick: () => setShootSettingsOpen(true),
-    },
-    { type: 'divider' },
-    { type: 'header', label: 'Detection options' },
-    {
-      type: 'checkbox',
-      id: 'toggle_numbers',
-      label: 'Read race numbers',
-      hint: 'Detect vehicle competition numbers (#0–999)',
-      checked: isOn(policy, 'numbers'),
-          onChange: (checked) => {
-            void run(async () => {
-            await switchFeature('numbers', checked);
-          toast(`Race number detection turned ${checked ? 'on' : 'off'}.`);
-        });
-      },
-    },
-    {
-      type: 'checkbox',
-      id: 'toggle_plates',
-      label: 'Read licence plates',
-      hint: 'Detect vehicle licence and registration plates',
-      checked: isOn(policy, 'plates'),
-          onChange: (checked) => {
-            void run(async () => {
-            await switchFeature('plates', checked);
-          toast(`Licence plate detection turned ${checked ? 'on' : 'off'}.`);
-        });
-      },
     },
     { type: 'divider' },
     { type: 'header', label: 'Culling' },
@@ -810,6 +751,13 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       danger: true,
       onClick: () => setConfirmReset('reset_detections'),
     },
+    {
+      id: 'reset_all',
+      label: 'Reset all…',
+      danger: true,
+      hint: 'Back to the moment this album was created. Deletes every measurement, star, pick and identification here.',
+      onClick: () => setConfirmReset('reset_album'),
+    },
     { type: 'divider' },
     {
       id: 'rename',
@@ -837,16 +785,6 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
       label: 'Import from Lightroom…',
       hint: 'Read the flags, stars and colour labels you gave this shoot in Lightroom Classic',
       onClick: () => setLightroomOpen(true),
-    },
-    {
-      id: 'summary',
-      label: 'Shoot summary',
-      onClick: () => {
-        void run(async () => {
-          const s = await call<{ images: Record<string, number>; counts: Record<string, number> }>('summary', { jobId });
-          toast(`${s.images.scanned} scanned · ${s.images.written} written · ${s.images.errors} errors · ${s.counts.numbered} numbered · ${s.counts.plated} plated · ${s.counts.to_review} to review`);
-        });
-      },
     },
   ];
 
@@ -935,6 +873,8 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         jobLabel={currentJob?.label ?? ''}
         initialProfile={currentProfile}
         initialSettings={albumSettings}
+        initialOverrides={albumOverrides}
+        initialUserDefaults={userDefaults}
         initialVision={albumVisionChoice(currentJob)}
         globals={settings}
         visible={shootSettingsOpen}

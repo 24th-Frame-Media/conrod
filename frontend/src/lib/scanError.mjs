@@ -11,7 +11,7 @@ const KIND_TITLES = {
 };
 
 /** The last path segment, so a long root reads as "Bathurst 1000", not the whole path. */
-export function folderName(root = '') {
+function folderName(root = '') {
   const parts = String(root).split(/[\\/]/).filter(Boolean);
   return parts.at(-1) ?? '';
 }

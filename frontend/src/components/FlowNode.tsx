@@ -7,7 +7,7 @@ import { Icon } from './basics';
  *  DECISION node) the type suggestion. Everything here reads from the node the
  *  snapshot produced — nothing invents a status or a consequence. */
 export type FlowControl = {
-  action: string; args: { jobId: number | null; stage: string };
+  action: string; args: { jobId: number | null; stage: string; paused?: boolean; skip?: boolean; full?: boolean };
   available: boolean; label: string; consequence?: string;
 };
 
@@ -16,7 +16,11 @@ type Props = {
   first: boolean;
   filter: string | null;
   onFilter?: (f: string | null) => void;
-  onStageControl?: (action: 'stage_pause' | 'stage_skip' | 'stage_rerun', stage: string) => void;
+  onStageControl?: (
+    action: 'stage_pause' | 'stage_skip' | 'stage_rerun',
+    stage: string,
+    extra?: { paused?: boolean; skip?: boolean; full?: boolean },
+  ) => void;
   onAcceptTypeSuggestion?: (type: string) => void;
   onOpenShootSettings?: () => void;
 };
@@ -67,7 +71,8 @@ export function FlowNode({ node, first, filter, onFilter, onStageControl, onAcce
             disabled={!c.available} title={kind === 'skip' ? c.consequence : `${c.label} ${node.label}`}
             onClick={() => {
               if (kind === 'skip') { setConfirmSkip(true); return; }
-              onStageControl?.(c.action as 'stage_pause' | 'stage_skip' | 'stage_rerun', c.args.stage);
+              const extra = c.args.paused !== undefined ? { paused: c.args.paused } : undefined;
+              onStageControl?.(c.action as 'stage_pause' | 'stage_skip' | 'stage_rerun', c.args.stage, extra);
             }}
           >{c.label}</button>
         );

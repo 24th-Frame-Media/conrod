@@ -1,25 +1,21 @@
-// The SURFACE of one grouped run (plan §6, batch B5). Pure, so `node --test`
-// pins it. This module never reads the DOM or the engine: it is fed the ONE run
-// snapshot (`buildRunSnapshot` in runSnapshot.mjs) plus the album's RESOLVED
-// settings. Every screen draws from what `buildSurface` returns — nothing
-// invents a node, a status word, a worker or a reason (§6.1).
-//
-// B1 split the single identify wire stage into three first-class stages; B2
-// added per-stage controls; B3 adds the VRAM fit. This file binds to those
-// contracts and mocks them so the whole surface is testable without Rust.
+// Pure view model for a grouped pipeline run. This module never reads the DOM
+// or the engine: it takes the normalized run snapshot (`buildRunSnapshot` in
+// runSnapshot.mjs) plus the album's resolved settings, and produces the nodes,
+// status words, per-stage controls, VRAM fit view, and type suggestion that
+// screens render directly.
 import { stageStatus } from './scan.mjs';
 import { SUBJECT_WORDS } from './subjects.mjs';
 import policies from './presetPolicies.mjs';
 
-/** B1's wire ids, in flow order. `key` is the short name; `settingsKey` is the
- *  resolved setting that says whether the step is on for this album (§6.3). */
+/** Identify substage wire ids in flow order. `key` is the short name; `settingsKey`
+ *  is the resolved setting that determines whether the step is on for this album. */
 export const IDENTIFY_SUBSTAGES = Object.freeze([
   {
     id: 'identify:ocr', key: 'ocr', label: 'OCR', name: 'OCR', settingsKey: 'identify_ocr',
     purpose: 'Reads plates, numbers and visible text',
   },
   {
-    id: 'identify:decision', key: 'decision', label: 'DECISION', name: 'Decision', settingsKey: 'use_decider',
+    id: 'identify:decision', key: 'decision', label: 'DECISION', name: 'Decision', settingsKey: 'identify_decision',
     purpose: 'Judges moments and suggests the shoot type',
   },
   {
@@ -28,7 +24,7 @@ export const IDENTIFY_SUBSTAGES = Object.freeze([
   },
 ]);
 
-/** The nine grouped-run stages, then the reveal/finish node (§2, §6.8). */
+/** The nine grouped-run stages in flow order, followed by the finish node. */
 export const FLOW_ORDER = Object.freeze([
   'read', 'detect', 'sharpness', 'faces',
   'identify:ocr', 'identify:decision', 'identify:vision',
@@ -43,13 +39,13 @@ const PLAIN_PURPOSE = Object.freeze({
   group: 'Groups frames of one moment', pick: 'Suggests one keeper per burst',
 });
 
-/** The ONE status vocabulary for a stage node (§4, §6.8). */
+/** Canonical status vocabulary for a stage node. */
 export const STAGE_WORDS = Object.freeze(['pending', 'running', 'paused', 'skipped', 'done', 'failed']);
-export const STAGE_WORD_LABEL = Object.freeze({
+const STAGE_WORD_LABEL = Object.freeze({
   pending: 'Pending', running: 'Running', paused: 'Paused', skipped: 'Skipped', done: 'Done', failed: 'Failed',
 });
 
-/** B2 engine commands, called EXACTLY as `{ action, args: { jobId, stage } }`. */
+/** Per-stage engine commands, invoked as `{ action, args: { jobId, stage } }`. */
 export const CONTROL_ACTIONS = Object.freeze({ pause: 'stage_pause', skip: 'stage_skip', rerun: 'stage_rerun' });
 
 /** One control's exact wire call. `stage` is the wire id (e.g. `identify:vision`). */
@@ -61,9 +57,9 @@ const clamp01 = (v) => Math.max(0, Math.min(1, Number(v) || 0));
 const n = (v) => Math.max(0, Math.round(Number(v) || 0)).toLocaleString('en-US');
 const two = (i) => String(i + 1).padStart(2, '0');
 
-/** A plain reason for a stage that failed, or '' when it is fine. Reads B1's
- *  `status`/`error` as well as the older `state`/`failed`/`reason` shapes. */
-export function stageFailReason(stage) {
+/** A plain reason for a stage that failed, or '' when the stage is fine.
+ *  Reads both the current `status`/`error` wire shape and legacy `state`/`failed`/`reason` fields. */
+export function stageFailureReason(stage) {
   if (!stage) return '';
   const raw = String(stage.status ?? stage.state ?? '').toLowerCase();
   if (raw === 'failed' || stage.failed === true) {
@@ -73,15 +69,15 @@ export function stageFailReason(stage) {
 }
 
 /**
- * The one canonical status word for a stage. The engine's explicit `status`
- * (B1) wins; legacy payloads fall back to their counters and worker counts.
+ * Canonical status word for a stage. The engine's explicit `status` wins;
+ * legacy payloads fall back to their counters and worker counts.
  * A switched-off stage keeps its counters at zero, so it never reads as active.
  */
 export function stageWord(stage, { paused = false } = {}) {
   if (!stage) return 'pending';
   const raw = String(stage.status ?? stage.state ?? '').toLowerCase();
   if (STAGE_WORDS.includes(raw)) return raw;
-  if (stageFailReason(stage)) return 'failed';
+  if (stageFailureReason(stage)) return 'failed';
   if (stage.skipped === true || raw === 'off') return 'skipped';
   const total = Number(stage.total ?? 0), done = Number(stage.done ?? 0);
   const busy = Number(stage.workers_busy ?? 0), workers = Number(stage.workers_total ?? 0);
@@ -91,14 +87,15 @@ export function stageWord(stage, { paused = false } = {}) {
   return 'pending';
 }
 
-/** The tone class shared by the word chip and the node border. */
-export function toneForWord(word) {
-  switch (word) {
+/** The colour/tone class shared by status chips and flowchart nodes. */
+export function toneFor(state) {
+  switch (String(state ?? '').toLowerCase()) {
     case 'running': return 'running';
     case 'paused': return 'paused';
-    case 'failed': return 'error';
-    case 'done': return 'done';
-    case 'skipped': return 'stopped';
+    case 'queued': return 'queued';
+    case 'failed': case 'error': return 'error';
+    case 'done': case 'done_errors': return 'done';
+    case 'skipped': case 'stopped': case 'scanning': case 'indexed': case 'incomplete': return 'stopped';
     default: return 'idle';
   }
 }
@@ -109,9 +106,9 @@ function stateForWord(word, off) {
   return word === 'running' ? 'active' : word;
 }
 
-/** Whether a stage is ON for this album, from the RESOLVED settings (§6.3).
- *  Defaults reproduce today's behaviour for older albums (§7). OCR needs a
- *  reader; Decision needs a decision service; Vision is the `use_vlm` switch. */
+/** Whether a stage is enabled for this album from its resolved settings.
+ *  Defaults preserve compatibility with older albums: OCR needs a reader,
+ *  Decision needs a decision service, and Vision follows `use_vlm`. */
 export function stageEnabled(key, settings = {}) {
   const s = settings ?? {};
   const on = (v, dflt = false) => (v === undefined ? dflt : Boolean(v));
@@ -120,7 +117,9 @@ export function stageEnabled(key, settings = {}) {
     case 'ocr':
       return on(s.identify_ocr, true) && (on(s.read_plates) || on(s.read_numbers) || on(s.read_text));
     case 'decision':
-      return on(s.use_decider) || s.moments_backend === 'decider' || enabled(s.moments_services).length > 0;
+      return on(s.identify_decision, true)
+        && (s.moments_detect !== false)
+        && (on(s.use_decider) || s.moments_backend === 'decider' || enabled(s.moments_services).length > 0);
     case 'vision':
       return on(s.use_vlm);
     default:
@@ -128,13 +127,13 @@ export function stageEnabled(key, settings = {}) {
   }
 }
 
-/** The plain reason a greyed step is off (§6.3). */
+/** Plain reason shown on a disabled step. */
 export function offReason(key) {
   const name = IDENTIFY_SUBSTAGES.find((d) => d.key === key)?.name ?? 'This step';
   return `${name} is off for this album`;
 }
 
-/** Where to enable a greyed step. A shortcut, never a hidden control (§6.3). */
+/** Shortcut metadata pointing to where a disabled step can be enabled. */
 export function offShortcut(key) {
   const d = IDENTIFY_SUBSTAGES.find((x) => x.key === key);
   return {
@@ -146,8 +145,8 @@ export function offShortcut(key) {
   };
 }
 
-/** The plain one-line consequence of skipping a step, shown BEFORE confirming
- *  (§4). Derived from the snapshot's counters, never hardcoded. */
+/** Plain one-line consequence of skipping a step, shown before confirming.
+ *  Derived from the snapshot's counters rather than hardcoded. */
 export function skipConsequence(key, { subject = SUBJECT_WORDS.subjects, remaining = 0 } = {}) {
   const left = n(remaining);
   switch (key) {
@@ -158,27 +157,36 @@ export function skipConsequence(key, { subject = SUBJECT_WORDS.subjects, remaini
   }
 }
 
-function controlSpecs(stageId, jobId, word, off, consequence) {
-  const mk = (action, available, extra = {}) => ({
-    ...controlSpec(action, jobId, stageId), available: Boolean(available) && !off, ...extra,
-  });
+function controlSpecs(stageId, jobId, word, off, consequence, { skippable = true, rerunnable = true } = {}) {
+  const mk = (action, available, extra = {}, argExtra = null) => {
+    const spec = controlSpec(action, jobId, stageId);
+    return {
+      ...spec,
+      args: argExtra ? { ...spec.args, ...argExtra } : spec.args,
+      available: Boolean(available) && !off,
+      ...extra,
+    };
+  };
+  const isPaused = word === 'paused';
   return {
-    pause: mk('pause', word === 'running', { label: 'Pause' }),
-    skip: mk('skip', word !== 'skipped' && word !== 'done' && word !== 'failed', { label: 'Skip', consequence }),
-    rerun: mk('rerun', word === 'done' || word === 'skipped' || word === 'failed' || word === 'paused', { label: 'Run again' }),
+    pause: isPaused
+      ? mk('pause', true, { label: 'Resume' }, { paused: false })
+      : mk('pause', word === 'running', { label: 'Pause' }, word === 'running' ? { paused: true } : null),
+    skip: mk('skip', skippable && word !== 'skipped' && word !== 'done' && word !== 'failed', { label: 'Skip', consequence }),
+    rerun: mk('rerun', rerunnable && (word === 'done' || word === 'skipped' || word === 'failed'), { label: 'Run again' }),
   };
 }
 
-// ---- VRAM fit + concurrency (§5, §6.8). Contract B3 emits `identifyVram`. ----
+// ---- VRAM fit and local-model concurrency ----
 
 const GIG = 2 ** 30;
 const gb = (bytes) => (bytes > 0 ? `${(bytes / GIG).toFixed(1)} GB` : null);
 const finite = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 /**
- * Normalise B3's `identifyVram: { cardBytes, decisionBytes, visionBytes,
- * fitsBoth, mode }`. `fitsBoth === false` forces serial mode and a warning with
- * the real numbers; serial mode is explained in plain words.
+ * Normalise `identifyVram: { cardBytes, decisionBytes, visionBytes, fitsBoth, mode }`.
+ * When `fitsBoth` is false, forces serial mode and surfaces a warning with the
+ * measured sizes alongside a plain explanation of serial execution.
  */
 export function vramView(identifyVram = null) {
   const v = identifyVram ?? {};
@@ -202,31 +210,65 @@ export function vramView(identifyVram = null) {
 }
 
 const isCloud = (provider) => /^(opencode|openrouter|gemini|anthropic|openai|google)/i.test(String(provider ?? ''));
-const isLocal = (provider) => /^(ollama|in_process|local)/i.test(String(provider ?? ''));
+const isLocal = (provider) => /^(ollama|in_process|local|builtin)/i.test(String(provider ?? ''));
+const isLoopback = (host) => {
+  const h = String(host ?? '').trim();
+  return !h || /^(?:https?:\/\/)?(localhost|127(?:\.\d+){3}|\[::1\]|::1)(:\d+)?(\/|$)/i.test(h);
+};
 
-/** Whether the decision and vision models both run locally (§5). Only an
- *  explicit local signal counts: an unset/auto transport, or no configured
- *  service, is not proof that both models run on this PC, so the preference
- *  stays hidden (shown ONLY when both are genuinely local). */
-export function modelsLocal(settings = {}) {
+/** Whether the decision and vision models both run locally. Only an
+ *  explicit local signal counts: an unset provider or cloud/remote host is not
+ *  proof that both models share this PC's VRAM, so the preference stays hidden
+ *  (shown ONLY when both are genuinely local). */
+export function modelsLocal(settings = {}, identifyVram = null) {
   const s = settings ?? {};
   const enabled = (x) => (Array.isArray(x) ? x.filter((m) => m && m.enabled !== false) : []);
   const momentServices = enabled(s.moments_services);
   const visionServices = enabled(s.vlm_services);
-  const decisionCloud = ['openrouter', 'opencode', 'auto'].includes(s.moments_transport) || momentServices.some((m) => isCloud(m.provider));
-  const decisionLocal = stageEnabled('decision', s) && !decisionCloud
-    && (s.moments_transport === 'in_process' || momentServices.some((m) => isLocal(m.provider)));
-  const visionCloud = visionServices.some((m) => isCloud(m.provider)) || isCloud(s.vlm_provider);
-  const visionLocal = stageEnabled('vision', s) && !visionCloud
-    && (visionServices.some((m) => isLocal(m.provider)) || isLocal(s.vlm_provider));
+  const hasVlmServices = Array.isArray(s.vlm_services) && s.vlm_services.length > 0;
+
+  // 'auto' is the Rust default transport and MUST NOT mark decision as cloud
+  // when use_decider is true or a local moment service is enabled.
+  const decisionCloudOnly = ['openrouter', 'opencode'].includes(s.moments_transport)
+    || (momentServices.length > 0 && momentServices.every((m) => isCloud(m.provider)) && !s.use_decider);
+  const decisionLocalSignal = s.use_decider === true
+    || s.moments_transport === 'in_process'
+    || momentServices.some((m) => isLocal(m.provider));
+  let decisionLocal = stageEnabled('decision', s) && !decisionCloudOnly && decisionLocalSignal;
+
+  let visionLocal = false;
+  let visionCloudOnly = false;
+  let visionConfigured = false;
+  if (hasVlmServices) {
+    visionConfigured = visionServices.length > 0;
+    visionCloudOnly = visionServices.length > 0
+      && visionServices.every((m) => isCloud(m.provider) || (isLocal(m.provider) && !isLoopback(m.host)));
+    visionLocal = stageEnabled('vision', s)
+      && visionServices.some((m) => isLocal(m.provider) && isLoopback(m.host));
+  } else {
+    visionConfigured = Boolean(s.vlm_provider);
+    visionCloudOnly = isCloud(s.vlm_provider) || (isLocal(s.vlm_provider) && !isLoopback(s.vlm_host));
+    visionLocal = stageEnabled('vision', s)
+      && isLocal(s.vlm_provider) && isLoopback(s.vlm_host);
+  }
+
+  if (identifyVram && finite(identifyVram.decisionBytes) > 0 && finite(identifyVram.visionBytes) > 0) {
+    if (stageEnabled('decision', s) && !decisionCloudOnly && (decisionLocalSignal || !s.moments_transport)) {
+      decisionLocal = true;
+    }
+    if (stageEnabled('vision', s) && !visionCloudOnly && visionConfigured) {
+      visionLocal = true;
+    }
+  }
+
   return { decisionLocal, visionLocal, bothLocal: decisionLocal && visionLocal };
 }
 
-/** The concurrency preference (seats per model), shown ONLY when both models
- *  run locally. Seats are the two settings B3 clamps to the worker caps. */
+/** Concurrency preference (worker seats per model), shown only when both models
+ *  run locally. Values are clamped to engine worker caps on the backend. */
 export function concurrencyView(identifyVram = null, settings = {}) {
   const v = vramView(identifyVram);
-  const local = modelsLocal(settings);
+  const local = modelsLocal(settings, identifyVram);
   const seats = {
     vision: Math.max(1, Math.round(finite(settings?.identify_vision_workers) || 2)),
     decision: Math.max(1, Math.round(finite(settings?.identify_decision_workers) || 1)),
@@ -239,11 +281,11 @@ export function concurrencyView(identifyVram = null, settings = {}) {
   return { ...v, ...local, seats, visible: local.bothLocal, mode, explanation };
 }
 
-// ---- Type suggestion (§3b, §6.8, §7) ----
+// ---- Shoot type suggestion ----
 
-/** B1 stores `shoot_type_suggested` + confidence on the album; the suggestion
- *  is SHOWN, never silently applied. Accepting affects only not-yet-run Vision
- *  prompts. `auto` (the meta-type) is the only profile that gets one. */
+/** View model for the engine's `shoot_type_suggested` and confidence on an album.
+ *  Suggestions are shown for `auto`/`mixed` albums and never silently applied;
+ *  accepting only affects Vision prompts that have not run yet. */
 export function typeSuggestionView(album = null, settings = null) {
   const profile = String(album?.scan_profile ?? settings?.scan_profile ?? '');
   const isAuto = profile === 'auto' || profile === 'mixed';
@@ -260,11 +302,11 @@ export function typeSuggestionView(album = null, settings = null) {
   };
 }
 
-// ---- Manage shoot per-stage toggles (§6.8) ----
+// ---- Manage shoot per-stage toggles ----
 
 export const STAGE_TOGGLES = Object.freeze([
   { key: 'ocr', settingsKey: 'identify_ocr', label: 'Read plates, numbers and text (OCR)', hint: 'A separate first pass. When it is off, the vision model reads numbers on its own.' },
-  { key: 'decision', settingsKey: 'use_decider', label: 'Judge moments with the decision model', hint: 'Asks what matters in this shoot, suggests a shoot type for mixed albums, and compares each burst for its peak.' },
+  { key: 'decision', settingsKey: 'identify_decision', label: 'Judge moments with the decision model', hint: 'Asks what matters in this shoot, suggests a shoot type for mixed albums, and compares each burst for its peak.' },
   { key: 'vision', settingsKey: 'use_vlm', label: 'Read each subject with the vision model', hint: 'Reads make, model, colour and team. Off keeps the OCR and Decision results.' },
 ]);
 
@@ -286,7 +328,7 @@ function plainNode(id, stage, ctx) {
   const status = stage ? stageStatus(stage) : 'pending';
   const off = status === 'off';
   const word = stageWord(stage, { paused });
-  const reason = stageFailReason(stage);
+  const reason = stageFailureReason(stage);
   const isFailed = Boolean(reason) && !off;
   const finalWord = isFailed ? 'failed' : off ? 'skipped' : word;
   const workers = Number(stage?.workers_total ?? 0), busy = Number(stage?.workers_busy ?? 0);
@@ -297,13 +339,16 @@ function plainNode(id, stage, ctx) {
   const fails = !off && Number(stage?.errors ?? 0) > 0 ? `${n(stage.errors)} failed` : '';
   const crew = workers > 0 ? (finalWord === 'done' ? `${workers} ${workers === 1 ? 'worker' : 'workers'}` : `${busy}/${workers} busy`) : '';
   const meta = off ? '' : [count, fails, crew, stage?.model].filter(Boolean).join(' · ');
+  const unskippable = id === 'read' || id === 'detect' || id === 'sharpness';
+  const unrerunnable = id === 'read' || id === 'faces';
+  const consequence = stage?.skip_consequence || skipConsequence('', { subject });
   return {
     id, key: null, number: '', label: stage?.label ? String(stage.label).toUpperCase() : PLAIN_LABELS[id] ?? String(id).toUpperCase(),
     sub, meta, title: [sub, count, fails, crew, stage?.model, stage?.device].filter(Boolean).join(' · '),
-    word: finalWord, wordLabel: STAGE_WORD_LABEL[finalWord] ?? finalWord, tone: toneForWord(finalWord), state: stateForWord(finalWord, off),
+    word: finalWord, wordLabel: STAGE_WORD_LABEL[finalWord] ?? finalWord, tone: toneFor(finalWord), state: stateForWord(finalWord, off),
     off, offReason: off ? offReasonForPlain(id) : '', offShortcut: off ? { label: 'Enable in Manage shoot', target: 'manage-shoot', settingsTab: 'culling' } : null,
     honestCheck: finalWord === 'done' && !off,
-    controls: controlSpecs(id, ctx.jobId, finalWord, off, skipConsequence('', { subject })),
+    controls: controlSpecs(id, ctx.jobId, finalWord, off, consequence, { skippable: !unskippable, rerunnable: !unrerunnable }),
     suggestion: null, workersVisible: !off && (finalWord === 'running' || finalWord === 'paused'),
     filter: off || id === 'group' || id === 'pick' ? null : id,
     counters: { done, total, remaining: Math.max(0, total - done) },
@@ -323,8 +368,8 @@ function identifyNode(def, stage, ctx) {
   const word = off ? 'skipped' : stageWord(stage, { paused });
   const total = Number(stage?.total ?? 0), done = Number(stage?.done ?? 0);
   const remaining = Math.max(0, total - done);
-  const consequence = skipConsequence(def.key, { subject, remaining });
-  const reason = stageFailReason(stage);
+  const consequence = stage?.skip_consequence || skipConsequence(def.key, { subject, remaining });
+  const reason = stageFailureReason(stage);
   const finalWord = reason && !off ? 'failed' : word;
   const workers = Number(stage?.workers_total ?? 0), busy = Number(stage?.workers_busy ?? 0);
   const sub = off ? offReason(def.key)
@@ -337,7 +382,7 @@ function identifyNode(def, stage, ctx) {
   return {
     id: def.id, key: def.key, number: '', label: def.label,
     sub, meta, title: [sub, count, stage?.model].filter(Boolean).join(' · '),
-    word: finalWord, wordLabel: STAGE_WORD_LABEL[finalWord] ?? finalWord, tone: toneForWord(finalWord),
+    word: finalWord, wordLabel: STAGE_WORD_LABEL[finalWord] ?? finalWord, tone: toneFor(finalWord),
     state: stateForWord(finalWord, off),
     off, offReason: off ? offReason(def.key) : '', offShortcut: off ? offShortcut(def.key) : null,
     honestCheck: finalWord === 'done' && !off,
@@ -362,15 +407,15 @@ function doneNode(finished) {
 }
 
 /**
- * Build the whole surface from the ONE run snapshot + resolved settings.
- * `snapshot` is the object `buildRunSnapshot` returns (stages, workers,
- * counters, failedStages, runActive, paused, view, activeJob). `context` adds
- * the resolved settings, the album record (type suggestion), B3's VRAM, the
- * serving decision service and the album's subject words.
+ * Build the full surface model from the normalized run snapshot and resolved
+ * settings. `snapshot` comes from `buildRunSnapshot` (stages, workers, counters,
+ * failedStages, runActive, paused, view, activeJob); `context` adds resolved
+ * settings, the album record (for type suggestions), VRAM fit info, the serving
+ * decision service, and the album's subject words.
  *
- * The flowchart ALWAYS carries the three identify sub-nodes, even when the
- * engine omitted a switched-off stage (§6.3: greyed, never hidden). Unknown
- * stage ids the engine sent are appended as-is (§6.1 stage-agnostic).
+ * The flowchart always includes the three identify sub-nodes even when the
+ * engine omits a switched-off stage (rendered greyed out, never hidden).
+ * Unknown stage ids from the engine are appended in snapshot order.
  */
 export function buildSurface(snapshot = {}, context = {}) {
   const {
@@ -402,7 +447,7 @@ export function buildSurface(snapshot = {}, context = {}) {
   }
 
   // Honest ✓ is phase-gated: only a stage that reported done is ticked.
-  // Off/greyed nodes never count toward progress (§6.3) or the stage tally.
+  // Off/greyed nodes never count toward progress or the stage tally.
   const numbered = nodes.map((node, i) => ({ ...node, number: two(i) }));
   const activeNodes = numbered.filter((node) => !node.off && node.id !== 'done');
   const identify = numbered.filter((node) => IDENTIFY_SUBSTAGES.some((d) => d.id === node.id));

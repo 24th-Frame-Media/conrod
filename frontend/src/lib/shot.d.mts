@@ -56,8 +56,6 @@ export type ShootStats = {
   taken_to: number | null;
 };
 
-/** The shutter as a fraction below half a second: "1/1000", else "0.5 s". */
-export function shutterLabel(seconds: number | null | undefined): string | null;
 /** "1/1000 s", "0.5 s", "1.3 s". */
 export function formatShutter(seconds: number | null | undefined): string | null;
 /** "ƒ/5.6", "ƒ/4". */

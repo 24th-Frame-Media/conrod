@@ -14,11 +14,11 @@ import { SettingsSection, SettingRow } from '../components/SettingsFields';
 import { Maintenance } from '../components/Maintenance';
 import { LightroomBridge } from '../components/LightroomBridge';
 import { AiSettingsCard } from './AiSettingsCard';
-import { IdentifyConcurrency } from '../components/IdentifyConcurrency';
 import { Benchmark } from './Benchmark';
 import { Known } from './Known';
 import type {
   DevInfo,
+  IdentifyVram,
   Job,
   ModelInfo,
   SettingValue,
@@ -109,6 +109,7 @@ function UpdateCard({ info, upToDate, error, checking, installing, progress, ver
 type Props = {
   status?: Status;
   settings: SettingsMap;
+  identifyVram?: IdentifyVram | null;
   onSaved: (s: SettingsMap) => void;
   run: Runner;
   toast: Toaster;
@@ -124,7 +125,7 @@ type Props = {
 };
 
 /** Settings shared with the Python library; Save writes the whole block back. */
-export function Settings({ settings, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status, onOpenWhatsNew, onOpenWizard, openTab, dev }: Props) {
+export function Settings({ settings, identifyVram = null, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status, onOpenWhatsNew, onOpenWizard, openTab, dev }: Props) {
   const [draft, setDraft] = useState<SettingsMap>(settings);
   useEffect(() => setDraft(settings), [settings]);
 
@@ -390,6 +391,7 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                         draft={draft}
                         saved={settings}
                         models={models}
+                        identifyVram={identifyVram}
                         onChange={setValue}
                         toast={toast}
                         onModelsChanged={onModelsChanged}
@@ -398,8 +400,6 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                       <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue} />
                     )
                   ))}
-
-                  <IdentifyConcurrency draft={draft} onChange={setValue} />
 
                   <details className="settings-section settings-advanced">
                     <summary>

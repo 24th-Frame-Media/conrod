@@ -166,7 +166,7 @@ export function workerLanes(live) {
 }
 
 /** Human labels for the vision model's action tags. */
-export const ACTION_LABELS = {
+const ACTION_LABELS = {
   airborne: 'Airborne', dust: 'Dust', tyre_smoke: 'Tyre smoke', spray: 'Spray',
   flames: 'Flames', sparks: 'Sparks', contact: 'Contact', wheel_lift: 'Wheel lift',
 };

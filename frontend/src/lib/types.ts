@@ -1,7 +1,7 @@
 export type Job = {
   id: number; label: string; root: string; status: string; total: number; done: number; copies?: number;
   created_at: number; scan_profile?: string; include_people?: boolean; settings_json?: string | null; burst_gap?: number;
-  /** B1's type suggestion for an `auto` album: shown, never applied silently (§3b, §7). */
+  /** Engine shoot-type suggestion for an `auto` album; shown for confirmation, never applied silently. */
   shoot_type_suggested?: string | null;
   shoot_type_confidence?: number | null;
   shoot_type_accepted?: string | null;
@@ -111,9 +111,9 @@ export type StageFailure = { id: string; label: string; reason: string };
 export type ScanFailureShape = { jobId?: number | null; label?: string; title?: string; message?: string; detail?: string; args?: unknown; raw?: string; [k: string]: unknown };
 
 /**
- * The ONE normalized run snapshot (plan §6.1). `buildRunSnapshot` produces this
- * from the engine `status` + live events (hydrate-then-live); every screen reads
- * from it and nothing invents a stage, worker or status. Stage-agnostic.
+ * Normalized run snapshot produced by `buildRunSnapshot` from engine `status`
+ * and live events (hydrate-then-live). Screens read from this single model
+ * stage-agnostically without inventing stages, workers, or statuses.
  */
 export type RunSnapshot = {
   activeJob: number | null;
@@ -130,12 +130,12 @@ export type RunSnapshot = {
   error: ScanFailureShape | null;
   now: number;
   stallMs: number;
-  /** B5: the ONE surface model (flowchart nodes, greyed steps, controls, VRAM,
-   *  suggestion, toggles), built on this snapshot. See surface.mjs. */
+  /** View model for the run surface (flowchart nodes, disabled steps, controls,
+   *  VRAM fit, type suggestion, and toggles) derived from this snapshot. See surface.mjs. */
   surface?: any;
 };
 
-/** B3's VRAM fit contract, carried in the resolved settings/snapshot (§5). */
+/** GPU VRAM fit metadata for local decision and vision models. */
 export type IdentifyVram = {
   cardBytes: number;
   decisionBytes: number;
@@ -213,6 +213,8 @@ export type ModelInfo = { id?: string; name: string; file: string; ready: boolea
 export type ModelsStatus = {
   rows: ModelInfo[];
   install: { id: string; done: number; total: number; error?: string | null } | null;
+  /** GPU VRAM fit metadata, recomputed for the current settings. */
+  identifyVram?: IdentifyVram | null;
 };
 
 /** The decision model's states: what the DECIDER node and the Settings card say. */
@@ -259,6 +261,8 @@ export type DeciderStatus = {
 };
 export type Bootstrap = {
   jobs: Job[]; settings: Settings; models: ModelInfo[]; status: Status;
+  /** GPU VRAM fit metadata emitted at top level by the engine. */
+  identifyVram?: IdentifyVram | null;
   /** `--dev` / `CONROD_DEV=1`: the isolated dev instance. */
   dev?: boolean;
   /** The Vite dev server's address (only meaningful when `dev`). */
@@ -385,14 +389,16 @@ export type PipelineStage = {
   errors?: number;
   rate_per_s: number;
   eta_s: number | null;
-  /** B1's explicit six-word lifecycle: pending/running/paused/skipped/done/failed. */
+  /** Explicit six-word stage lifecycle: pending | running | paused | skipped | done | failed. */
   status?: string;
-  /** Explicit stage lifecycle from B1: a stage that stopped with an error is `failed`. */
+  /** Legacy stage lifecycle field; a stage that stopped with an error reports `failed`. */
   state?: string;
   failed?: boolean;
   /** A plain reason for a failed stage, surfaced on the failed node and banner. */
   reason?: string | null;
   error?: string | null;
+  /** Plain one-line consequence of skipping this stage, emitted by the engine. */
+  skip_consequence?: string | null;
 };
 
 /** A step a scan lane moves a frame through, in order. See docs/plans/ingest-live-contract.md. */
@@ -425,7 +431,7 @@ export type AfKind = 'point' | 'grid';
 export type PipelineWorker = {
   stage: string;
   worker_index: number;
-  /** B1 contract: `working` | `paused` | `done` | `failed`. Legacy engines emit `busy` | `waiting` | `idle` | `paused`. */
+  /** Worker lifecycle state: `working` | `paused` | `done` | `failed` (legacy engines emit `busy` | `waiting` | `idle` | `paused`). */
   state: 'idle' | 'busy' | 'waiting' | 'paused' | 'working' | 'done' | 'failed' | 'stalled';
   /** Why it is waiting: `gpu`/`detector`, `faces`, `lock`, `writer`, `disk`, `ollama` or `paused`; null unless waiting. */
   waiting_for: 'gpu' | 'detector' | 'faces' | 'lock' | 'writer' | 'disk' | 'ollama' | 'paused' | null;
@@ -435,7 +441,7 @@ export type PipelineWorker = {
   ms_in_step: number;
   /** A stable lane id (0-based) that survives the lane changing `stage`; without it the card is keyed by stage + worker_index. */
   lane?: number;
-  /** Epoch ms of the worker's last report (B1). Past the generous window the UI shows it stalled, never busy. */
+  /** Epoch ms of the worker's last report. Past the stall window the UI marks it stalled instead of busy. */
   last_report_at?: number;
   /** The frame this lane holds, with what has been found on it so far. */
   current?: LaneFrame | null;
@@ -676,7 +682,7 @@ export type LightroomExport = {
   path: string;
 };
 
-/** `lightroom_import`: what the package(s) or catalog changed, in the plan's three counts. */
+/** `lightroom_import`: counts of matched, unmatched, and missing frames from the import. */
 export type LightroomImport = {
   matched: number;
   unmatched: number;

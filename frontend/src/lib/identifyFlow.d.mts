@@ -27,7 +27,6 @@ export function fileName(item: IdentifyItem | null | undefined): string;
 export function displayItem(live: IdentifyLive | null | undefined, selectedId?: number | null): IdentifyItem | null;
 /** One entry per worker: the car it is reading, else the last it finished, else null. */
 export function workerLanes(live: IdentifyLive | null | undefined): { worker: number; item: IdentifyItem | null; live: boolean }[];
-export const ACTION_LABELS: Readonly<Record<string, string>>;
 export function actionLabel(id: string | null | undefined): string;
 export function confidencePercent(conf: number | null | undefined): number | null;
 export function confidenceTone(conf: number | null | undefined): 'good' | 'warn' | 'bad' | 'none';

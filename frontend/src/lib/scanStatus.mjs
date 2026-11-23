@@ -29,8 +29,8 @@ export function stateFromJob(job, progress = null) {
  * counts for the summary card.
  */
 export function scanView({ job = null, live = null, hydrate = null, activeJob = null } = {}) {
-  // A hydration for a DIFFERENT album is ignored (audit P2-7: album switch must
-  // not briefly draw the previous album's counts).
+  // Ignore hydration responses for a different album so switching albums never
+  // briefly displays the previous album's counts.
   const hydrateMine = hydrate && (hydrate.jobId == null || hydrate.jobId === job?.id) ? hydrate : null;
   const reported = hydrateMine?.status ?? null;
   const reportedAt = hydrateMine?.at ?? 0;
@@ -45,8 +45,8 @@ export function scanView({ job = null, live = null, hydrate = null, activeJob = 
   const progress = liveWins ? liveProgress : reported?.progress ?? null;
   const source = liveWins ? 'live' : reported?.progress ? 'status' : 'job';
   let state;
-  // A reported terminal state wins even while the engine still lingers the
-  // active slot (audit P3-6): a reported error/done is never masked as running.
+  // A reported terminal state wins even while the engine's active slot is still
+  // clearing, so a reported error or completion is never masked as running.
   if (reported?.state && TERMINAL.has(reported.state) && (activeJob === job?.id || activeJob == null)) state = reported.state;
   else if (job != null && activeJob === job.id) state = 'running';
   else if (reported?.state && reported.state !== 'running') state = reported.state;

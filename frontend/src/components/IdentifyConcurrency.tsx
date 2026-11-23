@@ -1,25 +1,30 @@
 import { concurrencyView } from '../lib/surface.mjs';
+import type { IdentifyVram } from '../lib/types';
 import { Icon } from './basics';
 
-/** Settings → Identification: the identify concurrency preference and the
- *  VRAM fit warning (§5, §6.8). Both are built from the ONE surface model in
- *  surface.mjs, which binds to B3's `identifyVram` contract and the resolved
- *  settings. The seat preference is shown ONLY when both models run locally;
- *  the warning (with the real numbers) appears when only one model fits, and
- *  serial mode is explained in plain words. */
+/** Settings → Identification: local-model worker concurrency and VRAM fit
+ *  warning, derived from `concurrencyView` in surface.mjs using `identifyVram`
+ *  and resolved settings. Worker seats appear only when both models run
+ *  locally; when only one model fits in VRAM, a warning shows the measured
+ *  sizes and explains serial fallback. */
 type Props = {
   draft: Record<string, unknown>;
+  identifyVram?: IdentifyVram | null;
   onChange: (key: string, value: number | boolean | string) => void;
+  embedded?: boolean;
 };
 
-export function IdentifyConcurrency({ draft, onChange }: Props) {
-  const view = concurrencyView((draft as { identifyVram?: unknown }).identifyVram ?? null, draft);
+export function IdentifyConcurrency({ draft, identifyVram = null, onChange, embedded = false }: Props) {
+  const view = concurrencyView(identifyVram ?? (draft as { identifyVram?: IdentifyVram | null }).identifyVram ?? null, draft);
   // Nothing to say when the two models do not both run on this PC and fit.
   if (!view.visible && !view.showWarning) return null;
 
   const numbers = view.numbers;
   return (
-    <section className="settings-section identify-concurrency" aria-labelledby="identify-concurrency-head">
+    <section
+      className={embedded ? 'identify-concurrency embedded' : 'settings-section identify-concurrency'}
+      aria-labelledby="identify-concurrency-head"
+    >
       <h3 id="identify-concurrency-head"><Icon name="sliders" size={15} /> Two local models</h3>
       <p className="muted id-concurrency-lede">
         When the decision model and the vision model both run on this PC, you can set how many workers each stage uses.

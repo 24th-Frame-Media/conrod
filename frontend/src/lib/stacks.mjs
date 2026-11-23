@@ -76,7 +76,7 @@ export function softBursts(frames, facts) {
 }
 
 /** The star rating a burst must reach for the engine to keep a frame of it. Mirrors the Rust constant. */
-export const KEEPER_STARS = 3;
+const KEEPER_STARS = 3;
 
 /** Stack key for a frame: its burst (or dupe set); a frame with no group is its own stack. */
 export function groupKeyOf(frame, dupes = false) {
@@ -104,7 +104,7 @@ export function keeperIds(frames, facts) {
 const leadScore = (f) => (f.manual_stars ?? 0) * 10 + (Number.isFinite(f.rating) ? f.rating : 0) * 5;
 
 /** The frame a collapsed stack shows: a keeper if there is one, else the best frame that is not rejected. */
-export function leadOf(frames, keepers, facts) {
+function leadOf(frames, keepers, facts) {
   if (keepers.length) return keepers[0];
   const live = frames.filter((f) => decisionOf(f, facts.get(f.id)) !== 'rejected');
   const pool = live.length ? live : frames;
@@ -149,8 +149,6 @@ function locate(stacks, id) {
   }
   return null;
 }
-
-export const stackIndexOf = (stacks, id) => locate(stacks, id)?.[0] ?? -1;
 
 /** Left/right: along the burst, stopping at its ends. */
 export function stepInStack(stacks, id, delta) {

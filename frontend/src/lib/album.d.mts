@@ -1,8 +1,5 @@
 export type Grouping = 'bursts' | 'vehicles' | 'dupes' | 'flat';
 export type ReviewPrefs = { grouping: Grouping; sort: 'review' | 'best' | 'worst' | 'frame' | 'pick' | 'taste'; view: 'all' | 'keepers' | 'undecided' | 'rejected' | 'top3' | 'review' | 'needsLook'; minStars: number };
-export const GROUPINGS: readonly Grouping[];
-export const SORTS: readonly string[];
-export const VIEWS: readonly string[];
 export const defaultPrefs: ReviewPrefs;
 export function prefsKey(jobId: number): string;
 export function normalisePrefs(raw: unknown): ReviewPrefs;

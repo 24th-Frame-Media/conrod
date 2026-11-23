@@ -2,7 +2,7 @@ import { momentsStatus } from './aiCard.mjs';
 import type { Settings, VlmService } from './types';
 
 /** Every vision service the album has configured, enabled or not. */
-export function vlmServices(settings: Settings): VlmService[] {
+function vlmServices(settings: Settings): VlmService[] {
   const value = settings.vlm_services;
   return Array.isArray(value) ? (value as unknown as VlmService[]) : [];
 }
@@ -12,7 +12,7 @@ export function vlmServices(settings: Settings): VlmService[] {
  * picks it. `undefined` when every service is off, so the UI shows nothing
  * rather than a legacy model name the user disabled.
  */
-export function primaryVlmService(settings: Settings): VlmService | undefined {
+function primaryVlmService(settings: Settings): VlmService | undefined {
   return vlmServices(settings).find((service) => service.enabled);
 }
 

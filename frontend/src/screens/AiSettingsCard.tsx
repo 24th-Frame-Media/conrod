@@ -1,28 +1,29 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { engine, mocked } from '../lib/api';
-import * as ai from '../lib/aiCard.mjs';
-import type { ModelInfo, ModelsStatus, SettingValue, Settings as SettingsMap, Toaster } from '../lib/types';
+import {
+  ADD_DESC, ADD_ORDER, BUILTIN, BUILTIN_ROW_ID, DECIDER_QUANTS, DECISION_HELPER,
+  HELPERS, SERVICE_TYPES, SHARING, SHARING_HINT, SIMPLE_CONTROLS, THINK_HINT,
+  addService, builtinRowStates, cardsFromDraft, checkOutcome, costLine,
+  decisionCandidates, downloadProgress, helperStatus, isPicked, modelLine,
+  momentsStatus, patchService, poolCount, removeService, servingFor, setSharing,
+  sharingValue, summaryText, visionCandidates,
+  type AiHelper, type BuiltinModel, type Opt, type ServiceCard,
+} from '../lib/aiCard.mjs';
+import type { IdentifyVram, ModelInfo, ModelsStatus, SettingValue, Settings as SettingsMap, Toaster } from '../lib/types';
 import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
+import { IdentifyConcurrency } from '../components/IdentifyConcurrency';
 import '../styles/aiSettings.css';
-
-// The pure services-plan model is a plain .mjs module; keep one `any` handle so
-// the JSX below stays free of generated-type friction.
-const A: any = ai;
 
 type Props = {
   draft: SettingsMap;
   saved: SettingsMap;
   models: ModelInfo[];
+  identifyVram?: IdentifyVram | null;
   onChange: (key: string, value: SettingValue) => void;
   toast: Toaster;
   onModelsChanged?: () => void;
 };
 
-type Card = {
-  key: string; type: string; apiKey: string; host: string;
-  enabled: boolean; reasoning: boolean; visionSel: string; decisionSel: string;
-};
-type Opt = { id: string; name: string };
 type CardModels = {
   vision: Opt[]; decision: Opt[]; decisionFreeText: boolean;
   liveOllama: { name: string; vision: boolean }[];
@@ -42,16 +43,16 @@ function Switch({ on, onChange, ariaLabel, mini }: { on: boolean; onChange: (v: 
   );
 }
 
-/** The rebuilt AI services card. The services panel is always shown; there is
- *  no Manage/collapse. Each added service is one card with its own key or host,
- *  Test/Remove, a cost line, a per-card Thinking toggle (default off), and
- *  Vision/Decisions dropdowns filled from the engine's live model lists. */
-export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged }: Props) {
+/** The AI services card. The services panel is always shown; each added service
+ *  is one card with its own key or host, Test/Remove, a cost line, a per-card
+ *  Thinking toggle (default off), and Vision/Decisions dropdowns filled from
+ *  the engine's live model lists. */
+export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, onModelsChanged }: Props) {
   // Dev-mock shortcuts so a screenshot state opens straight from a URL.
   const dev = () => (import.meta.env.DEV && mocked ? new URLSearchParams(location.search) : new URLSearchParams());
 
-  const cards = useMemo<Card[]>(() => A.cardsFromDraft(draft) as Card[], [draft]);
-  const routing = A.sharingValue(draft) as string;
+  const cards = useMemo<ServiceCard[]>(() => cardsFromDraft(draft), [draft]);
+  const routing = sharingValue(draft);
 
   const [modelLists, setModelLists] = useState<Record<string, CardModels>>({});
   const [addMenuOpen, setAddMenuOpen] = useState(() => dev().get('aiadd') === '1');
@@ -75,32 +76,14 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   // One ref for every pending timer so unmount never leaves one behind.
   const timeoutsRef = useRef<Set<number>>(new Set());
   const aliveRef = useRef(true);
-  const [opts, setOpts] = useState<Record<string, string>>({});
-  const [builtinEnabled, setBuiltinEnabled] = useState(true);
+
   // Built-in rows read the engine's model manifest + the real use_decider
-  // setting, never hardcoded flags. Only an explicit switch toggle is local.
-  const [switchOverrides, setSwitchOverrides] = useState<Record<string, boolean>>({});
+  // setting directly, with no local overrides.
   const rowSource = liveRows ?? models;
-  const derivedRows = useMemo(
-    () => A.builtinRowStates(rowSource, Boolean(draft.use_decider)) as Record<string, { on: boolean; downloaded: boolean; available: boolean }>,
+  const builtinRows = useMemo(
+    () => builtinRowStates(rowSource, Boolean(draft.use_decider)),
     [rowSource, draft.use_decider],
   );
-  const builtinRows = useMemo<Record<string, { on: boolean; downloaded: boolean; available: boolean }>>(() => {
-    const out: Record<string, { on: boolean; downloaded: boolean; available: boolean }> = {};
-    for (const id of Object.keys(derivedRows)) {
-      const d = derivedRows[id];
-      out[id] = { downloaded: d.downloaded, available: d.available, on: d.downloaded ? (switchOverrides[id] ?? d.on) : false };
-    }
-    return out;
-  }, [derivedRows, switchOverrides]);
-  const [helpersOn, setHelpersOn] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {};
-    for (const h of A.HELPERS) {
-      const keys = (A.SIMPLE_CONTROLS[h.id] || []).map((c: { key: string }) => c.key);
-      init[h.id] = keys.length ? keys.some((k: string) => Boolean(draft[k])) : true;
-    }
-    return init;
-  });
 
   // Anchors for the two viewport-clamped menus (see placeAnchoredMenu).
   const addAnchorRef = useRef<HTMLSpanElement | null>(null);
@@ -152,25 +135,23 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   }, [rowSource]);
 
   const ctx = useMemo(() => {
-    const v = builtinRows['qwen3-vl:8b'];
+    // In-process vision serving is not implemented yet; never claim qwen3-vl:8b in the pool.
+    const builtinVision: string[] = [];
     const d = builtinRows['pplx-decider-local'];
-    const builtinVision = builtinEnabled && v && v.on && v.downloaded ? ['qwen3-vl:8b'] : [];
-    const builtinDecisions = builtinEnabled && d && d.on && d.downloaded ? ['pplx-decider-local'] : [];
+    const builtinDecisions = d && d.on && d.downloaded ? ['pplx-decider-local'] : [];
     const cardsCtx = cards.map((c) => ({
       type: c.type, enabled: c.enabled, visionSel: c.visionSel, decisionSel: c.decisionSel,
       apiKey: c.apiKey, tested: Boolean(tested[c.key]),
       liveModels: (modelLists[c.key] || {}).liveOllama || [],
     }));
     return { builtinVision, builtinDecisions, cards: cardsCtx, bundled, routing };
-  }, [cards, builtinRows, builtinEnabled, tested, modelLists, bundled, routing]);
+  }, [cards, builtinRows, tested, modelLists, bundled, routing]);
 
-  const pool = A.poolCount(ctx) as { n: number; svc: number };
-  const summary = A.summaryText(ctx) as { text: string; dot: string };
+  const pool = poolCount(ctx);
+  const summary = summaryText(ctx);
   // One source of truth for "who is judging moments". `draft` is the live settings
   // wire; `localInstalled` is the built-in local decider's own install state.
-  const momentSt = A.momentsStatus(draft, Boolean(builtinRows['pplx-decider-local']?.downloaded)) as {
-    path: string; service: string | null; model: string | null; label: string; status: string; ready: boolean; others: string[];
-  };
+  const momentSt = momentsStatus(draft, Boolean(builtinRows['pplx-decider-local']?.downloaded));
 
   /* Fill each card's Vision/Decisions dropdowns from the engine's live model
      lists. Unknown/failed lists fall back to the known capable models; an
@@ -179,19 +160,19 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   useEffect(() => {
     let cancelled = false;
     const tasks = cards.map(async (c): Promise<[string, CardModels]> => {
-      const def = A.SERVICE_TYPES[c.type];
+      const def = SERVICE_TYPES[c.type];
       const key = def.kind === 'key' ? c.apiKey : c.host;
       if (c.type === 'ollama') {
         try {
           const res = await engine.ollamaModels(c.host);
           const live = res.models || [];
-          return [c.key, { vision: A.visionCandidates('ollama', live), decision: [], decisionFreeText: false, liveOllama: live }];
+          return [c.key, { vision: visionCandidates('ollama', live), decision: [], decisionFreeText: false, liveOllama: live }];
         } catch {
           return [c.key, { vision: [], decision: [], decisionFreeText: false, liveOllama: [] }];
         }
       }
       let live: Opt[] = [];
-      try { const res = await engine.providerModels(c.type, '', key); live = (res.models || []) as Opt[]; } catch { /* no list */ }
+      try { const res = await engine.providerModels(c.type, '', key); live = res.models || []; } catch { /* no list */ }
       // TODO(engine, backend-owned): OpenRouter decision enumeration is a
       // decision_models command (same { id/model, sees_photos, note? } shape as
       // OpenCode's); both render through this same path. Until it lands,
@@ -200,11 +181,11 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
       if (def.decisions && (c.type === 'opencode' || c.type === 'openrouter')) {
         try {
           const res = await engine.decisionModels(c.type, '', key, '');
-          decisionLive = ((res.models || []) as any[]).map((m) => ({ id: m.id || m.model || m.name, name: m.name || m.id || m.model }));
+          decisionLive = (res.models || []).map((m) => ({ id: m.id || m.name, name: m.name || m.id }));
         } catch { /* enumeration command not landed yet -> fallback below */ }
       }
-      const dc = A.decisionCandidates(c.type, live, decisionLive) as { models: Opt[]; freeText: boolean };
-      return [c.key, { vision: A.visionCandidates(c.type, live) as Opt[], decision: dc.models, decisionFreeText: dc.freeText, liveOllama: [] }];
+      const dc = decisionCandidates(c.type, live, decisionLive);
+      return [c.key, { vision: visionCandidates(c.type, live), decision: dc.models, decisionFreeText: dc.freeText, liveOllama: [] }];
     });
     Promise.all(tasks).then((entries) => { if (!cancelled) setModelLists(Object.fromEntries(entries)); });
     return () => { cancelled = true; };
@@ -269,8 +250,8 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
      failure is the engine's own plain reason, never a timer pretending success. */
   useEffect(() => {
     if (!downloading) return;
-    const engineId = A.BUILTIN_ROW_ID[downloading] as string;
-    const st = A.builtinRowStates(liveRows ?? models, Boolean(draft.use_decider))[downloading] as { downloaded: boolean } | undefined;
+    const engineId = BUILTIN_ROW_ID[downloading];
+    const st = builtinRowStates(liveRows ?? models, Boolean(draft.use_decider))[downloading];
     if (st?.downloaded) {
       stopPolling();
       setDownloading(null);
@@ -305,7 +286,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
      opens: the plain reason and a Retry, not a silent Download button. */
   useEffect(() => {
     if (!installInfo?.error || downloading) return;
-    const entry = Object.entries(A.BUILTIN_ROW_ID as Record<string, string>).find(([, eid]) => eid === installInfo.id);
+    const entry = Object.entries(BUILTIN_ROW_ID).find(([, eid]) => eid === installInfo.id);
     if (!entry) return;
     const [cardId] = entry;
     const reason = String(installInfo.error);
@@ -317,17 +298,17 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     onChange('vlm_services', p.vlm_services as unknown as SettingValue);
     onChange('moments_services', p.moments_services as unknown as SettingValue);
   };
-  const patchCard = (key: string, patch: Record<string, unknown>) => applyPatch(A.patchService(draft, key, patch));
-  const removeCard = (key: string) => applyPatch(A.removeService(draft, key));
+  const patchCard = (key: string, patch: Record<string, unknown>) => applyPatch(patchService(draft, key, patch));
+  const removeCard = (key: string) => applyPatch(removeService(draft, key));
   const chooseSharing = (value: string) => {
-    const p = A.setSharing(value) as { vlm_strategy: string; moments_strategy: string };
+    const p = setSharing(value);
     onChange('vlm_strategy', p.vlm_strategy);
     onChange('moments_strategy', p.moments_strategy);
   };
   const doAdd = (type: string) => {
     const firstOllama = !cards.some((c) => c.type === 'ollama');
     const url = type === 'ollama' ? (firstOllama ? 'http://localhost:11434' : '') : undefined;
-    applyPatch(A.addService(draft, type, { hostIndex: cards.filter((c) => c.type === 'ollama').length + 1, url }));
+    applyPatch(addService(draft, type, { hostIndex: cards.filter((c) => c.type === 'ollama').length + 1, url }));
     setAddMenuOpen(false);
   };
 
@@ -337,7 +318,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
       : testing[key] === 'fail' ? 'Retry' : 'Test';
   const finishTest = (key: string, res: unknown, err?: unknown) => {
     if (!aliveRef.current) return;
-    const outcome = A.checkOutcome(res, err) as { ready: boolean; reason: string };
+    const outcome = checkOutcome(res, err);
     setTesting((t) => ({ ...t, [key]: outcome.ready ? 'ok' : 'fail' }));
     if (outcome.ready) {
       setTestErrors((s) => { const n = { ...s }; delete n[key]; return n; });
@@ -364,7 +345,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
       (err) => finishTest(key, undefined, err),
     );
   };
-  const testCard = (c: Card) => {
+  const testCard = (c: ServiceCard) => {
     const promise: Promise<unknown> = c.type === 'ollama' ? engine.ollamaModels(c.host)
       : c.type === 'openrouter' ? engine.openRouterCheck(c.apiKey)
         : c.type === 'opencode' ? engine.openCodeCheck(c.apiKey)
@@ -383,7 +364,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
 
   /* ---------- built-in model rows: download -> real install commands ---------- */
   const downloadBuiltin = (id: string) => {
-    const row = A.BUILTIN.models.find((m: { id: string }) => m.id === id);
+    const row = BUILTIN.models.find((m) => m.id === id);
     if (!row || builtinRows[id]?.downloaded || downloading) return;
     if (installInfo && !installInfo.error) return; // one install at a time on the card
     if (builtinRows[id]?.available === false) return; // nothing pinned to fetch
@@ -394,7 +375,9 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     startedAtRef.current = Date.now();
     // Exactly the clicked model's assets (vision), or the decider's own
     // installer (weights + projector + runtime, VRAM-gated quant).
-    const cmd = row.role === 'decisions' ? engine.installDecider() : engine.installModels(row.assets as string[]);
+    const cmd = row.role === 'decisions'
+      ? engine.installDecider()
+      : engine.installModels(row.assets ? [...row.assets] : []);
     void Promise.resolve(cmd).then(
       () => {
         if (!aliveRef.current) return;
@@ -410,7 +393,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
         stopPolling();
         if (aliveRef.current) {
           setDownloading(null);
-          const reason = (A.checkOutcome(null, err) as { reason: string }).reason;
+          const { reason } = checkOutcome(null, err);
           setDlError((s) => ({ ...s, [id]: reason }));
           toast(`Install failed — ${reason}`, { tone: 'error' });
         }
@@ -423,51 +406,14 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   useEffect(() => {
     if (autoDownloaded.current || !dev().get('aidownload')) return;
     autoDownloaded.current = true;
-    const first = A.BUILTIN.models.find((m: { id: string }) => !builtinRows[m.id]?.downloaded);
+    const first = BUILTIN.models.find((m) => !builtinRows[m.id]?.downloaded);
     if (first) downloadBuiltin(first.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ---------- render helpers ---------- */
-  const optVal = (key: string, def: string) => opts[key] ?? def;
-
-  const modelDef = (card: Card, id: string) =>
-    (A.SERVICE_TYPES[card.type].models || []).find((m: { id: string }) => m.id === id);
-
-  const modelOpts = (card: Card, selId: string) => {
-    const m = modelDef(card, selId) as { efforts?: string[]; def?: string; variants?: string[] } | undefined;
-    if (!m) return null;
-    const base = `${card.key}:${selId}`;
-    const bits = [];
-    if (card.reasoning && m.efforts && m.efforts.length) {
-      const key = base + ':thinking';
-      const cur = optVal(key, m.def || m.efforts[0]);
-      // The card already has a "Thinking" toggle; this per-model row is its
-      // effort level, so name it that instead of doubling the word.
-      bits.push(
-        <label key="thinking">Effort
-          <select aria-label={`Thinking level for ${selId}`} value={cur} onChange={(e) => setOpts((s) => ({ ...s, [key]: e.target.value }))}>
-            {m.efforts.map((e) => <option key={e} value={e}>{e.charAt(0).toUpperCase() + e.slice(1)}</option>)}
-          </select>
-        </label>,
-      );
-    }
-    if (m.variants && m.variants.length) {
-      const key = base + ':variant';
-      const cur = optVal(key, m.variants[0]);
-      bits.push(
-        <label key="variant">Variant
-          <select aria-label={`Variant for ${selId}`} value={cur} onChange={(e) => setOpts((s) => ({ ...s, [key]: e.target.value }))}>
-            {m.variants.map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
-        </label>,
-      );
-    }
-    return bits.length ? <div className="mo-opts">{bits}</div> : null;
-  };
-
-  const pickOptions = (card: Card, role: 'vision' | 'decisions') => {
-    const def = A.SERVICE_TYPES[card.type];
+  const pickOptions = (card: ServiceCard, role: 'vision' | 'decisions') => {
+    const def = SERVICE_TYPES[card.type];
     if (role === 'decisions' && !def.decisions) return null;
     const ml = modelLists[card.key] || { vision: [], decision: [], decisionFreeText: false, liveOllama: [] };
     if (role === 'vision') {
@@ -478,7 +424,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     return { options, freeText: ml.decisionFreeText || options.length === 0, disabled: false };
   };
 
-  const pickRow = (card: Card, role: 'vision' | 'decisions', label: string) => {
+  const pickRow = (card: ServiceCard, role: 'vision' | 'decisions', label: string) => {
     const o = pickOptions(card, role);
     if (!o) return null;
     const sel = role === 'vision' ? card.visionSel : card.decisionSel;
@@ -497,32 +443,32 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
         </select>
       );
     }
-    const cur = A.isPicked(sel) ? sel : null;
+    const cur = isPicked(sel) ? sel : null;
     return (
       <div className="pick">
         <div className="pick-line"><label>{label}</label>{control}</div>
         {role === 'decisions' && cur ? <div className="pick-meta">sees photos</div> : null}
-        {cur ? modelOpts(card, cur) : null}
       </div>
     );
   };
 
-  const builtinRow = (m: { id: string; role: string; dl?: string; variants?: string[] }) => {
+  const builtinRow = (m: BuiltinModel) => {
     const st = builtinRows[m.id] || { on: false, downloaded: false, available: true };
     const missing = !st.downloaded;
-    const engineId = A.BUILTIN_ROW_ID[m.id] as string;
+    const engineId = BUILTIN_ROW_ID[m.id];
     // Running is the engine's own install state for this row (or a command we
     // just sent whose tracker entry has not landed yet), never a local guess.
     const running = downloading === m.id || Boolean(installInfo && installInfo.id === engineId && !installInfo.error);
     const anyRunning = downloading !== null || Boolean(installInfo && !installInfo.error);
     const failed = !running && missing && dlError[m.id];
     const prog = running && installInfo && installInfo.id === engineId
-      ? A.downloadProgress(installInfo.done, installInfo.total) as { known: boolean; pct: number | null; label: string }
+      ? downloadProgress(installInfo.done, installInfo.total)
       : null;
     const meta = st.available === false ? 'not available yet'
       : running ? (prog ? prog.label : 'Downloading…')
         : missing ? (m.dl ? `${m.dl} · not downloaded` : 'not downloaded')
-          : 'on this PC';
+          : m.role === 'vision' ? 'saved on this PC · use Ollama to run'
+            : 'on this PC';
     let ctl;
     if (st.available === false) {
       // No pinned source exists: never offer a Download that cannot work.
@@ -535,22 +481,23 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
       ctl = <button className={`btn small primary mo-dl${failed ? ' retry' : ''}`} disabled={anyRunning} onClick={() => downloadBuiltin(m.id)}>
         {failed ? 'Retry' : 'Download'}
       </button>;
+    } else if (m.role === 'vision') {
+      // In-process vision serving is not implemented yet; show an honest status tag.
+      ctl = <span className="mo-na">Downloaded</span>;
     } else {
-      ctl = <Switch mini on={st.on} ariaLabel={m.id} onChange={(v) => {
-        // The decision row's switch is the real use_decider setting (the
-        // moments lane reads it); the vision row's stays a local preference
-        // until the in-process runner ships.
-        if (m.role === 'decisions') onChange('use_decider', v);
-        else setSwitchOverrides((s) => ({ ...s, [m.id]: v }));
-      }} />;
+      ctl = <Switch mini on={st.on} ariaLabel={m.id} onChange={(v) => onChange('use_decider', v)} />;
     }
-    let variant = null;
-    if (st.on && st.downloaded && m.variants && m.variants.length) {
-      const key = `builtin:${m.id}:variant`;
-      variant = (
-        <div className="mo-opts"><label>Variant
-          <select aria-label={`Variant for ${m.id}`} value={optVal(key, m.variants[0])} onChange={(e) => setOpts((s) => ({ ...s, [key]: e.target.value }))}>
-            {m.variants.map((v) => <option key={v} value={v}>{v}</option>)}
+    let quant = null;
+    if (m.role === 'decisions' && st.on && st.downloaded) {
+      const curQuant = String(draft.decider_quant || 'auto');
+      quant = (
+        <div className="mo-opts"><label>Precision
+          <select
+            aria-label={`Precision for ${m.id}`}
+            value={DECIDER_QUANTS.some((q) => q.id === curQuant) ? curQuant : 'auto'}
+            onChange={(e) => onChange('decider_quant', e.target.value)}
+          >
+            {DECIDER_QUANTS.map((q) => <option key={q.id} value={q.id}>{q.name}</option>)}
           </select>
         </label></div>
       );
@@ -564,41 +511,38 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
           </div>
         )}
         {failed && <p className="mo-fail" role="status">{dlError[m.id]}</p>}
-        {variant}
+        {quant}
       </div>
     );
   };
 
   const builtinCard = () => (
-    <section className={`service${builtinEnabled ? '' : ' svc-off'}`} data-card="builtin">
-      <div className="c-head"><span className={`dot ${builtinEnabled ? 'ok' : 'off'}`} /><h4>{A.BUILTIN.name}</h4><span className="tag own">{A.BUILTIN.tag}</span></div>
-      <p className="note">{A.BUILTIN.note}</p>
+    <section className="service" data-card="builtin">
+      <div className="c-head"><span className="dot ok" /><h4>{BUILTIN.name}</h4><span className="tag own">{BUILTIN.tag}</span></div>
+      <p className="note">{BUILTIN.note}</p>
       <p className="cost-line">Free — runs on this PC. Nothing is uploaded.</p>
       <div className="mo-scroll">
         <h3 className="mo-group">Reads photos</h3>
-        {A.BUILTIN.models.filter((m: { role: string }) => m.role === 'vision').map(builtinRow)}
+        {BUILTIN.models.filter((m) => m.role === 'vision').map(builtinRow)}
         <h3 className="mo-group">Makes decisions</h3>
         {momentSt.path === 'cloud' && (
           <p className="mo-served">Moments are judged by {momentSt.label}. The download below is only for this PC's local model.</p>
         )}
-        {A.BUILTIN.models.filter((m: { role: string }) => m.role === 'decisions').map(builtinRow)}
+        {BUILTIN.models.filter((m) => m.role === 'decisions').map(builtinRow)}
       </div>
       <div className="svc-foot">
-        <span className="foot-label">Enabled</span>
-        <Switch on={builtinEnabled} ariaLabel="Enable built-in models" onChange={setBuiltinEnabled} />
-        <span className="spacer" />
-        <button className="btn small" onClick={() => test('builtin', Promise.resolve(null))}>{testLabel('builtin')}</button>
+        <span className="foot-label">Always available on this PC</span>
       </div>
     </section>
   );
 
-  const serviceCard = (card: Card) => {
-    const def = A.SERVICE_TYPES[card.type];
+  const serviceCard = (card: ServiceCard) => {
+    const def = SERVICE_TYPES[card.type];
     const title = card.type === 'ollama' ? `${def.name} — ${hostShort(card.host)}` : def.name;
     const picked: { id: string; local: boolean }[] = [];
-    if (A.isPicked(card.visionSel)) picked.push({ id: card.visionSel, local: card.type === 'ollama' });
-    if (def.decisions && A.isPicked(card.decisionSel)) picked.push({ id: card.decisionSel, local: false });
-    const cost = A.costLine(picked) as string;
+    if (isPicked(card.visionSel)) picked.push({ id: card.visionSel, local: card.type === 'ollama' });
+    if (def.decisions && isPicked(card.decisionSel)) picked.push({ id: card.decisionSel, local: false });
+    const cost = costLine(picked);
     // Per-service thinking lives on the entry as `reasoning` (default false);
     // the backend applies it when building the VLM request (engine seam TODO).
     const think = card.reasoning;
@@ -628,7 +572,7 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
         {def.thinking && (
           <div className="think-row">
             <Switch mini on={think} ariaLabel={`Thinking for ${def.name}`} onChange={(v) => patchCard(card.key, { reasoning: v })} />
-            <div><span className="think-label">Thinking</span><p className="think-hint">{A.THINK_HINT}</p></div>
+            <div><span className="think-label">Thinking</span><p className="think-hint">{THINK_HINT}</p></div>
           </div>
         )}
         <div className="svc-foot">
@@ -650,13 +594,13 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
       <span className="add-label" ref={addAnchorRef}>Add service</span>
       <span className="add-hint">OpenCode, OpenRouter, Local Ollama (one card per host), Gemini, Anthropic or OpenAI</span>
       {addMenuOpen && <div className="add-menu" ref={addMenuRef} onClick={(e) => e.stopPropagation()}>
-        {A.ADD_ORDER.map((type: string) => {
+        {ADD_ORDER.map((type) => {
           const added = type !== 'ollama' && cards.some((c) => c.type === type);
           return (
             <button type="button" key={type} disabled={added}
               onClick={(e) => { e.stopPropagation(); if (!added) doAdd(type); }}>
-              <span className="am-name">{A.SERVICE_TYPES[type].name}</span>
-              <span className="am-desc">{A.ADD_DESC[type]}</span>
+              <span className="am-name">{SERVICE_TYPES[type].name}</span>
+              <span className="am-desc">{ADD_DESC[type]}</span>
               {added && <span className="am-added">Added ✓</span>}
             </button>
           );
@@ -665,18 +609,23 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
     </div>
   );
 
-  const toggleHelper = (h: { id: string }) => {
-    const on = !helpersOn[h.id];
-    setHelpersOn((s) => ({ ...s, [h.id]: on }));
-    const keys = (A.SIMPLE_CONTROLS[h.id] || []).map((c: { key: string }) => c.key);
-    for (const k of keys) onChange(k, on);
+  const helperKeys = (h: AiHelper) => (SIMPLE_CONTROLS[h.id] || []).map((c) => c.key);
+  const isHelperOn = (h: AiHelper) => {
+    const keys = helperKeys(h);
+    return keys.length
+      ? keys.some((k) => (k in draft ? Boolean(draft[k]) : k === 'use_vlm' || k === 'identify_decision'))
+      : true;
+  };
+  const toggleHelper = (h: AiHelper) => {
+    const next = !isHelperOn(h);
+    for (const k of helperKeys(h)) onChange(k, next);
   };
 
-  const helperRow = (h: { id: string; title: string; desc: string }) => {
-    const on = Boolean(helpersOn[h.id]);
+  const helperRow = (h: AiHelper) => {
+    const on = isHelperOn(h);
     // "Spots moments" names the service that is actually judging, not one bare
     // model id: a cloud service (JEV via OpenCode) needs nothing installed locally.
-    if (h.id === A.DECISION_HELPER) {
+    if (h.id === DECISION_HELPER) {
       const st = !on
         ? { text: 'Off', cls: 'off', dot: 'off' }
         : { text: momentSt.status, cls: momentSt.ready ? '' : 'locked', dot: momentSt.ready ? 'ok' : 'amber' };
@@ -697,9 +646,9 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
         </div>
       );
     }
-    const list = A.servingFor(h.id, ctx) as { id: string; ready: boolean }[];
-    const st = A.helperStatus(on, list) as { text: string; cls: string; dot: string };
-    const line = A.modelLine(list) as { head: string | null; rest: string[]; all: string[]; noModel: boolean };
+    const list = servingFor(h.id, ctx);
+    const st = helperStatus(on, list);
+    const line = modelLine(list);
     const open = openPopup === h.id;
     return (
       <div className="helper" key={h.id} data-h={h.id}>
@@ -747,11 +696,11 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
       <div className="share-bar">
         <h3>How work is shared</h3>
         <div className="seg" role="group" aria-label="How work is shared across services">
-          {A.SHARING.map((s: { id: string; name: string }) => (
+          {SHARING.map((s) => (
             <button key={s.id} className={routing === s.id ? 'on' : ''} aria-pressed={routing === s.id} onClick={() => chooseSharing(s.id)}>{s.name}</button>
           ))}
         </div>
-        <span className="share-hint">{A.SHARING_HINT}</span>
+        <span className="share-hint">{SHARING_HINT}</span>
         <span className="spacer" />
         <span className="pool">
           {pool.n ? <><b>{pool.n}</b> model{pool.n === 1 ? '' : 's'} in the pool · {pool.svc} service{pool.svc === 1 ? '' : 's'}</> : 'Nothing in the pool yet'}
@@ -764,10 +713,12 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
         {addTile()}
       </div>
 
+      <IdentifyConcurrency draft={draft} identifyVram={identifyVram} onChange={onChange} embedded />
+
       <section className="helpers">
         <h2 className="section-title">Photo helpers</h2>
         <p className="sub">Each helper shows the model it runs on. Switch one off to skip it.</p>
-        <div className="helper-list">{A.HELPERS.map(helperRow)}</div>
+        <div className="helper-list">{HELPERS.map(helperRow)}</div>
       </section>
     </section>
   );

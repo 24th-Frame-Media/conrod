@@ -27,32 +27,11 @@ export type SettingsMatch = {
   sectionTitle: string;
 };
 export type AlbumOverrideCount = { key: string; label: string; count: number };
-export type AiModelRow = {
-  id: string;
-  title: string;
-  does: string;
-  where: 'pc' | 'dynamic';
-  modelNames?: readonly string[];
-  keys: readonly string[];
-  switches: readonly string[];
-};
-export type AiModelState = 'ready' | 'downloading' | 'off' | 'not set up';
 
 export const TABS: readonly SettingsTab[];
 export const FIELDS: Record<string, SettingsField>;
 export const SECTIONS: readonly SettingsSection[];
 export const OVERRIDABLE: readonly { key: string; label: string }[];
-export const AI_MODELS: readonly AiModelRow[];
-
-export function aiModelWhere(model: AiModelRow, settings?: Record<string, unknown>): string;
-export function aiModelStatus(
-  model: AiModelRow,
-  input?: { settings?: Record<string, unknown>; models?: readonly unknown[] },
-): AiModelState;
-export function aiModelStatusLabel(state: AiModelState): string;
-
-/** The OpenCode key the decider uses: its own, else an enabled vision service's. */
-export function decisionOpenCodeKey(settings?: Record<string, unknown>): string;
 
 export function tabById(id: string): SettingsTab | null;
 export function keyTab(key: string): SettingsTabId | null;

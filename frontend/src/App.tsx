@@ -12,16 +12,16 @@ import { openJobPage } from './lib/navigation.mjs';
 import { classifyScanError, type ScanFailure } from './lib/scanError.mjs';
 import { buildRunSnapshot } from './lib/runSnapshot.mjs';
 import { subjectWords } from './lib/subjects.mjs';
-import { applyOverrides, defaultSummary, overridesOf } from './lib/presetPolicy.mjs';
+import { applyOverrides, defaultSummary, isOn, overridesOf } from './lib/presetPolicy.mjs';
 import { albumSetting } from './lib/album.mjs';
 import { windowTitle } from './lib/devMode.mjs';
 import { useDevInfo, useReloadState } from './lib/dev';
 import { subjectExcluded } from './review.mjs';
 import { decisionServiceLabel, vlmModelLabel } from './lib/vlm';
 import type { DevStart } from './lib/mock';
-import type { Job, Page, RunSnapshot, ScanArgs, Scope, Status } from './lib/types';
+import type { IdentifyVram, Job, Page, RunSnapshot, ScanArgs, Scope, Settings as SettingsMap, Status } from './lib/types';
 import type { SettingsTabId } from './lib/settings.mjs';
-import type { VisionAction } from './lib/vision.mjs';
+import { albumVisionOn, type VisionAction } from './lib/vision.mjs';
 import { Library } from './screens/Library';
 import { noReviewVerbs, ReviewScreen, type ReviewVerbs } from './screens/Review';
 import { ImportDialog, type ImportDefaults, type ScanDraft } from './screens/Import';
@@ -82,29 +82,45 @@ export function App() {
   /** The selected album's scan, read on entry, so the Scan screen is whole on re-entry, restart or a queued album. */
   const scanStatus = useScanStatus(jobId, status.activeJob);
   const identifyLive = useIdentifyProgress();
-  /** The album on screen, and its resolved settings — the ONLY source of the
-   *  flowchart's greyed steps, VRAM/concurrency and type suggestion (§6.1). */
+  /** The album on screen, and its resolved settings — the single source of the
+   *  flowchart's greyed steps, VRAM/concurrency and type suggestion. */
   const currentAlbum = eng.jobs.find((j) => j.id === jobId) ?? null;
-  const resolvedSummary = currentAlbum
+  const resolvedSummary = useMemo(() => (currentAlbum
     ? applyOverrides(
       defaultSummary(String(currentAlbum.scan_profile || eng.settings.scan_profile || 'motorsport')),
       overridesOf(albumSetting(currentAlbum, 'overrides', null)),
       overridesOf(albumSetting(currentAlbum, 'user_defaults', null)),
     )
-    : null;
-  const surfaceSubject = subjectWords(resolvedSummary);
-  const identifyVram = (eng.settings as unknown as { identifyVram?: unknown }).identifyVram ?? null;
+    : null), [currentAlbum, eng.settings.scan_profile]);
+  const surfaceSubject = useMemo(() => subjectWords(resolvedSummary), [resolvedSummary]);
+  const albumResolvedSettings = useMemo(() => {
+    if (!currentAlbum) return eng.settings;
+    return {
+      ...eng.settings,
+      scan_profile: String(currentAlbum.scan_profile || eng.settings.scan_profile || 'motorsport'),
+      identify_ocr: (albumSetting(currentAlbum, 'identify_ocr', eng.settings) as boolean | undefined) ?? true,
+      identify_decision: (albumSetting(currentAlbum, 'identify_decision', eng.settings) as boolean | undefined) ?? true,
+      use_vlm: albumVisionOn(currentAlbum, eng.settings),
+      read_plates: resolvedSummary ? isOn(resolvedSummary, 'plates') : Boolean(albumSetting(currentAlbum, 'read_plates', eng.settings)),
+      read_numbers: resolvedSummary ? isOn(resolvedSummary, 'numbers') : Boolean(albumSetting(currentAlbum, 'read_numbers', eng.settings)),
+      read_text: Boolean(albumSetting(currentAlbum, 'read_text', eng.settings)),
+      moments_detect: resolvedSummary ? isOn(resolvedSummary, 'moments_detect') : eng.settings.moments_detect !== false,
+    };
+  }, [eng.settings, currentAlbum, resolvedSummary]);
+  const identifyVram: IdentifyVram | null = eng.identifyVram
+    ?? (eng.settings as unknown as { identifyVram?: IdentifyVram | null }).identifyVram
+    ?? null;
   /**
-   * THE single run snapshot (plan §6.1). One object, built from the engine
-   * `status` + live events (hydrate-then-live) plus the album's resolved
-   * settings, drives the TitleBar badge, the jobs dropdown, the Scan/Ingest
-   * flowchart, lane grid, header counters and the B5 surface. Nothing
-   * downstream invents a stage, a worker or a status.
+   * The single run snapshot. One object, built from the engine `status` + live
+   * events (hydrate-then-live) plus the album's resolved settings, drives the
+   * TitleBar badge, the jobs dropdown, the Scan/Ingest flowchart, lane grid,
+   * header counters and the run surface. Nothing downstream invents a stage, a
+   * worker or a status.
    */
   const runSnapshot = useMemo<RunSnapshot>(() => buildRunSnapshot({
     status, jobs: eng.jobs, liveByJob: scanLive, hydrate: scanStatus, seed: scanError, jobId,
-    settings: eng.settings, album: currentAlbum, identifyVram, decisionService, subject: surfaceSubject,
-  }) as RunSnapshot, [status, eng.jobs, scanLive, scanStatus, scanError, jobId, eng.settings, currentAlbum, identifyVram, decisionService, surfaceSubject]);
+    settings: albumResolvedSettings, album: currentAlbum, identifyVram, decisionService, subject: surfaceSubject,
+  }) as RunSnapshot, [status, eng.jobs, scanLive, scanStatus, scanError, jobId, albumResolvedSettings, currentAlbum, identifyVram, decisionService, surfaceSubject]);
   const identifyPaused = status.tasks.some((task) => task.state === 'paused' && /^Identifying\b/.test(task.label));
   // Review stays open while its album scans: it shows the frames already measured, and the
   // pipeline actions (cull, identify, write) stay disabled by Review's own `busy` rule.
@@ -146,27 +162,39 @@ export function App() {
     });
   };
 
-  /** A greyed step's shortcut (§6.3): open this album's Manage shoot. */
+  /** A greyed step's shortcut: open this album's Manage shoot. */
   const [shootSettingsNonce, setShootSettingsNonce] = useState(0);
   const openShootSettings = () => {
     if (jobId == null) return;
     setPage('Review');
     setShootSettingsNonce((v) => v + 1);
   };
-  /** B2 per-stage controls, exact wire shape. */
-  const stageControl = (action: 'stage_pause' | 'stage_skip' | 'stage_rerun', stage: string) => void run(async () => {
+  /** Per-stage controls (pause, skip, rerun) sent to the engine. */
+  const stageControl = (
+    action: 'stage_pause' | 'stage_skip' | 'stage_rerun',
+    stage: string,
+    extra?: { paused?: boolean; skip?: boolean; full?: boolean },
+  ) => void run(async () => {
     if (jobId == null) return;
-    await engine.stageControl(action, jobId, stage);
+    await engine.stageControl(action, jobId, stage, extra);
     eng.setStatus(await engine.status());
     await eng.refreshJobs();
   });
-  /** B1 type suggestion: one click, never silent; only un-run Vision prompts change. */
+  /** Accept a shoot-type suggestion: one click, never silent; only un-run Vision prompts change. */
   const acceptTypeSuggestion = (type: string) => void run(async () => {
     if (jobId == null) return;
-    await engine.acceptTypeSuggestion(jobId, type);
+    const res = await engine.acceptTypeSuggestion(jobId, type);
     await eng.refreshJobs();
-    toast('Shoot type accepted. Only the vision reads still to come will use it.', { tone: 'ok' });
+    if (res && res.accepted === false) {
+      toast(res.note || 'The vision stage has already run; nothing left to change.');
+    } else {
+      toast('Shoot type accepted. Only the vision reads still to come will use it.', { tone: 'ok' });
+    }
   });
+  const handleSettingsSaved = (saved: SettingsMap) => {
+    eng.setSettings(saved);
+    void eng.refreshIdentifyVram().catch(() => undefined);
+  };
 
   useEffect(() => {
     if (eng.ready && typeof eng.settings.scan_profile === 'string') setProfile(eng.settings.scan_profile);
@@ -215,7 +243,7 @@ export function App() {
     try {
       // Narrow the try: ONLY a failure to START the scan is a scan failure. The
       // follow-up reads below run after acceptance — a failure there is its own
-      // surfaced error, never a bogus "scan failed" banner (audit P2-3).
+      // surfaced error, never a bogus "scan failed" banner.
       const r = await engine.scan(scan);
       id = r.jobId; duplicates = r.duplicates ?? 0; added = r.added ?? 0;
       started = r.scanning ?? true; queued = r.queued ?? false; queuePosition = r.queuePosition ?? 0;
@@ -273,7 +301,7 @@ export function App() {
   });
   const openJob = (id: number) => {
     const job = eng.jobs.find((j) => j.id === id);
-    // A stale null-job import failure must not follow the user into an album (§6.6).
+    // A stale null-job import failure must not follow the user into an album.
     setScanError(null);
     setJobId(id);
     // The primary entry point: hydrate from scan_status on jobId change, then go live.
@@ -322,7 +350,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} health={health} actions={actions} popoverOpen={dev?.popover ?? false} dev={devInfo} reloadState={reloadState} runSnapshot={runSnapshot} onOpenJob={openJob} />
+      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} health={health} actions={actions} popoverOpen={dev?.popover ?? false} dev={devInfo} reloadState={reloadState} runSnapshot={runSnapshot} onOpenJob={openJob} />
       <main className="stage" key={view}>
         {view === 'Library' && (
           <Library jobs={eng.jobs} scanning={scanning} live={scanLive} activeJob={status.activeJob} queue={status.queue ?? []}
@@ -339,7 +367,7 @@ export function App() {
         {view === 'Scan' && (
           <ScanScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? scanLive[jobId] : undefined} scanStatus={scanStatus} running={running}
             queue={queueJobs} onUnqueue={actions.unqueue} runSnapshot={runSnapshot}
-            paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={eng.setSettings}
+            paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={handleSettingsSaved}
             identify={jobId != null ? identifyLive[jobId] : undefined} status={status} identifyPaused={identifyPaused}
             model={vlmModelLabel(eng.settings)} decisionService={decisionService} scanError={scanError}
             onResumeJob={() => { if (jobId != null) void startScan({ jobId }); }}
@@ -396,7 +424,7 @@ export function App() {
               onEdit={(id, updates) => run(async () => { await engine.editDetection(id, updates); await rv.refresh(); })} />
         )}
         {view === 'Settings' && (
-          <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status}
+          <Settings settings={eng.settings} identifyVram={identifyVram} onSaved={handleSettingsSaved} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status}
             onOpenWhatsNew={whatsNew.openManually} onOpenWizard={wizard.openManually} openTab={settingsTab} dev={devInfo} />
         )}
       </main>
@@ -405,7 +433,7 @@ export function App() {
       {help && <KeysDialog onClose={() => setHelp(false)} />}
       {dropping && <div className="drop-overlay"><Icon name="drop" size={34} /><b>Drop a folder to scan it</b><span>Photos, or a folder of them</span></div>}
       <SetupWizard visible={wizard.open} settings={eng.settings} toast={toast} onClose={wizard.close}
-        onSaved={(saved) => { eng.setSettings(saved); if (typeof saved.scan_profile === 'string') setProfile(saved.scan_profile); }}
+        onSaved={(saved) => { handleSettingsSaved(saved); if (typeof saved.scan_profile === 'string') setProfile(saved.scan_profile); }}
         onOpenSettings={() => setPage('Settings')} />
       <WhatsNewSheet visible={whatsNew.open && wizard.decided && !wizard.open} fresh={whatsNew.fresh} earlier={whatsNew.earlier} onClose={whatsNew.close} />
       <Splash gone={eng.ready && startup.settled} status={startup.status} version={appVersion ?? (import.meta.env.DEV && mocked ? '0.0.0-mock' : null)} dev={devInfo} />

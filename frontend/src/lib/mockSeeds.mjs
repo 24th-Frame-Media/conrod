@@ -1,7 +1,6 @@
-// Dev/QA seeds for every run state the truthfulness contract cares about
-// (plan §6.8). Pure data — no engine, no timers — so `node --test` can build a
-// whole run snapshot from each one without Rust. B5 reuses these for the full
-// surface; B4 uses them to pin the plumbing.
+// Deterministic dev/test seeds covering every run and surface state.
+// Pure data (no engine, no timers) so `node --test` can exercise full run
+// snapshots and surface views without Rust.
 //
 // Wording is deliberately neutral: subject words are derived from the album's
 // resolved settings via subjects.mjs, never hardcoded here.
@@ -32,10 +31,10 @@ export const activeStage = (id = 'read', extra = {}) => ({ id, label: id[0].toUp
 /** A stage that stopped with an error → failed node + plain reason. */
 export const failedStage = () => activeStage('vision', { state: 'failed', done: 3, total: 10, errors: 1, reason: 'The vision service stopped answering.' });
 
-/** B1's wire shape: `status: 'failed'` + `error` (the engine no longer sends `state`/`reason`). */
+/** Current wire shape for a failed stage: `status: 'failed'` + `error`. */
 export const failedStageWire = () => activeStage('identify:vision', { status: 'failed', done: 3, total: 10, errors: 1, error: 'The vision service stopped answering.' });
 
-/** The nine grouped-run stages B1 emits (§2), with an explicit status word each. */
+/** The nine grouped-run stages in flow order, each with an explicit status word. */
 export const NINE_IDS = ['read', 'detect', 'sharpness', 'faces', 'identify:ocr', 'identify:decision', 'identify:vision', 'group', 'pick'];
 export function nineStages(over = {}) {
   return NINE_IDS.map((id, i) => activeStage(id, {
@@ -45,7 +44,7 @@ export function nineStages(over = {}) {
   }));
 }
 
-/** Resolved settings for a fully-on album, plus B3's VRAM contract when asked. */
+/** Resolved settings for a fully enabled album. */
 export function resolvedSettings(over = {}) {
   return {
     identify_ocr: true, read_plates: true, read_numbers: true, read_text: true,
@@ -55,11 +54,11 @@ export function resolvedSettings(over = {}) {
   };
 }
 
-/** B3's fit contract: both models fit, or only one fits (serial fallback). */
+/** VRAM fit fixtures: both models fit concurrently, or only one fits (serial fallback). */
 export const VRAM_FITS = () => ({ cardBytes: 12 * 2 ** 30, decisionBytes: 4.8 * 2 ** 30, visionBytes: 6 * 2 ** 30, fitsBoth: true, mode: 'concurrent' });
 export const VRAM_SERIAL = () => ({ cardBytes: 8 * 2 ** 30, decisionBytes: 4.8 * 2 ** 30, visionBytes: 6 * 2 ** 30, fitsBoth: false, mode: 'serial' });
 
-/** Settings where both models run locally (§5): local decision + local vision. */
+/** Settings where both decision and vision models run locally. */
 export function bothLocalSettings(over = {}) {
   return resolvedSettings({
     moments_transport: 'in_process',
@@ -122,7 +121,7 @@ export const SEEDS = {
   }),
   // Shown on the empty Scan page (no album selected).
   nullJobError: () => ({ ...common, status: status(null), jobs: [], liveByJob: {}, hydrate: null, seed: nullJobError(), jobId: null }),
-  // The SAME null-job error must NOT match another album (audit P2-2).
+  // A null-job import failure must not appear on an unrelated album.
   nullJobErrorOnOtherAlbum: () => ({ ...common, status: status(null), jobs: [baseJob(8, 'stopped')], liveByJob: {}, hydrate: null, seed: nullJobError(), jobId: 8 }),
   dropdownLive: () => ({
     ...common,
@@ -155,7 +154,7 @@ export const SEEDS = {
     hydrate: null, seed: null, jobId: 7,
   }),
 
-  // ── B5 surface seeds (§6.8): every state, testable without Rust ──
+  // ── Surface state seeds for tests and dev previews ──
 
   /** The three identify sub-nodes replace the single identify block. */
   subNodes: () => ({
@@ -170,7 +169,7 @@ export const SEEDS = {
     settings: resolvedSettings(), album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
     decisionService: 'the local decision model',
   }),
-  /** A paused DECISION node (B2 `stage_pause`), with a parked worker. */
+  /** A paused DECISION node (`stage_pause`) with a parked worker. */
   pausedStage: () => ({
     ...common,
     status: status(7),
@@ -185,7 +184,7 @@ export const SEEDS = {
     hydrate: null, seed: null, jobId: 7,
     settings: resolvedSettings(), album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
   }),
-  /** A runtime-skipped VISION node (B2 `stage_skip`): plain consequence, honest word. */
+  /** A runtime-skipped VISION node (`stage_skip`) with its plain skip consequence. */
   skippedStage: () => ({
     ...common,
     status: status(7),
@@ -201,7 +200,7 @@ export const SEEDS = {
     hydrate: null, seed: null, jobId: 7,
     settings: resolvedSettings(), album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
   }),
-  /** Greyed-off steps (§6.3): OCR, Decision and Vision off for this album. */
+  /** Disabled steps: OCR, Decision, and Vision all switched off for this album. */
   greyedOff: () => ({
     ...common,
     status: status(7),
@@ -218,7 +217,7 @@ export const SEEDS = {
     settings: resolvedSettings({ identify_ocr: false, use_decider: false, moments_backend: 'vlm', use_vlm: false }),
     album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
   }),
-  /** Serial VRAM: only one model fits, both models local (§5). */
+  /** Serial VRAM fallback: both models run locally, but only one fits in VRAM at a time. */
   serialVram: () => ({
     ...common,
     status: status(7),
@@ -236,7 +235,7 @@ export const SEEDS = {
     hydrate: null, seed: null, jobId: 7,
     settings: bothLocalSettings(), album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
   }),
-  /** An `auto` album with B1's type suggestion, not yet accepted (§3b). */
+  /** An `auto` album carrying a shoot-type suggestion that has not yet been accepted. */
   typeSuggestion: () => ({
     ...common,
     status: status(7),
@@ -247,7 +246,7 @@ export const SEEDS = {
     album: baseJob(7, 'scanning', { scan_profile: 'auto', shoot_type_suggested: 'sport-rodeo', shoot_type_confidence: 0.82 }),
     identifyVram: VRAM_FITS(),
   }),
-  /** B1's wire-shape failed stage (`status`/`error`), bound to the correct job. */
+  /** Failed stage in current `status`/`error` wire shape, bound to its job. */
   failedStageWire: () => ({
     ...common,
     status: status(7),

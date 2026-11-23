@@ -17,7 +17,6 @@ export type ScanFailure = {
   args?: ScanArgs;
 };
 
-export function folderName(root?: string): string;
 export function scanErrorKind(raw?: string, root?: string): ScanErrorKind;
 export function classifyScanError(raw?: string, options?: { root?: string; label?: string }): ScanFailure;
 export function scanFailureFor(input?: {

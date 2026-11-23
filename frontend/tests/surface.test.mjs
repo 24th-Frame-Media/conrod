@@ -75,21 +75,27 @@ test('controls call EXACTLY stage_pause / stage_skip / stage_rerun with {jobId, 
   const s = surface('subNodes');
   const running = node(s, 'identify:ocr');
   assert.deepEqual(running.controls.pause.action, 'stage_pause');
-  assert.deepEqual(running.controls.pause.args, { jobId: 7, stage: 'identify:ocr' });
+  assert.deepEqual(running.controls.pause.args, { jobId: 7, stage: 'identify:ocr', paused: true });
+  assert.equal(running.controls.pause.label, 'Pause');
   assert.deepEqual(node(s, 'identify:vision').controls.skip.action, 'stage_skip');
   assert.deepEqual(node(s, 'identify:vision').controls.skip.args, { jobId: 7, stage: 'identify:vision' });
   assert.equal(CONTROL_ACTIONS.rerun, 'stage_rerun');
   assert.deepEqual(controlSpec('rerun', 7, 'identify:vision'), { action: 'stage_rerun', args: { jobId: 7, stage: 'identify:vision' } });
 });
 
-test('Pause only on a running node; Run again on a finished/skipped/paused node; Skip needs a consequence', () => {
+test('Pause on running, Resume on paused; Run again on done/skipped/failed only; Skip needs a consequence', () => {
   const s = surface('subNodes');
   assert.equal(node(s, 'identify:ocr').controls.pause.available, true, 'running node can pause');
+  assert.equal(node(s, 'identify:ocr').controls.pause.label, 'Pause');
   assert.equal(node(s, 'identify:vision').controls.pause.available, false, 'pending node cannot pause');
   assert.equal(node(s, 'identify:vision').controls.rerun.available, false, 'pending node cannot re-run');
   const paused = surface('pausedStage');
-  assert.equal(node(paused, 'identify:decision').controls.pause.available, false, 'a paused node is not re-paused');
-  assert.equal(node(paused, 'identify:decision').controls.rerun.available, true, 'a paused node can run again');
+  const dec = node(paused, 'identify:decision');
+  assert.equal(dec.controls.pause.available, true, 'a paused node offers Resume');
+  assert.equal(dec.controls.pause.label, 'Resume');
+  assert.equal(dec.controls.pause.action, 'stage_pause');
+  assert.deepEqual(dec.controls.pause.args, { jobId: 7, stage: 'identify:decision', paused: false });
+  assert.equal(dec.controls.rerun.available, false, 'a paused node in an active scan cannot re-run');
   const skipped = surface('skippedStage');
   assert.equal(node(skipped, 'identify:vision').controls.skip.available, false, 'cannot skip an already-skipped node');
   assert.equal(node(skipped, 'identify:vision').controls.rerun.available, true);
@@ -98,6 +104,24 @@ test('Pause only on a running node; Run again on a finished/skipped/paused node;
   assert.match(vision.controls.skip.consequence, /Skipping Vision/);
   assert.match(vision.controls.skip.consequence, /no make\/model/i);
   assert.match(vision.controls.skip.consequence, /100/, 'remaining count comes from the snapshot');
+});
+
+test('unskippable plain stages disable skip, unrerunnable disable rerun, and plainNode uses stage.skip_consequence', () => {
+  const input = SEEDS.subNodes();
+  input.liveByJob[7].progress.pipeline.stages = nineStages({
+    read: { status: 'running', done: 10, total: 100 },
+    detect: { status: 'running', done: 10, total: 100 },
+    sharpness: { status: 'running', done: 10, total: 100 },
+    faces: { status: 'done', done: 100, total: 100, workers_total: 0 },
+    group: { status: 'pending', skip_consequence: 'Skipping Group: frames stay ungrouped.' },
+  });
+  const s = buildRunSnapshot(input).surface;
+  for (const id of ['read', 'detect', 'sharpness']) {
+    assert.equal(node(s, id).controls.skip.available, false, `${id} cannot be skipped`);
+  }
+  assert.equal(node(s, 'faces').controls.rerun.available, false, 'faces cannot be rerun');
+  assert.equal(node(s, 'group').controls.skip.available, true, 'group can be skipped while pending');
+  assert.equal(node(s, 'group').controls.skip.consequence, 'Skipping Group: frames stay ungrouped.');
 });
 
 test('skip consequences are plain and derived, one line each', () => {
@@ -137,6 +161,12 @@ test('offForAlbum is derived from RESOLVED settings, not the engine status', () 
   assert.equal(stageEnabled('vision', resolvedSettings({ use_vlm: false })), false);
   assert.equal(stageEnabled('decision', resolvedSettings({ use_decider: false, moments_backend: 'vlm' })), false);
   assert.equal(stageEnabled('decision', resolvedSettings({ use_decider: false, moments_backend: 'vlm', moments_services: [{ enabled: true }] })), true);
+  // Per-album identify_decision: false greys out Decision even with local decider or cloud moment services.
+  assert.equal(stageEnabled('decision', resolvedSettings({ identify_decision: false, use_decider: true })), false);
+  assert.equal(
+    stageEnabled('decision', resolvedSettings({ identify_decision: false, use_decider: false, moments_services: [{ provider: 'opencode', enabled: true }] })),
+    false,
+  );
   // Settings say ON but the engine reports a runtime skip: NOT greyed, honest skipped.
   const runtimeSkipped = buildSurface(buildRunSnapshot(SEEDS.skippedStage()), {
     settings: resolvedSettings(), album: null, identifyVram: VRAM_FITS(),
@@ -224,6 +254,31 @@ test('concurrency seats are shown ONLY when both decision and vision run locally
   assert.equal(s.concurrency.visible, false);
 });
 
+test('modelsLocal and concurrencyView honour Rust defaults (auto transport + loopback Ollama) and reject LAN hosts', () => {
+  const rustDefaults = {
+    use_decider: true,
+    moments_transport: 'auto',
+    use_vlm: true,
+    vlm_provider: 'ollama',
+    vlm_host: 'http://127.0.0.1:11434',
+  };
+  assert.deepEqual(modelsLocal(rustDefaults), { decisionLocal: true, visionLocal: true, bothLocal: true });
+  const cv = concurrencyView(VRAM_FITS(), rustDefaults);
+  assert.equal(cv.visible, true);
+
+  const lanOllama = { ...rustDefaults, vlm_host: 'http://192.168.1.50:11434' };
+  assert.equal(modelsLocal(lanOllama).visionLocal, false, 'LAN Ollama does not share local VRAM');
+  assert.equal(modelsLocal(lanOllama).bothLocal, false);
+  assert.equal(concurrencyView(VRAM_FITS(), lanOllama).visible, false);
+
+  const lanService = {
+    ...rustDefaults,
+    vlm_services: [{ id: 'lan', provider: 'ollama', host: 'http://192.168.1.50:11434', enabled: true }],
+  };
+  assert.equal(modelsLocal(lanService).visionLocal, false);
+  assert.equal(concurrencyView(VRAM_FITS(), lanService).visible, false);
+});
+
 test('serial mode is explained plainly even when both models fit but serial is chosen', () => {
   const c = concurrencyView({ ...VRAM_FITS(), mode: 'serial' }, bothLocalSettings());
   assert.equal(c.mode, 'serial');
@@ -306,7 +361,7 @@ test('a rodeo run words every surface node for animals and riders, never vehicle
 test('Manage shoot exposes OCR / Decision / Vision toggles wired to B1 settings', () => {
   const s = surface('greyedOff');
   assert.deepEqual(s.toggles.map((t) => t.key), ['ocr', 'decision', 'vision']);
-  assert.deepEqual(s.toggles.map((t) => t.settingsKey), ['identify_ocr', 'use_decider', 'use_vlm']);
+  assert.deepEqual(s.toggles.map((t) => t.settingsKey), ['identify_ocr', 'identify_decision', 'use_vlm']);
   assert.equal(s.toggles.every((t) => t.on === false), true, 'all three off for the greyed album');
   assert.deepEqual(STAGE_TOGGLES.map((t) => t.key), ['ocr', 'decision', 'vision']);
 });

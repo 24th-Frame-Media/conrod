@@ -1,50 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  EMPTY_FORK, HELPERS, NOT_SET_UP, STRATS, SUMMARY_LINES, ZONE_TITLES,
-  buildAiView, capStatus, capUsable, groupByZone, isEmpty, serviceConfig,
-  serving, setService, statusOf, summaryLine, unlockReason, zoneOf,
-} from '../src/lib/aiCard.mjs';
-import {
-  ADD_ORDER, BUILTIN, IN_TOK, OUT_TOK, SERVICE_TYPES, SHARING, THINK_HINT,
-  addService, builtinRowStates, cardsFromDraft, checkOutcome, costLine, decisionCandidates, defaultThinking,
-  downloadProgress, fmtUsd, helperStatus, isPicked, makeCard, modelLine, momentsStatus, patchService, photoCost, poolCount,
-  providerToType, removeService, servingFor, setCapModel, setSharing, sharingValue, summaryText,
-  visionCandidates,
+  ADD_ORDER, BUILTIN, DECIDER_QUANTS, HELPERS, IN_TOK, OUT_TOK, SERVICE_TYPES, SHARING,
+  SIMPLE_CONTROLS, THINK_HINT,
+  addService, builtinRowStates, cardsFromDraft, checkOutcome, costLine, decisionCandidates,
+  decisionModels, defaultThinking, downloadProgress, fmtUsd, helperStatus, isPicked, makeCard,
+  modelLine, momentsStatus, patchService, photoCost, poolCount, providerToType, removeService,
+  servingFor, setSharing, sharingValue, summaryText, visionCandidates,
 } from '../src/lib/aiCard.mjs';
 
-const NO_MODELS = { vision: {}, decision: {} };
-const view = (settings) => buildAiView(settings, NO_MODELS);
-
-const svc = (provider, extra = {}) => ({ provider, model: 'm', host: '', api_key: '', enabled: true, ...extra });
-const settingsWith = (opts = {}) => ({
-  ...(opts.use_decider != null ? { use_decider: opts.use_decider } : {}),
-  ...(opts.vlm_services ? { vlm_services: opts.vlm_services } : {}),
-  ...(opts.moments_services ? { moments_services: opts.moments_services } : {}),
-});
-
-const EMPTY = {};
-const CLOUD = settingsWith({
-  vlm_services: [svc('opencode', { api_key: 'oc-key' })],
-  moments_services: [svc('opencode', { api_key: 'oc-key' })],
-});
-const LOCAL = settingsWith({
-  use_decider: true,
-  moments_services: [svc('in_process', { api_key: '' })],
-});
-const OPENROUTER_ONLY = settingsWith({
-  vlm_services: [svc('openrouter', { api_key: 'or-key' })],
-  moments_services: [svc('openrouter', { api_key: 'or-key' })],
-});
-const BOTH = settingsWith({
-  use_decider: true,
-  moments_services: [svc('in_process', { api_key: '' }), svc('opencode', { api_key: 'oc-key' })],
-  vlm_services: [svc('opencode', { api_key: 'oc-key' })],
-});
-
-const capHelper = (cap) => HELPERS.find((h) => h.capability === cap);
-
-test('the card is exactly seven helpers, with plain names and no model words at rest', () => {
+test('the card is exactly seven helpers, with plain names, no model words at rest, and real setting keys', () => {
   assert.equal(HELPERS.length, 7);
   assert.deepEqual(HELPERS.map((h) => h.id), [
     'cars-people', 'sharpness', 'faces', 'plates', 'race-numbers', 'reads-cars', 'moments',
@@ -53,148 +18,22 @@ test('the card is exactly seven helpers, with plain names and no model words at 
     assert.ok(h.title && h.desc);
     // No visible row title leaks engine names.
     assert.doesNotMatch(h.title, /YOLO|OCR|VLM|model|provider|quant|endpoint/i);
+    assert.ok(Array.isArray(SIMPLE_CONTROLS[h.id]) && SIMPLE_CONTROLS[h.id].length > 0, `${h.id} has real setting keys`);
   }
   assert.deepEqual(HELPERS.filter((h) => h.capability).map((h) => h.capability), ['vision', 'decision']);
 });
 
-test('zone grouping: empty slots every helper on this PC and leaves the cloud zone empty', () => {
-  const v = view(EMPTY);
-  const [pc, cloud] = v.groups;
-  assert.equal(pc.id, 'pc');
-  assert.equal(pc.title, ZONE_TITLES.pc);
-  assert.equal(cloud.id, 'cloud');
-  assert.equal(cloud.title, ZONE_TITLES.cloud);
-  assert.equal(pc.helpers.length, 7);
-  assert.equal(cloud.helpers.length, 0);
-  assert.match(cloud.empty, /cloud key|download/i);
-  for (const h of HELPERS) assert.equal(zoneOf(h, v.ctx), 'pc');
-});
-
-test('zone grouping: a cloud key moves the two capable helpers to the cloud zone', () => {
-  const v = view(CLOUD);
-  const [pc, cloud] = v.groups;
-  assert.deepEqual(pc.helpers.map((h) => h.id), ['cars-people', 'sharpness', 'faces', 'plates', 'race-numbers']);
-  assert.deepEqual(cloud.helpers.map((h) => h.id), ['reads-cars', 'moments']);
-  assert.equal(zoneOf(capHelper('vision'), v.ctx), 'cloud');
-  assert.equal(zoneOf(capHelper('decision'), v.ctx), 'cloud');
-});
-
-test('zone grouping: local models (and local + cloud) keep the capable helpers on this PC', () => {
-  assert.deepEqual(view(LOCAL).groups.map((g) => g.helpers.length), [7, 0]);
-  assert.equal(zoneOf(capHelper('vision'), view(LOCAL).ctx), 'pc');
-  assert.deepEqual(view(BOTH).groups.map((g) => g.helpers.length), [7, 0]);
-  assert.equal(capStatus('vision', view(BOTH).ctx.config, NO_MODELS).text, 'Ready on this PC + cloud');
-});
-
-test('statuses at rest: ready on this PC, ready via the service, or not set up', () => {
-  const empty = view(EMPTY).ctx;
-  assert.equal(statusOf(capHelper('vision'), empty).text, NOT_SET_UP);
-  assert.equal(statusOf(capHelper('vision'), empty).tone, 'locked');
-
-  const cloud = view(CLOUD).ctx;
-  assert.equal(statusOf(capHelper('vision'), cloud).text, 'Ready via OpenCode');
-  assert.equal(statusOf(capHelper('decision'), cloud).tag, 'Cloud');
-
-  const local = view(LOCAL).ctx;
-  assert.equal(statusOf(capHelper('vision'), local).text, 'Ready on this PC');
-
-  // Simple helpers reflect their real on/off keys.
-  assert.equal(statusOf(HELPERS[0], { ...empty, settings: { include_cars: true } }).text, 'Ready on this PC');
-  assert.equal(statusOf(HELPERS[0], { ...empty, settings: { include_cars: false } }).text, 'Off');
-});
-
-test('unlock reasons: nothing configured locks both capabilities with the fork copy', () => {
-  const ctx = view(EMPTY).ctx;
-  for (const cap of ['vision', 'decision']) {
-    const u = unlockReason(capHelper(cap), ctx);
-    assert.equal(u.locked, true);
-    assert.equal(u.reason, NOT_SET_UP);
-    assert.match(u.sub, /add a key|download the built-in models/i);
-  }
-  assert.equal(capUsable('vision', ctx.config), false);
-  assert.equal(capUsable('decision', ctx.config), false);
-});
-
-test('unlock reasons: a cloud key unlocks both; OpenRouter alone cannot unlock moments', () => {
-  const cloud = view(CLOUD).ctx;
-  assert.equal(unlockReason(capHelper('vision'), cloud).locked, false);
-  assert.equal(unlockReason(capHelper('decision'), cloud).locked, false);
-
-  const orOnly = view(OPENROUTER_ONLY).ctx;
-  assert.equal(unlockReason(capHelper('vision'), orOnly).locked, false, 'OpenRouter can read photos');
-  const moments = unlockReason(capHelper('decision'), orOnly);
-  assert.equal(moments.locked, true, 'its moments model cannot see photos yet');
-  assert.match(moments.sub, /can’t see photos yet/i);
-  assert.match(moments.sub, /OpenCode key|built-in models/i);
-
-  assert.equal(unlockReason(capHelper('decision'), view(LOCAL).ctx).locked, false);
-});
-
-test('empty-fork copy: the two paths and the OpenCode / OpenRouter note', () => {
-  assert.equal(isEmpty(serviceConfig(EMPTY)), true);
-  assert.equal(isEmpty(serviceConfig(CLOUD)), false);
-  assert.equal(isEmpty(serviceConfig(LOCAL)), false);
-
-  assert.match(EMPTY_FORK.heading, /two ways/i);
-  assert.match(EMPTY_FORK.download.title, /Download the models/i);
-  assert.match(EMPTY_FORK.download.sub, /Free/i);
-  assert.match(EMPTY_FORK.download.sub, /5 GB/i);
-  assert.match(EMPTY_FORK.download.sub, /offline/i);
-  assert.match(EMPTY_FORK.cloud.title, /cloud service/i);
-  assert.match(EMPTY_FORK.cloud.sub, /pay as you go/i);
-  assert.match(EMPTY_FORK.cloud.sub, /any PC/i);
-  assert.match(EMPTY_FORK.cloud.note, /OpenCode covers both car reading and moments/i);
-  assert.match(EMPTY_FORK.cloud.note, /OpenRouter/i);
-  assert.match(EMPTY_FORK.cloud.note, /moments model can’t see photos yet/i);
-});
-
-test('collapsed summary line follows whichever path is done', () => {
-  assert.equal(summaryLine(serviceConfig(CLOUD)), SUMMARY_LINES.cloud);
-  assert.equal(summaryLine(serviceConfig(LOCAL)), SUMMARY_LINES.local);
-  assert.equal(summaryLine(serviceConfig(BOTH)), SUMMARY_LINES.both);
-  assert.equal(view(CLOUD).summary, SUMMARY_LINES.cloud);
-  assert.equal(view(EMPTY).isEmpty, true);
-});
-
-test('work-sharing strategies are the three engine values', () => {
-  assert.deepEqual(STRATS.map((s) => s.id), ['least_busy', 'round_robin', 'random']);
-});
-
-test('wiring: adding a key or downloading writes vlm_services / moments_services / use_decider', () => {
-  const keyed = setService(EMPTY, 'opencode', { key: 'oc-key' });
-  assert.equal(keyed.vlm_services[0].provider, 'opencode');
-  assert.equal(keyed.vlm_services[0].api_key, 'oc-key');
-  assert.equal(keyed.moments_services[0].provider, 'opencode');
-  assert.equal(serving('opencode', serviceConfig({ ...keyed, use_decider: keyed.use_decider })), true);
-
-  const downloaded = setService(EMPTY, 'local', { download: true });
-  assert.equal(downloaded.use_decider, true);
-  assert.equal(downloaded.moments_services[0].provider, 'in_process');
-  assert.equal(serving('local', serviceConfig({ ...downloaded })), true);
-
-  const hosted = setService(EMPTY, 'ollama', { addHost: 'http://localhost:11434' });
-  assert.equal(hosted.vlm_services[0].host, 'http://localhost:11434');
-  assert.deepEqual(serviceConfig({ ...hosted }).ollama.hosts, ['http://localhost:11434']);
-});
-
-test('wiring: groupByZone never lists a helper in two zones', () => {
-  for (const settings of [EMPTY, CLOUD, LOCAL, OPENROUTER_ONLY, BOTH]) {
-    const groups = groupByZone(view(settings).ctx);
-    const ids = groups.flatMap((g) => g.helpers.map((h) => h.id));
-    assert.equal(new Set(ids).size, ids.length);
-    assert.equal(ids.length, HELPERS.length);
-  }
-});
-
-/* ── services-plan rebuild: the four new behaviours ─────────────────────── */
-
-test('service definitions: six addable services, built-in rows, vision-only Ollama', () => {
+test('service definitions: six addable services, built-in rows, vision-only Ollama, real decider quants', () => {
   assert.equal(ADD_ORDER.length, 6);
   assert.equal(BUILTIN.models.length, 2);
   assert.equal(SERVICE_TYPES.ollama.decisions, false);
   assert.ok(THINK_HINT.length > 0);
   assert.equal(providerToType('opencode-go'), 'opencode');
   assert.equal(providerToType('in_process'), null); // built-in, not a service card
+  assert.deepEqual(DECIDER_QUANTS.map((q) => q.id), ['auto', 'int8', 'int4']);
+  assert.ok(decisionModels('opencode').length > 0);
+  assert.ok(decisionModels('openrouter').length > 0);
+  assert.deepEqual(decisionModels('ollama'), []);
 });
 
 test('sharing control: one global value writes both strategy keys together', () => {
@@ -257,16 +96,16 @@ test('per-card Thinking defaults off, is persisted as reasoning on both service 
 
 test('helper serving: non-AI helpers use bundled models, AI helpers use the pool', () => {
   const ctx = {
-    builtinVision: ['qwen3-vl:8b'], builtinDecisions: [],
+    builtinVision: [], builtinDecisions: ['pplx-decider-local'],
     bundled: { 'cars-people': [{ id: 'Vehicle detector (YOLO)', ready: true }, { id: 'Person detector', ready: true }] },
     cards: [{ type: 'opencode', enabled: true, visionSel: 'glm-5.3-flash', decisionSel: 'jev-1.13', apiKey: 'k' }],
   };
   assert.deepEqual(servingFor('cars-people', ctx).map((x) => x.id), ['Vehicle detector (YOLO)', 'Person detector']);
-  assert.deepEqual(servingFor('reads-cars', ctx).map((x) => x.id), ['qwen3-vl:8b', 'glm-5.3-flash']);
-  assert.deepEqual(servingFor('moments', ctx).map((x) => x.id), ['jev-1.13']);
+  assert.deepEqual(servingFor('reads-cars', ctx).map((x) => x.id), ['glm-5.3-flash']);
+  assert.deepEqual(servingFor('moments', ctx).map((x) => x.id), ['pplx-decider-local', 'jev-1.13']);
 });
 
-test('helper status: ready / needs a key / no model / off, no cloud wording', () => {
+test('helper status: ready / not installed / no model / off, no cloud wording', () => {
   assert.equal(helperStatus(false, [{ id: 'x', ready: true }]).text, 'Off');
   assert.equal(helperStatus(true, [{ id: 'x', ready: true }]).text, 'Ready');
   assert.equal(helperStatus(true, [{ id: 'x', ready: false }]).text, 'Not installed');
@@ -369,26 +208,13 @@ test('moments status: every serving cloud service is named, first is the head', 
 
 test('pool + summary strip follow enabled services and routing', () => {
   const ctx = {
-    builtinVision: ['qwen3-vl:8b'], builtinDecisions: [], routing: 'round_robin',
+    builtinVision: [], builtinDecisions: ['pplx-decider-local'], routing: 'round_robin',
     cards: [{ enabled: true, visionSel: 'glm-5.3-flash', decisionSel: 'none' }],
   };
   assert.deepEqual(poolCount(ctx), { n: 2, svc: 2 });
   assert.match(summaryText(ctx).text, /2 models ready across 2 services, shared round robin/);
-  assert.equal(poolCount({ ...ctx, cards: [], builtinVision: [] }).n, 0);
+  assert.equal(poolCount({ ...ctx, cards: [], builtinDecisions: [] }).n, 0);
   assert.match(summaryText({ ...ctx, cards: [], builtinVision: [], builtinDecisions: [] }).text, /No models in the pool/);
-});
-
-test('the built-in reader never becomes a vision service row', () => {
-  // An early version of this card wrote the built-in reader into vlm_services
-  // with provider in_process, and every car read then failed with "unknown
-  // vision provider 'in_process'".
-  const before = settingsWith({ vlm_services: [svc('ollama', { host: 'http://h:1' })] });
-  const out = setCapModel(before, 'vision', 'local', 'Built-in car reader');
-  assert.deepEqual(out.vlm_services.map((s) => s.provider), ['ollama']);
-  assert.equal(out.vlm_services.some((s) => s.provider === 'in_process'), false);
-  // A real service still records its model.
-  const cloud = setCapModel(before, 'vision', 'opencode', 'glm-5.3-flash');
-  assert.equal(cloud.vlm_services.at(-1).provider, 'opencode');
 });
 
 /* ── Test button: it must surface the engine's real failure reason ───────── */
@@ -412,7 +238,6 @@ test('a real check failure is surfaced; only a clean reply is ready', () => {
     { ok: true, label: 'Conrod dev key' },
     { ok: true, online: true, models: [{ name: 'qwen3-vl:8b' }] },
     { models: [{ id: 'glm-5.3-flash' }] },
-    null, // the built-in (on-this-PC) card has no engine check to fail
   ]) {
     assert.equal(checkOutcome(good).ready, true);
     assert.equal(checkOutcome(good).reason, '');

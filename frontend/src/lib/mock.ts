@@ -5,13 +5,13 @@ import { mockDeciderStatus, startDeciderSim } from './mockDecider';
 import type { ShootStats } from './shot.mjs';
 import { applyOverrides, defaultSummary, overridesOf } from './presetPolicy.mjs';
 import { profileDefaults } from './wizard.mjs';
-import type { Bootstrap, DeciderLive, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, PipelineWorker, ScanProgress, ScanStatus, Settings, Status, WorkerLimits } from './types';
+import type { Bootstrap, DeciderLive, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, IdentifyVram, Job, KnownVehicle, Page, PipelineWorker, ScanProgress, ScanStatus, Settings, Status, WorkerLimits } from './types';
 import * as aiCard from './aiCard.mjs';
 import { nineStages, resolvedSettings, bothLocalSettings, VRAM_SERIAL, VRAM_FITS } from './mockSeeds.mjs';
 
 /** `?mock=1&page=ingest&surface=<state>` paints a static grouped-run snapshot
- *  (§6.8 mock seeds): sub-nodes, paused, skipped, greyed, serial VRAM, a type
- *  suggestion, a failed stage, a stalled worker or a live dropdown. */
+ *  from mockSeeds: sub-nodes, paused, skipped, greyed, serial VRAM, a type
+ *  suggestion, a failed stage, a stalled worker, or a live dropdown. */
 const SURFACE_JOB = 3;
 const surfaceName = () => params().get('surface');
 
@@ -125,7 +125,7 @@ const TALL_FRAME = { id: 1000, width: 6000, height: 4000 };
 const COVERS = ['/mock/gemini.jpg', '/mock/mustang.jpg', '/mock/datsun.jpg'];
 const photo = (k: number): string => COVERS[((k % COVERS.length) + COVERS.length) % COVERS.length];
 
-type Db = { jobs: Job[]; frames: Frame[]; dets: Detection[]; known: KnownVehicle[]; settings: Settings; ticks: number; identifySkipped: boolean };
+type Db = { jobs: Job[]; frames: Frame[]; dets: Detection[]; known: KnownVehicle[]; settings: Settings; identifyVram: IdentifyVram | null; ticks: number; identifySkipped: boolean };
 let cache: Db | undefined;
 
 function makeDb(): Db {
@@ -232,12 +232,12 @@ function makeDb(): Db {
     moments_strategy: 'round_robin', moments_vlm_fallback: true, moments_threshold: 0.85,
     vlm_strategy: 'round_robin', vlm_reasoning: false, use_quality_score: true, include_people: true,
     workflow_mode: 'both', identify_scope: 'keepers',
-    // B5: the per-stage switches / concurrency seats B1 + B3 added.
-    identify_ocr: true, identify_vision_workers: 2, identify_decision_workers: 1,
+    // Per-stage identify switches and local-model worker concurrency seats.
+    identify_ocr: true, identify_decision: true, identify_vision_workers: 2, identify_decision_workers: 1,
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
     overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', decider_quant: 'auto', close_to_tray: false,
   };
-  return { jobs, frames, dets, known, settings, ticks: 0, identifySkipped: false };
+  return { jobs, frames, dets, known, settings, identifyVram: null, ticks: 0, identifySkipped: false };
 }
 
 /* ── ingest simulator (see mockIngest.ts): one timeline feeds both the scan and the identify event streams ── */
@@ -312,20 +312,22 @@ function startIngest(db: Db, jobId: number, mode: 'ingest' | 'identify'): void {
 const startSim = (db: Db, jobId: number) => startIngest(db, jobId, 'ingest');
 const startIdentifySim = (jobId: number) => startIngest(cache ??= makeDb(), jobId, 'identify');
 
-/** Paint a static grouped-run snapshot + resolved settings for the B5 surface
- *  seeds (§6.8). No simulator runs, so every state stays put for screenshots. */
+/** Paint a static grouped-run snapshot and resolved settings for a named
+ *  surface seed. No simulator runs, so the state stays fixed for inspection. */
 function surfaceSeed(db: Db): void {
   const name = surfaceName() ?? 'subNodes';
   const greyed = name === 'greyed';
   const base = resolvedSettings();
   if (name === 'serial' || name === 'concurrent') Object.assign(base, bothLocalSettings());
-  // Greyed steps are OFF for this album: set the switches AFTER any local-model
-  // seed so they stay off (§6.3), with no decision/vision service to turn them on.
+  // Disabled steps are off for this album: apply these overrides after any
+  // local-model defaults so no decision/vision service turns them back on.
   if (greyed) Object.assign(base, {
-    identify_ocr: false, use_decider: false, use_vlm: false,
+    identify_ocr: false, identify_decision: false, use_decider: false, use_vlm: false,
     moments_backend: 'vlm', moments_services: [], vlm_services: [],
   });
-  (base as unknown as Record<string, unknown>).identifyVram = name === 'serial' ? VRAM_SERIAL() : VRAM_FITS();
+  const vram = (name === 'serial' ? VRAM_SERIAL() : VRAM_FITS()) as IdentifyVram;
+  db.identifyVram = vram;
+  (base as unknown as Record<string, unknown>).identifyVram = vram;
   db.settings = base as unknown as Settings;
 
   const job = db.jobs.find((j) => j.id === SURFACE_JOB);
@@ -384,7 +386,7 @@ function surfaceSeed(db: Db): void {
 }
 
 function status(db: Db): Status {
-  // B5 surface seeds: a static grouped run, one album active (or a live queue).
+  // Surface seeds: static grouped run with one active album (or a queued album).
   if (surfaceName()) {
     const name = surfaceName();
     return {
@@ -439,7 +441,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
           };
         }
       }
-      return out({ rows: localRows(), install: mockInstall });
+      return out({ rows: localRows(), install: mockInstall, identifyVram: db.identifyVram });
     }
     case 'health': {
       // `&health=real` seeds the same row shape the engine sends (one row per
@@ -596,6 +598,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       // (connected / bundled-UI fallback / retrying) for QA screenshots.
       return out({
         jobs: db.jobs, settings: db.settings, status: status(db), models: localRows(),
+        identifyVram: db.identifyVram,
         dev: params().has('dev'), devUrl: 'http://localhost:1420', devServer: params().has('dev') && params().get('devserver') !== 'down',
         devHome: '~/.conrod-dev',
       } satisfies Bootstrap);
@@ -779,11 +782,13 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'stop': if (ingest && !ingest.finished) ingest.stop(); return out(status(db));
     case 'pause': ingest?.setPaused(true); return out(null);
     case 'resume_scan': ingest?.setPaused(false); return out(null);
-    // B2 per-stage controls: mutate the authoritative stage status so the
-    // flowchart (built from the snapshot) updates honestly.
+    // Per-stage controls: mutate the authoritative stage status so the
+    // snapshot-driven flowchart updates immediately.
     case 'stage_pause': case 'stage_skip': case 'stage_rerun': {
       const stage = String(a.stage ?? '');
-      const word = action === 'stage_pause' ? 'paused' : action === 'stage_skip' ? 'skipped' : 'running';
+      const word = action === 'stage_pause'
+        ? (a.paused === false ? 'running' : 'paused')
+        : action === 'stage_skip' ? 'skipped' : 'running';
       if (lastProgress) {
         lastProgress = { ...lastProgress, pipeline: { ...lastProgress.pipeline,
           stages: lastProgress.pipeline.stages.map((s) => s.id === stage ? { ...s, status: word } : s) } };
@@ -791,11 +796,12 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       }
       return out({ ok: true });
     }
-    // B1 type suggestion: one click sets the accepted type; the suggestion hides.
+    // Type suggestion: record the accepted shoot type so the prompt hides.
     case 'accept_type_suggestion': {
       const job = db.jobs.find((j) => j.id === Number(a.jobId));
-      if (job) (job as unknown as Record<string, unknown>).shoot_type_accepted = String(a.type ?? '');
-      return out({ ok: true });
+      const type = String(a.type ?? '');
+      if (job) (job as unknown as Record<string, unknown>).shoot_type_accepted = type;
+      return out({ accepted: true, type });
     }
     case 'delete_job': db.jobs = db.jobs.filter((j) => j.id !== a.jobId); return out(null);
     case 'cancel_operation': db.identifySkipped = true; if (ingest?.mode === 'identify') ingest.stop(); else ingest?.cancelVision(); return out(null);

@@ -11,7 +11,7 @@ const text = (v) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null)
 const count = (v) => (numOr(v) == null ? null : Math.round(v).toLocaleString());
 
 /** The shutter as a fraction below half a second: "1/1000", else "0.5 s". */
-export function shutterLabel(seconds) {
+function shutterLabel(seconds) {
   const s = numOr(seconds);
   if (s == null || s <= 0) return null;
   return s < 0.5 ? `1/${Math.round(1 / s)}` : `${trim1(s)} s`;

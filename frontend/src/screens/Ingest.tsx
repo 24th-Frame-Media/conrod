@@ -56,21 +56,25 @@ export type IngestProps = {
   onUnqueue?: (job: Job) => void;
   /** A scan that failed before or during the run; shown as a persistent banner with Resume. */
   scanError?: ScanFailure | null;
-  /** The single run snapshot (plan §6.1): stages, workers, counters, failed stages. */
+  /** Normalized run snapshot: stages, workers, counters, and failed stages. */
   runSnapshot?: RunSnapshot;
   /** Retry the failed scan; the banner's Resume. */
   onRetryScan?: () => void;
   /** A stopped or failed identification: continue it where it stopped, asking only
    *  the frames nobody decided and the subjects nobody read. Never fired by itself. */
   onContinueIdentify?: () => void;
-  /** B5: the ONE surface model from the run snapshot (flowchart sub-nodes,
-   *  greyed steps, controls, VRAM warning, type suggestion). */
+  /** Derived surface model from the run snapshot (flowchart sub-nodes,
+   *  disabled steps, controls, VRAM warning, and type suggestion). */
   surface?: any;
-  /** B2 per-stage controls, exact wire shape. */
-  onStageControl?: (action: 'stage_pause' | 'stage_skip' | 'stage_rerun', stage: string) => void;
-  /** One-click accept of B1's type suggestion (never silent). */
+  /** Per-stage controls matching the engine wire command shape. */
+  onStageControl?: (
+    action: 'stage_pause' | 'stage_skip' | 'stage_rerun',
+    stage: string,
+    extra?: { paused?: boolean; skip?: boolean; full?: boolean },
+  ) => void;
+  /** Accept the engine's shoot-type suggestion (explicit user action). */
   onAcceptTypeSuggestion?: (type: string) => void;
-  /** A greyed node's shortcut: open this album's Manage shoot (§6.3). */
+  /** Shortcut from a disabled node to open this album's shoot settings. */
   onOpenShootSettings?: () => void;
 };
 
@@ -128,8 +132,8 @@ export function IngestScreen({
   const prompts = useRef<Record<number, string>>({});
   const p = mode === 'ingest' ? scan?.progress : undefined;
   const operation = job ? status.operations.find((key) => key.startsWith('Identifying:') && key.endsWith(`:${job.id}`)) : undefined;
-  // The ONE snapshot for this run (plan §6.1): stages, workers, counters and
-  // failed stages all come from it. Stage-agnostic — whatever the engine sent.
+  // Normalized snapshot for this run: stages, workers, counters, and failed
+  // stages come from it stage-agnostically.
   const snap = runSnapshot && runSnapshot.activeJob === job?.id ? runSnapshot : null;
   const stages = snap ? snap.stages : (p ? orderStages(p.pipeline.stages) : []);
   const failedMap: Record<string, string> = Object.fromEntries((snap?.failedStages ?? []).map((f) => [f.id, f.reason]));
@@ -148,8 +152,8 @@ export function IngestScreen({
 
   const scanState = !p ? (running ? 'starting' : job?.status === 'error' ? 'error' : job?.status === 'done' || job?.status === 'done_errors' ? 'done' : 'idle')
     : p.state === 'running' && !running && job?.status !== 'scanning' ? 'stopped' : p.state === 'done_errors' ? 'done' : p.state;
-  // Bound strictly to this album: a null-job import failure shows ONLY on the
-  // empty Scan page, never on every album (§6.6, audit P2-2).
+  // Bind import errors strictly to this album: a null-job failure shows only
+  // on the empty Scan screen, never on another album.
   const seed = scanSeedFor(scanError ?? null, job?.id ?? null);
   const failure = mode === 'ingest' ? scanFailureFor({ job, progress: p, status, seed }) : null;
   const phase = ingestPhase({ mode, scan: mode === 'ingest' ? { state: scanState, stage: p?.stage } : null, identify: idLive, identifying: Boolean(operation) });
@@ -198,19 +202,18 @@ export function IngestScreen({
   const frac = mode === 'identify' ? progressPercent(idLive?.done, idLive?.total) / 100
     : phase === 'done' ? 1 : ingestFraction({ scanFraction: scanFrac, identify: idLive, vision });
   const pct = Math.round(frac * 100);
-  // The ONE surface model (§6.1): when the snapshot is on screen, its nodes —
-  // three identify sub-nodes, greyed steps, controls, status words — are the
-  // flowchart. The legacy builders stay as the fallback for an identify-only
-  // run or an engine that has not reported the grouped run yet.
+  // When the run snapshot is active, render its derived surface nodes (identify
+  // sub-nodes, disabled steps, controls, status words); otherwise fall back to
+  // legacy node builders for identify-only runs or older engines.
   const surfaceNodes = mode === 'ingest' && snap && surface && Array.isArray(surface.nodes) ? surface.nodes : null;
   const nodes: any[] = surfaceNodes ?? (mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive, decisionService, subject)
     : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService, subject, reads, failed: failedMap }));
 
   const visionLanes = workerLanes(idLive);
   const scanFilter = filter && filter !== 'vision' && filter !== 'decider' ? filter : null;
-  // Worker lifecycle (§6.4): ONLY active workers, each on its real step. Done/failed
-  // leave the grid (result → recent feed), a worker past the last-report window is
-  // shown honestly as stalled, and run end / stage transitions clear stale lanes.
+  // Render only active workers on their current step: done/failed workers leave
+  // the grid (results move to the recent feed), workers past the report window
+  // show as stalled, and run end / stage transitions clear stale lanes.
   const workerOpts = { now: Date.now(), stallMs: snap?.stallMs ?? 45000, paused, identify: !idLive, runActive: snap ? snap.runActive : live };
   const snapWorkers = snap ? snap.workers : p?.pipeline.workers;
   const picks = activeWorkers(snapWorkers, { ...workerOpts, filter: scanFilter, cap: 8, all: showAll });
@@ -234,9 +237,8 @@ export function IngestScreen({
     ? [leftLabel(etaLabel(identifyEta(idLive), done >= 3))]
     : etaLines({ vision, scanDone: identifying || phase === 'done', scanEta: smoothed ?? (p ? overallEta(stages, p.overall) : null), scanStable: Boolean(scan?.stable), identify: idLive, subject });
   const rate = identifying ? (idLive ? rateLabel(idLive.done, idLive.elapsed_ms, subject) : '') : frameRate(formatRate(p?.rate_per_s));
-  // Off/greyed steps never count toward progress (§6.3). The head stage's
-  // "Stage N of M" must use the same set, or an album with three steps off
-  // reads "Stage 8 of 6".
+  // Disabled steps do not count toward progress; compute "Stage N of M" over
+  // active stages only so the index never exceeds the total.
   const place = stagePlace(nodes, head?.id ?? p?.stage);
   const stageTotal = surfaceNodes ? place.total : nodes.filter((node) => node.id !== 'done').length;
   const stageAt = surfaceNodes ? place.at : nodes.findIndex((node) => node.id === (head?.id ?? p?.stage)) + 1;
@@ -289,7 +291,7 @@ export function IngestScreen({
           {live && mode === 'ingest' && !identifying && (
             <div className="id-actions">
               <button className="ghost" onClick={paused ? onResume : onPause}>{paused ? 'Resume' : 'Pause'}</button>
-              {/* Run-level Stop (§4): neutral wording, existing Cancelled semantics. */}
+              {/* Run-level Stop: stops the run while preserving completed work for resume. */}
               <button className="ghost danger" onClick={onCancel} title="Stop this run. Anything already read is kept and can be resumed.">Stop</button>
             </div>
           )}
@@ -359,8 +361,8 @@ export function IngestScreen({
           )}
         </ol>
 
-        {/* Every stage failure is visible with a plain reason and a retry on the
-            failed stage (§6.6). Stage-agnostic: whatever ids the engine sent. */}
+        {/* Surface every failed stage with its plain reason and a retry action,
+            regardless of stage id. */}
         {snap && snap.failedStages.length > 0 && (
           <section className="scan-summary scan-failure ing-stage-failure" role="alert" aria-label="Failed stages">
             <div className="ss-mark"><Icon name="x" size={20} /></div>
@@ -509,7 +511,7 @@ export function IngestScreen({
           {mode === 'ingest' && p && (
             <aside className="scan-rail">
               <Found found={p.found} identify={vision} />
-              {run && onSettingsSaved && <WorkerPanel run={run} onSaved={onSettingsSaved} scanning={phase === 'scan' || phase === 'starting' || phase === 'group' || phase === 'pick'} />}
+              {run && onSettingsSaved && <WorkerPanel run={run} onSaved={onSettingsSaved} scanning={phase === 'scan' || phase === 'starting' || phase === 'group' || phase === 'pick'} concurrency={surface?.concurrency} />}
             </aside>
           )}
         </div>

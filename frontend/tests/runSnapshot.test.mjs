@@ -243,3 +243,49 @@ test('run end produces no active lanes (stale lanes cleared)', () => {
   assert.equal(snap.runActive, false);
   assert.deepEqual(activeWorkers(snap.workers, { now: snap.now, runActive: snap.runActive }).lanes, []);
 });
+
+test('buildRunSnapshot binds view and surface.jobId to a non-active album without corrupting activeJob or dropdown', () => {
+  const snap = buildRunSnapshot({
+    now: 60000,
+    stallMs: STALL_MS,
+    status: {
+      activeJob: 1,
+      queue: [],
+      log: [],
+      operations: [],
+      tasks: [{ id: 1, label: 'Scanning Album 1', detail: '', state: 'running', done: 40, total: 100, eta: null, error: null }],
+    },
+    jobs: [
+      { id: 1, label: 'Album 1', root: '', status: 'scanning', total: 100, done: 40, errors: 0, error_samples: [], created_at: 1700000001 },
+      { id: 2, label: 'Album 2', root: '', status: 'done', total: 50, done: 50, errors: 0, error_samples: [], created_at: 1700000002 },
+    ],
+    liveByJob: {
+      1: {
+        progress: {
+          job_id: 1, state: 'running', stage: 'read', stage_index: 0, stage_count: 6,
+          done: 40, total: 100, rate_per_s: 1.2, eta_s: 50, recent: [],
+          found: { subjects: 0, soft: 0, closed_eyes: 0, numbers: 0, plates: 0, bursts: 0, keepers: 0 },
+          pipeline: { stages: [{ id: 'read', label: 'Read', workers_total: 2, workers_busy: 1, done: 40, total: 100 }], workers: [activeWorker()] },
+          overall: { done: 40, total: 100, fraction: 0.4, rate_per_s: 1.2, eta_s: 50, eta_confident: false },
+        },
+        stable: false,
+        history: [],
+        at: 200,
+      },
+    },
+    hydrate: null,
+    seed: null,
+    jobId: 2,
+  });
+  // Global activeJob + badge + dropdown still reflect album 1 running.
+  assert.equal(snap.activeJob, 1);
+  assert.equal(snap.badge.word, 'Running');
+  assert.equal(snap.jobs.find((j) => j.id === 1).chip.word, 'Running');
+  assert.equal(snap.jobs.find((j) => j.id === 2).chip.word, 'Done');
+  // Target album view + surface bind to album 2, not album 1.
+  assert.equal(snap.view.state, 'done');
+  assert.equal(snap.runActive, false);
+  assert.equal(snap.counters.total, 50);
+  assert.equal(snap.surface.jobId, 2);
+  assert.deepEqual(snap.workers, []);
+});

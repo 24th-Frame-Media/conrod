@@ -228,10 +228,4 @@
 .dec-bar i.top.warn { background: var(--warn2, #cfae5a); }
 .dec-answers.stale { opacity: .45; transition: opacity .2s; }
 .dec-foot { margin: 0; font-size: 10.5px; }
-.decider-card { display: grid; gap: 8px; padding: 12px 14px; margin: 0 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
-.decider-card.bad { border-color: color-mix(in srgb, var(--warn2, #cfae5a) 55%, transparent); }
-.decider-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.decider-card-gpu { margin: 0; font-size: 12.5px; }
-.decider-card-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.decider-section { display: grid; gap: 4px; }
 @media (prefers-reduced-motion: reduce) { .dec-answer { animation: none; } .dec-bar i { transition: none; } }

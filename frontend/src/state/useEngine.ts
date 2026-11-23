@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { call, engine, inTauri } from '../lib/api';
 import { clock, applySnapshot } from '../lib/snapshotOrder.mjs';
 import { classifyScanError } from '../lib/scanError.mjs';
-import type { Job, ModelInfo, Settings, Status } from '../lib/types';
+import type { IdentifyVram, Job, ModelInfo, Settings, Status } from '../lib/types';
 import type { Runner } from './hooks';
 import { useToast } from './toast';
 
@@ -28,6 +28,7 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
   const [jobs, setJobs] = useState<Job[]>([]);
   const [settings, setSettings] = useState<Settings>({});
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [identifyVram, setIdentifyVram] = useState<IdentifyVram | null>(null);
   const [status, setStatusRaw] = useState<Status>(emptyStatus);
   const [dev, setDev] = useState(false);
   const [devUrl, setDevUrl] = useState('');
@@ -61,6 +62,10 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
   }, []);
   // `health` = bootstrap's local models plus one live row per VLM server (with its id).
   const refreshModels = useCallback(async () => setModels(await call<ModelInfo[]>('health')), []);
+  const refreshIdentifyVram = useCallback(async () => {
+    const ms = await call<{ identifyVram?: IdentifyVram | null }>('models_status');
+    if (ms && 'identifyVram' in ms) setIdentifyVram(ms.identifyVram ?? null);
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -70,6 +75,7 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
       const stamp: Stamp = { at: clock.now(), source: 'live' };
       jobsAppliedRef.current = stamp;
       setJobs(b.jobs); setSettings(b.settings); setModels(b.models); commit(b.status, stamp);
+      setIdentifyVram(b.identifyVram ?? (b.settings as unknown as { identifyVram?: IdentifyVram | null })?.identifyVram ?? null);
       setDev(Boolean(b.dev)); setDevUrl(b.devUrl ?? ''); setDevServer(Boolean(b.devServer)); setDevHome(b.devHome ?? '');
       void refreshModels().catch(() => undefined);
     }).finally(() => { if (live) setReady(true); });
@@ -145,6 +151,6 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
     if (inTauri) void getCurrentWindow().requestUserAttention(last?.state === 'failed' ? UserAttentionType.Critical : UserAttentionType.Informational);
   }, [status, toast]);
 
-  return { ready, jobs, setJobs, settings, setSettings, models, status, setStatus, refreshJobs, refreshModels, dev, devUrl, devServer, devHome };
+  return { ready, jobs, setJobs, settings, setSettings, models, identifyVram, refreshIdentifyVram, status, setStatus, refreshJobs, refreshModels, dev, devUrl, devServer, devHome };
 }
 export type EngineModel = ReturnType<typeof useEngine>;

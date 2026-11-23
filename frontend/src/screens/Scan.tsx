@@ -28,16 +28,20 @@ type Props = {
   onResumeJob?: () => void;
   /** A scan call that threw before the album existed, shown by the same banner as a failed run. */
   scanError?: ScanFailure | null;
-  /** The single run snapshot (plan §6.1), passed through to the live Ingest screen. */
+  /** Normalized run snapshot passed through to the live Ingest screen. */
   runSnapshot?: RunSnapshot;
   /** Retry the scan after the failure's cause is fixed. */
   onRetryScan?: () => void;
-  /** B5: the ONE surface model from the run snapshot (flowchart sub-nodes,
-   *  greyed steps, controls, VRAM warning, type suggestion). */
+  /** Derived surface model from the run snapshot (flowchart sub-nodes,
+   *  disabled steps, controls, VRAM warning, and type suggestion). */
   surface?: any;
-  /** B2 per-stage controls: pause / skip / run-again, exact wire shape. */
-  onStageControl?: (action: 'stage_pause' | 'stage_skip' | 'stage_rerun', stage: string) => void;
-  /** One-click accept of B1's type suggestion (never silent). */
+  /** Per-stage controls: pause, resume, skip, and run again. */
+  onStageControl?: (
+    action: 'stage_pause' | 'stage_skip' | 'stage_rerun',
+    stage: string,
+    extra?: { paused?: boolean; skip?: boolean; full?: boolean },
+  ) => void;
+  /** Accept the engine's shoot-type suggestion (explicit user action). */
   onAcceptTypeSuggestion?: (type: string) => void;
   /** A greyed node's shortcut: open this album's Manage shoot. */
   onOpenShootSettings?: () => void;
@@ -68,8 +72,8 @@ function photos(count: number) {
  */
 export function ScanScreen({ job, live, scanStatus, status, paused, queue, onUnqueue, onResumeJob, onReview, onLibrary, scanError, runSnapshot, onRetryScan, ...rest }: Props) {
   const view = scanView({ job, live, hydrate: scanStatus, activeJob: status.activeJob });
-  // Bound strictly to this album: a null-job import failure can never match
-  // every album (§6.6, audit P2-2).
+  // Bind import errors strictly to this album so a null-job failure never
+  // appears on an unrelated album.
   const seed = scanSeedFor(scanError ?? null, job?.id ?? null);
 
   if (job && seed) {
