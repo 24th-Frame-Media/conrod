@@ -31,6 +31,7 @@ import { vlmModelLabel } from '../lib/vlm';
 import { facetsFor } from '../lib/facets.mjs';
 import { usePresetPolicy } from '../state/usePresetPolicy';
 import { isOn, overridesOf } from '../lib/presetPolicy.mjs';
+import { identifyTitle as identifyBannerTitle } from '../lib/subjects.mjs';
 import { thresholdOf } from '../lib/moments.mjs';
 import type { ReviewModel } from '../state/useReview';
 import { Viewer } from './Viewer';
@@ -62,7 +63,7 @@ function currentItem(task: Task): string {
   return detail.split(/[\\/]/).at(-1) ?? detail;
 }
 
-function IdentificationBanner({ task, settings, onSkip }: { task: Task; settings: Settings; onSkip: () => void }) {
+function IdentificationBanner({ task, settings, title, onSkip }: { task: Task; settings: Settings; title: string; onSkip: () => void }) {
   const models = [
     settings.read_plates && 'plate reader',
     (settings.read_plates || settings.read_numbers) && 'OCR',
@@ -76,7 +77,7 @@ function IdentificationBanner({ task, settings, onSkip }: { task: Task; settings
       <div className="identify-strip-main">
         <div className="identify-strip-left">
           <span className="work-spinner" />
-          <span className="identify-strip-title">Identifying vehicles</span>
+          <span className="identify-strip-title">{title}</span>
           <span className="identify-strip-pct">{percent}%</span>
           <span className="identify-strip-sep">·</span>
           <span className="identify-strip-file" title={task.detail}>{currentItem(task)}</span>
@@ -1077,7 +1078,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
           </div>
         </section>
       )}
-      {identifyTask && <IdentificationBanner task={identifyTask} settings={albumSettings} onSkip={onSkipIdentify} />}
+      {identifyTask && <IdentificationBanner task={identifyTask} settings={albumSettings} title={identifyBannerTitle(policy)} onSkip={onSkipIdentify} />}
       {hasRead && !identifying && (scopeEligible > 0 || identifyStale) && (
         <section className="identify-banner identify-again" aria-live="polite">
           <div className="identify-copy">

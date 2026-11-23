@@ -1,5 +1,6 @@
 // Pure logic for the identify live screen: the flow row, the image to show, the confidence meter and the words around them.
 import { msWords, percent } from './decider.mjs';
+import { SUBJECT_WORDS } from './subjects.mjs';
 import { visionModelWords, visionNodeSub, visionOffReason } from './vision.mjs';
 
 /** The stages the `identify-progress` event reports, in the order they happen. */
@@ -27,10 +28,11 @@ export function activeStage(stage) {
 /**
  * The row's nodes with their state. Everything before the first node of the active stage is
  * `done`, a node of the active stage is `active`, the rest is `pending`. `stage` overrides the
- * car-specific stage the screen is showing; otherwise the live car's own stage wins over the
- * run-wide one. A finished run has every node done: there is nothing left to pulse.
+ * subject-specific stage the screen is showing; otherwise the live subject's own stage wins over
+ * the run-wide one. `subject` is the album's own words (`subjectWords`), never a hardcoded car.
+ * A finished run has every node done: there is nothing left to pulse.
  */
-export function flowNodes(live, model, stage) {
+export function flowNodes(live, model, stage, subject = SUBJECT_WORDS.subjects) {
   const at = stage ?? live?.current?.stage ?? live?.stage ?? 'read';
   const active = activeStage(at);
   // `done` only ever comes from a finished car (the engine clears `current` when the run
@@ -40,7 +42,7 @@ export function flowNodes(live, model, stage) {
   const reason = visionOffReason(live);
   return FLOW_NODES.map((node, i) => ({
     ...node,
-    sub: node.label !== 'VISION' ? node.sub : reason ? visionNodeSub(reason) : visionModelWords(model) ? `Reading cars — ${visionModelWords(model)}` : node.sub,
+    sub: node.label !== 'VISION' ? node.sub : reason ? visionNodeSub(reason) : visionModelWords(model) ? `Reading ${subject.many} — ${visionModelWords(model)}` : node.sub,
     off: node.label === 'VISION' && Boolean(reason),
     state: finished || i < active ? 'done' : node.stage === at ? 'active' : 'pending',
   }));
@@ -201,7 +203,7 @@ export function elapsed(ms) {
   return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
 }
 
-/** Cars a minute and seconds a car, or null before anything finished. */
+/** Subjects a minute and seconds a subject, or null before anything finished. */
 export function rate(done, elapsedMs) {
   const d = Number(done), ms = Number(elapsedMs);
   if (!(d > 0) || !(ms > 0)) return null;
@@ -210,12 +212,12 @@ export function rate(done, elapsedMs) {
   return { perMin, secondsPerCar };
 }
 
-/** The header's rate: cars a minute once it is quick, seconds a car while it is slow. */
-export function rateLabel(done, elapsedMs) {
+/** The header's rate: subjects a minute once it is quick, seconds a subject while it is slow. */
+export function rateLabel(done, elapsedMs, subject = SUBJECT_WORDS.subjects) {
   const r = rate(done, elapsedMs);
   if (!r) return '';
-  if (r.perMin >= 10) return `${Math.round(r.perMin)} cars/min`;
-  return `${r.secondsPerCar.toFixed(1)} s/car`;
+  if (r.perMin >= 10) return `${Math.round(r.perMin)} ${subject.rate}`;
+  return `${r.secondsPerCar.toFixed(1)} ${subject.each}`;
 }
 
 /** The model's reply as pretty JSON; a JSON string is parsed, anything else is left as it came. */

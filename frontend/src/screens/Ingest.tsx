@@ -7,6 +7,9 @@ import { deciderActive } from '../lib/decider.mjs';
 import { useDeciderProgress } from '../state/useDeciderProgress';
 import { Empty, Icon } from '../components/basics';
 import { asset } from '../lib/api';
+import { albumSetting } from '../lib/album.mjs';
+import { applyOverrides, defaultSummary, overridesOf } from '../lib/presetPolicy.mjs';
+import { readsSubjects, subjectWords } from '../lib/subjects.mjs';
 import { confidencePercent, confidenceTone, displayItem, elapsed, phaseLabel, progressPercent, rateLabel, workerLanes } from '../lib/identifyFlow.mjs';
 import {
   etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneKey, laneState, leftLabel,
@@ -153,7 +156,16 @@ export function IngestScreen({
   }
 
   const live = phaseRunning(phase);
-  // Both the car reads and the bursts compared after them are the identify run: the header,
+  // What this album looks for, in its own words: a rodeo reads animals and riders, a motorsport
+  // album vehicles. The header, the flowchart and the rate all ask this instead of saying "cars".
+  const albumSummary = applyOverrides(
+    defaultSummary(String(job.scan_profile || 'motorsport')),
+    overridesOf(albumSetting(job, 'overrides', null)),
+    overridesOf(albumSetting(job, 'user_defaults', null)),
+  );
+  const subject = subjectWords(albumSummary);
+  const reads = readsSubjects(albumSummary);
+  // Both the subject reads and the bursts compared after them are the identify run: the header,
   // stats and stop button belong to it, and the count they show is its own.
   const identifying = phase === 'vision' || phase === 'peaks';
   const vision = mode === 'identify' || visionExpected(stages, idLive);
@@ -163,7 +175,7 @@ export function IngestScreen({
   const frac = mode === 'identify' ? progressPercent(idLive?.done, idLive?.total) / 100
     : phase === 'done' ? 1 : ingestFraction({ scanFraction: scanFrac, identify: idLive, vision });
   const pct = Math.round(frac * 100);
-  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive, decisionService) : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService });
+  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive, decisionService, subject) : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService, subject, reads });
 
   const visionLanes = workerLanes(idLive);
   const scanFilter = filter && filter !== 'vision' && filter !== 'decider' ? filter : null;
@@ -186,13 +198,15 @@ export function IngestScreen({
   // The bar already spans scan + identify; the time left must say both, not only the stage that happens to be running.
   const timeLeft = mode === 'identify'
     ? [leftLabel(etaLabel(identifyEta(idLive), done >= 3))]
-    : etaLines({ vision, scanDone: identifying || phase === 'done', scanEta: smoothed ?? (p ? overallEta(stages, p.overall) : null), scanStable: Boolean(scan?.stable), identify: idLive });
-  const rate = identifying ? (idLive ? rateLabel(idLive.done, idLive.elapsed_ms) : '') : frameRate(formatRate(p?.rate_per_s));
+    : etaLines({ vision, scanDone: identifying || phase === 'done', scanEta: smoothed ?? (p ? overallEta(stages, p.overall) : null), scanStable: Boolean(scan?.stable), identify: idLive, subject });
+  const rate = identifying ? (idLive ? rateLabel(idLive.done, idLive.elapsed_ms, subject) : '') : frameRate(formatRate(p?.rate_per_s));
   const stageTotal = nodes.filter((node) => node.id !== 'done').length;
   const stageAt = nodes.findIndex((node) => node.id === (head?.id ?? p?.stage)) + 1;
-  const sub = phase === 'starting' ? (mode === 'identify' ? 'Waiting for the first car…' : 'Reading the folder…')
+  const sub = phase === 'starting' ? (mode === 'identify' ? (reads ? `Waiting for the first ${subject.one}…` : 'Starting the judge…') : 'Reading the folder…')
     : phase === 'peaks' ? (phaseLabel(idLive?.phase) || 'Comparing bursts')
-      : phase === 'vision' ? (visionOff ? visionHeader(visionOff) : `Reading cars with ${visionModelWords(idLive?.model || model) || 'the vision model'}`)
+      : phase === 'vision' ? (!reads ? (phaseLabel(idLive?.phase) || 'Judging moments')
+        : visionOff ? visionHeader(visionOff)
+        : `Reading ${subject.many} with ${visionModelWords(idLive?.model || model) || 'the vision model'}`)
         : phase === 'scan' || phase === 'group' || phase === 'pick' ? `Stage ${Math.max(1, stageAt)} of ${stageTotal} · ${head?.label ?? p?.stage}`
           : phase === 'done' ? (mode === 'identify' ? 'Identification complete' : 'Scan complete') : '';
 
@@ -220,7 +234,9 @@ export function IngestScreen({
           {live && phase !== 'starting' && (
             <dl className="id-stats">
               {identifying
-                ? <div><dt>Cars</dt><dd className="mono">{idLive ? `${done.toLocaleString()} / ${idTotal.toLocaleString()}` : '–'}</dd></div>
+                ? <div><dt>{reads ? subject.title : 'Moments'}</dt><dd className="mono">{reads
+                  ? (idLive ? `${done.toLocaleString()} / ${idTotal.toLocaleString()}` : '–')
+                  : (idLive?.phase?.total ? `${(idLive.phase.done ?? 0).toLocaleString()} / ${idLive.phase.total.toLocaleString()}` : '–')}</dd></div>
                 : <div><dt>{head?.label ?? p?.stage ?? 'Frames'}</dt><dd className="mono">{p ? `${p.done.toLocaleString()} / ${p.total.toLocaleString()}` : '–'}</dd></div>}
               <div><dt>Rate</dt><dd className="mono">{rate || '–'}</dd></div>
               <div><dt>Time left</dt><dd className="mono ing-eta">{timeLeft.map((line, i) => <span key={`${i}:${line}`} className={i > 0 ? 'ing-eta-next' : ''}>{line}</span>)}</dd></div>
@@ -258,7 +274,7 @@ export function IngestScreen({
               {phase === 'starting' ? <div className="fill indeterminate" /> : <div className="fill" style={{ width: `${pct}%` }} />}
             </div>
             <span className="mono id-progress-count">
-              {phase === 'starting' ? (mode === 'identify' ? 'Waiting for the first car…' : 'Starting…')
+              {phase === 'starting' ? (mode === 'identify' ? (reads ? `Waiting for the first ${subject.one}…` : 'Starting the judge…') : 'Starting…')
                 : mode === 'identify' ? `${pct}% · ${done.toLocaleString()} / ${idTotal.toLocaleString()}` : `${pct}%`}
             </span>
           </div>

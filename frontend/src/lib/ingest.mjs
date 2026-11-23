@@ -3,6 +3,7 @@
 import { deciderNode } from './decider.mjs';
 import { deciderStepNode, flowNodes } from './identifyFlow.mjs';
 import { STAGE_ORDER, etaLabel, orderStages, stageStatus } from './scan.mjs';
+import { SUBJECT_WORDS, detectorPurpose } from './subjects.mjs';
 import { visionModelWords, visionNodeSub, visionOffReason } from './vision.mjs';
 
 /** The steps a scan lane carries a frame through, in order. */
@@ -26,12 +27,16 @@ const NODE_LABELS = { read: 'READ', detect: 'DETECT', sharpness: 'SHARPNESS', fa
 /** What each stage is for, in a photographer's words; the model's own file name lives in the title. */
 const NODE_PURPOSE = {
   read: 'Opens each RAW',
-  detect: 'Car and person detector',
-  sharpness: 'Checks the main car is in focus',
   faces: 'Finds faces and closed eyes',
   group: 'Groups frames of one moment',
   pick: 'Suggests one keeper per burst',
 };
+/** The detect and sharpness lines, in the album's own subject words ("main vehicle", "main animal"). */
+function stagePurpose(id, subject) {
+  if (id === 'detect') return detectorPurpose(subject);
+  if (id === 'sharpness') return `Checks the main ${subject.one} is in focus`;
+  return NODE_PURPOSE[id] ?? null;
+}
 /** Stages that have no per-item progress: they run once over the whole album. */
 const PHASES = new Set(['group', 'pick']);
 
@@ -50,14 +55,14 @@ export function failedWords(errors) {
   return count > 0 ? `${count.toLocaleString('en-US')} failed` : '';
 }
 
-function scanNode(id, stage, finished) {
+function scanNode(id, stage, finished, subject) {
   const status = stage ? stageStatus(stage) : 'pending';
   const off = status === 'off';
   const state = off ? 'pending' : finished ? 'done' : status === 'done' ? 'done' : status === 'active' ? 'active' : 'pending';
   const workers = stage?.workers_total ?? 0;
   const busy = stage?.workers_busy ?? 0;
   const model = stage?.model ?? '';
-  const purpose = NODE_PURPOSE[id] ?? stage?.label ?? id;
+  const purpose = stagePurpose(id, subject) ?? stage?.label ?? id;
   const sub = off ? 'not used' : purpose;
   const count = !off && stage && stage.total > 0 ? `${n(stage.done)} / ${n(stage.total)}` : '';
   const progress = !off && PHASES.has(id) ? (state === 'done' ? 'done' : state === 'active' ? 'working' : 'queued') : '';
@@ -71,7 +76,7 @@ function scanNode(id, stage, finished) {
   };
 }
 
-function visionNode(identify, identifyStage, model, finished) {
+function visionNode(identify, identifyStage, model, finished, subject) {
   let state = 'pending';
   if (identify) state = identify.state === 'running' ? 'active' : identify.state === 'done' ? 'done' : 'pending';
   else if (identifyStage) state = stageStatus(identifyStage) === 'done' ? 'done' : stageStatus(identifyStage) === 'active' ? 'active' : 'pending';
@@ -83,8 +88,8 @@ function visionNode(identify, identifyStage, model, finished) {
   const done = identify ? identify.done : identifyStage?.done ?? 0;
   const workers = identify?.workers ?? identifyStage?.workers_total ?? 0;
   const service = visionModelWords(shownModel);
-  const sub = reason ? visionNodeSub(reason) : service ? `Reading cars — ${service}` : 'Reading cars';
-  const count = !reason && total > 0 ? `${n(done)} / ${n(total)} cars` : '';
+  const sub = reason ? visionNodeSub(reason) : service ? `Reading ${subject.many} — ${service}` : `Reading ${subject.many}`;
+  const count = !reason && total > 0 ? `${n(done)} / ${n(total)} ${subject.many}` : '';
   const meta = [count, !reason && state === 'pending' && total === 0 ? 'waiting' : '', workers > 0 ? `${workers} ${workers === 1 ? 'worker' : 'workers'}` : ''].filter(Boolean).join(' · ');
   return { id: 'vision', number: '', label: 'VISION', sub, meta, title: [sub, shownModel, meta].filter(Boolean).join(' · '), state, off: Boolean(reason), filter: 'vision' };
 }
@@ -94,15 +99,17 @@ function visionNode(identify, identifyStage, model, finished) {
  * run identifies, then DONE. A scan `identify` stage is VISION's fallback while no identify-progress has arrived, so it never
  * draws a node of its own. A stage the engine has not reported yet is drawn pending, so the row is whole from the first frame.
  * decider (the decision model's live snapshot) adds the DECIDER node before DONE, dimmed while it is off or unavailable.
+ * `subject` is the album's own words; `reads` is false for a shoot whose identify run only judges moments, which draws no
+ * VISION node because there is nothing to read.
  */
-export function ingestNodes({ stages, identify = null, model = '', finished = false, decider = null, serving = null } = {}) {
+export function ingestNodes({ stages, identify = null, model = '', finished = false, decider = null, serving = null, subject = SUBJECT_WORDS.subjects, reads = true } = {}) {
   const ordered = orderStages(stages);
   const byId = new Map(ordered.map((s) => [s.id, s]));
   const ids = [...SCAN_NODE_IDS, ...ordered.map((s) => s.id).filter((id) => id !== 'identify' && !SCAN_NODE_IDS.includes(id))];
   const rank = (id) => { const i = STAGE_ORDER.indexOf(id); return i < 0 ? STAGE_ORDER.length : i; };
   ids.sort((a, b) => rank(a) - rank(b));
-  const nodes = ids.map((id) => scanNode(id, byId.get(id), finished));
-  if (visionExpected(ordered, identify)) nodes.push(visionNode(identify, byId.get('identify'), model, finished));
+  const nodes = ids.map((id) => scanNode(id, byId.get(id), finished, subject));
+  if (reads && visionExpected(ordered, identify)) nodes.push(visionNode(identify, byId.get('identify'), model, finished, subject));
   // The decision model sits after VISION: it answers about the same frames, on the same GPU, when the shoot type asks it.
   // Its run-level phase (judging moments, then comparing bursts) is what its tick waits for.
   if (decider) nodes.push(deciderNode(decider, serving, identify?.phase));
@@ -118,8 +125,8 @@ export function ingestNodes({ stages, identify = null, model = '', finished = fa
  * the decision model reports in (`decider`, else `live.decider`), its node sits after VISION,
  * with the question it is on and the frames it has judged.
  */
-export function identifyNodes(live, model, decider = null, serving = null) {
-  const nodes = flowNodes(live, model).map((node) => ({
+export function identifyNodes(live, model, decider = null, serving = null, subject = SUBJECT_WORDS.subjects) {
+  const nodes = flowNodes(live, model, undefined, subject).map((node) => ({
     id: node.label.toLowerCase(), number: node.number, label: node.label, sub: node.sub, meta: '', title: node.sub, state: node.state, off: node.off === true, filter: null,
   }));
   // The decision model's own run-level phase (judging moments, comparing bursts) is what its tick waits for.
@@ -420,18 +427,18 @@ export function roleLabel(box, role, byAf = false) {
 
 /**
  * The header's "Time left", line by line. With a vision phase the single bar spans both jobs, so the words do
- * too: the scan's own time, then the identify pass and the cars it still has to read. The identify rate is a
- * guess until a few cars are done, and says "estimating…" until then.
+ * too: the scan's own time, then the identify pass and the subjects it still has to read. The identify rate is a
+ * guess until a few subjects are done, and says "estimating…" until then.
  */
-export function etaLines({ vision = false, scanDone = false, scanEta = null, scanStable = false, identify = null } = {}) {
+export function etaLines({ vision = false, scanDone = false, scanEta = null, scanStable = false, identify = null, subject = SUBJECT_WORDS.subjects } = {}) {
   const plain = (label) => label.replace(/ 00 s left$/, ' left');
   if (!vision) return [plain(leftLabel(etaLabel(scanEta, scanStable)))];
   const scan = scanDone ? 'Scan done' : plain(leftLabel(etaLabel(scanEta, scanStable)));
   const total = Math.max(0, Number(identify?.total) || 0);
   const done = Math.max(0, Number(identify?.done) || 0);
-  const cars = total > 0 ? ` (${n(total)} ${total === 1 ? 'car' : 'cars'})` : '';
+  const many = total > 0 ? ` (${n(total)} ${total === 1 ? subject.one : subject.many})` : '';
   const when = scanDone ? 'Identify' : 'Then identify';
-  const id = identify?.state === 'done' ? 'Identify done' : `${when} ${leftLabel(etaLabel(identifyEta(identify), done >= 3))}${cars}`;
+  const id = identify?.state === 'done' ? 'Identify done' : `${when} ${leftLabel(etaLabel(identifyEta(identify), done >= 3))}${many}`;
   return [scan, id];
 }
 
