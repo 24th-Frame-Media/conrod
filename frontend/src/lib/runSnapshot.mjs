@@ -14,6 +14,7 @@ import { orderWins, makeClock, applySnapshot } from './snapshotOrder.mjs';
 import { scanView } from './scanStatus.mjs';
 import { orderStages, stageStatus } from './scan.mjs';
 import { selectLanes } from './ingest.mjs';
+import { buildSurface } from './surface.mjs';
 
 // Re-export the ordering primitives so consumers/tests need one import.
 export { orderWins, makeClock, applySnapshot };
@@ -147,10 +148,13 @@ export function scanSeedFor(seed, jobId) {
   return seed.jobId === jobId ? seed : null;
 }
 
-/** A plain reason for a stage that failed, or '' when the stage is fine. */
+/** A plain reason for a stage that failed, or '' when the stage is fine.
+ *  B1's wire shape carries `status: 'failed'` + `error`; older payloads used
+ *  `state`/`failed`/`reason`. Both are read so a failure is never silent. */
 export function stageFailureReason(stage) {
   if (!stage) return '';
-  if (stage.state === 'failed' || stage.failed === true) {
+  const raw = String(stage.status ?? stage.state ?? '').toLowerCase();
+  if (raw === 'failed' || stage.failed === true) {
     return String(stage.reason ?? stage.error ?? 'This stage stopped with an error.').trim() || 'This stage stopped with an error.';
   }
   return '';
@@ -179,10 +183,21 @@ export function failedStages(stages) {
  * ordering guard). Stages, workers and counters are taken verbatim from that
  * view's progress — stage-agnostic, so new stages need no change here.
  *
- * @param {{ status?: any, jobs?: any[], liveByJob?: any, hydrate?: any, seed?: any, jobId?: number|null, now?: number, stallMs?: number }} [options]
+ * `settings` is the album's RESOLVED settings, `album` is its job record
+ * (B1's type suggestion), `identifyVram` is B3's fit contract, `decisionService`
+ * names the serving decision model and `subject` is the album's subject words.
+ * Together with the snapshot they build `surface` (surface.mjs), the one model
+ * every flowchart node, greyed step, control, VRAM warning and suggestion reads
+ * (B5). Nothing downstream invents a stage, a worker or a status (§6.1).
+ *
+ * @param {{ status?: any, jobs?: any[], liveByJob?: any, hydrate?: any, seed?: any, jobId?: number|null, now?: number, stallMs?: number, settings?: any, album?: any, identifyVram?: any, decisionService?: string|null, subject?: any }} [options]
  */
 export function buildRunSnapshot(options = {}) {
-  const { status = null, jobs = [], liveByJob = {}, hydrate = null, seed = null, jobId = null, now = Date.now(), stallMs = STALL_MS } = options;
+  const {
+    status = null, jobs = [], liveByJob = {}, hydrate = null, seed = null, jobId = null,
+    now = Date.now(), stallMs = STALL_MS, settings = null, album = null,
+    identifyVram = null, decisionService = null, subject = null,
+  } = options;
   const activeJob = status?.activeJob ?? null;
   const queue = Array.isArray(status?.queue) ? status.queue : [];
   const tasks = Array.isArray(status?.tasks) ? status.tasks : [];
@@ -206,7 +221,7 @@ export function buildRunSnapshot(options = {}) {
   };
 
   const runActive = view.state === 'running';
-  return {
+  const base = {
     activeJob,
     paused,
     view,               // { state, source, progress, errors, ... } for the Scan screen
@@ -222,6 +237,12 @@ export function buildRunSnapshot(options = {}) {
     now,
     stallMs,
   };
+  // B5: the ONE surface model, built on this snapshot (never bypassing it).
+  base.surface = buildSurface(base, {
+    settings, album, identifyVram, decisionService,
+    subject: subject ?? undefined, jobId: activeJob ?? jobId,
+  });
+  return base;
 }
 
 /** Export stageStatus for callers that want the snapshot's per-stage word. */

@@ -1,0 +1,20 @@
+// Type shim for surface.mjs (pure logic; the UI consumes its loose shapes).
+export const IDENTIFY_SUBSTAGES: ReadonlyArray<{ id: string; key: string; label: string; name: string; settingsKey: string; purpose: string }>;
+export const FLOW_ORDER: ReadonlyArray<string>;
+export const STAGE_WORDS: ReadonlyArray<string>;
+export const STAGE_WORD_LABEL: Readonly<Record<string, string>>;
+export const CONTROL_ACTIONS: Readonly<Record<string, string>>;
+export const STAGE_TOGGLES: ReadonlyArray<{ key: string; settingsKey: string; label: string; hint: string }>;
+export function controlSpec(action: string, jobId: number | null, stage: string): { action: string; args: { jobId: number | null; stage: string } };
+export function stageFailReason(stage: any): string;
+export function stageWord(stage: any, options?: { paused?: boolean }): string;
+export function toneForWord(word: string): string;
+export function stageEnabled(key: string, settings?: any): boolean;
+export function offReason(key: string): string;
+export function offShortcut(key: string): any;
+export function skipConsequence(key: string, context?: { subject?: any; remaining?: number }): string;
+export function vramView(identifyVram?: any): any;
+export function modelsLocal(settings?: any): { decisionLocal: boolean; visionLocal: boolean; bothLocal: boolean };
+export function concurrencyView(identifyVram?: any, settings?: any): any;
+export function typeSuggestionView(album?: any, settings?: any): any;
+export function buildSurface(snapshot?: any, context?: any): any;

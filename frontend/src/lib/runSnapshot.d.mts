@@ -22,3 +22,4 @@ export function failedStages(stages: any): StageFailure[];
 export function buildRunSnapshot(options?: any): RunSnapshot;
 export { orderWins, makeClock, applySnapshot } from './snapshotOrder.mjs';
 export { stageStatus } from './scan.mjs';
+export { buildSurface } from './surface.mjs';
