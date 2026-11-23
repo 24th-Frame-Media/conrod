@@ -328,6 +328,10 @@ pub struct Desktop {
     /// The identify run in progress (or just finished), for `identify-progress`
     /// events: the car being read, its prompt and reply, and its final fields.
     pub(crate) identify: Mutex<Option<Arc<crate::identify_live::IdentifyLive>>>,
+    /// Per-album pause/skip stage controls, created from the album's stored
+    /// settings on first use and shared by the run and the commands.
+    pub(crate) stage_controls:
+        Mutex<std::collections::HashMap<i64, Arc<crate::stage_control::StageControl>>>,
     pub(crate) operations:
         Mutex<std::collections::BTreeMap<String, Arc<std::sync::atomic::AtomicBool>>>,
     /// What start-up is doing, for the splash (`startup-progress`, `startup_status`).
@@ -492,6 +496,7 @@ impl Desktop {
             queue: Mutex::new(std::collections::VecDeque::new()),
             progress: Mutex::new(None),
             identify: Mutex::new(None),
+            stage_controls: Mutex::new(std::collections::HashMap::new()),
             operations: Mutex::new(std::collections::BTreeMap::new()),
             startup,
         });
@@ -629,6 +634,86 @@ impl Desktop {
     /// The scan in progress (or the one that just ended), if any.
     pub fn progress(&self) -> Option<Arc<crate::progress::Progress>> {
         lock(&self.progress).clone()
+    }
+
+    /// One album's pause/skip stage controls. Created from the album's stored
+    /// `settings_json` the first time it is asked for, then shared: the run and
+    /// every control command act on the same object.
+    pub fn stage_control(&self, job: i64) -> Arc<crate::stage_control::StageControl> {
+        if let Some(control) = lock(&self.stage_controls).get(&job) {
+            return control.clone();
+        }
+        let stored: Option<String> = lock(&self.db)
+            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                r.get(0)
+            })
+            .ok();
+        let map = stored
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<Map<String, Value>>(text).ok())
+            .unwrap_or_default();
+        let control = crate::stage_control::StageControl::from_map(job, &map);
+        lock(&self.stage_controls).insert(job, control.clone());
+        control
+    }
+
+    /// Write an album's pause/skip sets into its `settings_json`, next to
+    /// `native_resume_stage`, so a crash or a reopen restores them. Best effort:
+    /// a failure is noted, never fatal to the run.
+    pub(crate) fn persist_stage_control(
+        &self,
+        job: i64,
+        control: &crate::stage_control::StageControl,
+    ) {
+        let db = lock(&self.db);
+        let stored: String =
+            match db.query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                r.get(0)
+            }) {
+                Ok(stored) => stored,
+                Err(e) => {
+                    drop(db);
+                    self.hub
+                        .note(format!("Could not record the stage controls: {}", err(e)));
+                    return;
+                }
+            };
+        let mut map: Map<String, Value> = serde_json::from_str(&stored).unwrap_or_default();
+        let paused: Vec<&str> = control.paused_stages();
+        let skipped: Vec<&str> = control.skipped_stages();
+        if paused.is_empty() {
+            map.remove(crate::stage_control::STAGE_PAUSE);
+        } else {
+            map.insert(crate::stage_control::STAGE_PAUSE.into(), json!(paused));
+        }
+        if skipped.is_empty() {
+            map.remove(crate::stage_control::STAGE_SKIP);
+        } else {
+            map.insert(crate::stage_control::STAGE_SKIP.into(), json!(skipped));
+        }
+        let saved = match serde_json::to_string(&map) {
+            Ok(saved) => saved,
+            Err(_) => return,
+        };
+        if let Err(e) = db.execute(
+            "UPDATE jobs SET settings_json=? WHERE id=?",
+            params![saved, job],
+        ) {
+            drop(db);
+            self.hub
+                .note(format!("Could not record the stage controls: {}", err(e)));
+        }
+    }
+
+    /// Pause or resume the running scan's cull lanes. A per-stage pause on a
+    /// cull stage is the same hold as the run-level Pause, because the lanes
+    /// read/detect/sharpness/faces run in one pool.
+    pub(crate) fn set_scan_paused(&self, paused: bool) {
+        if let Some((_, scan)) = lock(&self.active).as_ref() {
+            if !scan.is_finished() {
+                scan.pause(paused);
+            }
+        }
     }
 
     /// The `scan-progress` payload for this tick, throttled by the caller: one
@@ -926,6 +1011,9 @@ impl Desktop {
             Command::RerunStage(a) => {
                 crate::rerun::rerun_stage(self, a.job_id, a.stage, a.full, a.scope.as_deref())
             }
+            Command::StagePause(a) => crate::stage_control::pause(self, &a),
+            Command::StageSkip(a) => crate::stage_control::skip(self, &a),
+            Command::StageRerun(a) => crate::stage_control::rerun(self, &a),
             Command::BulkEdit(a) => crate::edits::bulk_edit(self, &a),
             Command::RenameJob(a) => crate::library::rename_job(self, &a),
             Command::UpdateJobSettings(a) => {
@@ -1190,6 +1278,7 @@ impl Desktop {
     /// ended. The screen reads this instead of depending on catching the event
     /// stream, so a queued, stopped or finished album still has a page.
     pub fn scan_status(&self, job: i64) -> Result<Value> {
+        let controls = self.stage_controls_json(job);
         let running = {
             let active = lock(&self.active);
             active
@@ -1213,6 +1302,7 @@ impl Desktop {
                 "errors": 0,
                 "error_samples": Vec::<String>::new(),
                 "resume_stage": Value::Null,
+                "stage_controls": controls,
             }));
         }
         // The line in front of this album, counting from 1 (1 = starts next).
@@ -1244,6 +1334,7 @@ impl Desktop {
                 "errors": 0,
                 "error_samples": Vec::<String>::new(),
                 "resume_stage": Value::Null,
+                "stage_controls": controls,
             }));
         }
         let (errors, error_samples) = scan_errors(&lock(&self.reader), job);
@@ -1264,7 +1355,17 @@ impl Desktop {
             "errors": errors,
             "error_samples": error_samples,
             "resume_stage": resume_tail(&map).word(),
+            "stage_controls": controls,
         }))
+    }
+
+    /// The album's pause/skip stage sets, as the run screen hydrates them.
+    fn stage_controls_json(&self, job: i64) -> Value {
+        let control = self.stage_control(job);
+        json!({
+            "paused": control.paused_stages(),
+            "skipped": control.skipped_stages(),
+        })
     }
 
     fn jobs(&self) -> Result<Vec<Value>> {
@@ -1693,6 +1794,12 @@ impl Desktop {
             progress.plan(stage, carried + paths.len() as u64);
         }
         *lock(&self.progress) = Some(progress.clone());
+        // The photographer's persisted controls apply from the first frame: a
+        // skipped stage starts skipped, and a paused cull stage starts parked.
+        let control = self.stage_control(job);
+        for stage in control.skipped_stages() {
+            progress.skip_stage(stage);
+        }
         let scan = Arc::new(crate::scan_files_filtered(
             paths,
             settings.clone(),
@@ -1739,6 +1846,14 @@ impl Desktop {
         ));
         self.finishing.store(true, Ordering::Release);
         *active = Some((job, scan.clone()));
+        if control.cull_paused() {
+            scan.pause(true);
+            for stage in control.paused_stages() {
+                if crate::stage_control::cull_stage(stage) {
+                    progress.pause_stage(stage);
+                }
+            }
+        }
         let desktop = self.clone();
         // A one-shot scan runs every stage to the end: bursts and keepers, then
         // identification when the album's preset reads numbers or plates.
@@ -1775,12 +1890,25 @@ impl Desktop {
                         }
                     }
                     desktop.note_resume_stage(job, Tail::Group);
-                    if let Some(p) = &desktop.progress() {
-                        p.phase("group");
-                    }
-                    if let Err(e) = desktop.regroup(job) {
-                        desktop.hub.start("Grouping album", 0).fail(e);
-                        final_status = "error";
+                    // Grouping is one whole-album pass: the pause takes effect at
+                    // its edge, and a skipped group keeps the seed bursts.
+                    let control = desktop.stage_control(job);
+                    if control.is_skipped("group") {
+                        if let Some(p) = &desktop.progress() {
+                            p.skip_stage("group");
+                        }
+                    } else {
+                        if let Some(p) = &desktop.progress() {
+                            p.phase("group");
+                        }
+                        if control.park_with("group", &scan.stop, desktop.progress().as_deref()) {
+                            if let Err(e) = desktop.regroup(job) {
+                                desktop.hub.start("Grouping album", 0).fail(e);
+                                final_status = "error";
+                            }
+                        } else {
+                            final_status = "stopped";
+                        }
                     }
                     desktop.note_resume_stage(job, Tail::Pick);
                 }

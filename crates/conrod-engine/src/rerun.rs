@@ -134,7 +134,11 @@ fn rerun_moments(d: &Arc<Desktop>, job: i64, cfg: Settings) -> Result<Value> {
 /// the effective keeper), so this only moves the engine's own suggestions.
 fn rerun_pick(d: &Arc<Desktop>, job: i64, cfg: Settings) -> Result<Value> {
     let lanes = cfg.lanes();
-    launch(d, job, &format!("{KIND} pick"), move |d, _stop, task| {
+    launch(d, job, &format!("{KIND} pick"), move |d, stop, task| {
+        // One whole-album pass: a pause holds it at its edge.
+        if !d.stage_control(job).park_with("pick", stop, None) {
+            return Ok(());
+        }
         let stats = crate::passes::pick_of_pass(&lock(&d.db), job, &lanes, cfg.use_quality_score)?;
         task.detail(format!(
             "Picked {} keepers from {} frames across {} passes",

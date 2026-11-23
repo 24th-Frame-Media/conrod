@@ -192,6 +192,44 @@ pub struct RerunStageArgs {
     pub scope: Option<String>,
 }
 
+/// One stage of one album, for the run controls. `stage` is the wire id from
+/// the progress snapshot (`identify:vision`, `group`, …).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StagePauseArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    pub stage: String,
+    /// `true` (the default) parks the stage at its next unit boundary; `false`
+    /// resumes it.
+    #[serde(default)]
+    pub paused: Option<bool>,
+}
+
+/// Mark a stage skipped. `skip: false` clears the skip without running it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StageSkipArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    pub stage: String,
+    #[serde(default)]
+    pub skip: Option<bool>,
+}
+
+/// Run one stage again on a finished album, through the established rerun
+/// guards. `full` applies to identify: it reads every unaccepted subject again
+/// instead of only the unread ones.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StageRerunArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    pub stage: String,
+    #[serde(default)]
+    pub full: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkArgs {
@@ -547,6 +585,12 @@ pub enum Command {
     /// Run one pipeline stage again on a finished album, on demand: detect,
     /// rate, identify, moments or pick. Only that stage runs; the rest stays.
     RerunStage(RerunStageArgs),
+    /// Hold one stage at its next unit boundary, or resume it.
+    StagePause(StagePauseArgs),
+    /// Mark one stage skipped, with its plain one-line consequence.
+    StageSkip(StageSkipArgs),
+    /// Run one stage again by its wire id, through the same guards as a rerun.
+    StageRerun(StageRerunArgs),
     BulkEdit(BulkArgs),
     RenameJob(RenameArgs),
     UpdateJobSettings(UpdateJobSettingsArgs),
@@ -691,6 +735,39 @@ mod tests {
             Command::parse("remove_lightroom_plugin", json!({})),
             Ok(Command::RemoveLightroomPlugin {})
         ));
+    }
+
+    #[test]
+    fn the_stage_control_commands_parse_their_wire_shape() {
+        let Ok(Command::StagePause(a)) = Command::parse(
+            "stage_pause",
+            json!({"jobId": 7, "stage": "identify:vision"}),
+        ) else {
+            panic!()
+        };
+        assert_eq!((a.job_id, a.stage.as_str()), (7, "identify:vision"));
+        assert_eq!(a.paused, None, "pause is the default; none means pause");
+        let Ok(Command::StagePause(a)) = Command::parse(
+            "stage_pause",
+            json!({"jobId": 7, "stage": "group", "paused": false}),
+        ) else {
+            panic!()
+        };
+        assert_eq!(a.paused, Some(false), "the same command resumes");
+
+        let Ok(Command::StageSkip(a)) =
+            Command::parse("stage_skip", json!({"jobId": 7, "stage": "identify:ocr"}))
+        else {
+            panic!()
+        };
+        assert_eq!(a.skip, None);
+        let Ok(Command::StageRerun(a)) =
+            Command::parse("stage_rerun", json!({"jobId": 7, "stage": "pick"}))
+        else {
+            panic!()
+        };
+        assert_eq!((a.job_id, a.stage.as_str(), a.full), (7, "pick", false));
+        assert!(Command::parse("stage_skip", json!({"jobId": 0, "stage": "pick"})).is_err());
     }
 
     #[test]

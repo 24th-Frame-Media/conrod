@@ -147,6 +147,7 @@ pub mod selftest;
 pub mod setup;
 #[cfg(test)]
 mod sporttest;
+pub mod stage_control;
 pub mod startup;
 pub mod taste;
 #[cfg(test)]
@@ -1578,6 +1579,11 @@ pub(crate) fn scan_files_filtered(
                     let mut paused = lock(&pausing.0);
                     while *paused && !flag.load(Ordering::Relaxed) {
                         task.paused(true);
+                        // The lane says paused, never busy, for as long as the
+                        // hold lasts; it is not working on anything right now.
+                        if let Some(p) = progress.as_ref() {
+                            p.worker_paused("read", lane);
+                        }
                         paused = pausing
                             .1
                             .wait_timeout(paused, std::time::Duration::from_millis(100))

@@ -41,6 +41,43 @@ pub const STAGES: [(&str, &str); 9] = [
 /// split still resolves to a place in the flowchart.
 pub const LEGACY_IDENTIFY: &str = "identify";
 
+/// The wire id `id` names, if it is one of [`STAGES`]. The control commands
+/// accept only these: an unknown id would persist a stage nothing reads.
+pub fn known_stage(id: &str) -> Option<&'static str> {
+    STAGES
+        .iter()
+        .find(|(stage, _)| *stage == id)
+        .map(|(stage, _)| *stage)
+}
+
+/// What skipping `stage` does, in one plain line the screen shows before it
+/// confirms. `None` means the stage cannot be skipped: it feeds every stage
+/// after it, so the run could not continue.
+pub fn skip_consequence(stage: &str) -> Option<&'static str> {
+    match stage {
+        "faces" => Some(
+            "Skipping Faces: no eye-open or smile reads, so people frames rank on sharpness alone.",
+        ),
+        IDENTIFY_OCR => {
+            Some("Skipping OCR: no plate or number reads; Vision reads any numbers on its own.")
+        }
+        IDENTIFY_DECISION => Some(
+            "Skipping Decision: no type suggestion and no peak picks; ranking is unchanged, and a mixed album keeps its stored type.",
+        ),
+        IDENTIFY_VISION => {
+            Some("Skipping Vision: OCR and Decision results stay, but there are no make/model reads for this album.")
+        }
+        "group" => Some("Skipping Group: every frame keeps its seed burst; nothing is regrouped."),
+        "pick" => Some("Skipping Pick: no keeper suggestions; hand picks stand."),
+        _ => None,
+    }
+}
+
+/// Whether the control surface may skip `stage` at all.
+pub fn skippable(stage: &str) -> bool {
+    skip_consequence(stage).is_some()
+}
+
 /// How many recent frames a snapshot carries.
 pub const RECENT_LIMIT: usize = 24;
 
@@ -266,6 +303,11 @@ pub struct StageNode {
     /// The plain reason a stage failed, if it did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// What skipping this stage would do, in one plain line. Present for every
+    /// stage the controls can skip (the screen shows it before confirming),
+    /// `null` for a stage that feeds every stage after it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_consequence: Option<String>,
     pub rate_per_s: f64,
     pub eta_s: Option<f64>,
 }
@@ -471,6 +513,7 @@ mod tests {
                     errors: 0,
                     status: "running".into(),
                     error: None,
+                    skip_consequence: skip_consequence("detect").map(str::to_owned),
                     rate_per_s: 20.0,
                     eta_s: Some(5.0),
                 }],
@@ -595,6 +638,39 @@ mod tests {
         assert_eq!(recent["boxes"][0]["cls"], "car");
         assert_eq!(recent["boxes"][0]["box"], json!([0.25, 0.25, 0.75, 0.75]));
         assert_eq!(recent["af_kind"], "point");
+    }
+
+    #[test]
+    fn every_skippable_stage_names_its_plain_consequence() {
+        for stage in [
+            "faces",
+            "identify:ocr",
+            "identify:decision",
+            "identify:vision",
+            "group",
+            "pick",
+        ] {
+            let text = skip_consequence(stage).unwrap_or_else(|| panic!("{stage} has no text"));
+            assert!(skippable(stage));
+            assert!(
+                text.len() > 20 && text.contains("Skipping"),
+                "{stage}: {text}"
+            );
+        }
+        for stage in ["read", "detect", "sharpness"] {
+            assert_eq!(
+                skip_consequence(stage),
+                None,
+                "{stage} feeds every stage after it and cannot be skipped"
+            );
+            assert!(!skippable(stage));
+        }
+        assert!(known_stage("identify:vision").is_some());
+        assert!(
+            known_stage("identify").is_none(),
+            "the old single id is a snapshot fallback, not a control target"
+        );
+        assert!(known_stage("nope").is_none());
     }
 
     #[test]
