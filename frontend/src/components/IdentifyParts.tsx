@@ -47,8 +47,8 @@ export function Chips({ item }: { item: IdentifyItem }) {
  * out. Several workers run at once, so the screen shows one of these per worker; a finished
  * worker keeps its last subject until the next one starts.
  */
-export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', visionOff, onVisionAction, onOpen, subject }: {
-  worker: number; item: IdentifyItem | null; prompt?: string; live: boolean; name?: string; onOpen: () => void;
+export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', ocrOnly = false, visionOff, onVisionAction, onOpen, subject }: {
+  worker: number; item: IdentifyItem | null; prompt?: string; live: boolean; name?: string; ocrOnly?: boolean; onOpen: () => void;
   subject?: Subject;
   /** Why the vision model is not asked, when it is not: the card says so instead of "Make not read". */
   visionOff?: VisionOffReason | null;
@@ -56,14 +56,15 @@ export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', visi
 }) {
   const w = subject ?? SUBJECT_WORDS.subjects;
   const image = item ? asset(displayPath(item)) : '';
-  const title = [item?.make, item?.model].filter(Boolean).join(' ') || (item ? (visionOff ? visionLaneWords(visionOff).title : 'Make not read') : `Waiting for a ${w.one}`);
+  const title = [item?.make, item?.model].filter(Boolean).join(' ')
+    || (item ? (ocrOnly ? (live ? 'Reading plates & numbers' : 'OCR complete') : visionOff ? visionLaneWords(visionOff).title : 'Make not read') : `Waiting for a ${w.one}`);
   const source = sourceLabel(item?.number_source);
   // Confidence is about the number: a subject with no number read is not a 0% reading.
   const conf = item?.number ? confidencePercent(item.number_conf) : null;
   const tone = confidenceTone(item?.number_conf);
   const label = `${name} ${String(worker + 1).padStart(2, '0')}`;
   return (
-    <section className={`id-lane${live ? ' live' : item ? ' done' : ' idle'}`} aria-label={`${name === 'WORKER' ? 'Worker' : 'Vision worker'} ${worker + 1}`}>
+    <section className={`id-lane${live ? ' live' : item ? ' done' : ' idle'}`} aria-label={`${name === 'WORKER' ? 'Worker' : name === 'OCR' ? 'OCR worker' : 'Vision worker'} ${worker + 1}`}>
       <header className="id-lane-head">
         <span className="id-lane-name mono">{label}</span>
         <span className={`id-lane-stage ${item?.stage ?? 'idle'}`}>{item ? item.stage : 'idle'}</span>
@@ -97,13 +98,13 @@ export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', visi
         <h4>ASKING</h4>
         {prompt
           ? <pre className="mono">{prompt}</pre>
-          : <p className="muted id-panel-empty">{item ? (visionOff ? <VisionWhy reason={visionOff} onAction={onVisionAction} /> : `No prompt for this ${w.one}.`) : 'Waiting…'}</p>}
+          : <p className="muted id-panel-empty">{item ? (ocrOnly ? 'Reading plate and number (vision runs next).' : visionOff ? <VisionWhy reason={visionOff} onAction={onVisionAction} /> : `No prompt for this ${w.one}.`) : 'Waiting…'}</p>}
       </section>
       <section className="id-panel id-lane-panel">
         <h4>MODEL SAYS</h4>
         {item?.reply
           ? <pre className="mono">{prettyReply(item.reply)}</pre>
-          : <p className="muted id-panel-empty">{visionOff ? 'Vision is off, so there is no reply.' : live ? 'Waiting for the model…' : 'No reply.'}</p>}
+          : <p className="muted id-panel-empty">{ocrOnly ? 'Vision model waits until OCR finishes.' : visionOff ? 'Vision is off, so there is no reply.' : live ? 'Waiting for the model…' : 'No reply.'}</p>}
         {item?.action?.length ? (
           <div className="id-action-tags">{item.action.map((tag) => <span className="tag" key={tag}>{actionLabel(tag)}</span>)}</div>
         ) : null}

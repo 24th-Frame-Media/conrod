@@ -30,8 +30,11 @@ test('flow nodes mark done, active and pending; vision lights both AI nodes', ()
   assert.deepEqual(nodes.map((node) => node.state), ['done', 'done', 'active', 'active', 'pending', 'pending']);
   assert.equal(nodes[2].label, 'READ');
   assert.equal(nodes[3].label, 'VISION');
-  assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b', null, vehicles)[3].sub, 'Reading vehicles — Qwen2.5-VL · this PC', 'the VISION node says what it does and names the model plainly');
+  assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b', null, vehicles)[3].sub, 'Reading vehicles — Qwen2.5-VL', 'the VISION node says what it does and names the model plainly');
   assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b')[2].sub, 'plate + OCR', 'the other sublines stay put');
+  // During the OCR phase, only READ lights up while VISION stays pending.
+  const ocrNodes = flowNodes({ stage: 'vision', state: 'running', phase: { name: 'ocr', done: 10, total: 50, state: 'running' } }, 'qwen3-vl:8b-instruct-q4_K_M', null, vehicles);
+  assert.deepEqual(ocrNodes.map((node) => node.state), ['done', 'done', 'active', 'pending', 'pending', 'pending']);
 });
 
 test('a finished run has nothing left to pulse, and no snapshot starts at LOAD', () => {
@@ -181,6 +184,7 @@ test('elapsed and rate read like a stopwatch, not a debug dump', () => {
 });
 
 test('a phase reads as a count in words, and an unknown one as nothing', () => {
+  assert.equal(phaseLabel({ name: 'ocr', done: 82, total: 499, state: 'running' }), 'Reading plates and numbers 82/499');
   assert.equal(phaseLabel({ name: 'peaks', done: 12, total: 214, state: 'running' }), 'Comparing bursts 12/214');
   assert.equal(phaseLabel({ name: 'moments', done: 3, total: 40, state: 'running' }), 'Judging moments 3/40');
   assert.equal(phaseLabel({ name: 'peaks', done: 0, total: 0 }), 'Comparing bursts', 'before the first burst there is still a name');
@@ -189,8 +193,12 @@ test('a phase reads as a count in words, and an unknown one as nothing', () => {
   assert.equal(phaseLabel(undefined), '');
 });
 
-test('the DECIDER node ticks only when the moments lane has finished, and names the work it is on', () => {
+test('the DECIDER node ignores the OCR phase and ticks only when the moments lane has finished', () => {
   const decider = { state: 'ready', done: 5, busy: 0, current: null, recent: [] };
+  // OCR is not a decider phase: a waiting decider must not falsely pulse active during OCR.
+  const duringOcr = deciderStepNode({ ...decider, done: 0 }, null, { name: 'ocr', done: 82, total: 499, state: 'running' });
+  assert.equal(duringOcr.state, 'pending');
+  assert.equal(duringOcr.sub, 'waiting');
   // Idle between frames, but the lane has not finished: no tick yet.
   const between = deciderStepNode(decider, null, { name: 'moments', done: 5, total: 5, state: 'running' });
   assert.equal(between.state, 'active');

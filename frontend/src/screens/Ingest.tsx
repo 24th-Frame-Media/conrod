@@ -198,8 +198,15 @@ export function IngestScreen({
   const vision = mode === 'identify' || visionExpected(stages, idLive);
   const frozen = live && phase !== 'starting' && (identifying ? identifyPaused : paused);
   const head = stages.find((s) => s.id === p?.stage);
+  const done = idLive?.done ?? 0;
+  const idTotal = idLive?.total ?? 0;
+  const activePhase = idLive?.phase?.state === 'running' ? idLive.phase : null;
+  const ocrPhase = activePhase?.name === 'ocr';
+  const phaseCounts = Boolean(activePhase && (activePhase.total ?? 0) > 0 && (done === 0 || activePhase.name === 'peaks' || !reads));
+  const shownDone = phaseCounts ? (activePhase?.done ?? 0) : done;
+  const shownTotal = phaseCounts ? (activePhase?.total ?? 0) : idTotal;
   const scanFrac = p ? (scanState === 'done' ? 1 : overallFraction(stages, p.overall)) : 0;
-  const frac = mode === 'identify' ? progressPercent(idLive?.done, idLive?.total) / 100
+  const frac = mode === 'identify' ? progressPercent(shownDone, shownTotal) / 100
     : phase === 'done' ? 1 : ingestFraction({ scanFraction: scanFrac, identify: idLive, vision });
   const pct = Math.round(frac * 100);
   // When the run snapshot is active, render its derived surface nodes (identify
@@ -229,14 +236,13 @@ export function IngestScreen({
   const showDecider = deciderLive != null && (filter === 'decider' || (filter == null && deciderActive(deciderLive)));
 
   const total = stages[0]?.total || p?.total || job.total;
-  const done = idLive?.done ?? 0;
-  const idTotal = idLive?.total ?? 0;
   const smoothed = scan ? etaRemaining(scan.history) : null;
+  const idProgressLive = idLive && phaseCounts ? { ...idLive, done: shownDone, total: shownTotal } : idLive;
   // The bar already spans scan + identify; the time left must say both, not only the stage that happens to be running.
   const timeLeft = mode === 'identify'
-    ? [leftLabel(etaLabel(identifyEta(idLive), done >= 3))]
+    ? [leftLabel(etaLabel(identifyEta(idProgressLive), shownDone >= 3))]
     : etaLines({ vision, scanDone: identifying || phase === 'done', scanEta: smoothed ?? (p ? overallEta(stages, p.overall) : null), scanStable: Boolean(scan?.stable), identify: idLive, subject });
-  const rate = identifying ? (idLive ? rateLabel(idLive.done, idLive.elapsed_ms, subject) : '') : frameRate(formatRate(p?.rate_per_s));
+  const rate = identifying ? (idLive ? rateLabel(shownDone, idLive.elapsed_ms, subject) : '') : frameRate(formatRate(p?.rate_per_s));
   // Disabled steps do not count toward progress; compute "Stage N of M" over
   // active stages only so the index never exceeds the total.
   const place = stagePlace(nodes, head?.id ?? p?.stage);
@@ -244,11 +250,16 @@ export function IngestScreen({
   const stageAt = surfaceNodes ? place.at : nodes.findIndex((node) => node.id === (head?.id ?? p?.stage)) + 1;
   const sub = phase === 'starting' ? (mode === 'identify' ? (reads ? `Waiting for the first ${subject.one}…` : 'Starting the judge…') : 'Reading the folder…')
     : phase === 'peaks' ? (phaseLabel(idLive?.phase) || 'Comparing bursts')
-      : phase === 'vision' ? (!reads ? (phaseLabel(idLive?.phase) || 'Judging moments')
+      : phase === 'vision' ? (activePhase ? (phaseLabel(activePhase) || (ocrPhase ? 'Reading plates and numbers' : 'Judging moments'))
+        : !reads ? (phaseLabel(idLive?.phase) || 'Judging moments')
         : visionOff ? visionHeader(visionOff)
         : `Reading ${subject.many} with ${visionModelWords(idLive?.model || model) || 'the vision model'}`)
         : phase === 'scan' || phase === 'group' || phase === 'pick' ? `Stage ${Math.max(1, stageAt)} of ${stageTotal} · ${head?.label ?? p?.stage}`
           : phase === 'done' ? (mode === 'identify' ? 'Identification complete' : 'Scan complete') : '';
+  const statLabel = activePhase?.name === 'ocr' ? 'OCR'
+    : activePhase?.name === 'peaks' ? 'Bursts'
+      : activePhase?.name === 'moments' || !reads ? 'Moments'
+        : subject.title;
 
   const detailCar = picked?.kind === 'car' ? displayItem(idLive, picked.id) : null;
   const detailFrame = picked?.kind === 'frame' ? p?.recent.find((f) => f.image_id === picked.id) ?? null : null;
@@ -274,9 +285,9 @@ export function IngestScreen({
           {live && phase !== 'starting' && (
             <dl className="id-stats">
               {identifying
-                ? <div><dt>{reads ? subject.title : 'Moments'}</dt><dd className="mono">{reads
-                  ? (idLive ? `${done.toLocaleString()} / ${idTotal.toLocaleString()}` : '–')
-                  : (idLive?.phase?.total ? `${(idLive.phase.done ?? 0).toLocaleString()} / ${idLive.phase.total.toLocaleString()}` : '–')}</dd></div>
+                ? <div><dt>{statLabel}</dt><dd className="mono">{shownTotal > 0 || idLive
+                  ? `${shownDone.toLocaleString()} / ${shownTotal.toLocaleString()}`
+                  : '–'}</dd></div>
                 : <div><dt>{head?.label ?? p?.stage ?? 'Frames'}</dt><dd className="mono">{p ? `${p.done.toLocaleString()} / ${p.total.toLocaleString()}` : '–'}</dd></div>}
               <div><dt>Rate</dt><dd className="mono">{rate || '–'}</dd></div>
               <div><dt>Time left</dt><dd className="mono ing-eta">{timeLeft.map((line, i) => <span key={`${i}:${line}`} className={i > 0 ? 'ing-eta-next' : ''}>{line}</span>)}</dd></div>
@@ -316,7 +327,7 @@ export function IngestScreen({
             </div>
             <span className="mono id-progress-count">
               {phase === 'starting' ? (mode === 'identify' ? (reads ? `Waiting for the first ${subject.one}…` : 'Starting the judge…') : 'Starting…')
-                : mode === 'identify' ? `${pct}% · ${done.toLocaleString()} / ${idTotal.toLocaleString()}` : `${pct}%`}
+                : mode === 'identify' ? `${pct}% · ${shownDone.toLocaleString()} / ${shownTotal.toLocaleString()}` : `${pct}%`}
             </span>
           </div>
         )}
@@ -446,7 +457,7 @@ export function IngestScreen({
               {showDecider && deciderLive && <DeciderLane live={deciderLive} serving={decisionService} />}
                     {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} />)}
                     {showVision && visionLanes.map((lane) => (
-                      <IdentifyLane key={`vision:${lane.worker}`} name="VISION" worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject}
+                      <IdentifyLane key={`vision:${lane.worker}`} name={ocrPhase ? 'OCR' : 'VISION'} ocrOnly={ocrPhase} worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject}
                         prompt={lane.item ? lane.item.prompt ?? prompts.current[lane.item.detection_id] : undefined}
                         onOpen={() => lane.item && pickCar(lane.item.detection_id)} />
                     ))}

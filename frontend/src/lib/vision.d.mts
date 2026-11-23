@@ -7,7 +7,7 @@ export const VISION_OFF_REASONS: readonly VisionOffReason[];
 /** The reason an identify snapshot carries, or null when vision is on. */
 export function visionOffReason(live: Pick<IdentifyLive, 'vision_off_reason'> | null | undefined): VisionOffReason | null;
 export function visionHeader(reason: VisionOffReason | null | undefined): string;
-/** A friendly model name and where it runs: `Qwen2.5-VL · this PC`; '' for no model. */
+/** A friendly model name: `Qwen3-VL`; '' for no model. */
 export function visionModelWords(model: string | null | undefined): string;
 export function visionNodeSub(reason: VisionOffReason | null | undefined): string;
 export function visionLaneWords(reason: VisionOffReason | null | undefined): { title: string; why: string; action: VisionAction | null };

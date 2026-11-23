@@ -407,6 +407,7 @@ impl Run<'_> {
         lane: usize,
         mark_read: bool,
         advance_task: bool,
+        ocr_done: &AtomicUsize,
         passes: &Mutex<HashMap<i64, analyze::OcrPass>>,
     ) -> Result<()> {
         let s = self.settings;
@@ -416,10 +417,15 @@ impl Run<'_> {
                 wanted.push(row);
             }
         }
-        for _ in 0..(rows.len() - wanted.len()) {
-            self.stage_advance(IDENTIFY_OCR, 1);
+        let skipped = rows.len() - wanted.len();
+        if skipped > 0 {
+            self.stage_advance(IDENTIFY_OCR, skipped);
             if advance_task {
-                self.task_advance(1);
+                self.task_advance(skipped);
+            }
+            let n = ocr_done.fetch_add(skipped, Ordering::Relaxed) + skipped;
+            if let Some(live) = self.live {
+                live.phase_progress(n);
             }
         }
         if wanted.is_empty() {
@@ -440,14 +446,28 @@ impl Run<'_> {
                 return Ok(());
             }
             let id = row["id"].as_i64().ok_or("Invalid detection")?;
+            let image_id = row["image_id"].as_i64().unwrap_or_default();
             if !ml_eligible(self.d, id)? {
                 self.stage_advance(IDENTIFY_OCR, 1);
                 if advance_task {
                     self.task_advance(1);
                 }
+                let n = ocr_done.fetch_add(1, Ordering::Relaxed) + 1;
+                if let Some(live) = self.live {
+                    live.phase_progress(n);
+                }
                 continue;
             }
+            let item_start = Instant::now();
             if let Some(live) = self.live {
+                live.start_item(
+                    lane,
+                    id,
+                    image_id,
+                    path,
+                    row["thumb_path"].as_str(),
+                    row["preview_path"].as_str(),
+                );
                 live.phase(id, identify_live::CROP);
             }
             let subject = ["x1", "y1", "x2", "y2"].map(|k| row[k].as_f64().unwrap_or(0.0).max(0.0));
@@ -467,6 +487,10 @@ impl Run<'_> {
                 self.stage_advance(IDENTIFY_OCR, 1);
                 if advance_task {
                     self.task_advance(1);
+                }
+                let n = ocr_done.fetch_add(1, Ordering::Relaxed) + 1;
+                if let Some(live) = self.live {
+                    live.phase_progress(n);
                 }
                 continue;
             }
@@ -488,6 +512,10 @@ impl Run<'_> {
                 seen_numbers: &seen_numbers,
                 prompt_context: None,
             };
+            self.task.detail(format!("OCR · {filename}"));
+            if let Some(live) = self.live {
+                live.phase(id, identify_live::VISION);
+            }
             let pass = analyze::read_ocr(&crop, native, kind, kind == "motorcycle", &ctx, readers)?;
             for failure in &pass.failures {
                 self.report(failure.clone());
@@ -533,10 +561,23 @@ impl Run<'_> {
                     ],
                 )
                 .map_err(err)?;
+            let ocr_failures = pass.failures.clone();
             lock(passes).insert(id, pass);
+            if let Some(live) = self.live {
+                live.finish_ocr_item(
+                    id,
+                    &merged,
+                    ocr_failures,
+                    item_start.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
             self.stage_advance(IDENTIFY_OCR, 1);
             if advance_task {
                 self.task_advance(1);
+            }
+            let n = ocr_done.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Some(live) = self.live {
+                live.phase_progress(n);
             }
         }
         Ok(())
@@ -1140,12 +1181,14 @@ pub(crate) fn identify_stage(
                 p.phase(IDENTIFY_OCR);
                 p.total(IDENTIFY_OCR, pending.len() as u64);
             }
+            live.begin_phase(identify_live::OCR_PHASE, pending.len());
             // Mark `read_at` in OCR only when Vision is off/skipped for the
             // album (so an OCR-only rerun on a Vision-enabled album leaves
             // unread subjects available to a subsequent incremental Vision
             // rerun). Advance the task bar whenever Vision won't run here.
             let mark_read = vision_off.is_some() || control.is_skipped(IDENTIFY_VISION);
             let advance_task = !vision_on;
+            let ocr_done = AtomicUsize::new(0);
             let (next, failure) = (AtomicUsize::new(0), Mutex::new(None));
             std::thread::scope(|s| {
                 for lane in 0..workers {
@@ -1159,7 +1202,7 @@ pub(crate) fn identify_stage(
                         &pending,
                         &run,
                     );
-                    let (progress, passes) = (&progress, &passes);
+                    let (progress, passes, ocr_done) = (&progress, &passes, &ocr_done);
                     s.spawn(move || {
                         let mut readers = match load_ocr_readers(settings, ocr_engine) {
                             Ok(readers) => readers,
@@ -1185,6 +1228,7 @@ pub(crate) fn identify_stage(
                                 lane,
                                 mark_read,
                                 advance_task,
+                                ocr_done,
                                 passes,
                             ) {
                                 lock(failure).get_or_insert(e);
@@ -1207,6 +1251,9 @@ pub(crate) fn identify_stage(
                 }
                 end.finish("error");
                 return Err(e);
+            }
+            if !control.is_skipped(IDENTIFY_OCR) && !stop.load(Ordering::Relaxed) {
+                live.end_phase();
             }
             if let Some(p) = &progress {
                 if control.is_skipped(IDENTIFY_OCR) {
@@ -1292,6 +1339,7 @@ pub(crate) fn identify_stage(
                     && matches!(only_stage, None | Some(IDENTIFY_VISION))
                     && !control.is_skipped(IDENTIFY_VISION);
                 if vision_now {
+                    live.clear_phase();
                     // The vision stage reads with the freshly resolved type:
                     // an `auto` album whose suggestion was accepted during
                     // Decision uses that type's prompts right away; a typed

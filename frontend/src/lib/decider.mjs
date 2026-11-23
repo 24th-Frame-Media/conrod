@@ -47,7 +47,7 @@ export function deciderNode(live, serving = null, phase = null) {
   const failed = live?.errors > 0 ? `${live.errors.toLocaleString('en-US')} failed` : '';
   const meta = off ? '' : [frames, failed, live?.quant, live?.avg_ms ? msWords(live.avg_ms) : ''].filter(Boolean).join(' · ');
   const title = cloud ? serving : [sub, live?.message, live?.device, live?.model].filter(Boolean).join(' · ');
-  const run = phase && typeof phase === 'object' ? phase : null;
+  const run = phase && typeof phase === 'object' && (phase.name === 'moments' || phase.name === 'peaks') ? phase : null;
   // A phase the run never finished (stopped, or failed) must not pulse forever:
   // the node stays pending until the run is continued.
   const tick = run ? (run.state === 'done' ? 'done' : run.state === 'stopped' ? 'pending' : 'active') : busy ? 'active' : answered > 0 ? 'done' : 'pending';

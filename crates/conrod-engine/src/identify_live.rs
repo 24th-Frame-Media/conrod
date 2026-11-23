@@ -32,6 +32,8 @@ pub const VISION: &str = "vision";
 pub const MERGE: &str = "merge";
 pub const DONE: &str = "done";
 
+/// The run-level phase where OCR reads plates and numbers before Vision.
+pub const OCR_PHASE: &str = "ocr";
 /// The run-level phase where the moments lane judges the frames.
 pub const MOMENTS_PHASE: &str = "moments";
 /// The run-level phase after the last car is read: comparing each burst for
@@ -326,6 +328,30 @@ impl IdentifyLive {
         push_recent(&mut state, item);
     }
 
+    /// One subject finished its OCR pass: publish its read plate/number right
+    /// away so worker cards and the recent strip stay alive during OCR. When
+    /// Vision finishes the same detection later, `push_recent` upgrades it in
+    /// place without duplicating the card.
+    pub fn finish_ocr_item(
+        &self,
+        detection_id: i64,
+        analysis: &VehicleAnalysis,
+        failures: Vec<String>,
+        ms: f64,
+    ) {
+        let mut state = lock(&self.inner);
+        let mut item = take_live(&mut state, detection_id);
+        item.stage = DONE;
+        item.number = analysis.race_number.clone();
+        item.number_source = analysis.number_source.clone();
+        item.number_conf = analysis.number_conf;
+        item.plate = analysis.plate.clone();
+        item.failures = failures;
+        item.ms = round1(ms);
+        item.at = epoch();
+        push_recent(&mut state, item);
+    }
+
     /// A car that never reached the readers (an empty box, a lost eligibility
     /// race): it still lands in `recent`, so the screen never stalls on it.
     pub fn finish_error(&self, detection_id: i64, message: impl Into<String>) {
@@ -407,6 +433,12 @@ impl IdentifyLive {
             phase.state = "done";
             phase.done = phase.total;
         }
+    }
+
+    /// Clear a completed run-level phase (such as OCR or Decision) as the
+    /// Vision stage begins reporting per-subject progress.
+    pub fn clear_phase(&self) {
+        lock(&self.inner).phase = None;
     }
 
     /// The run ended: `done`, `stopped` or `error`. The car in flight (if any)
@@ -506,6 +538,9 @@ fn take_live(state: &mut State, detection_id: i64) -> Item {
 }
 
 fn push_recent(state: &mut State, item: Item) {
+    state
+        .recent
+        .retain(|existing| existing.detection_id != item.detection_id);
     state.recent.push_front(item);
     state.recent.truncate(RECENT_LIMIT);
 }
@@ -990,5 +1025,65 @@ mod tests {
 
         live.set_model("glm-5.3-flash");
         assert!(live.snapshot()["vision_off_reason"].is_null());
+    }
+
+    #[test]
+    fn ocr_phase_populates_workers_and_vision_upgrades_recent_without_duplicates() {
+        let live = IdentifyLive::new(111, 2);
+        live.set_workers(3);
+        live.begin_phase(OCR_PHASE, 2);
+        live.start_item(
+            0,
+            10,
+            100,
+            "D:/shoot/A.CR3",
+            Some("thumb-a.jpg"),
+            Some("preview-a.jpg"),
+        );
+        live.phase(10, VISION);
+        let mid = live.snapshot();
+        assert_eq!(mid["phase"]["name"], "ocr");
+        assert_eq!(mid["phase"]["state"], "running");
+        assert_eq!(mid["phase"]["done"], 0);
+        assert_eq!(mid["phase"]["total"], 2);
+        assert_eq!(mid["active"].as_array().unwrap().len(), 1);
+        assert_eq!(mid["active"][0]["detection_id"], 10);
+
+        let ocr = VehicleAnalysis {
+            race_number: Some("42".into()),
+            number_source: Some("ocr".into()),
+            number_conf: 0.85,
+            plate: Some("ABC123".into()),
+            ..VehicleAnalysis::default()
+        };
+        live.finish_ocr_item(10, &ocr, Vec::new(), 420.0);
+        live.phase_progress(1);
+        let after_ocr = live.snapshot();
+        assert_eq!(after_ocr["phase"]["done"], 1);
+        assert_eq!(after_ocr["recent"].as_array().unwrap().len(), 1);
+        assert_eq!(after_ocr["recent"][0]["number"], "42");
+        assert_eq!(after_ocr["recent"][0]["plate"], "ABC123");
+        assert!(after_ocr["recent"][0]["make"].is_null());
+
+        live.end_phase();
+        assert_eq!(live.snapshot()["phase"]["state"], "done");
+        live.clear_phase();
+        assert!(live.snapshot()["phase"].is_null());
+
+        // Vision now reads the same detection and replaces the OCR recent entry cleanly.
+        live.start_item(
+            0,
+            10,
+            100,
+            "D:/shoot/A.CR3",
+            Some("thumb-a.jpg"),
+            Some("preview-a.jpg"),
+        );
+        finish(&live, 10, "42");
+        let after_vision = live.snapshot();
+        let recent = after_vision["recent"].as_array().unwrap();
+        assert_eq!(recent.len(), 1, "Vision replaces the OCR card in recent");
+        assert_eq!(recent[0]["detection_id"], 10);
+        assert_eq!(recent[0]["make"], "Toyota");
     }
 }

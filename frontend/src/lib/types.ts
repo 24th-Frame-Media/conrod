@@ -556,7 +556,7 @@ export type IdentifyItem = {
 /** The payload of the `identify-progress` event, a few times a second while identification runs. */
 /** The work after the cars, as the identify snapshot reports it (judging frames, then comparing bursts). */
 export type IdentifyPhase = {
-  name: 'moments' | 'peaks' | string;
+  name: 'ocr' | 'moments' | 'peaks' | string;
   done: number;
   total: number;
   /** `done` only when that work really ended: the DECIDER node's tick waits for it. */

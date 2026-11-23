@@ -52,7 +52,7 @@ test('the vision node takes its count from the identify run once it reports', ()
   const live = { state: 'running', done: 12, total: 60, workers: 3, model: 'qwen2.5vl:7b', stage: 'vision', current: null, active: [], recent: [], errors: [] };
   const vision = ingestNodes({ stages, identify: live, subject: vehicles }).find((n) => n.id === 'vision');
   assert.equal(vision.state, 'active');
-  assert.equal(vision.sub, 'Reading vehicles — Qwen2.5-VL · this PC');
+  assert.equal(vision.sub, 'Reading vehicles — Qwen2.5-VL');
   assert.match(vision.meta, /3 workers/);
   assert.match(vision.meta, /12 \/ 60 vehicles/);
   assert.match(vision.title, /qwen2\.5vl:7b/, 'the raw file stays in the tooltip');
@@ -86,7 +86,7 @@ test('the identify-only chart keeps the six identify nodes and none is a filter'
   const nodes = identifyNodes({ stage: 'vision', state: 'running' }, 'qwen', null, null, vehicles);
   assert.deepEqual(nodes.map((n) => n.label), ['LOAD', 'CROP', 'READ', 'VISION', 'ENTRY LIST', 'RESULT']);
   assert.ok(nodes.every((n) => n.filter === null));
-  assert.equal(nodes[3].sub, 'Reading vehicles — Qwen · this PC');
+  assert.equal(nodes[3].sub, 'Reading vehicles — Qwen');
 });
 
 test('the phase follows the scan, then the identify run', () => {

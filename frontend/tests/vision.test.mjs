@@ -43,10 +43,10 @@ test('the VISION node and the worker card never call "off" a model', () => {
   }
 });
 
-test('the friendly model name reads Qwen3-VL for the local default', () => {
-  assert.equal(visionModelWords('qwen3-vl:8b-instruct-q4_K_M'), 'Qwen3-VL · this PC');
-  assert.equal(visionModelWords('qwen3-vl:8b-instruct-q4_K_M via ollama'), 'Qwen3-VL · this PC');
-  assert.equal(visionModelWords('qwen2.5vl:7b'), 'Qwen2.5-VL · this PC', 'the older tag keeps its old name');
+test('the friendly model name reads Qwen3-VL without a bogus location tag', () => {
+  assert.equal(visionModelWords('qwen3-vl:8b-instruct-q4_K_M'), 'Qwen3-VL');
+  assert.equal(visionModelWords('qwen3-vl:8b-instruct-q4_K_M via ollama'), 'Qwen3-VL');
+  assert.equal(visionModelWords('qwen2.5vl:7b'), 'Qwen2.5-VL', 'the older tag keeps its old name');
 });
 
 test('the flow row and the ingest flowchart show the reason where the model name goes', () => {

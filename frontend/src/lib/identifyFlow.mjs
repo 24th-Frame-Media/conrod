@@ -40,19 +40,22 @@ export function flowNodes(live, model, stage, subject = SUBJECT_WORDS.subjects) 
   const finished = at === 'done';
   // Vision off is a reason, not a model: the VISION node says so instead of naming one.
   const reason = visionOffReason(live);
+  const ocrRunning = live?.phase?.name === 'ocr' && live?.phase?.state === 'running';
   return FLOW_NODES.map((node, i) => ({
     ...node,
     sub: node.label !== 'VISION' ? node.sub : reason ? visionNodeSub(reason) : visionModelWords(model) ? `Reading ${subject.many} — ${visionModelWords(model)}` : node.sub,
     off: node.label === 'VISION' && Boolean(reason),
-    state: finished || i < active ? 'done' : node.stage === at ? 'active' : 'pending',
+    state: finished || i < active ? 'done'
+      : node.stage === at ? (ocrRunning && node.label === 'VISION' ? 'pending' : 'active')
+        : 'pending',
   }));
 }
 
 /** States in which the decision model cannot run as things stand, for the node's dimmed look. */
 const DECIDER_OFF = new Set(['off', 'not_installed', 'installing', 'no_gpu', 'no_vram']);
 
-/** The words for each run-level phase after the cars. */
-const PHASE_WORDS = { moments: 'Judging moments', peaks: 'Comparing bursts' };
+/** The words for each run-level phase. */
+const PHASE_WORDS = { ocr: 'Reading plates and numbers', moments: 'Judging moments', peaks: 'Comparing bursts' };
 
 /**
  * A run-level phase as the header and the DECIDER node say it: "Comparing bursts 12/214".
@@ -97,7 +100,7 @@ export function deciderStepNode(live, serving = null, phase = null) {
   const answer = said ? `${said.label} ${percent(said.p)}` : '';
   const cloud = Boolean(serving);
   const off = !cloud && DECIDER_OFF.has(live.state) && !busy && frames === 0;
-  const run = phase && typeof phase === 'object' ? phase : null;
+  const run = phase && typeof phase === 'object' && (phase.name === 'moments' || phase.name === 'peaks') ? phase : null;
   const work = phaseLabel(run);
   const finished = run?.state === 'done';
   // A run that stopped mid-phase leaves work undone: the node must not keep

@@ -11,18 +11,17 @@ export function visionOffReason(live) {
 }
 
 /**
- * A vision model as a photographer reads it: a friendly name (`Qwen3-VL`), not the file or tag (`qwen3-vl:8b-instruct-q4_K_M`),
- * and where the photos go: `this PC` for Ollama, `cloud` for the hosted providers. Unknown names are kept as sent.
+ * A vision model as a photographer reads it: a friendly name (`Qwen3-VL`), not the file or tag (`qwen3-vl:8b-instruct-q4_K_M`).
+ * Unknown names keep their base name with provider suffix and tag stripped.
  */
 export function visionModelWords(model) {
   const raw = String(model ?? '').trim();
   if (!raw) return '';
   const base = raw.replace(/\s+via\s+.+$/i, '').trim();
-  const name = /qwen3[-.]?vl/i.test(base) ? 'Qwen3-VL' : /qwen2\.5vl/i.test(base) ? 'Qwen2.5-VL' : /qwen/i.test(base) ? 'Qwen' : base.replace(/:[^/]+$/, '') || base;
-  const where = /ollama|localhost|127\.0\.0\.1|this pc/i.test(raw) ? 'this PC'
-    : /openrouter|openai|anthropic|gemini|cloud/i.test(raw) ? 'cloud'
-      : /qwen/i.test(base) || /:[a-z0-9._-]+$/i.test(base) ? 'this PC' : '';
-  return [name, where].filter(Boolean).join(' · ');
+  return /qwen3[-.]?vl/i.test(base) ? 'Qwen3-VL'
+    : /qwen2\.5vl/i.test(base) ? 'Qwen2.5-VL'
+      : /qwen/i.test(base) ? 'Qwen'
+        : base.replace(/:[^/]+$/, '') || base;
 }
 
 const HEADER = {
