@@ -205,7 +205,15 @@ export type DeciderStatus = {
   needs: { int8: number; int4: number };
   install: { done: number; total: number } | null;
 };
-export type Bootstrap = { jobs: Job[]; settings: Settings; models: ModelInfo[]; status: Status };
+export type Bootstrap = {
+  jobs: Job[]; settings: Settings; models: ModelInfo[]; status: Status;
+  /** `--dev` / `CONROD_DEV=1`: the isolated dev instance. */
+  dev?: boolean;
+  /** The Vite dev server's address (only meaningful when `dev`). */
+  devUrl?: string;
+  /** Whether that server answered at start-up; false loads the bundled UI. */
+  devServer?: boolean;
+};
 
 /** A model a start-up step is about (shown in mono on the splash). */
 export type StartupModel = { name: string; file: string; bytes?: number | null };

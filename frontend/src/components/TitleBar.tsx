@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { getCurrentWindow, type Window } from '@tauri-apps/api/window';
 import { inTauri, mocked } from '../lib/api';
+import { DEV_BADGE } from '../lib/devMode.mjs';
 import { etaText, pct, plural } from '../lib/format';
 import { applyTheme, storedTheme } from '../lib/theme.mjs';
 import { modelGroups, modelWord, workLabel, type HealthStatus } from '../lib/health.mjs';
@@ -193,11 +194,11 @@ function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { st
 
 type Props = {
   page: Page; setPage: (page: Page) => void; jobs: Job[]; models: ModelInfo[]; status: Status; profile: string;
-  health: HealthStatus; actions: StatusActions; popoverOpen: boolean;
+  health: HealthStatus; actions: StatusActions; popoverOpen: boolean; dev: boolean;
 };
 
 /** Topbar and title bar in one: brand, tabs, stats, scan type, status pill, window controls. Drag it to move the window. */
-export function TitleBar({ page, setPage, jobs, models, status, profile, health, actions, popoverOpen }: Props) {
+export function TitleBar({ page, setPage, jobs, models, status, profile, health, actions, popoverOpen, dev }: Props) {
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const photos = jobs.reduce((n, j) => n + j.total, 0);
   const [theme, setTheme] = useState(storedTheme);
@@ -213,7 +214,7 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, health,
   return (
     <header className="topbar" data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region>
-        <div className="brand-mark"><Mark /></div>
+        <div className="brand-mark"><Mark />{dev && <span className="brand-dev" title="Development build">{DEV_BADGE}</span>}</div>
         <h1>Conrod</h1>
       </div>
       <nav className="tabs" aria-label="Screens">

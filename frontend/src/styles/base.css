@@ -135,8 +135,19 @@ button.small { padding: 4px 12px; font-size: 12px; }
 .topbar-progress { position: absolute; left: 0; bottom: -1px; height: 2px; background: var(--accent); transition: width .4s var(--ease); }
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand > *, .stats > * { pointer-events: none; }
-.brand-mark { height: 26px; color: var(--accent); display: flex; }
+.brand-mark { height: 26px; color: var(--accent); display: flex; position: relative; }
+/* The dev badge hangs off the mark's bottom-right; absolute so the topbar never moves. Placeholder
+   styling: the design pass owns the final look. */
+.brand-dev {
+  position: absolute; right: -10px; bottom: -3px; padding: 0 3px; border-radius: 2px;
+  background: var(--accent); color: var(--on-accent); font: 700 8px/1.4 var(--mono);
+}
 .brand h1 { font-size: 16px; margin: 0; font-weight: 600; }
+/* Dev mode with no Vite server: the bundled UI is up and says why. */
+.dev-banner {
+  flex: none; padding: 6px 16px; background: var(--warn2); color: var(--bg);
+  font-size: 12px; font-weight: 600; letter-spacing: .01em;
+}
 .mark { height: 100%; width: auto; display: block; }
 .tabs { display: flex; gap: 4px; }
 .tabs button { background: transparent; border: none; color: var(--text-dim); padding: 8px 12px; border-radius: 8px; display: flex; align-items: center; gap: 8px; }
@@ -370,6 +381,9 @@ dialog[open] { animation: dialog-in .18s var(--ease); }
 .splash-mark { height: 56px; color: var(--accent); }
 .splash-name { font-size: 26px; font-weight: 400; margin: 0; }
 .splash-name b { font-weight: 600; }
+.splash-dev {
+  margin: 5px 0 0; color: var(--accent); font: 600 10px/1.4 var(--mono);
+}
 .splash-ver { color: var(--text-mute); font-size: 12px; font-weight: 400; margin: 2px 0 0; }
 .splash-now { grid-column: 1 / -1; margin: 18px 0 10px; min-height: 40px; }
 .splash-msg { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; color: var(--text-dim); font-size: 13px; margin: 0; }

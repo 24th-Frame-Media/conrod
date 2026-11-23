@@ -384,7 +384,12 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'bootstrap':
       if (['scan', 'ingest'].includes(params().get('page') ?? '')) startSim(db, 3);
       if (params().get('page') === 'identify') startIdentifySim(1);
-      return out({ jobs: db.jobs, settings: db.settings, status: status(db), models: [{ name: 'Vehicle detector', file: 'yolo.onnx', ready: true }, { name: 'Plate reader', file: 'plates.onnx', ready: true }, { name: 'Vision model', file: 'qwen', ready: false }] } satisfies Bootstrap);
+      // `?dev=1` (which also turns the mock on) renders the dev badge and title;
+      // add `&devserver=down` to see the "dev server not running" banner.
+      return out({
+        jobs: db.jobs, settings: db.settings, status: status(db), models: [{ name: 'Vehicle detector', file: 'yolo.onnx', ready: true }, { name: 'Plate reader', file: 'plates.onnx', ready: true }, { name: 'Vision model', file: 'qwen', ready: false }],
+        dev: params().has('dev'), devUrl: 'http://localhost:1420', devServer: params().has('dev') && params().get('devserver') !== 'down',
+      } satisfies Bootstrap);
     case 'status': return out(status(db));
     case 'scan_status': {
       const id = Number(a.jobId) || 0;

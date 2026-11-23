@@ -2,6 +2,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type {
   Bootstrap, GlobalStats, Job, MarkValues, Review, ScanArgs, Settings, Status, KnownVehicle,
 } from './types';
+import { mockSeed } from './devMode.mjs';
 
 /** The engine's answer to `scan`: the album it started (or found), and what a
  *  re-import did with the frames that were already there. */
@@ -21,8 +22,8 @@ export type ScanStarted = {
   queuePosition?: number;
 };
 
-/** `?mock=1` under `vite dev` only. The whole branch is dead code in production builds. */
-export const mocked: boolean = import.meta.env.DEV && new URLSearchParams(location.search).has('mock');
+/** `?mock=1` (or the `?dev=1` mock seed) under `vite dev` only. The whole branch is dead code in production builds. */
+export const mocked: boolean = import.meta.env.DEV && mockSeed(new URLSearchParams(location.search));
 export const inTauri = '__TAURI_INTERNALS__' in window;
 
 export const call = async <T = unknown>(action: string, args: unknown = {}): Promise<T> => {

@@ -10,6 +10,7 @@ import { queueLabel } from './lib/format';
 import { healthStatus, modelGroups } from './lib/health.mjs';
 import { openJobPage } from './lib/navigation.mjs';
 import { classifyScanError, type ScanFailure } from './lib/scanError.mjs';
+import { devServerNotice, windowTitle } from './lib/devMode.mjs';
 import { subjectExcluded } from './review.mjs';
 import { decisionServiceLabel, vlmModelLabel } from './lib/vlm';
 import type { DevStart } from './lib/mock';
@@ -65,6 +66,11 @@ export function App() {
   const appVersion = useAppVersion();
   const wizard = useWizard({ ready: eng.ready, settings: eng.settings, albums: eng.jobs.length, markSeen: whatsNew.markSeen });
   const { status } = eng;
+  // Dev mode: the engine read `--dev` / `CONROD_DEV=1`. The title and badge are
+  // always on; the banner only when the Vite server did not answer and the
+  // window fell back to the bundled UI.
+  const devNotice = devServerNotice(eng.dev, eng.devServer, eng.devUrl);
+  useEffect(() => { document.title = windowTitle('Conrod', eng.dev); }, [eng.dev]);
   const scanning = status.activeJob !== null;
   const scanLive = useScanProgress();
   /** The selected album's scan, read on entry, so the Scan screen is whole on re-entry, restart or a queued album. */
@@ -249,7 +255,8 @@ export function App() {
 
   return (
     <div className="app">
-      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} health={health} actions={actions} popoverOpen={dev?.popover ?? false} />
+      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} health={health} actions={actions} popoverOpen={dev?.popover ?? false} dev={eng.dev} />
+      {devNotice && <div className="dev-banner" role="status">{devNotice}</div>}
       <main className="stage" key={view}>
         {view === 'Library' && (
           <Library jobs={eng.jobs} scanning={scanning} live={scanLive} activeJob={status.activeJob} queue={status.queue ?? []}
@@ -323,7 +330,7 @@ export function App() {
         onSaved={(saved) => { eng.setSettings(saved); if (typeof saved.scan_profile === 'string') setProfile(saved.scan_profile); }}
         onOpenSettings={() => setPage('Settings')} />
       <WhatsNewSheet visible={whatsNew.open && wizard.decided && !wizard.open} fresh={whatsNew.fresh} earlier={whatsNew.earlier} onClose={whatsNew.close} />
-      <Splash gone={eng.ready && startup.settled} status={startup.status} version={appVersion ?? (import.meta.env.DEV && mocked ? '0.0.0-mock' : null)} />
+      <Splash gone={eng.ready && startup.settled} status={startup.status} version={appVersion ?? (import.meta.env.DEV && mocked ? '0.0.0-mock' : null)} dev={eng.dev} />
     </div>
   );
 }

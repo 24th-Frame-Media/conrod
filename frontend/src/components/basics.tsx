@@ -117,7 +117,7 @@ export function Empty({ icon = 'images', title, children }: { icon?: IconName; t
  * that fills as steps finish, and the last few finished steps ticked off. A step that went wrong
  * shows amber and never blocks. Without a status yet it is the logo and an indeterminate bar.
  */
-export function Splash({ gone, status, version }: { gone: boolean; status?: StartupStatus | null; version?: string | null }) {
+export function Splash({ gone, status, version, dev }: { gone: boolean; status?: StartupStatus | null; version?: string | null; dev?: boolean }) {
   const fraction = startupFraction(status);
   const model = modelParts(status?.model);
   const count = startupCount(status);
@@ -128,6 +128,7 @@ export function Splash({ gone, status, version }: { gone: boolean; status?: Star
         <div className="splash-mark"><Mark /></div>
         <div>
           <p className="splash-name"><b>con</b>rod</p>
+          {dev && <p className="splash-dev">Dev mode</p>}
           {version && <p className="splash-ver">v{version}</p>}
         </div>
         <div className="splash-now" role="status">
