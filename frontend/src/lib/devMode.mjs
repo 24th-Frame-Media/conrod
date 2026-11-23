@@ -5,8 +5,9 @@
  * with `--dev` or `CONROD_DEV=1`.
  */
 
-/** The window title suffix and badge word. */
-export const DEV_TITLE = '[Dev]';
+/** The window title suffix and badge word. The approved design uses `[DEV]`
+ *  (uppercase) so the dev instance is unmistakable in the taskbar and tray. */
+export const DEV_TITLE = '[DEV]';
 export const DEV_BADGE = 'DEV';
 
 /** `?mock=1` runs the browser mock; `?dev=1` also does, as a dev-mode seed. */
@@ -14,7 +15,7 @@ export function mockSeed(params) {
   return params.has('mock') || params.has('dev');
 }
 
-/** The document title: `Conrod` in a release, `Conrod [Dev]` in dev mode. */
+/** The document title: `Conrod` in a release, `Conrod [DEV]` in dev mode. */
 export function windowTitle(base, dev) {
   return dev ? `${base} ${DEV_TITLE}` : base;
 }

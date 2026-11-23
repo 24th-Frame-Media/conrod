@@ -10,7 +10,8 @@ import { queueLabel } from './lib/format';
 import { healthStatus, modelGroups } from './lib/health.mjs';
 import { openJobPage } from './lib/navigation.mjs';
 import { classifyScanError, type ScanFailure } from './lib/scanError.mjs';
-import { devServerNotice, windowTitle } from './lib/devMode.mjs';
+import { windowTitle } from './lib/devMode.mjs';
+import { useDevInfo, useReloadState } from './lib/dev';
 import { subjectExcluded } from './review.mjs';
 import { decisionServiceLabel, vlmModelLabel } from './lib/vlm';
 import type { DevStart } from './lib/mock';
@@ -66,10 +67,11 @@ export function App() {
   const appVersion = useAppVersion();
   const wizard = useWizard({ ready: eng.ready, settings: eng.settings, albums: eng.jobs.length, markSeen: whatsNew.markSeen });
   const { status } = eng;
-  // Dev mode: the engine read `--dev` / `CONROD_DEV=1`. The title and badge are
-  // always on; the banner only when the Vite server did not answer and the
-  // window fell back to the bundled UI.
-  const devNotice = devServerNotice(eng.dev, eng.devServer, eng.devUrl);
+  // Dev mode: the engine read `--dev` / `CONROD_DEV=1`. The DEV + live-reload
+  // chips, the splash strip and the Settings banner all read this one object.
+  const version = appVersion ?? (mocked ? '0.0.0-mock' : '');
+  const devInfo = useDevInfo({ dev: eng.dev, devUrl: eng.devUrl, devHome: eng.devHome, version, mocked });
+  const reloadState = useReloadState(devInfo);
   useEffect(() => { document.title = windowTitle('Conrod', eng.dev); }, [eng.dev]);
   const scanning = status.activeJob !== null;
   const scanLive = useScanProgress();
@@ -255,8 +257,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} health={health} actions={actions} popoverOpen={dev?.popover ?? false} dev={eng.dev} />
-      {devNotice && <div className="dev-banner" role="status">{devNotice}</div>}
+      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} health={health} actions={actions} popoverOpen={dev?.popover ?? false} dev={devInfo} reloadState={reloadState} />
       <main className="stage" key={view}>
         {view === 'Library' && (
           <Library jobs={eng.jobs} scanning={scanning} live={scanLive} activeJob={status.activeJob} queue={status.queue ?? []}
@@ -319,7 +320,7 @@ export function App() {
         )}
         {view === 'Settings' && (
           <Settings settings={eng.settings} onSaved={eng.setSettings} run={run} toast={toast} jobs={eng.jobs} models={eng.models} onModelsChanged={eng.refreshModels} status={eng.status}
-            onOpenWhatsNew={whatsNew.openManually} onOpenWizard={wizard.openManually} openTab={settingsTab} />
+            onOpenWhatsNew={whatsNew.openManually} onOpenWizard={wizard.openManually} openTab={settingsTab} dev={devInfo} />
         )}
       </main>
       <ImportDialog draft={draft} setDraft={setDraft} profile={profile} setProfile={setProfile} settings={eng.settings} status={status} busy={starting}
@@ -330,7 +331,7 @@ export function App() {
         onSaved={(saved) => { eng.setSettings(saved); if (typeof saved.scan_profile === 'string') setProfile(saved.scan_profile); }}
         onOpenSettings={() => setPage('Settings')} />
       <WhatsNewSheet visible={whatsNew.open && wizard.decided && !wizard.open} fresh={whatsNew.fresh} earlier={whatsNew.earlier} onClose={whatsNew.close} />
-      <Splash gone={eng.ready && startup.settled} status={startup.status} version={appVersion ?? (import.meta.env.DEV && mocked ? '0.0.0-mock' : null)} dev={eng.dev} />
+      <Splash gone={eng.ready && startup.settled} status={startup.status} version={appVersion ?? (import.meta.env.DEV && mocked ? '0.0.0-mock' : null)} dev={devInfo} />
     </div>
   );
 }

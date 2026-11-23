@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { engine, inTauri } from '../lib/api';
@@ -17,6 +17,7 @@ import { AiSettingsCard } from './AiSettingsCard';
 import { Benchmark } from './Benchmark';
 import { Known } from './Known';
 import type {
+  DevInfo,
   Job,
   ModelInfo,
   SettingValue,
@@ -117,10 +118,12 @@ type Props = {
   onOpenWizard?: () => void;
   /** A tab another screen asked for (the Vision off card opens Identification); a new nonce asks again. */
   openTab?: { id: SettingsTabId; nonce: number };
+  /** Dev instance info; the amber data-home banner only renders when present. */
+  dev?: DevInfo | null;
 };
 
 /** Settings shared with the Python library; Save writes the whole block back. */
-export function Settings({ settings, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status, onOpenWhatsNew, onOpenWizard, openTab }: Props) {
+export function Settings({ settings, onSaved, run, toast, jobs = [], models = [], onModelsChanged, status, onOpenWhatsNew, onOpenWizard, openTab, dev }: Props) {
   const [draft, setDraft] = useState<SettingsMap>(settings);
   useEffect(() => setDraft(settings), [settings]);
 
@@ -278,6 +281,13 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
   return (
     <div className="screen settings-screen">
       <div className="settings-page">
+        {dev && (
+          <div className="dev-banner">
+            <span className="dev-flag">DEV</span>
+            <span>Development instance — albums, settings and cache live in <code className="mono">{dev.home}</code>. Your production library (<code className="mono">~/.conrod</code>) is untouched.</span>
+            <button type="button" className="ghost small" onClick={() => { if (inTauri) void openPath(dev.path).catch(() => undefined); }}>Open data folder</button>
+          </div>
+        )}
         <header className="settings-head">
           <div className="settings-title">
             <h2>Settings</h2>

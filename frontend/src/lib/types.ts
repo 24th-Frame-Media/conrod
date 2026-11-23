@@ -213,7 +213,23 @@ export type Bootstrap = {
   devUrl?: string;
   /** Whether that server answered at start-up; false loads the bundled UI. */
   devServer?: boolean;
+  /** Resolved dev data root (an absolute path); the UI displays `~/.conrod-dev`. */
+  devHome?: string;
 };
+
+/** Everything the dev chrome needs, gathered once from Bootstrap or the mock. */
+export type DevInfo = {
+  /** Data home as displayed (`~/.conrod-dev`). */
+  home: string;
+  /** Real folder path for "Open data folder". */
+  path: string;
+  /** Vite dev server URL. */
+  url: string;
+  version: string;
+  commit: string;
+};
+/** Live-reload state of the dev server (connected / retrying / bundled fallback). */
+export type ReloadState = 'ok' | 'busy' | 'warn';
 
 /** A model a start-up step is about (shown in mono on the splash). */
 export type StartupModel = { name: string; file: string; bytes?: number | null };

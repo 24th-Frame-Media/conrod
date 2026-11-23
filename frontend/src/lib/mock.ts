@@ -384,11 +384,13 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'bootstrap':
       if (['scan', 'ingest'].includes(params().get('page') ?? '')) startSim(db, 3);
       if (params().get('page') === 'identify') startIdentifySim(1);
-      // `?dev=1` (which also turns the mock on) renders the dev badge and title;
-      // add `&devserver=down` to see the "dev server not running" banner.
+      // `?dev=1` (which also turns the mock on) renders the whole dev chrome.
+      // `&devserver=up|down|reconnecting` forces the live-reload chip's state
+      // (connected / bundled-UI fallback / retrying) for QA screenshots.
       return out({
         jobs: db.jobs, settings: db.settings, status: status(db), models: [{ name: 'Vehicle detector', file: 'yolo.onnx', ready: true }, { name: 'Plate reader', file: 'plates.onnx', ready: true }, { name: 'Vision model', file: 'qwen', ready: false }],
         dev: params().has('dev'), devUrl: 'http://localhost:1420', devServer: params().has('dev') && params().get('devserver') !== 'down',
+        devHome: '~/.conrod-dev',
       } satisfies Bootstrap);
     case 'status': return out(status(db));
     case 'scan_status': {
