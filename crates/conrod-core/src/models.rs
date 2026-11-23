@@ -32,6 +32,11 @@ pub const TASTE_TOWER: &str = "dinov2-small-tower.onnx";
 /// The learned head beside it: weights, feature order and standardisation.
 /// Absent means taste is off; `scripts/taste/train_head.py` writes it.
 pub const TASTE_HEAD: &str = "taste-head.json";
+/// The built-in vision model (Qwen3-VL-8B-Instruct, official GGUF, Apache-2.0):
+/// the Q4_K_M weights the 2026-11-22/23 benchmarks picked, plus its F16 vision
+/// projector. Opt-in (optional in scripts/assets.json), fetched resumably.
+pub const VISION: &str = "Qwen3VL-8B-Instruct-Q4_K_M.gguf";
+pub const VISION_MMPROJ: &str = "mmproj-Qwen3VL-8B-Instruct-F16.gguf";
 /// The decision model (Perplexity pplx-decider-flash-v1.2, official GGUF): int8 weights,
 /// the vision projector, and the int4 file derived from the int8 on the machine.
 /// All opt-in (optional in scripts/assets.json).

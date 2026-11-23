@@ -76,6 +76,14 @@ pub struct KeyArgs {
     pub key: String,
 }
 
+/// Which assets to install. Empty (or absent) means everything missing; a
+/// non-empty list installs exactly those manifest ids and nothing else.
+#[derive(Debug, Default, Deserialize)]
+pub struct InstallModelsArgs {
+    #[serde(default)]
+    pub ids: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PlateArgs {
     pub plate: String,
@@ -490,7 +498,12 @@ pub enum Command {
     OpenCodeCheck(OpenCodeCheckArgs),
     Write(WriteArgs),
     CancelOperation(KeyArgs),
-    InstallModels {},
+    /// Install missing models. Empty `ids` = everything missing (the Setup
+    /// card's button); named ids install exactly those assets (a card row's
+    /// Download button), never the whole set.
+    InstallModels(InstallModelsArgs),
+    /// Live, disk-truth model rows + the install in flight, for the AI card.
+    ModelsStatus {},
     /// The decision model card: install state, VRAM, quantization.
     DeciderStatus {},
     InstallDecider {},
@@ -604,6 +617,29 @@ impl Command {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn install_models_parses_empty_and_named_ids_and_models_status_parses() {
+        let Ok(Command::InstallModels(a)) = Command::parse("install_models", json!({})) else {
+            panic!()
+        };
+        assert!(a.ids.is_empty(), "no ids means everything missing");
+        let Ok(Command::InstallModels(a)) = Command::parse("install_models", Value::Null) else {
+            panic!()
+        };
+        assert!(a.ids.is_empty());
+        let Ok(Command::InstallModels(a)) = Command::parse(
+            "install_models",
+            json!({"ids": ["Qwen3VL-8B-Instruct-Q4_K_M.gguf", "mmproj-Qwen3VL-8B-Instruct-F16.gguf"]}),
+        ) else {
+            panic!()
+        };
+        assert_eq!(a.ids.len(), 2, "a Download installs exactly its own assets");
+        assert!(matches!(
+            Command::parse("models_status", json!({})),
+            Ok(Command::ModelsStatus {})
+        ));
+    }
 
     #[test]
     fn the_lightroom_bridge_commands_parse_their_arguments() {

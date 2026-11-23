@@ -139,6 +139,32 @@
       "sources": []
     },
     {
+      "name": "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+      "dest": "models",
+      "extract": false,
+      "optional": true,
+      "licence": "Apache-2.0 (Qwen/Qwen3-VL-8B-Instruct-GGUF, official GGUF; opt-in built-in vision model, 5.0 GB)",
+      "note": "Pinned from the official Qwen repo's LFS metadata (sha256 = LFS oid). TODO(owner): stage to assets-v1 via scripts/stage-assets.ps1 once downloaded locally.",
+      "sha256": "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2",
+      "size": 5027784800,
+      "sources": [
+        "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q4_K_M.gguf"
+      ]
+    },
+    {
+      "name": "mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+      "dest": "models",
+      "extract": false,
+      "optional": true,
+      "licence": "Apache-2.0 (Qwen/Qwen3-VL-8B-Instruct-GGUF, official vision projector)",
+      "note": "Pinned from the official Qwen repo's LFS metadata (sha256 = LFS oid). TODO(owner): stage to assets-v1 via scripts/stage-assets.ps1 once downloaded locally.",
+      "sha256": "ca524100ebf825c9a870db1c580d03879e0da0ab2541697e2458e64891cf9d38",
+      "size": 1159029824,
+      "sources": [
+        "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf"
+      ]
+    },
+    {
       "name": "decider-flash-v1.2-q8_0.gguf",
       "dest": "models",
       "extract": false,

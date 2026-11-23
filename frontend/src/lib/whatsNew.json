@@ -7,93 +7,98 @@
       {
         "title": "New",
         "items": [
-          "Press P to pick a frame you love; it is written as a Pick keyword, and a frame cannot be both picked and rejected.",
-          "Grid, loupe and compare views (G, E, C), a filmstrip for each burst, and keyboard movement within and between bursts. F zooms to the car, plate or face.",
-          "Near-duplicate shots are stacked across the whole shoot.",
-          "A closed eye is flagged as a reason to cull, and a People tab groups the faces in a shoot.",
-          "Hover a flagged frame to see why, and filter to Needs a look.",
-          "An optional aesthetic score can break ties inside a burst (off by default).",
-          "Sharpness is judged on the subject itself, by measuring how crisp its edges are at full resolution, and shown on the familiar star scale.",
-          "A burst is split into separate moments by how the subject is framed, and among equally sharp frames the keeper favours the prominent, uncropped subject.",
-          "Blur strictness per album: strict, moderate or lenient.",
-          "Give an album its race entry list (CSV or JSON) and Conrod looks up each number it reads.",
-          "The entry list fills in team, drivers, car and sponsor spellings from the number it reads.",
-          "Pans are recognised by a sharp subject against a streaked background.",
-          "Review marks the top three candidates in every burst and can filter to them.",
-          "Sport shoots recognise the ball in play and the rider on the animal.",
-          "Regrouping a shoot is instant and tells you how many bursts it made.",
-          "Expressions are read: eyes open, smile and head turn.",
-          "Import is one sheet, and the scan screen shows the whole pipeline: a flowchart, a lane for each worker, live thumbnails and a summary.",
-          "An export sheet shows counts, offers a dry run and gives Lightroom instructions. Review shows a loading state instead of an empty album.",
-          "Ctrl+Z and Ctrl+Shift+Z undo and redo your last culling decision and take you back to that frame.",
-          "Settings is rebuilt: culling first, a chip on each setting an album overrides, search, a footer that shows unsaved changes, and Known vehicles as a catalogue.",
-          "A learned taste order for sorting a burst by what you tend to like. It never overrides the keeper.",
-          "A light theme, with a toggle in the header.",
-          "An identifications sheet shows what was read and lets you accept results one by one. Sheets only close when you click the backdrop.",
-          "OpenCode is available as a vision provider, with a list of its models.",
-          "Pans are rated on the picture, capped by how much of the frame is sharp, so most pans land at three stars.",
-          "Suggested keepers are green and take one click to accept.",
-          "A burst with nothing above two stars has no keeper, and the grid says so instead of proposing the least bad frame.",
-          "Duplicate copies of a shot can be hidden.",
-          "A Critical blur setting for track work.",
-          "Bursts are grouped by what the pictures look like, and a frame the detector missed is rated where the camera focused.",
-          "Composition labels: placement, balance, symmetry, leading lines and background clutter.",
-          "Stacking can be tuned, the camera's focus area is shown, and a blurred subject the background cannot vouch for is caught.",
-          "Keep and cull pills, decisions for a whole stack, composition labels, the autofocus box and arrows between stacks.",
-          "A re-score measures the subject inside the camera's focus box.",
-          "An album can cull, identify, or do both, and the pipeline view follows your choice.",
-          "Shoot statistics: lens, ISO and file size are stored for every frame.",
-          "A shoot statistics card, and shot details in the viewer.",
-          "Identification reads each burst's keeper by default, and shoot statistics open in their own dialog.",
-          "Library-wide statistics, and a freeze when opening an album with many keepers is gone.",
-          "Identification is live: watch each frame being read as it happens. Opencode Go is supported as a provider.",
-          "Each identification worker has its own live page, action shots are read, and the viewer shows more.",
-          "A new connecting-rod C for the mark and the app icon."
+          "Culling roadmap (pick, compare, filmstrip, dupes, eyes, people, NIMA).",
+          "Gradient-ratio edge blur estimator and labelled experiment.",
+          "Subject sharpness from native-resolution edge blur, mapped onto the star scale.",
+          "Split bursts into moments by subject framing; keeper prefers the prominent uncut subject among equally sharp frames.",
+          "Per-album blur strictness (strict/moderate/lenient), moderate by default.",
+          "Per-album race entry list (CSV/JSON) with lookup, candidates and settings field.",
+          "Tight vehicle-reading prompt (visible text only, racing hints, plate validation) and design-only models kept as suggestions.",
+          "Race entry list fills team, drivers, car and sponsor spellings from the read number.",
+          "Panning = sharp subject over a coherently streaked background (85% of real pans, 5.6% false on static).",
+          "Review marks each burst's top three candidates and can filter to them.",
+          "Unslop polish (graphite chrome, amber china-pencil keeper mark, line icons, sentence case) and per-shoot facet tabs.",
+          "Framing features from detection boxes (K4).",
+          "Exposure measure for blown highlights and crushed shadows.",
+          "Sport subjects -- the ball in play, and the rider on the animal.",
+          "Per-album burst gap with one default, one-time migration, worker caps and the scan-progress payload.",
+          "Instant regroup with counts, one-shot scan and the pipeline snapshot.",
+          "Emit one scan-progress event from the status thread.",
+          "Expression reads eye open, smile and head pose from MediaPipe landmarks.",
+          "One-sheet import and transparent scan screen with pipeline flowchart, worker lanes, live thumbnails and summary.",
+          "Album-scoped sheet choices, real stage queues and a weighted overall.",
+          "Wire the keeper signals into the scan, the sets and the rank.",
+          "Export sheet with album counts, dry run and Lightroom instructions; Review shows a loading state instead of an empty album.",
+          "Ctrl+Z / Ctrl+Shift+Z undo and redo the last culling decision, moving back to the frame it changed.",
+          "Settings overhaul - culling first, per-album chips, search, dirty footer, known vehicles as a catalog.",
+          "Learned taste sort from DINOv2 embeddings, never a keeper pick.",
+          "A deliberate light theme with a header toggle.",
+          "Identifications sheet (what was read, accept one by one), sheets render through a portal and only close on a backdrop press, pan is a flag beside sharp/soft.",
+          "OpenCode (Console/Go) provider with model list; research note on keeper and motorsport models.",
+          "Pans are rated on the picture - capped by the sharp share of the frame, so most pans land at three stars.",
+          "Suggested keepers are green and one click to accept.",
+          "A burst with nothing above two stars has no keeper, and the grid says so.",
+          "Hide duplicate copies of a shot; a rated subject beats a frame the detector missed.",
+          "Critical strictness for track work; a pan's frame stars read the picture; a missed frame is rated on the whole frame.",
+          "Group a burst by its pictures, and rate a missed frame where the camera focused.",
+          "Composition labels - placement, balance, symmetry, leading lines and background clutter.",
+          "Tunable stacking, the camera's focus area in the payload, and a blurred subject the background cannot vouch for.",
+          "Keep/cull pills, stack decisions, composition labels, the AF box and cross-stack arrows.",
+          "Measure a subject inside the camera's focus box on a re-score.",
+          "An album can cull, identify, or both.",
+          "Choose cull, identify or both, and follow it in the pipeline.",
+          "Store lens, ISO and file size and add shoot_stats.",
+          "A shoot statistics card and shot details in the viewer.",
+          "Identify the effective keeper by default and open shoot statistics in their own dialog.",
+          "Add library-wide statistics and fix the keeper-index freeze.",
+          "Add the live identification flow and OpenCode Go support.",
+          "One live page per worker, action reads and a richer viewer.",
+          "A connecting-rod C for the mark and app icon."
         ]
       },
       {
         "title": "Improved",
         "items": [
-          "Finding near-duplicates is much faster on large shoots, and burst spacing has one default.",
-          "Vehicles are read from visible text only, with racing hints and checks on plates.",
-          "A calmer graphite look with an amber keeper mark, line icons and a filter tab for each type of shoot.",
-          "How a subject is framed (size and position) now counts when ranking a burst.",
-          "Blown highlights and crushed shadows are measured and count when ranking a burst.",
-          "Burst spacing is set per album, and existing albums are converted once.",
-          "Import choices belong to the album, and progress shows real queues with an overall percentage that adds up.",
-          "Eyes, smiles, exposure and framing now feed the scan, the sets of related frames and the ranking.",
-          "Review opens faster on big albums."
+          "Time-windowed near-duplicate search, parallel hashing, one burst gap default.",
+          "Compact the review payload and make it testable."
         ]
       },
       {
         "title": "Fixed",
         "items": [
-          "Installing every model no longer switches on the optional aesthetic score.",
-          "Birds and other animals are found as subjects in every shoot type.",
-          "Detail shots with no clear subject are rated on their in-focus area instead of being called blurry.",
-          "Star ratings change smoothly at the top end, and when two frames tie the sharper subject wins.",
-          "A frame whose framing changed stands on its own instead of joining the previous moment.",
-          "Vehicle reading in the app now matches what the benchmark measured, and numbers from an entry list are trusted.",
-          "Top-three ranks skip rejected frames, share one badge on the grid and filmstrip, and blur strictness can be changed from the keyboard.",
-          "Portraits pick the softer eye and never a shut face, and frames with no subject are judged on their edges.",
-          "Review filters work inside burst stacks, the selection no longer jumps, P sets the keeper, view choices are remembered per album, and large stacks scroll smoothly.",
-          "A closed eye is only ever confirmed, never invented, by the face model.",
-          "The shoot type's default blur setting reaches the app, so every preset culls as intended.",
-          "The time-left estimate is steadier, and the slowest step shows as an hourglass on its card.",
-          "Animals are named (cow, horse, bird and so on) instead of all being called vehicles.",
-          "Lead room follows the direction of the pan, and the keeper order is consistent.",
-          "Six-letter personalised plates are read correctly.",
-          "Identifications with a number or plate come first, and a livery with no number shows its words.",
-          "A pan stays one moment however far the car travels, even through frames the detector missed, and no longer swallows a static shot framed elsewhere.",
-          "Frames with no subject but pan streaks are judged as pans.",
-          "Re-scoring re-reads the pixels, so a stale pan rating really is replaced.",
-          "A pan is rated by its cap rather than its sharpest detail, and a re-score agrees with the scan.",
-          "The Close button in the viewer sits at the top right of the side panel.",
-          "A frame whose own crop looks soft no longer wins the burst.",
-          "The Review toolbar is one row of controls at one height.",
-          "A patch with no detail is reported as unmeasured, not as perfectly sharp.",
-          "Race numbers keep the model's confidence, and the number in the car's side window is read.",
-          "A driver name on the car can correct a misread number."
+          "Keep opt-in NIMA out of install-everything.",
+          "Detect birds and other animals as subjects in every preset.",
+          "Rate subject-less frames on their in-focus area so detail shots are not blurred.",
+          "Continuous top of the blur-to-rating map; sharper subject breaks rating ties.",
+          "A frame whose framing changed stands alone instead of merging into the previous moment.",
+          "App vehicle reading matches the benchmark: no repeat penalty on first ask, entry-list numbers trusted, 8k Ollama context.",
+          "Top-3 ranks skip rejected frames and NaN ratings, shared rank badge on grid and filmstrip, keyboard blur-strictness control.",
+          "Portrait picks use the softer eye and never a shut face, subject-less frames take directional edge blur, profile-aware readiness.",
+          "Filters apply inside burst stacks, selection never jumps, burst keyboard model, P sets the keeper, per-album view prefs, virtualised stacks, album-only settings.",
+          "Post-merge.",
+          "Rank framing after size and give exposure and smiles margins.",
+          "Let the blendshape mesh only confirm a closed eye, never invent one.",
+          "Preset blur default reaches the app, deliver-most culls real blur, dark_ok in the preset policy; add wiring review.",
+          "Bottleneck becomes an hourglass in the card corner, steadier time-left estimate (median agreement, smoothed readout), blind-run pick export.",
+          "Name COCO animals (cow, horse, bird, ...) instead of calling every one a vehicle.",
+          "Lead room from the pan axis, and a total keeper order.",
+          "Keep six-letter personalised plates the bench already reads.",
+          "Rows with a number or plate come first, and a livery with no number shows its words.",
+          "A pan is one moment however far the car travels, and a pan that only keeps part of the car sharp is capped by its weakest quarter.",
+          "A subject-less frame with pan streaks is judged like a pan, with a diagnostic example.",
+          "Re-read pixels and rate subject-less frames, so a re-score actually replaces a stale pan rating.",
+          "A pan is rated by its cap, not by its sharpest detail; the scan and a re-score agree.",
+          "A pan stays one moment through the frames the detector missed.",
+          "A pan no longer swallows a static moment framed elsewhere.",
+          "The Close button sits at the top right of the side panel.",
+          "Read focus points only for the frames the detector missed.",
+          "The crop's tile score must not overrule the edge census.",
+          "The camera's focus area may only lower a subject's score.",
+          "A frame whose own crop reads soft does not keep the burst.",
+          "One toolbar row with controls the same height.",
+          "A featureless patch is unmeasured, not perfectly sharp.",
+          "Keep the model's number confidence and read the official window number.",
+          "Let a driver name on the car correct a misread number."
         ]
       }
     ]
@@ -106,16 +111,7 @@
       {
         "title": "New",
         "items": [
-          "Use several vision servers at once, local or cloud. Conrod sends each crop to whichever is least busy, round-robin or at random, and moves on if one fails.",
-          "A model benchmark in Settings lets you compare vision models on your own sharp photos.",
-          "Identify one frame from Review without storing the result.",
-          "An Includes people option for motorsport shoots, with a face and eye pass for existing albums. Review adapts to portrait, motorsport and mixed albums."
-        ]
-      },
-      {
-        "title": "Improved",
-        "items": [
-          "Album covers follow the shoot type, with vehicle crops for motorsport."
+          "VLM servers, benchmark, people split, updater fixes."
         ]
       }
     ]
@@ -126,15 +122,9 @@
     "highlights": "Safer update and metadata handling, and one version number across the app.",
     "sections": [
       {
-        "title": "Improved",
-        "items": [
-          "One version number across the app and its installer."
-        ]
-      },
-      {
         "title": "Fixed",
         "items": [
-          "Text read from photos can no longer be used to tamper with the metadata tool, and the update check fails safe."
+          "Audit fixes, single-source version, release script."
         ]
       }
     ]
@@ -147,22 +137,16 @@
       {
         "title": "New",
         "items": [
-          "Zoom and pan work like Lightroom's inspection controls.",
-          "Conrod finds the models installed on your Ollama server for you.",
-          "Settings has a side panel with your version, library numbers and update status."
-        ]
-      },
-      {
-        "title": "Improved",
-        "items": [
-          "The zoom view uses the full-resolution preview and jumps straight to the subject.",
-          "Checking for updates no longer fails when one source is unavailable."
+          "Decode full-resolution preview and zoom directly to subject.",
+          "Overhaul zoom and pan with Lightroom photographic inspection controls.",
+          "Resilient update check with atom fallback, settings makeover, and ollama model discovery.",
+          "Add right-hand stats, version, and updater sidebar dashboard."
         ]
       },
       {
         "title": "Fixed",
         "items": [
-          "Settings is split into category tabs, and dropdown text is no longer cut off."
+          "Add category tabs to settings and fix dropdown text clipping."
         ]
       }
     ]
@@ -175,27 +159,16 @@
       {
         "title": "New",
         "items": [
-          "Several vehicles can be edited at once.",
-          "Review and Known vehicles are rebuilt: a compact table of what was found, with crop thumbnails, plates you can edit in place, and a way to merge two entries for the same car.",
-          "One main button always offers the next step in the flow, with the other steps in a menu beside it.",
-          "Settings for a single shoot, including a switch for reading race numbers.",
-          "A Manage shoot menu clears ratings, identifications or detections, asking first.",
-          "The inspector panel can be resized and remembers its width."
-        ]
-      },
-      {
-        "title": "Improved",
-        "items": [
-          "Capture times include fractions of a second, so frames from fast bursts keep their true order.",
-          "The status light simply says Ready or Error, and the Cars filter is now called Vehicles."
+          "Add ML-eligible filtering, EXIF subsecond extraction, and bulk edit support.",
+          "Overhaul Review and Known Vehicles UI with DetectionsTable and vehicle merge.",
+          "Split primary action button, shoot settings, resizable inspector, and release v1.0.0-beta.4."
         ]
       },
       {
         "title": "Fixed",
         "items": [
-          "Star ratings and colour labels in the XMP files use the spelling Lightroom expects.",
-          "Panned shots stay together as one burst when the camera angle changes during the pan.",
-          "Race numbers are no longer invented from licence plates, calendar years or a vision model's guess."
+          "Fix panned shutter burst grouping across angle changes and unculled album threshold.",
+          "Eliminate hallucinated race numbers from plates, calendar years, and VLM guesses."
         ]
       }
     ]
@@ -204,14 +177,7 @@
     "version": "1.0.0-beta.3",
     "date": "2026-09-21",
     "highlights": "A shorter path from import to a finished cull.",
-    "sections": [
-      {
-        "title": "Improved",
-        "items": [
-          "Reviewing an album takes fewer steps from import to a finished cull."
-        ]
-      }
-    ]
+    "sections": []
   },
   {
     "version": "1.0.0-beta.2",
@@ -219,9 +185,9 @@
     "highlights": "A clearer view of a scan while it runs.",
     "sections": [
       {
-        "title": "Improved",
+        "title": "New",
         "items": [
-          "A clearer view of what a scan is doing while it runs, and a tidier review screen."
+          "Improve scan monitoring and review."
         ]
       }
     ]
@@ -238,12 +204,6 @@
           "Everything is rebuilt natively: reading RAW files, finding cars, rating sharpness, grouping bursts, reading plates and race numbers, and writing XMP files for Lightroom.",
           "Updates arrive through the app itself."
         ]
-      },
-      {
-        "title": "Fixed",
-        "items": [
-          "Bulk actions in Review work again."
-        ]
       }
     ]
   },
@@ -251,97 +211,42 @@
     "version": "0.8.0",
     "date": "2026-09-06",
     "highlights": "Faster capture-time reading, and vision work can spread over several machines.",
-    "sections": [
-      {
-        "title": "New",
-        "items": [
-          "Vision work can be spread across more than one computer running Ollama, so a spare GPU on your network helps."
-        ]
-      },
-      {
-        "title": "Improved",
-        "items": [
-          "Capture times are read much faster, especially from external drives and cards."
-        ]
-      }
-    ]
+    "sections": []
   },
   {
     "version": "0.7.0",
     "date": "2026-09-05",
     "highlights": "Big shoots open in seconds; thumbnails and details fill in behind.",
-    "sections": [
-      {
-        "title": "Improved",
-        "items": [
-          "A new album opens in about a second, with thumbnails and details filling in behind it, instead of making you wait while everything is read first."
-        ]
-      }
-    ]
+    "sections": []
   },
   {
     "version": "0.6.4",
     "date": "2026-09-05",
     "highlights": "Updates install even when last time's folder will not go away.",
-    "sections": [
-      {
-        "title": "Fixed",
-        "items": [
-          "Updates install even when a leftover folder from the last update is still in the way."
-        ]
-      }
-    ]
+    "sections": []
   },
   {
     "version": "0.6.3",
     "date": "2026-09-05",
     "highlights": "A watched folder no longer keeps scanning after you delete its album.",
-    "sections": [
-      {
-        "title": "Fixed",
-        "items": [
-          "A watched folder stops scanning when its album is deleted, instead of rescanning forever."
-        ]
-      }
-    ]
+    "sections": []
   },
   {
     "version": "0.6.2",
     "date": "2026-09-05",
     "highlights": "Frames with no vehicle in them are measured again too.",
-    "sections": [
-      {
-        "title": "Fixed",
-        "items": [
-          "Close-ups and frames with no vehicle in them are measured for sharpness again."
-        ]
-      }
-    ]
+    "sections": []
   },
   {
     "version": "0.6.1",
     "date": "2026-09-05",
     "highlights": "Each car is learned once, not once per frame.",
-    "sections": [
-      {
-        "title": "Fixed",
-        "items": [
-          "A car is learned once, not once per frame, so one car no longer ends up with several different model names."
-        ]
-      }
-    ]
+    "sections": []
   },
   {
     "version": "0.6.0",
     "date": "2026-09-05",
     "highlights": "Conrod remembers the plates it has already read.",
-    "sections": [
-      {
-        "title": "New",
-        "items": [
-          "Conrod remembers what each plate turned out to be, so a car it has seen before is not read again (and not read differently)."
-        ]
-      }
-    ]
+    "sections": []
   }
 ]

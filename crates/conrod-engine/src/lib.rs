@@ -27,6 +27,11 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Tests that move process-global state (`CONROD_HOME`, `CONROD_ASSETS_URL`,
+/// the install tracker) take this guard so they run one at a time.
+#[cfg(test)]
+pub(crate) static HOME_LOCK: Mutex<()> = Mutex::new(());
+
 /// Interchangeable model sessions that worker lanes borrow one at a time, so
 /// lanes do not queue behind a single session. Every item is loaded from the
 /// same files and keeps no state between calls.

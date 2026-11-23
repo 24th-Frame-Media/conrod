@@ -61,7 +61,7 @@
       "highlights": "A much smarter cull: sharpness measured on the subject itself, better pans and bursts, top-three picks, undo, a light theme and live identification."
     },
     "Unreleased": {
-      "highlights": "Culling works with the camera's own focus point, Conrod talks to Lightroom, ingest is one live screen, and a crash no longer loses your place.",
+      "highlights": "Culling works with the camera's own focus point, Conrod talks to Lightroom, ingest is one live screen, a crash no longer loses your place, and model downloads are real: verified, resumable, and honest about what is on your PC.",
       "add": [
         {
           "section": "New",
@@ -79,6 +79,22 @@
     }
   },
   "commits": {
+    "0d71bfe": "skip",
+    "53cd054": "skip",
+    "ae96d9e": {
+      "section": "Fixed",
+      "text": "Model downloads check free disk space before they start and say plainly when there is not enough. A download that fails or is interrupted keeps its reason and its partial file so the next try resumes, and a model with no published source yet reads not available yet instead of offering a Download that cannot work."
+    },
+    "b00c2f3": [
+      {
+        "section": "Fixed",
+        "text": "The AI settings card tells the truth about what is on your PC the moment you open it: an installed decision model shows its switch even while it is turned off, the built-in vision model only reads as installed after its files download and pass their checksum, and a failed install keeps its plain reason with a Retry."
+      },
+      {
+        "section": "New",
+        "text": "The built-in vision model (Qwen3-VL 8B, the winner of our November benchmark) downloads from Settings with real gigabyte progress, and Download fetches just the model you clicked instead of everything."
+      }
+    ],
     "56e94f7": {
       "section": "Fixed",
       "text": "Your own picks can't be overwritten any more. If you pick, star or reject a frame in Review while Conrod is still writing metadata for that album, your choice stays and that frame is left out of that write instead of being marked as a reject."

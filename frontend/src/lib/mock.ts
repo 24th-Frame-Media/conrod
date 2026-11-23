@@ -18,13 +18,73 @@ const params = () => new URLSearchParams(location.search);
  *  the key/host with a plain reason, so the Test button's failure state can be
  *  screenshotted without an interactive click (pair with `&aitest=1`). */
 const keyFails = () => params().get('aikeytest') === 'fail';
-/** Dev QA: `&aidl=installed` seeds the built-in models as present in the
- *  manifest, so an installed, active model shows its switch on instead of a
- *  fake Download button. install_models / install_decider flip these flags, so
- *  a real Download can be watched polling the health list until it appears. */
-const seededInstalled = params().get('aidl') === 'installed';
-let visionInstalled = seededInstalled;
-let decisionInstalled = seededInstalled || mockDeciderStatus().state === 'ready';
+/** Dev QA: `&aidl=installed|downloading|failed|unavailable` seeds the built-in
+ *  rows' four states. install_models / install_decider run a simulated install
+ *  with real byte totals (the engine's own asset sizes), so a Download is only
+ *  "done" once the row's files are marked present — never an instant flip. */
+const aidl = params().get('aidl');
+let visionInstalled = aidl === 'installed';
+let decisionInstalled = aidl === 'installed' || mockDeciderStatus().state === 'ready';
+
+/** The engine's real pinned sizes (scripts/assets.json), so mock progress is honest. */
+const VISION_TOTAL = 5027784800 + 1159029824;
+const DECIDER_TOTAL = 5157837472 + 672423040 + 38090643;
+type MockInstall = { id: string; done: number; total: number; error: string | null };
+let mockInstall: MockInstall | null = null;
+let installTimer: number | null = null;
+let dlSeedStarted = false;
+
+function startMockInstall(id: 'builtin-vision' | 'decider', opts: { fail?: boolean; slow?: boolean } = {}) {
+  if (installTimer != null) window.clearInterval(installTimer);
+  const total = id === 'builtin-vision' ? VISION_TOTAL : DECIDER_TOTAL;
+  const failAt = opts.fail ? Math.round(total * 0.3) : null;
+  mockInstall = { id, done: 0, total, error: null };
+  const step = Math.round(total / (opts.slow ? 400 : 40));
+  installTimer = window.setInterval(() => {
+    if (!mockInstall) return;
+    mockInstall.done = Math.min(total, mockInstall.done + step);
+    if (failAt != null && mockInstall.done >= failAt) {
+      mockInstall.error = `Not enough disk space for the model: it needs ${(total / 2 ** 30).toFixed(1)} GB free, but only 66 MB is left. Free some space and try again.`;
+      if (installTimer != null) window.clearInterval(installTimer);
+      installTimer = null;
+      return;
+    }
+    if (mockInstall.done >= total) {
+      if (id === 'builtin-vision') visionInstalled = true; else decisionInstalled = true;
+      mockInstall = null;
+      if (installTimer != null) window.clearInterval(installTimer);
+      installTimer = null;
+    }
+  }, 250);
+}
+
+/** The local model rows, shaped exactly like the engine's `models_status`. */
+function localRows() {
+  const deciderReady = decisionInstalled && mockDeciderStatus().state === 'ready';
+  return [
+    { id: 'detector', name: 'Detector', file: 'yolo26m-960.onnx', ready: true, downloaded: true, available: true },
+    { id: 'faces', name: 'Faces', file: 'face_detection_yunet_2023mar.onnx', ready: true, downloaded: true, available: true },
+    { id: 'similarity', name: 'Similarity', file: 'dinov2-small-quantized.onnx', ready: true, downloaded: true, available: true },
+    { id: 'plates', name: 'Plates', file: 'yolo-v9-t-640-license-plates-end2end.onnx', ready: true, downloaded: true, available: true },
+    { id: 'text', name: 'Text (OCR)', file: 'ch_PP-OCRv4_det_infer.onnx', ready: true, downloaded: true, available: true },
+    { id: 'exiftool', name: 'ExifTool', file: 'exiftool', ready: true, downloaded: true, available: true },
+    {
+      id: 'decider', name: 'Decision model', file: 'decider-flash-v1.2-q8_0.gguf',
+      ready: deciderReady, downloaded: decisionInstalled, optional: true, available: true,
+      detail: decisionInstalled ? mockDeciderStatus().message : 'Not installed yet.',
+    },
+    {
+      id: 'builtin-vision', name: 'Vision model (built-in)', file: 'Qwen3VL-8B-Instruct-Q4_K_M.gguf',
+      ready: visionInstalled, downloaded: visionInstalled, optional: true, available: aidl !== 'unavailable',
+      detail: visionInstalled ? 'On this PC.' : aidl === 'unavailable' ? 'Not available yet: no pinned source to download it from.' : 'Not downloaded yet (5.8 GB).',
+    },
+    {
+      id: 'quality', name: 'Quality', file: 'nima-mobilenet-technical.onnx',
+      ready: false, downloaded: false, optional: true, available: false,
+      detail: 'Not available yet: no pinned source to download it from.',
+    },
+  ];
+}
 
 /** `?mock=1&page=ingest` (or `page=scan`) plays a ~80 s ingest of album 3: scan lanes, group, pick, vision, done. `page=identify` plays only the vision phase.
     Tuning: `&speed=4` hurries it, `&at=30` starts 30 s in (scan 0-61, group 61-64, pick 64-67, vision 67-89, done after 90), `&paused` starts it paused, `&frames=` `&cars=` size it, `&theme=light`. */
@@ -156,7 +216,7 @@ function makeDb(): Db {
     ...(servicesForAi() as unknown as Settings),
     // `&aidl=installed` switches the local decision model on, so an installed
     // and active model shows its switch on (the seeded, downloaded state).
-    ...(seededInstalled ? { use_decider: true } : {}),
+    ...(aidl === 'installed' ? { use_decider: true } : {}),
     // Moment + vision wiring the two-zone card writes back to the engine.
     moments_strategy: 'round_robin', moments_vlm_fallback: true, moments_threshold: 0.85,
     vlm_strategy: 'round_robin', vlm_reasoning: false, use_quality_score: true, include_people: true,
@@ -274,6 +334,21 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'watch_status': return out({active: false, jobId: null});
     case 'set_watch': return out(a);
     case 'cover': return out({ path: photo((Number(a.jobId) || 1) - 1) });
+    case 'models_status': {
+      // `&aidl=downloading` opens mid-install; `&aidl=failed` opens on a
+      // plain disk-space refusal (the state a real failed install leaves).
+      if (!dlSeedStarted) {
+        dlSeedStarted = true;
+        if (aidl === 'downloading') startMockInstall('builtin-vision', { slow: true });
+        if (aidl === 'failed') {
+          mockInstall = {
+            id: 'builtin-vision', done: Math.round(VISION_TOTAL * 0.3), total: VISION_TOTAL,
+            error: 'Not enough disk space for the model: it needs 5.8 GB free, but only 66 MB is left. Free some space and try again.',
+          };
+        }
+      }
+      return out({ rows: localRows(), install: mockInstall });
+    }
     case 'health': {
       // `&health=real` seeds the same row shape the engine sends (one row per
       // VLM service with file:'vlm', plus the opt-in models) so the activity
@@ -283,21 +358,30 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
         { name: 'Text (OCR)', file: 'ocr', ready: true },
         { id: 'vlm-opencode', name: 'OpenCode (pay-as-you-go credits)', file: 'vlm', ready: true, detail: 'glm-5.3-flash available' },
         { id: 'vlm-local', name: 'in_process', file: 'vlm', ready: false, detail: 'Ollama unavailable' },
-        { name: 'Decision model', file: 'decider-int8.onnx', ready: true, optional: true, detail: 'Ready' },
-        { name: 'Quality', file: 'quality.onnx', ready: false, optional: true, detail: 'Opt-in sharpness tiebreak' },
+        { id: 'decider', name: 'Decision model', file: 'decider-flash-v1.2-q8_0.gguf', ready: true, downloaded: true, optional: true, detail: 'Ready' },
+        { id: 'quality', name: 'Quality', file: 'nima-mobilenet-technical.onnx', ready: false, downloaded: false, optional: true, available: false, detail: 'Not available yet' },
       ]);
-      // The built-in card reads this real manifest list. `install_models` /
-      // `install_decider` flip the flags, so a Download is only "done" once a
-      // row actually shows up here as ready.
-      return out([
-        { name: 'Detector', file: 'det.onnx', ready: true },
-        { name: 'Vision model', file: 'qwen', ready: visionInstalled, detail: visionInstalled ? 'Ready' : 'Ollama is not running' },
-        { name: 'Decision model', file: 'decider-int8.onnx', ready: decisionInstalled, optional: true, detail: decisionInstalled ? 'Ready' : mockDeciderStatus().message },
-      ]);
+      // Local rows plus one row per configured VLM service (file:'vlm'). The
+      // built-in card reads models_status, never this list.
+      const services = (db.settings.vlm_services ?? []) as unknown as { id?: string; provider?: string; enabled?: boolean; model?: string }[];
+      const serviceRows = services.filter((s) => s.enabled).map((s) => ({
+        id: s.id ?? `vlm-${s.provider}`, name: `${s.provider ?? 'vision'} (${s.model ?? 'model'})`, file: 'vlm', ready: true, detail: `${s.model ?? ''} available`,
+      }));
+      return out([...localRows(), ...serviceRows]);
     }
     case 'decider_status': return out(mockDeciderStatus());
-    case 'install_decider': decisionInstalled = true; return out({operation: 'Installing decision model'});
-    case 'install_models': visionInstalled = true; return out({operation: 'Installing models'});
+    case 'install_decider':
+      startMockInstall('decider', { fail: aidl === 'failed' });
+      return out({ operation: 'Installing decision model' });
+    case 'install_models': {
+      const ids = (a.ids as string[]) ?? [];
+      // Exactly the clicked model's assets; the Setup card's empty list means
+      // everything missing (here: the built-in vision pair).
+      if (!ids.length || ids.includes('Qwen3VL-8B-Instruct-Q4_K_M.gguf')) {
+        startMockInstall('builtin-vision', { fail: aidl === 'failed' });
+      }
+      return out({ operation: 'Installing models' });
+    }
     case 'cache_info': return out({total: {files: 64, bytes: 3200000}});
     case 'check_update': return out({ok: true, current: '0.0.0-mock', latest: '0.0.1-mock', newer: true, installable: true});
     case 'ollama_models': return out(keyFails()
@@ -416,12 +500,7 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       // `&devserver=up|down|reconnecting` forces the live-reload chip's state
       // (connected / bundled-UI fallback / retrying) for QA screenshots.
       return out({
-        jobs: db.jobs, settings: db.settings, status: status(db), models: [
-          { name: 'Vehicle detector', file: 'yolo.onnx', ready: true },
-          { name: 'Plate reader', file: 'plates.onnx', ready: true },
-          { name: 'Vision model', file: 'qwen', ready: visionInstalled },
-          { name: 'Decision model', file: 'decider-int8.onnx', ready: decisionInstalled, optional: true },
-        ],
+        jobs: db.jobs, settings: db.settings, status: status(db), models: localRows(),
         dev: params().has('dev'), devUrl: 'http://localhost:1420', devServer: params().has('dev') && params().get('devserver') !== 'down',
         devHome: '~/.conrod-dev',
       } satisfies Bootstrap);

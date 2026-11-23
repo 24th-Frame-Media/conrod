@@ -8,7 +8,7 @@ import {
 import {
   ADD_ORDER, BUILTIN, IN_TOK, OUT_TOK, SERVICE_TYPES, SHARING, THINK_HINT,
   addService, builtinRowStates, cardsFromDraft, checkOutcome, costLine, decisionCandidates, defaultThinking,
-  fmtUsd, helperStatus, isPicked, makeCard, modelLine, momentsStatus, patchService, photoCost, poolCount,
+  downloadProgress, fmtUsd, helperStatus, isPicked, makeCard, modelLine, momentsStatus, patchService, photoCost, poolCount,
   providerToType, removeService, servingFor, setCapModel, setSharing, sharingValue, summaryText,
   visionCandidates,
 } from '../src/lib/aiCard.mjs';
@@ -269,7 +269,7 @@ test('helper serving: non-AI helpers use bundled models, AI helpers use the pool
 test('helper status: ready / needs a key / no model / off, no cloud wording', () => {
   assert.equal(helperStatus(false, [{ id: 'x', ready: true }]).text, 'Off');
   assert.equal(helperStatus(true, [{ id: 'x', ready: true }]).text, 'Ready');
-  assert.equal(helperStatus(true, [{ id: 'x', ready: false }]).text, 'Needs a key');
+  assert.equal(helperStatus(true, [{ id: 'x', ready: false }]).text, 'Not installed');
   assert.equal(helperStatus(true, []).text, 'No model');
 });
 
@@ -420,29 +420,58 @@ test('a real check failure is surfaced; only a clean reply is ready', () => {
 });
 
 /* ── built-in rows read the real manifest + use_decider ─────────────────── */
-test('built-in rows: downloaded/on come from the manifest and use_decider, never invented flags', () => {
+test('built-in rows: downloaded is disk truth, on follows the setting, matched by row id', () => {
   const missing = builtinRowStates([
-    { name: 'Detector', file: 'det.onnx', ready: true },
-    { name: 'Vision model', file: 'qwen', ready: false },
-    { name: 'Decision model', file: 'decider-int8.onnx', ready: false, optional: true },
+    { id: 'detector', name: 'Detector', file: 'yolo26m-960.onnx', ready: true, downloaded: true },
+    { id: 'builtin-vision', name: 'Vision model (built-in)', file: 'Qwen3VL-8B-Instruct-Q4_K_M.gguf', ready: false, downloaded: false },
+    { id: 'decider', name: 'Decision model', file: 'decider-flash-v1.2-q8_0.gguf', ready: false, downloaded: false, optional: true },
   ], false);
-  assert.deepEqual(missing['qwen3-vl:8b'], { downloaded: false, on: false }, 'qwen3-vl:8b reflects the manifest');
-  assert.deepEqual(missing['pplx-decider-local'], { downloaded: false, on: false });
+  assert.deepEqual(missing['qwen3-vl:8b'], { downloaded: false, on: false, available: true });
+  assert.deepEqual(missing['pplx-decider-local'], { downloaded: false, on: false, available: true });
 
-  // Installed AND active: the switch is on, not a "not downloaded" Download button.
-  const installed = builtinRowStates([
-    { name: 'Vision model', file: 'qwen', ready: true },
-    { name: 'Decision model', file: 'decider-int8.onnx', ready: true, optional: true },
+  // The decider IS on disk but switched off: ready=false, downloaded=true.
+  // The row must show its switch (off), never a "not downloaded" Download.
+  const installedOff = builtinRowStates([
+    { id: 'builtin-vision', name: 'Vision model (built-in)', ready: true, downloaded: true },
+    { id: 'decider', name: 'Decision model', ready: false, downloaded: true, optional: true },
+  ], false);
+  assert.deepEqual(installedOff['pplx-decider-local'], { downloaded: true, on: false, available: true });
+  assert.deepEqual(installedOff['qwen3-vl:8b'], { downloaded: true, on: true, available: true });
+
+  // Installed AND active: the switch is on.
+  const installedOn = builtinRowStates([
+    { id: 'builtin-vision', ready: true, downloaded: true },
+    { id: 'decider', ready: true, downloaded: true, optional: true },
   ], true);
-  assert.deepEqual(installed['qwen3-vl:8b'], { downloaded: true, on: true });
-  assert.deepEqual(installed['pplx-decider-local'], { downloaded: true, on: true });
-
-  // Installed but use_decider off: still a switch (downloaded), just off.
-  const off = builtinRowStates([
-    { name: 'Vision model', ready: true }, { name: 'Decision model', ready: true },
-  ], false);
-  assert.deepEqual(off['pplx-decider-local'], { downloaded: true, on: false });
+  assert.deepEqual(installedOn['pplx-decider-local'], { downloaded: true, on: true, available: true });
   assert.equal(builtinRowStates([], false)['qwen3-vl:8b'].downloaded, false);
+});
+
+test('a cloud "Vision model" health row is never the built-in vision model', () => {
+  // The exact lie from the field: health's service row (file:'vlm', ready:true
+  // because vision is disabled) made qwen3-vl:8b read as installed.
+  const rows = [
+    { id: 'vlm-opencode', name: 'Vision model', file: 'vlm', ready: true, detail: 'Disabled in settings' },
+    { id: 'vlm-local', name: 'Ollama (localhost)', file: 'vlm', ready: true },
+    { name: 'Vision model', file: 'vlm', ready: true },
+  ];
+  assert.equal(builtinRowStates(rows, false)['qwen3-vl:8b'].downloaded, false);
+  assert.equal(builtinRowStates(rows, false)['pplx-decider-local'].downloaded, false);
+  // With the real local row present, only IT decides the state.
+  const withLocal = [...rows, { id: 'builtin-vision', ready: false, downloaded: false }];
+  assert.equal(builtinRowStates(withLocal, false)['qwen3-vl:8b'].downloaded, false);
+});
+
+test('legacy rows without ids still match locally, and unavailable is honest', () => {
+  const legacy = builtinRowStates([
+    { name: 'Decision model', file: 'decider-flash-v1.2-q8_0.gguf', ready: true },
+  ], true);
+  assert.equal(legacy['pplx-decider-local'].downloaded, true);
+  // No pinned source: the row says not available, with no Download to offer.
+  const na = builtinRowStates([
+    { id: 'builtin-vision', ready: false, downloaded: false, available: false },
+  ], false);
+  assert.deepEqual(na['qwen3-vl:8b'], { downloaded: false, on: false, available: false });
 });
 
 /* ── "None — skip" is excluded from cost and pool counts ────────────────── */
@@ -466,21 +495,36 @@ test('"None — skip" is never billed or counted in the pool or cost', () => {
 });
 
 /* ── a download completes only when the model appears in the manifest ────── */
-test('a download completes only when the model appears in the real manifest', () => {
-  // The card polls health/onModelsChanged. While no ready row exists, the
-  // built-in row must stay in its running/Download state, not flip to a switch.
+test('a download completes only when the row flips to downloaded (verified on disk)', () => {
+  // The card polls models_status. While the files are not verified on disk,
+  // the built-in row must stay in its running/Download state.
   const before = [
-    { name: 'Vision model', file: 'qwen', ready: false },
-    { name: 'Decision model', file: 'decider-int8.onnx', ready: false },
+    { id: 'builtin-vision', ready: false, downloaded: false },
+    { id: 'decider', ready: false, downloaded: false },
   ];
   assert.equal(builtinRowStates(before, false)['qwen3-vl:8b'].downloaded, false);
   assert.equal(builtinRowStates(before, false)['pplx-decider-local'].downloaded, false);
-  // Once the installer lands and health reports the row ready, only then does
-  // the row flip to its switch (the real completion condition).
+  // A serving "ready" without downloaded (a cloud row) still never completes it.
+  assert.equal(builtinRowStates([{ id: 'vlm-x', name: 'Vision model', file: 'vlm', ready: true }], false)['qwen3-vl:8b'].downloaded, false);
+  // Once the installer verifies the hashes and the row flips, only then does
+  // the row show its switch (the real completion condition).
   const after = [
-    { name: 'Vision model', file: 'qwen', ready: true },
-    { name: 'Decision model', file: 'decider-int8.onnx', ready: true },
+    { id: 'builtin-vision', ready: true, downloaded: true },
+    { id: 'decider', ready: false, downloaded: true },
   ];
   assert.equal(builtinRowStates(after, true)['qwen3-vl:8b'].downloaded, true);
   assert.equal(builtinRowStates(after, true)['pplx-decider-local'].downloaded, true);
+});
+
+/* ── download progress is real bytes, indeterminate only when unknown ────── */
+test('downloadProgress surfaces real totals and never invents a percent', () => {
+  const p = downloadProgress(1_610_612_736, 6_186_814_624);
+  assert.equal(p.known, true);
+  assert.equal(p.pct, 26);
+  assert.match(p.label, /1\.50 GB of 5\.76 GB · 26%/);
+  assert.deepEqual(downloadProgress(0, 0), { known: false, pct: null, label: 'Downloading…' });
+  assert.equal(downloadProgress(50, 0).known, false);
+  assert.equal(downloadProgress(6_186_814_624, 6_186_814_624).pct, 100);
+  // Over-read (resume accounting) clamps, never exceeds 100.
+  assert.equal(downloadProgress(7e9, 6_186_814_624).pct, 100);
 });

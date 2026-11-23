@@ -886,7 +886,14 @@ impl Desktop {
                 }
                 Ok(Value::Null)
             }
-            Command::InstallModels {} => crate::setup::install_missing(self),
+            Command::InstallModels(a) => {
+                if a.ids.is_empty() {
+                    crate::setup::install_missing(self)
+                } else {
+                    crate::setup::install_ids(self, a.ids)
+                }
+            }
+            Command::ModelsStatus {} => Ok(self.models_status()),
             Command::DeciderStatus {} => Ok(crate::decider::service().status()),
             Command::InstallDecider {} => crate::decider::install_in_background(self),
             Command::SaveSettings(updates) => self.save_settings(&updates),
@@ -1110,17 +1117,20 @@ impl Desktop {
         let mut rows = crate::setup::rows();
         if let Some(list) = rows.as_array_mut() {
             list.push(crate::decider::service().model_row());
+            // The built-in vision model: disk truth for its pinned GGUF pair.
+            list.push(crate::setup::vision_row());
             // Status only: the quality model is opt-in, so it is never part of
             // "install everything", but Settings can still say whether it is here.
-            list.push(json!({
-                "name": "Quality",
-                "file": conrod_core::models::QUALITY,
-                "ready": conrod_core::models::find(conrod_core::models::QUALITY).is_some(),
-                "optional": true,
-                "detail": "Opt-in sharpness tiebreak",
-            }));
+            list.push(crate::setup::quality_row());
         }
         rows
+    }
+
+    /// The AI card's live re-check: every local model row re-read from disk
+    /// right now, plus the install in flight (real bytes, or its plain failure).
+    /// Never a cached snapshot, and never a cloud service row.
+    pub fn models_status(&self) -> Value {
+        json!({"rows": self.models(), "install": crate::setup::install_progress()})
     }
 
     /// The worker count of every pool, its cap and whether a change applies

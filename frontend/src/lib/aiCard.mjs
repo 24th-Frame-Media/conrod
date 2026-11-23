@@ -425,14 +425,26 @@ export const ADD_DESC = {
 };
 export const THINK_HINT = 'Models reason step by step before answering. Off keeps reads fast and cheap.';
 
-/** The always-present built-in card: Conrod's own bundled models on this PC. */
+/** The always-present built-in card: Conrod's own bundled models on this PC.
+ *  `assets` names the manifest files a Download installs (exactly those, never
+ *  the whole set); the decision model has its own engine installer instead. */
 export const BUILTIN = {
   name: 'Built-in models (This PC)', tag: 'Own PC',
   note: 'Ready on this PC. Nothing is uploaded.',
   models: [
-    { id: 'qwen3-vl:8b', role: 'vision', group: 'Reads photos', variants: ['q4_K_M', 'q8_0'], on: true },
-    { id: 'pplx-decider-local', role: 'decisions', group: 'Makes decisions', dl: '~5 GB', on: false },
+    {
+      id: 'qwen3-vl:8b', role: 'vision', group: 'Reads photos', variants: ['q4_K_M', 'q8_0'], on: true,
+      dl: '~6 GB', assets: ['Qwen3VL-8B-Instruct-Q4_K_M.gguf', 'mmproj-Qwen3VL-8B-Instruct-F16.gguf'],
+    },
+    { id: 'pplx-decider-local', role: 'decisions', group: 'Makes decisions', dl: '~5 GB', on: false, assets: null },
   ],
+};
+
+/** The engine row id each built-in card row reads (never a fuzzy name match:
+ *  a cloud "Vision model" health row is NOT the built-in vision model). */
+export const BUILTIN_ROW_ID = {
+  'qwen3-vl:8b': 'builtin-vision',
+  'pplx-decider-local': 'decider',
 };
 
 /** One global "How work is shared" control. Its value is the engine's
@@ -682,7 +694,7 @@ export function modelLine(list) {
 export function helperStatus(on, list) {
   if (!on) return { text: 'Off', cls: 'off', dot: 'off' };
   if (list.some((x) => x.ready)) return { text: 'Ready', cls: '', dot: 'ok' };
-  if (list.length) return { text: 'Needs a key', cls: 'locked', dot: 'amber' };
+  if (list.length) return { text: 'Not installed', cls: 'locked', dot: 'amber' };
   return { text: 'No model', cls: 'off', dot: 'off' };
 }
 
@@ -781,31 +793,59 @@ export function checkOutcome(res, err) {
 }
 
 /* ── built-in rows: the engine's model manifest, not invented flags ─────────
-   The "Built-in models (This PC)" card used to seed each row from a hardcoded
-   `on`/`dl` flag, so a model that was actually installed and active still
-   showed "not downloaded" with a Download button. These rows now read the
-   app's real model manifest/status list (ModelInfo[]: name, file, ready) plus
-   the real `use_decider` setting. `momentsStatus` stays the one source of truth
-   for who is serving the moments job. */
+   Each row reads its OWN engine row by stable id (`builtin-vision`, `decider`).
+   `downloaded` is disk truth (the verified files exist), separate from `ready`
+   (serving: the decider is downloaded but switched off, so ready=false while
+   downloaded=true). A cloud service's "Vision model" health row (file:'vlm')
+   can never stand in for the built-in model. `available:false` means no pinned
+   source exists yet: the row says "not available yet", with no Download. */
 const BUILTIN_MATCH = {
   'qwen3-vl:8b': ['vision', 'qwen'],
   'pplx-decider-local': ['decision', 'decider'],
 };
 export function builtinRowStates(models = [], useDecider = false) {
   const rows = Array.isArray(models) ? models : [];
-  const readyFor = (needles) => {
-    const hit = rows.find((m) => {
-      const name = String((m && m.name) || '').toLowerCase();
-      const file = String((m && m.file) || '').toLowerCase();
+  const rowFor = (id) => {
+    const want = BUILTIN_ROW_ID[id];
+    // Preferred: the engine's stable row id.
+    const byId = rows.find((m) => m && m.id === want);
+    if (byId) return byId;
+    // Legacy rows (no id): match the local model row by name/file, but NEVER a
+    // cloud service row (file:'vlm') or a service-labelled health row.
+    const needles = BUILTIN_MATCH[id];
+    return rows.find((m) => {
+      if (!m || m.id || String(m.file || '') === 'vlm') return false;
+      const name = String(m.name || '').toLowerCase();
+      const file = String(m.file || '').toLowerCase();
       return needles.some((n) => name.includes(n) || file.includes(n));
     });
-    return Boolean(hit && hit.ready);
   };
-  const vision = readyFor(BUILTIN_MATCH['qwen3-vl:8b']);
-  const decision = readyFor(BUILTIN_MATCH['pplx-decider-local']);
+  const stateOf = (id) => {
+    const row = rowFor(id);
+    const downloaded = Boolean(row && (row.downloaded ?? row.ready));
+    const available = !row || row.available !== false;
+    return { downloaded, available };
+  };
+  const vision = stateOf('qwen3-vl:8b');
+  const decision = stateOf('pplx-decider-local');
   return {
-    'qwen3-vl:8b': { downloaded: vision, on: vision },
-    'pplx-decider-local': { downloaded: decision, on: decision && Boolean(useDecider) },
+    'qwen3-vl:8b': { downloaded: vision.downloaded, on: vision.downloaded, available: vision.available },
+    'pplx-decider-local': {
+      downloaded: decision.downloaded,
+      on: decision.downloaded && Boolean(useDecider),
+      available: decision.available,
+    },
   };
+}
+
+/** Honest download progress from the engine's real byte counts. `total` of 0
+ *  (or missing) is truly unknown: an indeterminate bar, never a fake percent. */
+export function downloadProgress(done, total) {
+  const d = Number(done) || 0;
+  const t = Number(total) || 0;
+  const gb = (b) => (b / 2 ** 30).toFixed(b < 10 * 2 ** 30 ? 2 : 1);
+  if (t <= 0) return { known: false, pct: null, label: 'Downloading…' };
+  const pct = Math.max(0, Math.min(100, Math.round((d / t) * 100)));
+  return { known: true, pct, label: `${gb(d)} GB of ${gb(t)} GB · ${pct}%` };
 }
 
