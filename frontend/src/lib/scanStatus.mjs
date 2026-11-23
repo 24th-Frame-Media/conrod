@@ -3,8 +3,10 @@
 // record. Pure, so node --test can pin the precedence without a browser.
 //
 // The rule: a live snapshot is trusted only for the album the engine calls
-// active, and only when its event arrived after the hydration read (otherwise
-// the older read would be rendered even though a newer event is in hand).
+// active, and only when it wins the ordering guard over the hydration read
+// (otherwise an older read would be rendered even though a newer event is in
+// hand). The guard lives in snapshotOrder.mjs, shared by every run stream.
+import { orderWins } from './snapshotOrder.mjs';
 
 const TERMINAL = new Set(['done', 'done_errors', 'stopped', 'error']);
 
@@ -27,15 +29,26 @@ export function stateFromJob(job, progress = null) {
  * counts for the summary card.
  */
 export function scanView({ job = null, live = null, hydrate = null, activeJob = null } = {}) {
-  const reported = hydrate?.status ?? null;
-  const reportedAt = hydrate?.at ?? 0;
+  // A hydration for a DIFFERENT album is ignored (audit P2-7: album switch must
+  // not briefly draw the previous album's counts).
+  const hydrateMine = hydrate && (hydrate.jobId == null || hydrate.jobId === job?.id) ? hydrate : null;
+  const reported = hydrateMine?.status ?? null;
+  const reportedAt = hydrateMine?.at ?? 0;
   const liveProgress = live?.progress ?? null;
+  // Live event vs a slower `scan_status` read: the shared ordering guard. A live
+  // event stamped in the SAME millisecond as the read now wins (was a `>` that
+  // dropped it), and a slow poll can never outrank a newer pushed event.
+  const liveStamp = liveProgress ? { at: live?.at ?? 0, source: 'live' } : null;
+  const reportStamp = reported ? { at: reportedAt, source: 'hydrate' } : null;
   const liveWins = Boolean(liveProgress) && job != null && activeJob != null
-    && job.id === activeJob && (live?.at ?? 0) > reportedAt;
+    && job.id === activeJob && orderWins(reportStamp, liveStamp);
   const progress = liveWins ? liveProgress : reported?.progress ?? null;
   const source = liveWins ? 'live' : reported?.progress ? 'status' : 'job';
   let state;
-  if (job != null && activeJob === job.id) state = 'running';
+  // A reported terminal state wins even while the engine still lingers the
+  // active slot (audit P3-6): a reported error/done is never masked as running.
+  if (reported?.state && TERMINAL.has(reported.state) && (activeJob === job?.id || activeJob == null)) state = reported.state;
+  else if (job != null && activeJob === job.id) state = 'running';
   else if (reported?.state && reported.state !== 'running') state = reported.state;
   else state = stateFromJob(job, progress);
   // A `running` snapshot that is no longer the active album is a run that

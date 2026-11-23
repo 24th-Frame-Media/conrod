@@ -20,6 +20,6 @@ export type ScanView = {
 export function scanView(input?: {
   job?: Job | null;
   live?: { progress: ScanProgress; at: number } | null;
-  hydrate?: { status: ScanStatus; at: number } | null;
+  hydrate?: { status: ScanStatus; at: number; jobId?: number | null } | null;
   activeJob?: number | null;
 }): ScanView;
