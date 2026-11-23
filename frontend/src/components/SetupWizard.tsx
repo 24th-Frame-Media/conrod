@@ -183,7 +183,7 @@ export function SetupWizard({ visible, settings, onSaved, onClose, onOpenSetting
               ))}
               <fieldset className="wizard-ask">
                 <legend>What should Conrod read?</legend>
-                <p className="muted wizard-note">Ticked ones come from your shoots. A reader only works where it can: plates come off cars, names off faces.</p>
+                <p className="muted wizard-note">Ticked ones come from your shoots. A reader only works where it can: numbers come off the subjects that show them, names off faces.</p>
                 <div className="wizard-reads">
                   {READ_KEYS.map((key) => {
                     const where = readerApplies(ordered, key, people);
@@ -268,7 +268,7 @@ export function SetupWizard({ visible, settings, onSaved, onClose, onOpenSetting
                 )}
               </div>
               <p className="muted wizard-note">
-                Vision services (the model that reads cars and people) are set up in Settings.{' '}
+                Vision services (the model that reads subjects) are set up in Settings.{' '}
                 <button type="button" className="wizard-link" onClick={() => void save(false, onOpenSettings)} disabled={saving}>Finish and open Settings</button>
               </p>
             </section>

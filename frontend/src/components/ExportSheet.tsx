@@ -83,7 +83,7 @@ export function ExportSheet({ visible, jobId, albumLabel, frames, keepers, dryRu
           <div>
             <b>XMP sidecars next to the originals</b>
             <p className="muted">
-              Ratings, stars, keywords and vehicle details go into an .xmp file beside each photo.
+              Ratings, stars, keywords and subject details go into an .xmp file beside each photo.
               The originals are never moved, renamed or changed.
             </p>
           </div>

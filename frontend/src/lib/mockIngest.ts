@@ -160,15 +160,25 @@ export function startIngestSim(deps: IngestDeps, opts: IngestOptions): IngestSim
     const pick = !afterGroup ? 0 : phase === 'pick' ? (pickT / PICK_S) * total : total;
     const idDone = state === 'done' ? cars : phase === 'vision' || phase === 'done' || phase === 'stopped' ? visionSnap().done : 0;
     const vision = cars > 0;
+    // B1's nine first-class stages. The old single `identify` stage is gone:
+    // OCR → DECISION → VISION, each with its own status word (§2, §6.8).
+    const word = (done: number, tot: number, busy: number) => done >= tot && tot > 0 ? 'done' : busy > 0 || done > 0 ? 'running' : 'pending';
     const stages: PipelineStage[] = (['read', 'detect', 'sharpness', 'faces'] as const).map((id) => {
       const m = STAGE_META[id], done = passed[id];
       const busy = lanes.filter((l) => l.k != null && !l.waiting && stageOfStep(l.step) === id).length;
-      return { id, label: m.label, model: m.model, device: m.device, workers_total: m.workers, workers_busy: Math.min(busy, m.workers), queue_len: 0, done, total, errors: 0, rate_per_s: Math.round(rate * 10) / 10, eta_s: rate > 0.05 && done < total ? (total - done) / rate : null };
+      return { id, label: m.label, model: m.model, device: m.device, workers_total: m.workers, workers_busy: Math.min(busy, m.workers), queue_len: 0, done, total, errors: 0, rate_per_s: Math.round(rate * 10) / 10, eta_s: rate > 0.05 && done < total ? (total - done) / rate : null, status: word(done, total, busy) };
+    });
+    const identifyOn = phase === 'vision' || phase === 'done' || phase === 'stopped';
+    const sub = (id: string, label: string, done: number, tot: number, busy: number, model: string): PipelineStage => ({
+      id, label, model, device: 'ollama', workers_total: VISION_WORKERS, workers_busy: busy, queue_len: 0,
+      done, total: tot, errors: 0, rate_per_s: 0, eta_s: null, status: word(done, tot, busy),
     });
     stages.push(
-      { id: 'group', label: 'Group', model: 'EXIF time + similarity', device: 'CPU', workers_total: 1, workers_busy: phase === 'group' ? 1 : 0, queue_len: 0, done: Math.floor(group), total, errors: 0, rate_per_s: phase === 'group' ? total / GROUP_S : 0, eta_s: phase === 'group' ? GROUP_S - groupT : null },
-      { id: 'pick', label: 'Pick', model: 'keeper ranker', device: 'CPU', workers_total: 1, workers_busy: phase === 'pick' ? 1 : 0, queue_len: 0, done: Math.floor(pick), total, errors: 0, rate_per_s: phase === 'pick' ? total / PICK_S : 0, eta_s: phase === 'pick' ? PICK_S - pickT : null },
-      { id: 'identify', label: 'Identify', model: vision && !opts.visionOff ? `${VISION_MODEL} via Ollama` : '', device: vision ? 'ollama' : '', workers_total: vision ? VISION_WORKERS : 0, workers_busy: phase === 'vision' ? Math.min(VISION_WORKERS, cars - idDone) : 0, queue_len: 0, done: idDone, total: cars, errors: 0, rate_per_s: 0, eta_s: null },
+      sub('identify:ocr', 'Identify · OCR', identifyOn ? cars : 0, cars, 0, 'plate + OCR readers'),
+      sub('identify:decision', 'Identify · Decision', identifyOn ? cars : 0, cars, 0, 'local decision model'),
+      sub('identify:vision', 'Identify · Vision', idDone, cars, phase === 'vision' ? Math.min(VISION_WORKERS, cars - idDone) : 0, vision && !opts.visionOff ? `${VISION_MODEL} via Ollama` : ''),
+      { id: 'group', label: 'Group', model: 'EXIF time + similarity', device: 'CPU', workers_total: 1, workers_busy: phase === 'group' ? 1 : 0, queue_len: 0, done: Math.floor(group), total, errors: 0, rate_per_s: phase === 'group' ? total / GROUP_S : 0, eta_s: phase === 'group' ? GROUP_S - groupT : null, status: word(Math.floor(group), total, phase === 'group' ? 1 : 0) },
+      { id: 'pick', label: 'Pick', model: 'keeper ranker', device: 'CPU', workers_total: 1, workers_busy: phase === 'pick' ? 1 : 0, queue_len: 0, done: Math.floor(pick), total, errors: 0, rate_per_s: phase === 'pick' ? total / PICK_S : 0, eta_s: phase === 'pick' ? PICK_S - pickT : null, status: word(Math.floor(pick), total, phase === 'pick' ? 1 : 0) },
     );
     const open = stages.findIndex((s) => s.done < s.total);
     const headAt = open < 0 ? stages.length - 1 : open, head = stages[headAt];
@@ -186,7 +196,7 @@ export function startIngestSim(deps: IngestDeps, opts: IngestOptions): IngestSim
     };
     const eta = rate > 0.05 ? Math.max(0, total - finished) / rate + GROUP_S + PICK_S : null;
     return {
-      job_id: jobId, state, stage: head.id, stage_index: headAt, stage_count: vision ? 7 : 6, done: head.done, total: head.total, rate_per_s: head.rate_per_s,
+      job_id: jobId, state, stage: head.id, stage_index: headAt, stage_count: 9, done: head.done, total: head.total, rate_per_s: head.rate_per_s,
       eta_s: state === 'running' ? head.eta_s : null, recent: [...recent], found, pipeline: { stages, workers },
       overall: { done: Math.floor(scanFrac * total), total, fraction: state === 'done' ? 1 : scanFrac, rate_per_s: rate, eta_s: state === 'running' ? eta : null, eta_confident: finished >= 8 },
     };

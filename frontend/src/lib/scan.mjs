@@ -1,7 +1,10 @@
 // Pure logic for the scan screen: which stage is the bottleneck, whether an ETA can be trusted, and the words around them.
 
-/** The stages in flow order; the engine's own order is used when it sends something else. */
-export const STAGE_ORDER = ['read', 'detect', 'sharpness', 'faces', 'identify', 'group', 'pick'];
+/** The stages in flow order; the engine's own order is used when it sends something else.
+ *  B1 split the single `identify` stage into three first-class stages, in order
+ *  OCR → DECISION → VISION before group/pick (plan §2). The old id is kept as an
+ *  unknown (rendered gracefully) for snapshots written before the split. */
+export const STAGE_ORDER = ['read', 'detect', 'sharpness', 'faces', 'identify:ocr', 'identify:decision', 'identify:vision', 'group', 'pick'];
 
 /** Stage nodes left to right: known stages by flow order, then any unknown ones as the engine sent them. */
 export function orderStages(stages) {

@@ -310,7 +310,7 @@ export function Known({ run, toast }: { run: Runner; toast: Toaster }) {
                 void run(async () => {
                   const result = await call<{ written: number }>('seed_known');
                   await load();
-                  toast(`Built registry from ${result.written} cars`);
+                  toast(`Built registry from ${result.written} subjects`);
                 })
               }
             >

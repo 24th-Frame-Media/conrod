@@ -5,8 +5,15 @@ import { mockDeciderStatus, startDeciderSim } from './mockDecider';
 import type { ShootStats } from './shot.mjs';
 import { applyOverrides, defaultSummary, overridesOf } from './presetPolicy.mjs';
 import { profileDefaults } from './wizard.mjs';
-import type { Bootstrap, DeciderLive, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, ScanProgress, ScanStatus, Settings, Status, WorkerLimits } from './types';
+import type { Bootstrap, DeciderLive, Detection, Frame, GlobalStats, IdentifyItem, IdentifyLive, IdentifyStage, Job, KnownVehicle, Page, PipelineWorker, ScanProgress, ScanStatus, Settings, Status, WorkerLimits } from './types';
 import * as aiCard from './aiCard.mjs';
+import { nineStages, resolvedSettings, bothLocalSettings, VRAM_SERIAL, VRAM_FITS } from './mockSeeds.mjs';
+
+/** `?mock=1&page=ingest&surface=<state>` paints a static grouped-run snapshot
+ *  (§6.8 mock seeds): sub-nodes, paused, skipped, greyed, serial VRAM, a type
+ *  suggestion, a failed stage, a stalled worker or a live dropdown. */
+const SURFACE_JOB = 3;
+const surfaceName = () => params().get('surface');
 
 export type DevStart = {
   page?: Page; jobId?: number; viewer?: boolean; popover?: boolean;
@@ -221,6 +228,8 @@ function makeDb(): Db {
     moments_strategy: 'round_robin', moments_vlm_fallback: true, moments_threshold: 0.85,
     vlm_strategy: 'round_robin', vlm_reasoning: false, use_quality_score: true, include_people: true,
     workflow_mode: 'both', identify_scope: 'keepers',
+    // B5: the per-stage switches / concurrency seats B1 + B3 added.
+    identify_ocr: true, identify_vision_workers: 2, identify_decision_workers: 1,
     use_known_vehicles: true, normalise_names: true, write_rating: true, write_label: true, overwrite_rating: false, overwrite_label: false, write_caption: true,
     overwrite_caption: false, write_plate_keyword: true, write_sidecar_for_raw: true, keyword_prefix: 'conrod', decider_quant: 'auto', close_to_tray: false,
   };
@@ -262,7 +271,7 @@ function identifyItem(k: number, stage: IdentifyStage, startedAt: number): Ident
   return {
     detection_id: 9000 + k, image_id: 1000 + k, path: `D:\\Photos\\2026\\10\\Challenge Bathurst\\IMG_${4200 + k}.CR3`,
     thumb_path: mockThumb(k), preview_path: null, crop_path: mockThumb(k + 2), stage,
-    prompt: 'You are reading one competition car. Read the race number from the windscreen or side window first, then the door board. Take the make and model from badges or the body shape, and the team from the livery.',
+    prompt: 'You are reading one subject. Read the race number from the windscreen or side window first, then the door board. Take the make and model from badges or the body shape, and the team from the livery.',
     reply: { number: no, make, model, colour, team, plate: null },
     trace: [
       `read IMG_${4200 + k}.CR3 · RAW preview 1920 px`,
@@ -299,14 +308,93 @@ function startIngest(db: Db, jobId: number, mode: 'ingest' | 'identify'): void {
 const startSim = (db: Db, jobId: number) => startIngest(db, jobId, 'ingest');
 const startIdentifySim = (jobId: number) => startIngest(cache ??= makeDb(), jobId, 'identify');
 
+/** Paint a static grouped-run snapshot + resolved settings for the B5 surface
+ *  seeds (§6.8). No simulator runs, so every state stays put for screenshots. */
+function surfaceSeed(db: Db): void {
+  const name = surfaceName() ?? 'subNodes';
+  const greyed = name === 'greyed';
+  const base = resolvedSettings();
+  if (name === 'serial' || name === 'concurrent') Object.assign(base, bothLocalSettings());
+  // Greyed steps are OFF for this album: set the switches AFTER any local-model
+  // seed so they stay off (§6.3), with no decision/vision service to turn them on.
+  if (greyed) Object.assign(base, {
+    identify_ocr: false, use_decider: false, use_vlm: false,
+    moments_backend: 'vlm', moments_services: [], vlm_services: [],
+  });
+  (base as unknown as Record<string, unknown>).identifyVram = name === 'serial' ? VRAM_SERIAL() : VRAM_FITS();
+  db.settings = base as unknown as Settings;
+
+  const job = db.jobs.find((j) => j.id === SURFACE_JOB);
+  if (job) {
+    if (name === 'suggestion') {
+      job.scan_profile = 'auto';
+      (job as unknown as Record<string, unknown>).shoot_type_suggested = 'sport-rodeo';
+      (job as unknown as Record<string, unknown>).shoot_type_confidence = 0.82;
+    } else {
+      delete (job as unknown as Record<string, unknown>).shoot_type_suggested;
+    }
+    job.status = 'scanning'; job.total = 100; job.done = 40;
+  }
+  if (name === 'dropdown') {
+    db.jobs = [
+      { id: SURFACE_JOB, label: 'Hillclimb Sprint Day', root: '', status: 'scanning', total: 100, done: 40, created_at: 1789900000 },
+      { id: 8, label: 'Queued album', root: '', status: 'queued', total: 100, done: 0, created_at: 1789900001 },
+      { id: 9, label: 'Finished album', root: '', status: 'done', total: 100, done: 100, created_at: 1789900002 },
+    ];
+  }
+
+  const overrides: Record<string, Record<string, Record<string, unknown>>> = {
+    paused: {
+      'identify:ocr': { status: 'done', done: 100, total: 100, workers_total: 0 },
+      'identify:decision': { status: 'paused', done: 40, total: 100, workers_total: 2, workers_busy: 0 },
+    },
+    skipped: {
+      'identify:ocr': { status: 'done', done: 100, total: 100, workers_total: 0 },
+      'identify:decision': { status: 'done', done: 100, total: 100, workers_total: 0 },
+      'identify:vision': { status: 'skipped', done: 0, total: 0, workers_total: 0 },
+    },
+    greyed: {
+      'identify:ocr': { status: 'skipped', done: 0, total: 0, workers_total: 0 },
+      'identify:decision': { status: 'skipped', done: 0, total: 0, workers_total: 0 },
+      'identify:vision': { status: 'skipped', done: 0, total: 0, workers_total: 0 },
+    },
+    failed: {
+      'identify:ocr': { status: 'done', done: 100, total: 100, workers_total: 0 },
+      'identify:decision': { status: 'done', done: 100, total: 100, workers_total: 0 },
+      'identify:vision': { status: 'failed', done: 3, total: 10, workers_total: 1, error: 'The vision service stopped answering.' },
+    },
+  };
+  const stages = nineStages(overrides[name] ?? {});
+  const workers: PipelineWorker[] = name === 'stalled'
+    ? [{ stage: 'identify:vision', worker_index: 0, lane: 0, state: 'working', waiting_for: null, file: 'IMG_4201.CR3', step: 'vision', ms_in_step: 60000, last_report_at: 1000, current: null }]
+    : [{ stage: 'read', worker_index: 0, lane: 0, state: 'working', waiting_for: null, file: 'IMG_4200.CR3', step: 'read', ms_in_step: 200, last_report_at: Date.now(), current: null }];
+  lastProgress = {
+    job_id: SURFACE_JOB, state: 'running',
+    // Greyed steps are skipped: the run has moved on to Group, not parked on them.
+    stage: name === 'greyed' ? 'group' : name === 'paused' ? 'identify:decision' : name === 'failed' ? 'identify:vision' : 'identify:ocr',
+    stage_index: 4, stage_count: 9, done: 40, total: 100, rate_per_s: 1.2, eta_s: 50,
+    recent: [], found: { subjects: 40, soft: 4, closed_eyes: 1, numbers: 8, plates: 6, bursts: 18, keepers: 12 },
+    pipeline: { stages, workers },
+    overall: { done: 40, total: 100, fraction: 0.4, rate_per_s: 1.2, eta_s: 50, eta_confident: false },
+  };
+}
+
 function status(db: Db): Status {
+  // B5 surface seeds: a static grouped run, one album active (or a live queue).
+  if (surfaceName()) {
+    const name = surfaceName();
+    return {
+      tasks: [{ id: 9, label: `Scanning ${db.jobs.find((j) => j.id === SURFACE_JOB)?.label ?? 'album'}`, detail: '', state: 'running', done: 40, total: 100, eta: null, error: null }],
+      log: ['surface seed'], activeJob: SURFACE_JOB, operations: [], queue: name === 'dropdown' ? [8] : [],
+    };
+  }
   if (ingest && !ingest.finished) {
     const info = ingest.info(), job = db.jobs.find((j) => j.id === ingest?.jobId);
     const state = info.paused ? 'paused' : 'running';
     if (ingest.mode === 'identify' || info.phase === 'vision') {
       return {
         tasks: [{ id: 11, label: `Identifying · album ${ingest.jobId}`, detail: lastIdentify?.current?.path ?? 'Preparing…', state, done: info.done, total: info.total, eta: null, error: null }],
-        log: [`Reading ${job?.label ?? 'album'} vehicles`], activeJob: ingest.mode === 'ingest' ? ingest.jobId : null, operations: [`Identifying:${ingest.jobId}`],
+        log: [`Reading ${job?.label ?? 'album'} subjects`], activeJob: ingest.mode === 'ingest' ? ingest.jobId : null, operations: [`Identifying:${ingest.jobId}`],
       };
     }
     return { tasks: [{ id: 9, label: `Scanning ${job?.label ?? 'album'}`, detail: info.detail, state, done: info.done, total: info.total, eta: lastProgress?.eta_s ?? null, error: null }], log: ['scan started'], activeJob: ingest.jobId, operations: [] };
@@ -316,7 +404,7 @@ function status(db: Db): Status {
     const done = Math.min(1458, 118 + db.ticks * 7);
     return { tasks: [{ id: 3, label: 'Identifying · album 1', detail: `IMG_${5289 + db.ticks}.CR3 · motorcycle`, state: 'running', done, total: 1458, eta: 420, error: null }], log: [`Reading vehicle ${done}`], activeJob: null, operations: ['Identifying:1'] };
   }
-  if (!params().has('scan')) return { tasks: [{ id: 1, label: 'Identify Challenge Bathurst', detail: 'Done', state: 'done', done: 300, total: 300, eta: null, error: null }], log: ['12:02:11 scan finished', '12:04:40 identified 300 vehicles'], activeJob: null, operations: [] };
+  if (!params().has('scan')) return { tasks: [{ id: 1, label: 'Identify Challenge Bathurst', detail: 'Done', state: 'done', done: 300, total: 300, eta: null, error: null }], log: ['12:02:11 scan finished', '12:04:40 identified 300 subjects'], activeJob: null, operations: [] };
   db.ticks += 1;
   const done = Math.min(120, 62 + db.ticks);
   return {
@@ -494,8 +582,11 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
       } satisfies WorkerLimits);
     }
     case 'bootstrap':
-      if (['scan', 'ingest'].includes(params().get('page') ?? '')) startSim(db, 3);
-      if (params().get('page') === 'identify') startIdentifySim(1);
+      if (surfaceName()) surfaceSeed(db);
+      else {
+        if (['scan', 'ingest'].includes(params().get('page') ?? '')) startSim(db, 3);
+        if (params().get('page') === 'identify') startIdentifySim(1);
+      }
       // `?dev=1` (which also turns the mock on) renders the whole dev chrome.
       // `&devserver=up|down|reconnecting` forces the live-reload chip's state
       // (connected / bundled-UI fallback / retrying) for QA screenshots.
@@ -684,6 +775,24 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'stop': if (ingest && !ingest.finished) ingest.stop(); return out(status(db));
     case 'pause': ingest?.setPaused(true); return out(null);
     case 'resume_scan': ingest?.setPaused(false); return out(null);
+    // B2 per-stage controls: mutate the authoritative stage status so the
+    // flowchart (built from the snapshot) updates honestly.
+    case 'stage_pause': case 'stage_skip': case 'stage_rerun': {
+      const stage = String(a.stage ?? '');
+      const word = action === 'stage_pause' ? 'paused' : action === 'stage_skip' ? 'skipped' : 'running';
+      if (lastProgress) {
+        lastProgress = { ...lastProgress, pipeline: { ...lastProgress.pipeline,
+          stages: lastProgress.pipeline.stages.map((s) => s.id === stage ? { ...s, status: word } : s) } };
+        for (const cb of listeners) cb(lastProgress);
+      }
+      return out({ ok: true });
+    }
+    // B1 type suggestion: one click sets the accepted type; the suggestion hides.
+    case 'accept_type_suggestion': {
+      const job = db.jobs.find((j) => j.id === Number(a.jobId));
+      if (job) (job as unknown as Record<string, unknown>).shoot_type_accepted = String(a.type ?? '');
+      return out({ ok: true });
+    }
     case 'delete_job': db.jobs = db.jobs.filter((j) => j.id !== a.jobId); return out(null);
     case 'cancel_operation': db.identifySkipped = true; if (ingest?.mode === 'identify') ingest.stop(); else ingest?.cancelVision(); return out(null);
     default: return out(null);

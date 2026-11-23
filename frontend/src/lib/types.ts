@@ -1,6 +1,10 @@
 export type Job = {
   id: number; label: string; root: string; status: string; total: number; done: number; copies?: number;
   created_at: number; scan_profile?: string; include_people?: boolean; settings_json?: string | null; burst_gap?: number;
+  /** B1's type suggestion for an `auto` album: shown, never applied silently (§3b, §7). */
+  shoot_type_suggested?: string | null;
+  shoot_type_confidence?: number | null;
+  shoot_type_accepted?: string | null;
   /** Frames the scan could not read. A `done_errors` album opens in Review and offers a retry. */
   errors?: number;
   /** Up to three `name: reason` lines for the errors, for the album card. */
@@ -126,6 +130,18 @@ export type RunSnapshot = {
   error: ScanFailureShape | null;
   now: number;
   stallMs: number;
+  /** B5: the ONE surface model (flowchart nodes, greyed steps, controls, VRAM,
+   *  suggestion, toggles), built on this snapshot. See surface.mjs. */
+  surface?: any;
+};
+
+/** B3's VRAM fit contract, carried in the resolved settings/snapshot (§5). */
+export type IdentifyVram = {
+  cardBytes: number;
+  decisionBytes: number;
+  visionBytes: number;
+  fitsBoth: boolean;
+  mode: 'concurrent' | 'serial';
 };
 
 /** The `scan_status` answer for one album: what its scan is doing now, snapshot or not. */
@@ -369,6 +385,8 @@ export type PipelineStage = {
   errors?: number;
   rate_per_s: number;
   eta_s: number | null;
+  /** B1's explicit six-word lifecycle: pending/running/paused/skipped/done/failed. */
+  status?: string;
   /** Explicit stage lifecycle from B1: a stage that stopped with an error is `failed`. */
   state?: string;
   failed?: boolean;

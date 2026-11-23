@@ -11,6 +11,9 @@ import { healthStatus, modelGroups } from './lib/health.mjs';
 import { openJobPage } from './lib/navigation.mjs';
 import { classifyScanError, type ScanFailure } from './lib/scanError.mjs';
 import { buildRunSnapshot } from './lib/runSnapshot.mjs';
+import { subjectWords } from './lib/subjects.mjs';
+import { applyOverrides, defaultSummary, overridesOf } from './lib/presetPolicy.mjs';
+import { albumSetting } from './lib/album.mjs';
 import { windowTitle } from './lib/devMode.mjs';
 import { useDevInfo, useReloadState } from './lib/dev';
 import { subjectExcluded } from './review.mjs';
@@ -79,15 +82,29 @@ export function App() {
   /** The selected album's scan, read on entry, so the Scan screen is whole on re-entry, restart or a queued album. */
   const scanStatus = useScanStatus(jobId, status.activeJob);
   const identifyLive = useIdentifyProgress();
+  /** The album on screen, and its resolved settings — the ONLY source of the
+   *  flowchart's greyed steps, VRAM/concurrency and type suggestion (§6.1). */
+  const currentAlbum = eng.jobs.find((j) => j.id === jobId) ?? null;
+  const resolvedSummary = currentAlbum
+    ? applyOverrides(
+      defaultSummary(String(currentAlbum.scan_profile || eng.settings.scan_profile || 'motorsport')),
+      overridesOf(albumSetting(currentAlbum, 'overrides', null)),
+      overridesOf(albumSetting(currentAlbum, 'user_defaults', null)),
+    )
+    : null;
+  const surfaceSubject = subjectWords(resolvedSummary);
+  const identifyVram = (eng.settings as unknown as { identifyVram?: unknown }).identifyVram ?? null;
   /**
    * THE single run snapshot (plan §6.1). One object, built from the engine
-   * `status` + live events (hydrate-then-live), drives the TitleBar badge, the
-   * jobs dropdown, the Scan/Ingest flowchart, lane grid and header counters.
-   * Nothing downstream invents a stage, a worker or a status.
+   * `status` + live events (hydrate-then-live) plus the album's resolved
+   * settings, drives the TitleBar badge, the jobs dropdown, the Scan/Ingest
+   * flowchart, lane grid, header counters and the B5 surface. Nothing
+   * downstream invents a stage, a worker or a status.
    */
   const runSnapshot = useMemo<RunSnapshot>(() => buildRunSnapshot({
     status, jobs: eng.jobs, liveByJob: scanLive, hydrate: scanStatus, seed: scanError, jobId,
-  }) as RunSnapshot, [status, eng.jobs, scanLive, scanStatus, scanError, jobId]);
+    settings: eng.settings, album: currentAlbum, identifyVram, decisionService, subject: surfaceSubject,
+  }) as RunSnapshot, [status, eng.jobs, scanLive, scanStatus, scanError, jobId, eng.settings, currentAlbum, identifyVram, decisionService, surfaceSubject]);
   const identifyPaused = status.tasks.some((task) => task.state === 'paused' && /^Identifying\b/.test(task.label));
   // Review stays open while its album scans: it shows the frames already measured, and the
   // pipeline actions (cull, identify, write) stay disabled by Review's own `busy` rule.
@@ -128,6 +145,28 @@ export function App() {
       toast('Vision is on for this album. Run Identify again to use it.', { tone: 'ok' });
     });
   };
+
+  /** A greyed step's shortcut (§6.3): open this album's Manage shoot. */
+  const [shootSettingsNonce, setShootSettingsNonce] = useState(0);
+  const openShootSettings = () => {
+    if (jobId == null) return;
+    setPage('Review');
+    setShootSettingsNonce((v) => v + 1);
+  };
+  /** B2 per-stage controls, exact wire shape. */
+  const stageControl = (action: 'stage_pause' | 'stage_skip' | 'stage_rerun', stage: string) => void run(async () => {
+    if (jobId == null) return;
+    await engine.stageControl(action, jobId, stage);
+    eng.setStatus(await engine.status());
+    await eng.refreshJobs();
+  });
+  /** B1 type suggestion: one click, never silent; only un-run Vision prompts change. */
+  const acceptTypeSuggestion = (type: string) => void run(async () => {
+    if (jobId == null) return;
+    await engine.acceptTypeSuggestion(jobId, type);
+    await eng.refreshJobs();
+    toast('Shoot type accepted. Only the vision reads still to come will use it.', { tone: 'ok' });
+  });
 
   useEffect(() => {
     if (eng.ready && typeof eng.settings.scan_profile === 'string') setProfile(eng.settings.scan_profile);
@@ -306,6 +345,7 @@ export function App() {
             onResumeJob={() => { if (jobId != null) void startScan({ jobId }); }}
             onRetryScan={() => { if (scanError?.args) void startScan(scanError.args); else if (jobId != null) void startScan({ jobId }); else actions.resume(); }}
             onPause={actions.pause} onResume={actions.resume} onCancel={actions.stop} onCancelOperation={actions.cancel} onVisionAction={visionAction}
+            surface={runSnapshot.surface} onStageControl={stageControl} onAcceptTypeSuggestion={acceptTypeSuggestion} onOpenShootSettings={openShootSettings}
             onReview={() => setPage('Review')} onLibrary={() => setPage('Library')} />
         )}
         {view === 'Identify' && (
@@ -328,6 +368,7 @@ export function App() {
             showBoxes={showBoxes} onToggleBoxes={() => setShowBoxes((v) => !v)} verbs={reviewVerbs}
             onJobsChanged={eng.refreshJobs} onPickJob={setJobId} onCull={() => jobId != null && void startScan({ jobId })} onIdentify={(scope, onlyNew) => jobId != null && identify(jobId, scope, onlyNew)} onHelp={() => setHelp(true)} onOpenViewer={() => setViewer(true)}
               onLibrary={() => setPage('Library')} onWatchIdentify={() => jobId != null && setPage('Identify')} onWatchScan={() => setPage('Scan')}
+              openShootSettings={shootSettingsNonce}
               onAcceptAll={() => void run(async () => {
                 const ids = rv.review.detections.filter((d) => !d.reviewed && rv.review.frames.some((f) => f.id === d.image_id && !subjectExcluded(f, d))).map((d) => d.id);
                 if (ids.length) await call('bulk_edit', { ids, reviewed: true });

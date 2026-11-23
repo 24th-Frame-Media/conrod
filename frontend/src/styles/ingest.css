@@ -136,7 +136,7 @@
 .ing-card.frame.blurred { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
 .ing-card.frame.blurred .id-card-num { color: var(--bad); }
 .ing-card.frame .id-card-conf { color: var(--accent); letter-spacing: .05em; }
-.ing-card.frame.sel, .ing-card.car.sel { border-color: var(--scan); }
+.ing-card.frame.sel, .ing-card.subject.sel { border-color: var(--scan); }
 .ing-card .ing-kind { font-family: var(--mono); font-size: 9px; letter-spacing: .12em; color: var(--text-mute); }
 
 /* detail page for a culled frame */

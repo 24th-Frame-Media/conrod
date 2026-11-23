@@ -32,6 +32,44 @@ export const activeStage = (id = 'read', extra = {}) => ({ id, label: id[0].toUp
 /** A stage that stopped with an error → failed node + plain reason. */
 export const failedStage = () => activeStage('vision', { state: 'failed', done: 3, total: 10, errors: 1, reason: 'The vision service stopped answering.' });
 
+/** B1's wire shape: `status: 'failed'` + `error` (the engine no longer sends `state`/`reason`). */
+export const failedStageWire = () => activeStage('identify:vision', { status: 'failed', done: 3, total: 10, errors: 1, error: 'The vision service stopped answering.' });
+
+/** The nine grouped-run stages B1 emits (§2), with an explicit status word each. */
+export const NINE_IDS = ['read', 'detect', 'sharpness', 'faces', 'identify:ocr', 'identify:decision', 'identify:vision', 'group', 'pick'];
+export function nineStages(over = {}) {
+  return NINE_IDS.map((id, i) => activeStage(id, {
+    status: i < 4 ? 'done' : i === 4 ? 'running' : 'pending',
+    done: i < 4 ? 100 : i === 4 ? 40 : 0, total: 100, workers_total: i < 4 ? 0 : 2,
+    ...(over[id] ?? {}),
+  }));
+}
+
+/** Resolved settings for a fully-on album, plus B3's VRAM contract when asked. */
+export function resolvedSettings(over = {}) {
+  return {
+    identify_ocr: true, read_plates: true, read_numbers: true, read_text: true,
+    use_decider: true, moments_backend: 'decider', use_vlm: true,
+    scan_profile: 'motorsport', identify_vision_workers: 2, identify_decision_workers: 1,
+    ...over,
+  };
+}
+
+/** B3's fit contract: both models fit, or only one fits (serial fallback). */
+export const VRAM_FITS = () => ({ cardBytes: 12 * 2 ** 30, decisionBytes: 4.8 * 2 ** 30, visionBytes: 6 * 2 ** 30, fitsBoth: true, mode: 'concurrent' });
+export const VRAM_SERIAL = () => ({ cardBytes: 8 * 2 ** 30, decisionBytes: 4.8 * 2 ** 30, visionBytes: 6 * 2 ** 30, fitsBoth: false, mode: 'serial' });
+
+/** Settings where both models run locally (§5): local decision + local vision. */
+export function bothLocalSettings(over = {}) {
+  return resolvedSettings({
+    moments_transport: 'in_process',
+    moments_services: [{ id: 'moments-local', provider: 'in_process', enabled: true }],
+    vlm_services: [{ id: 'vlm-local', provider: 'ollama', enabled: true }],
+    use_decider: true, use_vlm: true,
+    ...over,
+  });
+}
+
 /** An import that failed BEFORE an album existed (jobId null): the null-job case. */
 export const nullJobError = () => ({ kind: 'folder_missing', title: 'Conrod lost the folder', message: 'The folder is not there any more. Reconnect the drive and press Resume.', detail: 'ENOENT', resumable: true, jobId: null, label: 'Import', raw: 'ENOENT', args: { root: '' } });
 
@@ -115,5 +153,107 @@ export const SEEDS = {
     jobs: [baseJob(7, 'done')],
     liveByJob: { 7: live(7, scanProgress(7, { state: 'done', pipeline: { stages: [activeStage('read')], workers: [activeWorker()] } })) },
     hydrate: null, seed: null, jobId: 7,
+  }),
+
+  // ── B5 surface seeds (§6.8): every state, testable without Rust ──
+
+  /** The three identify sub-nodes replace the single identify block. */
+  subNodes: () => ({
+    ...common,
+    status: status(7),
+    jobs: [baseJob(7, 'scanning')],
+    liveByJob: { 7: live(7, scanProgress(7, {
+      stage: 'identify:ocr', stage_count: 9,
+      pipeline: { stages: nineStages(), workers: [activeWorker()] },
+    })) },
+    hydrate: null, seed: null, jobId: 7,
+    settings: resolvedSettings(), album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
+    decisionService: 'the local decision model',
+  }),
+  /** A paused DECISION node (B2 `stage_pause`), with a parked worker. */
+  pausedStage: () => ({
+    ...common,
+    status: status(7),
+    jobs: [baseJob(7, 'scanning')],
+    liveByJob: { 7: live(7, scanProgress(7, {
+      stage: 'identify:decision', stage_count: 9,
+      pipeline: { stages: nineStages({
+        'identify:ocr': { status: 'done', done: 100, total: 100, workers_total: 0 },
+        'identify:decision': { status: 'paused', done: 40, total: 100, workers_total: 2, workers_busy: 0 },
+      }), workers: [pausedWorker()] },
+    })) },
+    hydrate: null, seed: null, jobId: 7,
+    settings: resolvedSettings(), album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
+  }),
+  /** A runtime-skipped VISION node (B2 `stage_skip`): plain consequence, honest word. */
+  skippedStage: () => ({
+    ...common,
+    status: status(7),
+    jobs: [baseJob(7, 'scanning')],
+    liveByJob: { 7: live(7, scanProgress(7, {
+      stage: 'identify:vision', stage_count: 9,
+      pipeline: { stages: nineStages({
+        'identify:ocr': { status: 'done', done: 100, total: 100, workers_total: 0 },
+        'identify:decision': { status: 'done', done: 100, total: 100, workers_total: 0 },
+        'identify:vision': { status: 'skipped', done: 0, total: 0, workers_total: 0 },
+      }), workers: [] },
+    })) },
+    hydrate: null, seed: null, jobId: 7,
+    settings: resolvedSettings(), album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
+  }),
+  /** Greyed-off steps (§6.3): OCR, Decision and Vision off for this album. */
+  greyedOff: () => ({
+    ...common,
+    status: status(7),
+    jobs: [baseJob(7, 'scanning')],
+    liveByJob: { 7: live(7, scanProgress(7, {
+      stage: 'group', stage_count: 9,
+      pipeline: { stages: nineStages({
+        'identify:ocr': { status: 'skipped', done: 0, total: 0, workers_total: 0 },
+        'identify:decision': { status: 'skipped', done: 0, total: 0, workers_total: 0 },
+        'identify:vision': { status: 'skipped', done: 0, total: 0, workers_total: 0 },
+      }), workers: [] },
+    })) },
+    hydrate: null, seed: null, jobId: 7,
+    settings: resolvedSettings({ identify_ocr: false, use_decider: false, moments_backend: 'vlm', use_vlm: false }),
+    album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
+  }),
+  /** Serial VRAM: only one model fits, both models local (§5). */
+  serialVram: () => ({
+    ...common,
+    status: status(7),
+    jobs: [baseJob(7, 'scanning')],
+    liveByJob: { 7: live(7, scanProgress(7, { pipeline: { stages: nineStages(), workers: [activeWorker()] } })) },
+    hydrate: null, seed: null, jobId: 7,
+    settings: bothLocalSettings(), album: baseJob(7, 'scanning'), identifyVram: VRAM_SERIAL(),
+  }),
+  /** Both models local and enough VRAM: the concurrency preference is visible. */
+  concurrentVram: () => ({
+    ...common,
+    status: status(7),
+    jobs: [baseJob(7, 'scanning')],
+    liveByJob: { 7: live(7, scanProgress(7, { pipeline: { stages: nineStages(), workers: [activeWorker()] } })) },
+    hydrate: null, seed: null, jobId: 7,
+    settings: bothLocalSettings(), album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
+  }),
+  /** An `auto` album with B1's type suggestion, not yet accepted (§3b). */
+  typeSuggestion: () => ({
+    ...common,
+    status: status(7),
+    jobs: [baseJob(7, 'scanning', { scan_profile: 'auto', shoot_type_suggested: 'sport-rodeo', shoot_type_confidence: 0.82 })],
+    liveByJob: { 7: live(7, scanProgress(7, { pipeline: { stages: nineStages(), workers: [activeWorker()] } })) },
+    hydrate: null, seed: null, jobId: 7,
+    settings: resolvedSettings({ scan_profile: 'auto' }),
+    album: baseJob(7, 'scanning', { scan_profile: 'auto', shoot_type_suggested: 'sport-rodeo', shoot_type_confidence: 0.82 }),
+    identifyVram: VRAM_FITS(),
+  }),
+  /** B1's wire-shape failed stage (`status`/`error`), bound to the correct job. */
+  failedStageWire: () => ({
+    ...common,
+    status: status(7),
+    jobs: [baseJob(7, 'scanning')],
+    liveByJob: { 7: live(7, scanProgress(7, { pipeline: { stages: [activeStage('read'), failedStageWire()], workers: [activeWorker()] } })) },
+    hydrate: null, seed: null, jobId: 7,
+    settings: resolvedSettings(), album: baseJob(7, 'scanning'), identifyVram: VRAM_FITS(),
   }),
 };

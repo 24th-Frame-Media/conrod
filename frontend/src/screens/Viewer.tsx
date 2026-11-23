@@ -168,10 +168,10 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keep
           )}
 
           {attrs && (
-            <section className="viewer-vehicle" aria-label="Vehicle identification">
+            <section className="viewer-vehicle" aria-label="Subject identification">
               <span className="viewer-vehicle-number mono">{attrs.race_number ? `#${attrs.race_number}` : (attrs.plate ?? '—')}</span>
               <div className="viewer-vehicle-facts">
-                <b>{vehicleName || (attrs.plate ? 'Plate read' : 'Unidentified vehicle')}</b>
+                <b>{vehicleName || (attrs.plate ? 'Plate read' : 'Unidentified subject')}</b>
                 <span className="muted">
                   {[attrs.team, attrs.colour, vehicleName ? attrs.plate : null].filter(Boolean).join(' · ') || 'No team or colour read'}
                 </span>

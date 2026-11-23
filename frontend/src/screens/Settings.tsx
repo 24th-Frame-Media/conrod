@@ -14,6 +14,7 @@ import { SettingsSection, SettingRow } from '../components/SettingsFields';
 import { Maintenance } from '../components/Maintenance';
 import { LightroomBridge } from '../components/LightroomBridge';
 import { AiSettingsCard } from './AiSettingsCard';
+import { IdentifyConcurrency } from '../components/IdentifyConcurrency';
 import { Benchmark } from './Benchmark';
 import { Known } from './Known';
 import type {
@@ -397,6 +398,8 @@ export function Settings({ settings, onSaved, run, toast, jobs = [], models = []
                       <SettingsSection key={section.id} section={section} draft={draft} saved={settings} onChange={setValue} />
                     )
                   ))}
+
+                  <IdentifyConcurrency draft={draft} onChange={setValue} />
 
                   <details className="settings-section settings-advanced">
                     <summary>

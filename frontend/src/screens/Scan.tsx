@@ -32,6 +32,15 @@ type Props = {
   runSnapshot?: RunSnapshot;
   /** Retry the scan after the failure's cause is fixed. */
   onRetryScan?: () => void;
+  /** B5: the ONE surface model from the run snapshot (flowchart sub-nodes,
+   *  greyed steps, controls, VRAM warning, type suggestion). */
+  surface?: any;
+  /** B2 per-stage controls: pause / skip / run-again, exact wire shape. */
+  onStageControl?: (action: 'stage_pause' | 'stage_skip' | 'stage_rerun', stage: string) => void;
+  /** One-click accept of B1's type suggestion (never silent). */
+  onAcceptTypeSuggestion?: (type: string) => void;
+  /** A greyed node's shortcut: open this album's Manage shoot. */
+  onOpenShootSettings?: () => void;
 };
 
 /** A card for a scan that is not running right now: waiting its turn, stopped, failed or done. */
