@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCurrentWindow, UserAttentionType } from '@tauri-apps/api/window';
 import { Icon, KeysDialog, Splash } from './components/basics';
 import { TitleBar, type StatusActions } from './components/TitleBar';
@@ -10,12 +10,13 @@ import { queueLabel } from './lib/format';
 import { healthStatus, modelGroups } from './lib/health.mjs';
 import { openJobPage } from './lib/navigation.mjs';
 import { classifyScanError, type ScanFailure } from './lib/scanError.mjs';
+import { buildRunSnapshot } from './lib/runSnapshot.mjs';
 import { windowTitle } from './lib/devMode.mjs';
 import { useDevInfo, useReloadState } from './lib/dev';
 import { subjectExcluded } from './review.mjs';
 import { decisionServiceLabel, vlmModelLabel } from './lib/vlm';
 import type { DevStart } from './lib/mock';
-import type { Job, Page, ScanArgs, Scope, Status } from './lib/types';
+import type { Job, Page, RunSnapshot, ScanArgs, Scope, Status } from './lib/types';
 import type { SettingsTabId } from './lib/settings.mjs';
 import type { VisionAction } from './lib/vision.mjs';
 import { Library } from './screens/Library';
@@ -74,10 +75,19 @@ export function App() {
   const reloadState = useReloadState(devInfo);
   useEffect(() => { document.title = windowTitle('Conrod', eng.dev); }, [eng.dev]);
   const scanning = status.activeJob !== null;
-  const scanLive = useScanProgress();
+  const scanLive = useScanProgress(status.activeJob);
   /** The selected album's scan, read on entry, so the Scan screen is whole on re-entry, restart or a queued album. */
   const scanStatus = useScanStatus(jobId, status.activeJob);
   const identifyLive = useIdentifyProgress();
+  /**
+   * THE single run snapshot (plan §6.1). One object, built from the engine
+   * `status` + live events (hydrate-then-live), drives the TitleBar badge, the
+   * jobs dropdown, the Scan/Ingest flowchart, lane grid and header counters.
+   * Nothing downstream invents a stage, a worker or a status.
+   */
+  const runSnapshot = useMemo<RunSnapshot>(() => buildRunSnapshot({
+    status, jobs: eng.jobs, liveByJob: scanLive, hydrate: scanStatus, seed: scanError, jobId,
+  }) as RunSnapshot, [status, eng.jobs, scanLive, scanStatus, scanError, jobId]);
   const identifyPaused = status.tasks.some((task) => task.state === 'paused' && /^Identifying\b/.test(task.label));
   // Review stays open while its album scans: it shows the frames already measured, and the
   // pipeline actions (cull, identify, write) stay disabled by Review's own `busy` rule.
@@ -161,42 +171,55 @@ export function App() {
           workflowMode: defaults.workflow_mode, identifyScope: defaults.identify_scope,
         }
       : args;
+    let id: number | null = null;
+    let duplicates = 0, added = 0, started = true, queued = false, queuePosition = 0;
     try {
-      const { jobId: id, duplicates = 0, added = 0, scanning: started = true, queued = false, queuePosition = 0 } = await engine.scan(scan);
-      await eng.refreshJobs();
-      if (id != null) setJobId(id);
-      eng.setStatus(await engine.status());
-      setShowImport(false);
-      // A folder that is already an album gains only its new frames: say what
-      // was skipped instead of silently scanning (or duplicating) again.
-      if (!started && added === 0 && duplicates > 0) {
-        setPage('Library');
-        toast(`${duplicates.toLocaleString()} photos are already in this library. Nothing was imported.`, { tone: 'ok' });
-        return;
-      }
-      // Another scan was running: the album is made and waits its turn; the
-      // running one starts it when it ends.
-      if (queued) {
-        setPage('Library');
-        toast(`Album queued. ${queueLabel(Math.max(0, queuePosition - 1))}. It starts when the running scan finishes.`, { tone: 'ok' });
-        return;
-      }
-      if (duplicates > 0) {
-        toast(`${duplicates.toLocaleString()} already-imported photos were skipped${added ? `; ${added} new ${added === 1 ? 'frame' : 'frames'} added` : ''}.`, { tone: 'ok' });
-      }
-      setPage('Scan');
-      if (inTauri) void getCurrentWindow().requestUserAttention(UserAttentionType.Informational);
+      // Narrow the try: ONLY a failure to START the scan is a scan failure. The
+      // follow-up reads below run after acceptance — a failure there is its own
+      // surfaced error, never a bogus "scan failed" banner (audit P2-3).
+      const r = await engine.scan(scan);
+      id = r.jobId; duplicates = r.duplicates ?? 0; added = r.added ?? 0;
+      started = r.scanning ?? true; queued = r.queued ?? false; queuePosition = r.queuePosition ?? 0;
     } catch (e) {
       // A scan that never started gets one plain reason on the Ingest screen, not a raw toast.
-      const jobId = 'jobId' in scan ? scan.jobId : null;
+      const jid = 'jobId' in scan ? scan.jobId : null;
       const root = 'root' in scan ? scan.root : draft.root;
-      const label = 'label' in scan ? scan.label : (jobId != null ? eng.jobs.find((j) => j.id === jobId)?.label ?? draft.label : draft.label);
-      setScanError({ ...classifyScanError(String(e), { root, label }), jobId: jobId ?? undefined, label, raw: String(e), args: scan });
-      if (jobId != null) setJobId(jobId);
+      const label = 'label' in scan ? scan.label : (jid != null ? eng.jobs.find((j) => j.id === jid)?.label ?? draft.label : draft.label);
+      setScanError({ ...classifyScanError(String(e), { root, label }), jobId: jid ?? undefined, label, raw: String(e), args: scan });
+      if (jid != null) setJobId(jid);
       setPage('Scan');
+      return;
     } finally {
       setStarting(false);
     }
+    // The scan is running. A failed status/jobs read must NOT look like a failed scan.
+    try {
+      await eng.refreshJobs();
+      eng.setStatus(await engine.status());
+    } catch (e) {
+      toast(`The scan started, but its status could not be refreshed: ${String(e)}`, { tone: 'error' });
+    }
+    if (id != null) setJobId(id);
+    setShowImport(false);
+    // A folder that is already an album gains only its new frames: say what
+    // was skipped instead of silently scanning (or duplicating) again.
+    if (!started && added === 0 && duplicates > 0) {
+      setPage('Library');
+      toast(`${duplicates.toLocaleString()} photos are already in this library. Nothing was imported.`, { tone: 'ok' });
+      return;
+    }
+    // Another scan was running: the album is made and waits its turn; the
+    // running one starts it when it ends.
+    if (queued) {
+      setPage('Library');
+      toast(`Album queued. ${queueLabel(Math.max(0, queuePosition - 1))}. It starts when the running scan finishes.`, { tone: 'ok' });
+      return;
+    }
+    if (duplicates > 0) {
+      toast(`${duplicates.toLocaleString()} already-imported photos were skipped${added ? `; ${added} new ${added === 1 ? 'frame' : 'frames'} added` : ''}.`, { tone: 'ok' });
+    }
+    setPage('Scan');
+    if (inTauri) void getCurrentWindow().requestUserAttention(UserAttentionType.Informational);
   };
   /** `scope` is the run's override; absent, the engine reads the album's own `identify_scope`. `onlyNew` reads just the subjects nobody has read yet. */
   const identify = (id: number, scope?: Scope, onlyNew = false) => void run(async () => {
@@ -211,7 +234,10 @@ export function App() {
   });
   const openJob = (id: number) => {
     const job = eng.jobs.find((j) => j.id === id);
+    // A stale null-job import failure must not follow the user into an album (§6.6).
+    setScanError(null);
     setJobId(id);
+    // The primary entry point: hydrate from scan_status on jobId change, then go live.
     setPage(openJobPage(job, status.activeJob));
   };
 
@@ -257,7 +283,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} health={health} actions={actions} popoverOpen={dev?.popover ?? false} dev={devInfo} reloadState={reloadState} />
+      <TitleBar page={view} setPage={goPage} jobs={eng.jobs} models={eng.models} status={status} profile={profile} health={health} actions={actions} popoverOpen={dev?.popover ?? false} dev={devInfo} reloadState={reloadState} runSnapshot={runSnapshot} onOpenJob={openJob} />
       <main className="stage" key={view}>
         {view === 'Library' && (
           <Library jobs={eng.jobs} scanning={scanning} live={scanLive} activeJob={status.activeJob} queue={status.queue ?? []}
@@ -273,7 +299,7 @@ export function App() {
         )}
         {view === 'Scan' && (
           <ScanScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? scanLive[jobId] : undefined} scanStatus={scanStatus} running={running}
-            queue={queueJobs} onUnqueue={actions.unqueue}
+            queue={queueJobs} onUnqueue={actions.unqueue} runSnapshot={runSnapshot}
             paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={eng.setSettings}
             identify={jobId != null ? identifyLive[jobId] : undefined} status={status} identifyPaused={identifyPaused}
             model={vlmModelLabel(eng.settings)} decisionService={decisionService} scanError={scanError}

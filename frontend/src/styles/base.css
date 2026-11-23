@@ -443,3 +443,59 @@ dialog[open] { animation: dialog-in .18s var(--ease); }
 .dev-popover .popover-actions { padding: 12px 0 0; margin-top: 12px; }
 @media (max-width: 980px) { .dev-live-text { display: none; } }
 @media (max-width: 700px) { .dev-popover { width: min(340px, calc(100vw - 24px)); } }
+
+/* ---- Jobs dropdown + shared status chips (plan §6.7) ------------------------------
+   Reads the ONE run snapshot. No polling of its own; it updates while closed. */
+.jobs { position: relative; }
+.jobs-trigger {
+  display: flex; align-items: center; gap: 7px; padding: 4px 10px; font-size: 12px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
+  color: var(--text-dim); transition: border-color .14s var(--ease), color .14s var(--ease);
+}
+.jobs-trigger:hover { border-color: var(--line-hover); color: var(--text); }
+.jobs-trigger.running { border-color: color-mix(in srgb, var(--scan) 45%, transparent); }
+.jobs-trigger > svg { flex: none; }
+.jobs-live { width: 7px; height: 7px; border-radius: 50%; background: var(--scan); animation: pulse 1.4s ease-in-out infinite; }
+.jobs-pop {
+  position: absolute; right: 0; top: calc(100% + 8px); width: 300px; max-width: calc(100vw - 16px);
+  max-height: min(70vh, 520px); overflow: auto; z-index: 60; padding: 10px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow); animation: pop-in .18s var(--ease); cursor: default;
+}
+.jobs-pop-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 4px 6px 10px; }
+.jobs-pop-head b { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); }
+.jobs-pop-head small { font-size: 10.5px; }
+.jobs-empty { padding: 6px; font-size: 12px; }
+.jobs-row { display: grid; gap: 7px; width: 100%; text-align: left; padding: 9px 10px; background: transparent;
+  border: 1px solid transparent; border-radius: 8px; }
+.jobs-row:hover { background: var(--surface-2); border-color: var(--line); }
+.jobs-row.active { background: color-mix(in srgb, var(--scan) 8%, var(--surface-2)); border-color: color-mix(in srgb, var(--scan) 30%, transparent); }
+.jobs-row-top { display: flex; align-items: center; gap: 8px; }
+.jobs-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; font-size: 12.5px; }
+.jobs-chip { flex: none; font-size: 10px; letter-spacing: .04em; padding: 2px 7px; border-radius: 6px;
+  border: 1px solid var(--line); color: var(--text-mute); background: var(--surface-2); }
+.jobs-chip.running { color: var(--scan); border-color: color-mix(in srgb, var(--scan) 40%, transparent); }
+.jobs-chip.paused, .jobs-chip.queued { color: var(--warn2); border-color: color-mix(in srgb, var(--warn2) 40%, transparent); }
+.jobs-chip.error, .jobs-chip.failed { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.jobs-chip.done { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+.jobs-chip.stopped { color: var(--text-dim); }
+.jobs-bar { display: block; height: 4px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.jobs-bar-fill { display: block; height: 100%; background: var(--text-mute); transition: width .4s var(--ease); }
+.jobs-bar-fill.running { background: var(--scan); }
+.jobs-bar-fill.paused, .jobs-bar-fill.queued { background: var(--warn2); }
+.jobs-bar-fill.error, .jobs-bar-fill.failed { background: var(--bad); }
+.jobs-bar-fill.done { background: var(--good); }
+.jobs-pop-foot { padding: 8px 6px 2px; font-size: 10.5px; }
+
+/* ---- Worker lifecycle: stalled is honest, never busy (plan §6.4) ----------------- */
+.id-lane.stalled { border-color: color-mix(in srgb, var(--warn2) 35%, transparent); }
+.id-lane-stage.ing-stage.stalled, .ing-lane-text.stalled { color: var(--warn2); border-color: color-mix(in srgb, var(--warn2) 40%, transparent); }
+.id-badge.stalled { color: var(--warn2); border-color: color-mix(in srgb, var(--warn2) 45%, transparent); background: var(--surface); }
+
+/* ---- Failed stage node + retry banner (plan §6.6) -------------------------------- */
+.id-node.failed { border-color: color-mix(in srgb, var(--bad) 50%, transparent); color: var(--bad); }
+.id-node.failed .id-node-num { color: var(--bad); }
+.id-node.failed .ing-sub { color: var(--bad); }
+.ing-stage-failure { margin: 12px 0; }
+@media (max-width: 980px) { .jobs-trigger > span:not(.jobs-chip) { display: none; } }
+
