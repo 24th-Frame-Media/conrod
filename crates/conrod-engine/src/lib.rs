@@ -116,6 +116,7 @@ pub mod analyze;
 pub mod bench;
 #[cfg(test)]
 mod blurtest;
+pub mod builtin_vlm;
 pub mod catalog;
 pub mod commands;
 pub mod composition;
@@ -1412,12 +1413,39 @@ pub fn scan_files(
 /// worker is on, what it has found on its frame so far, and gets the frame
 /// counts the status area cannot show. `should_scan` says whether a path is
 /// read at all (`None` skips it) and what the lane needs to know about it.
+#[allow(dead_code)]
 pub(crate) fn scan_files_filtered(
     paths: Vec<PathBuf>,
     settings: Settings,
     profile: ScanProfile,
     hub: TaskHub,
     progress: Option<Arc<crate::progress::Progress>>,
+    should_scan: impl Fn(&Path) -> Option<Pickup> + Send + Sync + 'static,
+    on_frame: impl Fn(ScanResult) + Send + Sync + 'static,
+) -> Scan {
+    scan_files_with_setup(
+        paths,
+        settings,
+        profile,
+        hub,
+        progress,
+        |_| {},
+        should_scan,
+        on_frame,
+    )
+}
+
+/// [`scan_files_filtered`] with a cancellable pre-scan setup closure (e.g. EXIF
+/// unit seeding) that runs on the background worker thread before loading the
+/// detector, so `start_scan` returns immediately without holding `Desktop.active`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scan_files_with_setup(
+    paths: Vec<PathBuf>,
+    settings: Settings,
+    profile: ScanProfile,
+    hub: TaskHub,
+    progress: Option<Arc<crate::progress::Progress>>,
+    before_scan: impl FnOnce(&AtomicBool) + Send + 'static,
     should_scan: impl Fn(&Path) -> Option<Pickup> + Send + Sync + 'static,
     on_frame: impl Fn(ScanResult) + Send + Sync + 'static,
 ) -> Scan {
@@ -1429,7 +1457,6 @@ pub(crate) fn scan_files_filtered(
     let failure = error.clone();
     let pause = Arc::new((Mutex::new(false), Condvar::new()));
     let pausing = pause.clone();
-    let loading = hub.start("Loading the detector", 0);
     std::thread::spawn(move || {
         struct Completion(Arc<AtomicBool>);
         impl Drop for Completion {
@@ -1438,10 +1465,14 @@ pub(crate) fn scan_files_filtered(
             }
         }
         let _completion = Completion(complete);
-        if paths.is_empty() || flag.load(Ordering::Relaxed) {
-            loading.finish();
+        if flag.load(Ordering::Relaxed) {
             return;
         }
+        before_scan(&flag);
+        if paths.is_empty() || flag.load(Ordering::Relaxed) {
+            return;
+        }
+        let loading = hub.start("Loading the detector", 0);
         let mut needs = setup::SCAN.to_vec();
         if settings.lanes().faces {
             needs.extend(setup::FACES);

@@ -3,9 +3,9 @@ import { engine, mocked } from '../lib/api';
 import {
   ADD_DESC, ADD_ORDER, BUILTIN, BUILTIN_ROW_ID, DECIDER_QUANTS, DECISION_HELPER,
   HELPERS, SERVICE_TYPES, SHARING, SHARING_HINT, SIMPLE_CONTROLS, THINK_HINT,
-  addService, builtinRowStates, cardsFromDraft, checkOutcome, costLine,
+  addService, builtinRowStates, builtinVisionEnabled, cardsFromDraft, checkOutcome, costLine,
   decisionCandidates, downloadProgress, helperStatus, isPicked, modelLine,
-  momentsStatus, patchService, poolCount, removeService, servingFor, setSharing,
+  momentsStatus, patchService, poolCount, removeService, servingFor, setBuiltinVision, setSharing,
   sharingValue, summaryText, visionCandidates,
   type AiHelper, type BuiltinModel, type Opt, type ServiceCard,
 } from '../lib/aiCard.mjs';
@@ -77,12 +77,13 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
   const timeoutsRef = useRef<Set<number>>(new Set());
   const aliveRef = useRef(true);
 
-  // Built-in rows read the engine's model manifest + the real use_decider
-  // setting directly, with no local overrides.
+  // Built-in rows read the engine's model manifest + the real use_decider /
+  // built-in vision service settings directly, with no local overrides.
   const rowSource = liveRows ?? models;
+  const builtinVisionOn = builtinVisionEnabled(draft);
   const builtinRows = useMemo(
-    () => builtinRowStates(rowSource, Boolean(draft.use_decider)),
-    [rowSource, draft.use_decider],
+    () => builtinRowStates(rowSource, Boolean(draft.use_decider), builtinVisionOn),
+    [rowSource, draft.use_decider, builtinVisionOn],
   );
 
   // Anchors for the two viewport-clamped menus (see placeAnchoredMenu).
@@ -135,8 +136,8 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
   }, [rowSource]);
 
   const ctx = useMemo(() => {
-    // In-process vision serving is not implemented yet; never claim qwen3-vl:8b in the pool.
-    const builtinVision: string[] = [];
+    const v = builtinRows['qwen3-vl:8b'];
+    const builtinVision = v && v.on && v.downloaded ? ['qwen3-vl:8b'] : [];
     const d = builtinRows['pplx-decider-local'];
     const builtinDecisions = d && d.on && d.downloaded ? ['pplx-decider-local'] : [];
     const cardsCtx = cards.map((c) => ({
@@ -467,7 +468,7 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
     const meta = st.available === false ? 'not available yet'
       : running ? (prog ? prog.label : 'Downloading…')
         : missing ? (m.dl ? `${m.dl} · not downloaded` : 'not downloaded')
-          : m.role === 'vision' ? 'saved on this PC · use Ollama to run'
+          : m.role === 'vision' ? 'on this PC · built-in'
             : 'on this PC';
     let ctl;
     if (st.available === false) {
@@ -482,8 +483,7 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
         {failed ? 'Retry' : 'Download'}
       </button>;
     } else if (m.role === 'vision') {
-      // In-process vision serving is not implemented yet; show an honest status tag.
-      ctl = <span className="mo-na">Downloaded</span>;
+      ctl = <Switch mini on={st.on} ariaLabel={m.id} onChange={(v) => onChange('vlm_services', setBuiltinVision(draft, v) as unknown as SettingValue)} />;
     } else {
       ctl = <Switch mini on={st.on} ariaLabel={m.id} onChange={(v) => onChange('use_decider', v)} />;
     }

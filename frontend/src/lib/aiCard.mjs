@@ -497,7 +497,39 @@ const BUILTIN_MATCH = {
   'qwen3-vl:8b': ['vision', 'qwen'],
   'pplx-decider-local': ['decision', 'decider'],
 };
-export function builtinRowStates(models = [], useDecider = false) {
+/** Whether Conrod's built-in Qwen3-VL vision runner is enabled in `vlm_services`. */
+export function builtinVisionEnabled(settings = {}) {
+  const list = arr(settings && settings.vlm_services);
+  if (list.length) {
+    return list.some((s) => s && String(s.provider || '').toLowerCase() === 'builtin' && s.enabled !== false);
+  }
+  return String((settings && settings.vlm_provider) || '').toLowerCase() === 'builtin';
+}
+
+/** Return an updated `vlm_services` array with the built-in vision service enabled or disabled. */
+export function setBuiltinVision(settings = {}, enabled = true) {
+  const list = arr(settings && settings.vlm_services);
+  const idx = list.findIndex((s) => s && String(s.provider || '').toLowerCase() === 'builtin');
+  if (idx >= 0) {
+    return list.map((s, i) => (i === idx ? { ...s, enabled: Boolean(enabled), model: s.model || 'qwen3-vl:8b' } : s));
+  }
+  if (!enabled) return list.slice();
+  return [
+    ...list,
+    {
+      id: 'vlm-builtin',
+      provider: 'builtin',
+      model: 'qwen3-vl:8b',
+      host: '',
+      api_key: '',
+      key_kind: 'auto',
+      enabled: true,
+      reasoning: false,
+    },
+  ];
+}
+
+export function builtinRowStates(models = [], useDecider = false, useBuiltinVision = true) {
   const rows = Array.isArray(models) ? models : [];
   const rowFor = (id) => {
     const want = BUILTIN_ROW_ID[id];
@@ -523,7 +555,11 @@ export function builtinRowStates(models = [], useDecider = false) {
   const vision = stateOf('qwen3-vl:8b');
   const decision = stateOf('pplx-decider-local');
   return {
-    'qwen3-vl:8b': { downloaded: vision.downloaded, on: vision.downloaded, available: vision.available },
+    'qwen3-vl:8b': {
+      downloaded: vision.downloaded,
+      on: vision.downloaded && Boolean(useBuiltinVision),
+      available: vision.available,
+    },
     'pplx-decider-local': {
       downloaded: decision.downloaded,
       on: decision.downloaded && Boolean(useDecider),

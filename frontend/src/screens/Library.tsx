@@ -103,8 +103,8 @@ export function Library({ jobs, scanning, live, activeJob, queue, setup, onOpen,
   const [status, setStatus] = useState('all');
   const [sort, setSort] = useState('newest');
 
-  // One running scan (the engine's active job, or an album still marked scanning).
-  const scanJob = jobs.find((j) => j.id === activeJob) ?? jobs.find((j) => j.status === 'scanning') ?? null;
+  // One running scan: trust the engine's active slot rather than a stale DB `scanning` status.
+  const scanJob = activeJob != null ? (jobs.find((j) => j.id === activeJob) ?? null) : null;
   const aScanIsRunning = scanning || scanJob != null;
   const scanLive = scanJob ? live[scanJob.id] : undefined;
   const scanProg = scanLive?.progress;

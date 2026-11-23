@@ -5,6 +5,20 @@ pub fn vision(settings: &Settings, enabled: bool) -> Value {
     if !enabled {
         return json!({"name": "Vision model", "file": "vlm", "ready": true, "detail": "Disabled in settings"});
     }
+    if settings.vlm_provider.eq_ignore_ascii_case("builtin") {
+        let weights = conrod_core::models::find(conrod_core::models::VISION).is_some();
+        let mmproj = conrod_core::models::find(conrod_core::models::VISION_MMPROJ).is_some();
+        let server = conrod_core::models::vision_server().is_some();
+        let ready = weights && mmproj && server;
+        let detail = if ready {
+            "Qwen3-VL 8B ready on this PC (built-in)".to_string()
+        } else if !weights || !mmproj {
+            "Download the built-in vision model in Settings → AI models".to_string()
+        } else {
+            "Built-in runtime missing; reinstall in Settings → AI models".to_string()
+        };
+        return json!({"name": "This PC (built-in)", "file": "vlm", "ready": ready, "detail": detail});
+    }
     if settings.vlm_provider != "ollama" {
         return json!({"name": "Vision model", "file": "vlm", "ready": !settings.vlm_api_key.trim().is_empty(), "detail": "API key presence checked; availability is checked during identification"});
     }

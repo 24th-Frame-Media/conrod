@@ -249,11 +249,14 @@ export function App() {
       started = r.scanning ?? true; queued = r.queued ?? false; queuePosition = r.queuePosition ?? 0;
     } catch (e) {
       // A scan that never started gets one plain reason on the Ingest screen, not a raw toast.
+      // Clear jobId when a fresh import failed before creating an album so a
+      // previously open album never hides the import error banner.
       const jid = 'jobId' in scan ? scan.jobId : null;
       const root = 'root' in scan ? scan.root : draft.root;
       const label = 'label' in scan ? scan.label : (jid != null ? eng.jobs.find((j) => j.id === jid)?.label ?? draft.label : draft.label);
       setScanError({ ...classifyScanError(String(e), { root, label }), jobId: jid ?? undefined, label, raw: String(e), args: scan });
-      if (jid != null) setJobId(jid);
+      setJobId(jid ?? null);
+      setShowImport(false);
       setPage('Scan');
       return;
     } finally {

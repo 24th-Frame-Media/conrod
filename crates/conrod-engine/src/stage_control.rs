@@ -114,6 +114,10 @@ impl StageControl {
         self.wake.notify_all();
     }
 
+    pub fn wake_all(&self) {
+        self.wake.notify_all();
+    }
+
     pub fn paused_stages(&self) -> Vec<&'static str> {
         lock(&self.inner).paused.iter().copied().collect()
     }

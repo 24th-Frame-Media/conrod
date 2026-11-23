@@ -11,12 +11,17 @@ use crate::desktop::{rows, Desktop};
 use crate::lock;
 use rusqlite::{params, Connection};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-/// Read the headers of the album's frames and cut its units. Best-effort per
-/// file: an unreadable or moved header is skipped, never a failed scan.
-pub(crate) fn seed(d: &Desktop, job: i64) -> Result<usize, String> {
+/// Read the headers of the album's frames and cut its units, stopping early
+/// between files when `stop` is raised. Best-effort per file: an unreadable or
+/// moved header is skipped, never a failed scan.
+pub(crate) fn seed_cancellable(
+    d: &Desktop,
+    job: i64,
+    stop: Option<&AtomicBool>,
+) -> Result<usize, String> {
     let todo = rows(
         &lock(&d.reader),
         "SELECT id,path,camera,taken_at,lens,iso,file_size FROM images
@@ -26,14 +31,21 @@ pub(crate) fn seed(d: &Desktop, job: i64) -> Result<usize, String> {
         [job],
     )?;
     if !todo.is_empty() {
-        read_headers(d, &todo)?;
+        read_headers(d, &todo, stop)?;
+    }
+    if stop.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        return Ok(0);
     }
     assign_units(&lock(&d.db), job)
 }
 
 /// The EXIF-only part, in a small disk-bound pool: each row writes only the
 /// columns it actually filled, so a re-seed costs no more than a header read.
-fn read_headers(d: &Desktop, todo: &[serde_json::Value]) -> Result<(), String> {
+fn read_headers(
+    d: &Desktop,
+    todo: &[serde_json::Value],
+    stop: Option<&AtomicBool>,
+) -> Result<(), String> {
     let workers = std::thread::available_parallelism()
         .map_or(4, |n| n.get() * 4 / 5)
         .clamp(2, 16)
@@ -46,6 +58,9 @@ fn read_headers(d: &Desktop, todo: &[serde_json::Value]) -> Result<(), String> {
             scope.spawn(move || {
                 let mut mine = Vec::new();
                 loop {
+                    if stop.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                        break;
+                    }
                     let n = next.fetch_add(1, Ordering::Relaxed);
                     let Some(row) = todo.get(n) else { break };
                     let Some(id) = row["id"].as_i64() else {
@@ -131,7 +146,14 @@ pub(crate) fn assign_units(db: &Connection, job: i64) -> Result<usize, String> {
             // The seeded group is also the frame's provisional stack identity
             // (until the regroup refines it with looks and subjects), so a
             // stopped or interrupted album still shows sensible stacks.
-            "UPDATE images SET unit_id=?,burst_key=?,time_burst=?,visible=0 WHERE id=?",
+            // Already-done frames stay visible and keep their existing burst_key
+            // when resuming or adding newly-arrived frames to an album.
+            "UPDATE images
+                SET unit_id=?,
+                    burst_key=COALESCE(burst_key, ?),
+                    time_burst=COALESCE(time_burst, ?),
+                    visible=CASE WHEN status='done' THEN 1 ELSE 0 END
+              WHERE id=?",
             params![
                 i64::from(frame.unit),
                 i64::from(frame.unit),
@@ -191,7 +213,7 @@ mod tests {
         );
         for (taken, image) in [(100.0, a), (105.0, b), (120.0, c)] {
             lib.sql(
-                "UPDATE images SET camera='cam',taken_at=? WHERE id=?",
+                "UPDATE images SET status='pending',camera='cam',taken_at=? WHERE id=?",
                 rusqlite::params![taken, image],
             );
         }
@@ -204,7 +226,10 @@ mod tests {
             "SELECT count(*) FROM images WHERE job_id=? AND visible=0",
             [lib.job],
         );
-        assert_eq!(hidden, 3, "nothing is visible before the last stage");
+        assert_eq!(
+            hidden, 3,
+            "pending frames wait for reveal before the last stage"
+        );
 
         assert_eq!(super::reveal_units(lib.d(), lib.job).unwrap(), 2);
         let shown: i64 = lib.one(
@@ -212,6 +237,30 @@ mod tests {
             [lib.job],
         );
         assert_eq!(shown, 3);
+
+        // Resuming an album with already-done frames must keep those frames
+        // visible and preserve their grouped burst_key.
+        lib.sql(
+            "UPDATE images SET status='done',burst_key=99,visible=1 WHERE id=?",
+            [a],
+        );
+        lib.sql(
+            "UPDATE images SET status='pending',burst_key=NULL WHERE id=?",
+            [c],
+        );
+        super::assign_units(&lib.db(), lib.job).unwrap();
+        let (vis_a, bk_a): (i64, i64) = lib
+            .db()
+            .query_row(
+                "SELECT visible,burst_key FROM images WHERE id=?",
+                [a],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(vis_a, 1, "already-done frames stay visible on resume");
+        assert_eq!(bk_a, 99, "already-grouped burst_key is preserved on resume");
+        let vis_c: i64 = lib.one("SELECT visible FROM images WHERE id=?", [c]);
+        assert_eq!(vis_c, 0, "pending frames start hidden until finished");
 
         // A stop or a crash shows the frames again instead of an empty album.
         lib.sql("UPDATE images SET visible=0 WHERE job_id=?", [lib.job]);

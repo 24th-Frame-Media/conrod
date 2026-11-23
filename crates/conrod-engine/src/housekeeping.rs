@@ -419,11 +419,39 @@ pub fn reset_album(d: &Desktop, job: i64) -> Result<Value> {
         // The import-only path leaves a fresh album 'indexed' (the CREATE TABLE
         // default of 'scanning' is not what the person ever sees); anything else
         // would read as a scan in flight with no Resume.
-        tx.execute("UPDATE jobs SET status='indexed' WHERE id=?", [job])
+        // Also clear any recorded resume stage and shoot-type suggestions so
+        // scanning the reset album starts cleanly from the beginning.
+        let cleaned_settings: Option<String> = tx
+            .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<serde_json::Map<String, Value>>(&raw).ok())
+            .map(|mut map| {
+                map.remove("native_resume_stage");
+                map.remove("native_identify_stale");
+                map.remove(crate::stage_control::STAGE_PAUSE);
+                map.remove(crate::stage_control::STAGE_SKIP);
+                Value::Object(map).to_string()
+            });
+        if let Some(settings_json) = cleaned_settings {
+            tx.execute(
+                "UPDATE jobs SET status='indexed',settings_json=?,shoot_type_suggested=NULL,shoot_type_confidence=NULL,shoot_type_accepted=NULL WHERE id=?",
+                rusqlite::params![settings_json, job],
+            )
             .map_err(err)?;
+        } else {
+            tx.execute(
+                "UPDATE jobs SET status='indexed',shoot_type_suggested=NULL,shoot_type_confidence=NULL,shoot_type_accepted=NULL WHERE id=?",
+                [job],
+            )
+            .map_err(err)?;
+        }
         tx.commit().map_err(err)?;
         (gone, frames)
     };
+    lock(&d.stage_controls).remove(&job);
     let crops_removed = remove_crops(d, &crops);
     let thumbs_removed = remove_crops(d, &thumbs);
     task.finish();

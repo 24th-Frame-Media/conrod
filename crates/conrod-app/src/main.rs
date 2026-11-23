@@ -288,9 +288,11 @@ fn main() {
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(250));
                     if worker.quit_requested() {
+                        conrod_engine::builtin_vlm::service().unload();
                         handle.exit(0);
                         return;
                     }
+                    conrod_engine::builtin_vlm::service().tick();
                     let version = worker.hub.version();
                     // One `scan-progress` event per tick (4/s) while a scan is
                     // running, then one final snapshot. Throttling is this

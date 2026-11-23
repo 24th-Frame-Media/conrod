@@ -909,14 +909,74 @@ pub fn local_ollama_models(settings: &Settings) -> Vec<(String, String)> {
     out
 }
 
+/// Hooks registered by the engine so `provider: "builtin"` can lazily start and
+/// release Conrod's managed local `llama-server` without `conrod-io` depending
+/// on `conrod-engine`.
+type BuiltinEndpointFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
+type BuiltinReleaseFn = Arc<dyn Fn() + Send + Sync>;
+
+struct BuiltinBackend {
+    endpoint: BuiltinEndpointFn,
+    release: BuiltinReleaseFn,
+}
+
+fn builtin_backend() -> &'static Mutex<Option<BuiltinBackend>> {
+    static BACKEND: std::sync::OnceLock<Mutex<Option<BuiltinBackend>>> = std::sync::OnceLock::new();
+    BACKEND.get_or_init(|| Mutex::new(None))
+}
+
+/// Register the built-in local vision backend (endpoint resolver + VRAM release).
+pub fn register_builtin(endpoint: BuiltinEndpointFn, release: BuiltinReleaseFn) {
+    *lock(builtin_backend()) = Some(BuiltinBackend { endpoint, release });
+}
+
+fn resolve_builtin_endpoint() -> Result<String, VlmError> {
+    let endpoint = lock(builtin_backend())
+        .as_ref()
+        .map(|b| b.endpoint.clone())
+        .ok_or_else(|| {
+            VlmError::Misconfigured(
+                "Built-in vision runtime is not initialized in this process".into(),
+            )
+        })?;
+    endpoint().map_err(VlmError::Transport)
+}
+
+/// Unload the built-in vision server if one is registered.
+pub fn release_builtin() -> bool {
+    let release = lock(builtin_backend()).as_ref().map(|b| b.release.clone());
+    if let Some(release) = release {
+        release();
+        true
+    } else {
+        false
+    }
+}
+
+/// Whether the settings enable Conrod's built-in vision provider (`provider: "builtin"`).
+pub fn uses_builtin_vision(settings: &Settings) -> bool {
+    if !settings.vlm_services.is_empty() {
+        settings
+            .vlm_services
+            .iter()
+            .any(|s| s.enabled && s.provider.eq_ignore_ascii_case("builtin"))
+    } else {
+        settings.vlm_provider.eq_ignore_ascii_case("builtin")
+    }
+}
+
 /// Ask every local Ollama endpoint identify uses to drop its model now
-/// (`keep_alive: 0`), so the next stage's model gets the whole card. This is
-/// the serial-by-stage discipline: Ollama would otherwise keep the vision model
-/// resident for its `keep_alive` window. Best effort and quick: a host that is
-/// down, remote or refuses is skipped and never fails a run. Returns how many
-/// endpoints were asked.
+/// (`keep_alive: 0`), and release the built-in vision server if enabled, so
+/// the next stage's model gets the whole card. This is the serial-by-stage
+/// discipline: Ollama would otherwise keep the vision model resident for its
+/// `keep_alive` window. Best effort and quick: a host that is down, remote or
+/// refuses is skipped and never fails a run. Returns how many endpoints were
+/// asked.
 pub fn release_local_models(settings: &Settings) -> usize {
     let mut asked = 0;
+    if uses_builtin_vision(settings) && release_builtin() {
+        asked += 1;
+    }
     for (host, model) in local_ollama_models(settings) {
         let url = format!("{host}/api/generate");
         // A plain-http host that is not local must never be contacted, even to
@@ -1582,6 +1642,7 @@ pub fn gemini_request(
 /// How each provider is spelled when shown to someone.
 pub fn display_name(provider: &str) -> String {
     match provider.to_lowercase().as_str() {
+        "builtin" => "This PC (built-in)".into(),
         "ollama" => "Ollama".into(),
         "openai" => "OpenAI".into(),
         "openrouter" => "OpenRouter".into(),
@@ -1756,7 +1817,7 @@ pub fn parse_gemini_response(body: &Value) -> Result<Value, VlmError> {
 fn parse_response(provider: &str, body: &Value) -> Result<Value, VlmError> {
     match provider {
         "ollama" => parse_ollama_response(body),
-        "openai" => parse_openai_response(body),
+        "builtin" | "openai" => parse_openai_response(body),
         // OpenRouter speaks the OpenAI envelope too.
         "openrouter" => parse_openai_response(body),
         "anthropic" => parse_anthropic_response(body),
@@ -1902,7 +1963,26 @@ impl VlmClient {
                 "No vision service is enabled".into(),
             ));
         }
-        let resp = if provider == "ollama" {
+        let resp = if provider == "builtin" {
+            let base = resolve_builtin_endpoint()?;
+            let url = format!("{}/v1/chat/completions", base.trim_end_matches('/'));
+            let model = if settings.vlm_model.is_empty() {
+                "qwen3-vl:8b"
+            } else {
+                &settings.vlm_model
+            };
+            let mut req =
+                openai_request_at(&url, true, model, "", prompt, images, schema, num_predict);
+            req.headers.clear();
+            if let Some(penalty) = repeat_penalty {
+                req.json["repeat_penalty"] = json!(penalty);
+            }
+            self.send_once(
+                &req,
+                Duration::from_secs_f64(settings.vlm_timeout),
+                Some(Duration::from_secs(10)),
+            )?
+        } else if provider == "ollama" {
             // Deliberately not through the rate gate: nothing meters a
             // program talking to itself, and Ollama blocks while it loads a
             // model rather than refusing -- there is nothing here worth
@@ -3689,5 +3769,58 @@ mod tests {
             [("http://[::1]:11434".to_string(), "qwen3-vl:8b".to_string())],
             "a separate LAN Ollama server is not unloaded by release_local_models"
         );
+    }
+
+    #[test]
+    fn builtin_vision_provider_uses_registered_endpoint_and_release_hook() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let body = r#"{"choices":[{"message":{"content":"{\"make\":\"Porsche\",\"model\":\"911 GT3\",\"colour\":\"silver\",\"body_type\":\"coupe\",\"team\":null,\"sponsors\":[],\"race_number\":\"7\",\"visible_text\":[],\"action\":[],\"notes\":null}"}}]}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(reply.as_bytes());
+        });
+
+        let released = Arc::new(AtomicBool::new(false));
+        let rel = released.clone();
+        register_builtin(
+            Arc::new(move || Ok(base.clone())),
+            Arc::new(move || rel.store(true, Ordering::SeqCst)),
+        );
+
+        let settings = Settings {
+            vlm_services: vec![VlmService {
+                id: "vlm-builtin".into(),
+                provider: "builtin".into(),
+                model: "qwen3-vl:8b".into(),
+                enabled: true,
+                ..VlmService::default()
+            }],
+            ..Settings::default()
+        };
+        assert!(uses_builtin_vision(&settings));
+        let client = VlmClient::new(Arc::new(RealClock::default()));
+        let schema =
+            json!({"type": "object", "properties": {"make": {"type": ["string", "null"]}}});
+        let out = client
+            .call(&settings, "describe", &[], &schema, 128)
+            .expect("builtin provider call succeeds against registered loopback server");
+        assert_eq!(out["make"], "Porsche");
+        assert_eq!(out["race_number"], "7");
+        server.join().unwrap();
+
+        assert_eq!(release_local_models(&settings), 1);
+        assert!(released.load(Ordering::SeqCst));
     }
 }

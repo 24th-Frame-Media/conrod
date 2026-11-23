@@ -222,7 +222,13 @@ pub fn vision_row() -> Value {
             .is_some_and(|a| a.pinned())
     });
     let detail = if downloaded {
-        "On this PC.".to_string()
+        if crate::builtin_vlm::service().running() {
+            "Running on this PC (built-in).".to_string()
+        } else if models::vision_server().is_some() {
+            "On this PC (built-in).".to_string()
+        } else {
+            "On this PC (runtime installs automatically when enabled).".to_string()
+        }
     } else if !available {
         "Not available yet: no pinned source to download it from.".to_string()
     } else {
@@ -333,7 +339,15 @@ pub fn install_missing(d: &Arc<Desktop>) -> Result<Value, String> {
 /// Install exactly the named assets in the background (the card's per-model
 /// Download), or everything missing when `ids` is empty. One install at a time.
 pub fn install_ids(d: &Arc<Desktop>, ids: Vec<String>) -> Result<Value, String> {
-    let ids = if ids.is_empty() { everything() } else { ids };
+    let mut ids = if ids.is_empty() { everything() } else { ids };
+    // Installing the built-in Qwen3-VL pair also ensures the bundled llama.cpp
+    // runtime (`llama-server.exe`) is present so it can run without Ollama.
+    if ids.iter().any(|id| VISION.contains(&id.as_str()))
+        && models::vision_server().is_none()
+        && !ids.iter().any(|id| id == models::DECIDER_RUNTIME)
+    {
+        ids.push(models::DECIDER_RUNTIME.to_string());
+    }
     let key = "Installing models".to_string();
     let flag = Arc::new(AtomicBool::new(false));
     {

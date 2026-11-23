@@ -149,8 +149,11 @@ export function momentsStatus(settings?: Record<string, unknown>, localInstalled
 export function poolCount(ctx?: AiPoolCtx): { n: number; svc: number };
 export function summaryText(ctx?: AiPoolCtx): { text: string; dot: string };
 export function checkOutcome(res: unknown, err?: unknown): CheckOutcome;
+export function builtinVisionEnabled(settings?: Record<string, unknown>): boolean;
+export function setBuiltinVision(settings?: Record<string, unknown>, enabled?: boolean): unknown[];
 export function builtinRowStates(
   models?: readonly ManifestModelRow[],
   useDecider?: boolean,
+  useBuiltinVision?: boolean,
 ): Record<string, BuiltinRowState>;
 export function downloadProgress(done: number, total: number): { known: boolean; pct: number | null; label: string };

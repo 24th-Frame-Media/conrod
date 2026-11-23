@@ -105,9 +105,21 @@ fn resume_tail(settings: &Map<String, Value>) -> Tail {
 }
 
 /// The workflow a resume runs: the album's stored scan stage, never the
-/// sheet's (a resume has no sheet). An album that was only indexed is culled.
+/// sheet's (a resume has no sheet). Checks both top-level `native_scan_stage`
+/// and legacy nested `extra.native_scan_stage` (written when `Settings::extra`
+/// was serialized as a nested object). An album that was only indexed is culled.
 fn stored_stage(settings: &Map<String, Value>) -> crate::commands::ScanStage {
-    match settings.get("native_scan_stage").and_then(Value::as_str) {
+    let raw = settings
+        .get("native_scan_stage")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            settings
+                .get("extra")
+                .and_then(Value::as_object)
+                .and_then(|extra| extra.get("native_scan_stage"))
+                .and_then(Value::as_str)
+        });
+    match raw {
         Some("all") => crate::commands::ScanStage::All,
         _ => crate::commands::ScanStage::Cull,
     }
@@ -193,6 +205,16 @@ struct ImportPlan {
     fresh: Vec<PathBuf>,
 }
 
+/// Canonical key for comparing file paths across imports: case-insensitive and
+/// slash-normalised on Windows, exact on case-sensitive filesystems.
+fn path_key(path: &str) -> String {
+    if cfg!(windows) {
+        path.replace('/', "\\").to_lowercase()
+    } else {
+        path.to_string()
+    }
+}
+
 fn plan_import(db: &Connection, root: &Path, paths: &[PathBuf]) -> Result<ImportPlan> {
     let album: Option<i64> = db
         .query_row(
@@ -203,20 +225,25 @@ fn plan_import(db: &Connection, root: &Path, paths: &[PathBuf]) -> Result<Import
         .optional()
         .map_err(err)?;
     // A photograph already in an album is not imported again, even under
-    // another root: two rows would mean two scans of the same file.
-    let mut probe = db
-        .prepare("SELECT EXISTS(SELECT 1 FROM images WHERE path=?)")
-        .map_err(err)?;
+    // another root: two rows would mean two scans of the same file. Load known
+    // paths in one query so importing thousands of frames never does N+1 probes
+    // and Windows case variants match cleanly.
+    let mut existing = std::collections::HashSet::new();
+    {
+        let mut stmt = db.prepare("SELECT path FROM images").map_err(err)?;
+        let iter = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
+        for row in iter {
+            existing.insert(path_key(&row.map_err(err)?));
+        }
+    }
     let mut duplicates = 0;
     let mut fresh = Vec::with_capacity(paths.len());
     for path in paths {
-        let text = path.to_string_lossy();
-        let known: bool = probe
-            .query_row([text.as_ref()], |r| r.get(0))
-            .map_err(err)?;
-        if known {
+        let key = path_key(&path.to_string_lossy());
+        if existing.contains(&key) {
             duplicates += 1;
         } else {
+            existing.insert(key);
             fresh.push(path.clone());
         }
     }
@@ -470,6 +497,7 @@ impl Desktop {
         let reader = conrod_store::connect(Some(&root.join("conrod.db"))).map_err(err)?;
         let settings = Settings::load(&root.join("settings.json"));
         crate::decider::service().configure(&settings);
+        crate::builtin_vlm::register();
         task.finish();
         let albums: i64 = db
             .query_row("SELECT count(*) FROM jobs", [], |r| r.get(0))
@@ -580,7 +608,7 @@ impl Desktop {
         let db = lock(&self.db);
         let changed = db
             .execute(
-                "UPDATE jobs SET status='stopped' WHERE status IN ('scanning','indexing','grouping','picking','identifying')",
+                "UPDATE jobs SET status='stopped' WHERE status IN ('scanning','indexing','grouping','picking','identifying','queued')",
                 [],
             )
             .map_err(err)?;
@@ -737,6 +765,7 @@ impl Desktop {
 
     pub fn request_quit(&self) {
         self.quit.store(true, Ordering::Release);
+        crate::builtin_vlm::service().unload();
     }
     pub fn quit_requested(&self) -> bool {
         self.quit.load(Ordering::Acquire)
@@ -744,6 +773,14 @@ impl Desktop {
     /// Whether closing the window should leave Conrod running in the tray.
     pub fn close_to_tray(&self) -> bool {
         lock(&self.settings).close_to_tray
+    }
+    /// Whether the cull worker pool (Stage A) is currently running.
+    pub(crate) fn cull_running(&self) -> bool {
+        self.active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|(_, scan)| !scan.is_finished())
     }
     pub fn scanning(&self) -> bool {
         self.active
@@ -799,7 +836,8 @@ impl Desktop {
     }
 
     /// Take an album out of the line: it keeps its frames and results, and
-    /// waits to be started by hand.
+    /// waits to be started by hand. If a prior crash left the DB row `queued`
+    /// with an empty in-memory queue, heal it back to `stopped`.
     fn unqueue(&self, job: i64) -> Result<Value> {
         let removed = {
             let mut queue = lock(&self.queue);
@@ -811,13 +849,20 @@ impl Desktop {
                 None => false,
             }
         };
+        let db = lock(&self.db);
         if !removed {
-            return Err("That album is not waiting in the queue".into());
+            let stale_queued: bool = db
+                .query_row("SELECT status FROM jobs WHERE id=?", [job], |r| {
+                    r.get::<_, String>(0)
+                })
+                .optional()
+                .map_err(err)?
+                .is_some_and(|s| s == "queued");
+            if !stale_queued {
+                return Err("That album is not waiting in the queue".into());
+            }
         }
-        self.db
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .execute("UPDATE jobs SET status='stopped' WHERE id=?", [job])
+        db.execute("UPDATE jobs SET status='stopped' WHERE id=?", [job])
             .map_err(err)?;
         Ok(Value::Null)
     }
@@ -925,7 +970,27 @@ impl Desktop {
             Command::ResumeScan {} => self.control(|scan| scan.pause(false)),
             Command::Stop {} => {
                 self.hub.note("Stopping scan...");
-                self.control(Scan::cancel)
+                let active_job = {
+                    let active = lock(&self.active);
+                    if let Some((j, scan)) = active.as_ref() {
+                        scan.cancel();
+                        Some(*j)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(job) = active_job {
+                    // Wake any parked stage (Group / Pick / Identify) so Stop
+                    // takes effect immediately instead of waiting on a pause.
+                    self.stage_control(job).wake_all();
+                    // Also cancel the scan-owned Identify operation if the
+                    // post-scan thread is currently inside Identify.
+                    let key = format!("Identifying:{job}");
+                    if let Some(flag) = lock(&self.operations).get(&key) {
+                        flag.store(true, Ordering::Relaxed);
+                    }
+                }
+                Ok(self.status())
             }
             Command::Unqueue(a) => self.unqueue(a.job_id),
             Command::DeleteJob(a) => self.delete_job(a.job_id),
@@ -1153,11 +1218,18 @@ impl Desktop {
 
     fn delete_job(&self, job: i64) -> Result<Value> {
         if lock(&self.active).as_ref().is_some_and(|(j, s)| {
-            *j == job && !s.is_finished() || self.finishing.load(Ordering::Acquire)
+            *j == job && (!s.is_finished() || self.finishing.load(Ordering::Acquire))
         }) {
             return Err("Stop the scan before removing its album".into());
         }
+        if lock(&self.operations)
+            .keys()
+            .any(|k| k.ends_with(&format!(":{job}")))
+        {
+            return Err("Cancel the running task on this album before removing it".into());
+        }
         lock(&self.queue).retain(|waiting| *waiting != job);
+        lock(&self.stage_controls).remove(&job);
         let task = self.hub.start("Removing album from library", 0);
         self.db
             .lock()
@@ -1261,16 +1333,17 @@ impl Desktop {
 
     pub fn status(&self) -> Value {
         let tasks: Vec<_> = self.hub.snapshot().iter().map(|t| json!({"id":t.id,"label":t.label,"detail":t.detail,"state":format!("{:?}",t.state).to_lowercase(),"done":t.done,"total":t.total,"elapsed":t.elapsed.as_secs_f64(),"eta":t.eta.map(|d|d.as_secs_f64()),"error":t.error})).collect();
+        let finishing = self.finishing.load(Ordering::Acquire);
         let (active_job, ended) = {
             let active = lock(&self.active);
             (
                 active
                     .as_ref()
-                    .filter(|(_, s)| !s.is_finished())
+                    .filter(|(_, s)| !s.is_finished() || finishing)
                     .map(|(j, _)| *j),
                 active
                     .as_ref()
-                    .filter(|(_, s)| s.is_finished())
+                    .filter(|(_, s)| s.is_finished() && !finishing)
                     .map(|(j, _)| *j),
             )
         };
@@ -1521,227 +1594,347 @@ impl Desktop {
                 false,
             );
         }
-        let mut settings = lock(&self.settings).clone();
-        let auto_apply = settings.auto_apply;
-        let task = self.hub.start("Indexing album", 0);
-        // How far this run's tail goes, which stage it reads at, and what the
-        // import found. A resume keeps the album's own stage; a folder that is
-        // already an album only gains the frames it does not have yet.
-        let (job, paths, stage, from, existing, duplicates, added) = if let Some(job) = a.job_id {
-            let db = lock(&self.db);
-            let stored: String = db
-                .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
-                    r.get(0)
-                })
-                .map_err(err)?;
-            let map = serde_json::from_str::<Map<String, Value>>(&stored).unwrap_or_default();
-            settings = settings.apply(&map);
-            let paths = unfinished_paths(&db, job)?;
-            // Frames left to read start the pipeline at the scan again; with
-            // none, continue at the stage the album stopped in.
-            let from = if paths.is_empty() {
-                resume_tail(&map)
-            } else {
-                Tail::Scan
-            };
-            (job, paths, stored_stage(&map), from, true, 0, 0)
-        } else {
-            // dunce: plain `canonicalize` returns a `\\?\` verbatim path on
-            // Windows, which would be stored and then no longer match the
-            // paths Python and exiftool use.
+        // Validate cheap inputs BEFORE starting the `Indexing album` hub task,
+        // so bad paths or empty folders never drop an unfinished Task into the
+        // activity log as "stopped without finishing".
+        let base_settings = lock(&self.settings).clone();
+        let auto_apply = base_settings.auto_apply;
+        let validated_root = if a.job_id.is_none() {
             let root = dunce::canonicalize(a.root.as_deref().ok_or("Choose a photo folder")?)
-                .map_err(err)?;
+                .map_err(|e| format!("Could not open folder: {e}"))?;
             if !root.is_dir() {
                 return Err("Choose a photo folder".into());
             }
-            let found = crate::files_with_recursion(&root, a.recursive);
-            if found.is_empty() {
-                return Err("No CR2, CR3 or JPEG photos found in that folder".into());
-            }
-            let db = lock(&self.db);
-            let plan = plan_import(&db, &root, &found)?;
-            if let Some(job) = plan.album {
-                // The folder already is an album: it gains only the frames it
-                // has not seen, and keeps the settings it was created with.
-                let added = plan.fresh.len();
-                if added == 0 {
-                    task.finish();
-                    return Ok(json!({
-                        "jobId": job,
-                        "duplicates": plan.duplicates,
-                        "added": 0,
-                        "existing": true,
-                        "scanning": false,
-                    }));
+            if let Some(strictness) = a.blur_strictness.as_deref() {
+                if !["critical", "strict", "moderate", "lenient"].contains(&strictness) {
+                    return Err("Strictness must be critical, strict, moderate or lenient".into());
                 }
-                let tx = db.unchecked_transaction().map_err(err)?;
-                conrod_store::add_images(&tx, job, &plan.fresh).map_err(err)?;
-                tx.commit().map_err(err)?;
+            }
+            if let Some(gap) = a.burst_gap {
+                if !(gap.is_finite() && gap > 0.0) {
+                    return Err("Burst gap must be a positive number of seconds".into());
+                }
+            }
+            Some(root)
+        } else {
+            None
+        };
+
+        let task = self.hub.start("Indexing album", 0);
+        struct PreparedScan {
+            job: i64,
+            paths: Vec<PathBuf>,
+            stage: ScanStage,
+            from: Tail,
+            existing: bool,
+            duplicates: usize,
+            added: usize,
+            settings: Settings,
+            early: Option<Value>,
+        }
+        let prepared: Result<PreparedScan> = (|| {
+            let mut settings = base_settings;
+            // How far this run's tail goes, which stage it reads at, and what the
+            // import found. A resume keeps the album's own stage; a folder that is
+            // already an album only gains the frames it does not have yet.
+            if let Some(job) = a.job_id {
+                let db = lock(&self.db);
                 let stored: String = db
                     .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
                         r.get(0)
                     })
-                    .map_err(err)?;
+                    .optional()
+                    .map_err(err)?
+                    .ok_or("No such album")?;
                 let map = serde_json::from_str::<Map<String, Value>>(&stored).unwrap_or_default();
                 settings = settings.apply(&map);
-                // The sheet can still ask for an index-only import; otherwise
-                // the new frames are read the way the album was created.
-                let stage = if a.stage == ScanStage::Index {
-                    ScanStage::Index
+                let paths = unfinished_paths(&db, job)?;
+                // Frames left to read start the pipeline at the scan again; with
+                // none, continue at the stage the album stopped in.
+                let from = if paths.is_empty() {
+                    resume_tail(&map)
                 } else {
-                    stored_stage(&map)
+                    Tail::Scan
                 };
-                (
+                Ok(PreparedScan {
                     job,
-                    unfinished_paths(&db, job)?,
-                    stage,
-                    Tail::Scan,
-                    true,
-                    plan.duplicates,
-                    added,
-                )
-            } else if plan.fresh.is_empty() {
-                // Every frame is already in another album. Nothing is created:
-                // report the album that holds them so the sheet can say so.
-                let holder: Option<i64> = db
-                    .query_row(
-                        "SELECT job_id FROM images WHERE path=? LIMIT 1",
-                        [found[0].to_string_lossy().as_ref()],
-                        |r| r.get(0),
-                    )
-                    .optional()
-                    .map_err(err)?;
-                task.finish();
-                return Ok(json!({
-                    "jobId": holder,
-                    "duplicates": plan.duplicates,
-                    "added": 0,
-                    "existing": true,
-                    "scanning": false,
-                }));
+                    paths,
+                    stage: stored_stage(&map),
+                    from,
+                    existing: true,
+                    duplicates: 0,
+                    added: 0,
+                    settings,
+                    early: None,
+                })
             } else {
-                // The sheet's choices belong to the album being created, not to the
-                // global defaults: they are written once, into its settings_json.
-                let profile = a
-                    .scan_profile
-                    .as_deref()
-                    .or(a.profile.as_deref())
-                    .unwrap_or(&settings.scan_profile);
-                settings.scan_profile = ShootPreset::parse(profile).name().into();
-                // The photographer's own defaults for this type, copied in now:
-                // the album keeps them whatever the profile does later.
-                settings.take_profile_defaults(a.blur_strictness.is_some());
-                // The profile is global; the album keeps only its copy.
-                settings.user_profile = Map::new();
-                if let Some(read) = a.read_plates {
-                    settings.read_plates = read;
+                let root = validated_root.expect("validated above");
+                let found = crate::files_with_recursion(&root, a.recursive);
+                if found.is_empty() {
+                    return Err("No CR2, CR3 or JPEG photos found in that folder".into());
                 }
-                if let Some(read) = a.read_numbers {
-                    settings.read_numbers = read;
-                }
-                if let Some(people) = a.include_people {
-                    settings.include_people = people;
-                }
-                if let Some(map) = &a.overrides {
-                    // Only known features, only booleans.
-                    settings.overrides = conrod_core::profile::Overrides::from_map(map).to_map();
-                }
-                if let Some(strictness) = a.blur_strictness.as_deref() {
-                    if !["critical", "strict", "moderate", "lenient"].contains(&strictness) {
-                        return Err(
-                            "Strictness must be critical, strict, moderate or lenient".into()
-                        );
+                let db = lock(&self.db);
+                let plan = plan_import(&db, &root, &found)?;
+                if let Some(job) = plan.album {
+                    // The folder already is an album: it gains only the frames it
+                    // has not seen, and keeps the settings it was created with.
+                    let added = plan.fresh.len();
+                    if added == 0 {
+                        return Ok(PreparedScan {
+                            job,
+                            paths: Vec::new(),
+                            stage: ScanStage::Index,
+                            from: Tail::Scan,
+                            existing: true,
+                            duplicates: plan.duplicates,
+                            added: 0,
+                            settings,
+                            early: Some(json!({
+                                "jobId": job,
+                                "duplicates": plan.duplicates,
+                                "added": 0,
+                                "existing": true,
+                                "scanning": false,
+                            })),
+                        });
                     }
-                    settings.blur_strictness = strictness.to_string();
-                    settings.blur_explicit = true;
-                }
-                if let Some(gap) = a.burst_gap {
-                    if !(gap.is_finite() && gap > 0.0) {
-                        return Err("Burst gap must be a positive number of seconds".into());
+                    let tx = db.unchecked_transaction().map_err(err)?;
+                    conrod_store::add_images(&tx, job, &plan.fresh).map_err(err)?;
+                    tx.commit().map_err(err)?;
+                    let stored: String = db
+                        .query_row("SELECT settings_json FROM jobs WHERE id=?", [job], |r| {
+                            r.get(0)
+                        })
+                        .map_err(err)?;
+                    let map =
+                        serde_json::from_str::<Map<String, Value>>(&stored).unwrap_or_default();
+                    settings = settings.apply(&map);
+                    // The sheet can still ask for an index-only import; otherwise
+                    // the new frames are read the way the album was created.
+                    let stage = if a.stage == ScanStage::Index {
+                        ScanStage::Index
+                    } else {
+                        stored_stage(&map)
+                    };
+                    Ok(PreparedScan {
+                        job,
+                        paths: unfinished_paths(&db, job)?,
+                        stage,
+                        from: Tail::Scan,
+                        existing: true,
+                        duplicates: plan.duplicates,
+                        added,
+                        settings,
+                        early: None,
+                    })
+                } else if plan.fresh.is_empty() {
+                    // Every frame is already in another album. Nothing is created:
+                    // report the album that holds them so the sheet can say so.
+                    let sql = if cfg!(windows) {
+                        "SELECT job_id FROM images WHERE path=? COLLATE NOCASE LIMIT 1"
+                    } else {
+                        "SELECT job_id FROM images WHERE path=? LIMIT 1"
+                    };
+                    let holder: Option<i64> = db
+                        .query_row(sql, [found[0].to_string_lossy().as_ref()], |r| r.get(0))
+                        .optional()
+                        .map_err(err)?;
+                    Ok(PreparedScan {
+                        job: holder.unwrap_or(0),
+                        paths: Vec::new(),
+                        stage: ScanStage::Index,
+                        from: Tail::Scan,
+                        existing: true,
+                        duplicates: plan.duplicates,
+                        added: 0,
+                        settings,
+                        early: Some(json!({
+                            "jobId": holder,
+                            "duplicates": plan.duplicates,
+                            "added": 0,
+                            "existing": true,
+                            "scanning": false,
+                        })),
+                    })
+                } else {
+                    // The sheet's choices belong to the album being created, not to the
+                    // global defaults: they are written once, into its settings_json.
+                    let profile = a
+                        .scan_profile
+                        .as_deref()
+                        .or(a.profile.as_deref())
+                        .unwrap_or(&settings.scan_profile);
+                    settings.scan_profile = ShootPreset::parse(profile).name().into();
+                    // The photographer's own defaults for this type, copied in now:
+                    // the album keeps them whatever the profile does later.
+                    settings.take_profile_defaults(a.blur_strictness.is_some());
+                    // The profile is global; the album keeps only its copy.
+                    settings.user_profile = Map::new();
+                    if let Some(read) = a.read_plates {
+                        settings.read_plates = read;
                     }
-                    settings.burst_gap = gap;
-                }
-                // The grouping sheet's choices go through the same normalisers the
-                // settings loader and regroup use: an unknown word is "normal", and
-                // a pause is clamped to the 0..=10 the cut honours (0 disables it).
-                if let Some(stacks) = a.grouping_stacks {
-                    settings.grouping_stacks = stacks;
-                }
-                if let Some(word) = a.grouping_sensitivity.as_deref() {
-                    settings.grouping_sensitivity = conrod_core::bursts::sensitivity_word(word);
-                }
-                if let Some(pause) = a.grouping_pause {
-                    settings.grouping_pause = conrod_core::bursts::clamped_pause(pause);
-                }
-                if let Some(keep) = a.grouping_keep_pans {
-                    settings.grouping_keep_pans = keep;
-                }
-                if let Some(merge) = a.grouping_merge {
-                    settings.grouping_merge = merge;
-                }
-                if let Some(anchor) = a.grouping_focus_anchor {
-                    settings.grouping_focus_anchor = anchor;
-                }
-                if let Some(word) = a.workflow_mode.as_deref() {
-                    settings.workflow_mode =
-                        conrod_core::settings::workflow_mode_word(word).to_string();
-                }
-                if let Some(word) = a.identify_scope.as_deref() {
-                    settings.identify_scope =
-                        conrod_core::settings::identify_scope_word(word).to_string();
-                }
-                settings.extra.insert(
-                    "native_scan_stage".into(),
-                    json!(match a.stage {
+                    if let Some(read) = a.read_numbers {
+                        settings.read_numbers = read;
+                    }
+                    if let Some(people) = a.include_people {
+                        settings.include_people = people;
+                    }
+                    if let Some(map) = &a.overrides {
+                        // Only known features, only booleans.
+                        settings.overrides =
+                            conrod_core::profile::Overrides::from_map(map).to_map();
+                    }
+                    if let Some(strictness) = a.blur_strictness.as_deref() {
+                        settings.blur_strictness = strictness.to_string();
+                        settings.blur_explicit = true;
+                    }
+                    if let Some(gap) = a.burst_gap {
+                        settings.burst_gap = gap;
+                    }
+                    // The grouping sheet's choices go through the same normalisers the
+                    // settings loader and regroup use: an unknown word is "normal", and
+                    // a pause is clamped to the 0..=10 the cut honours (0 disables it).
+                    if let Some(stacks) = a.grouping_stacks {
+                        settings.grouping_stacks = stacks;
+                    }
+                    if let Some(word) = a.grouping_sensitivity.as_deref() {
+                        settings.grouping_sensitivity = conrod_core::bursts::sensitivity_word(word);
+                    }
+                    if let Some(pause) = a.grouping_pause {
+                        settings.grouping_pause = conrod_core::bursts::clamped_pause(pause);
+                    }
+                    if let Some(keep) = a.grouping_keep_pans {
+                        settings.grouping_keep_pans = keep;
+                    }
+                    if let Some(merge) = a.grouping_merge {
+                        settings.grouping_merge = merge;
+                    }
+                    if let Some(anchor) = a.grouping_focus_anchor {
+                        settings.grouping_focus_anchor = anchor;
+                    }
+                    if let Some(word) = a.workflow_mode.as_deref() {
+                        settings.workflow_mode =
+                            conrod_core::settings::workflow_mode_word(word).to_string();
+                    }
+                    if let Some(word) = a.identify_scope.as_deref() {
+                        settings.identify_scope =
+                            conrod_core::settings::identify_scope_word(word).to_string();
+                    }
+                    let stage_word = match a.stage {
                         ScanStage::Index => "index",
                         ScanStage::All => "all",
                         _ => "cull",
-                    }),
-                );
-                let added = plan.fresh.len();
-                // Vision is not copied in: the album follows the global switch
-                // until the photographer sets it for this album alone.
-                let mut stored = json!(settings);
-                if let Some(map) = stored.as_object_mut() {
-                    conrod_core::settings::follow_global_vlm(map);
+                    };
+                    settings
+                        .extra
+                        .insert("native_scan_stage".into(), json!(stage_word));
+                    let added = plan.fresh.len();
+                    // Vision is not copied in: the album follows the global switch
+                    // until the photographer sets it for this album alone.
+                    // Store `native_scan_stage` at top-level too so `stored_stage`
+                    // always finds it directly alongside `native_resume_stage`.
+                    let mut stored = json!(settings);
+                    if let Some(map) = stored.as_object_mut() {
+                        conrod_core::settings::follow_global_vlm(map);
+                        map.insert("native_scan_stage".into(), json!(stage_word));
+                    }
+                    let tx = db.unchecked_transaction().map_err(err)?;
+                    let job = conrod_store::create_job(&tx, &root, a.label.as_deref(), &stored)
+                        .map_err(err)?;
+                    conrod_store::add_images(&tx, job, &plan.fresh).map_err(err)?;
+                    tx.commit().map_err(err)?;
+                    Ok(PreparedScan {
+                        job,
+                        paths: plan.fresh,
+                        stage: a.stage,
+                        from: Tail::Scan,
+                        existing: false,
+                        duplicates: plan.duplicates,
+                        added,
+                        settings,
+                        early: None,
+                    })
                 }
-                let tx = db.unchecked_transaction().map_err(err)?;
-                let job = conrod_store::create_job(&tx, &root, a.label.as_deref(), &stored)
-                    .map_err(err)?;
-                conrod_store::add_images(&tx, job, &plan.fresh).map_err(err)?;
-                tx.commit().map_err(err)?;
-                (
-                    job,
-                    plan.fresh,
-                    a.stage,
-                    Tail::Scan,
-                    false,
-                    plan.duplicates,
-                    added,
-                )
+            }
+        })();
+
+        let PreparedScan {
+            job,
+            paths,
+            stage,
+            from,
+            existing,
+            duplicates,
+            added,
+            settings,
+            early,
+        } = match prepared {
+            Ok(p) => p,
+            Err(e) => {
+                task.fail(e.clone());
+                return Err(e);
             }
         };
+        if let Some(reply) = early {
+            task.finish();
+            return Ok(reply);
+        }
         if stage == ScanStage::Index {
-            self.db
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            if let Err(e) = lock(&self.db)
                 .execute("UPDATE jobs SET status='indexed' WHERE id=?", [job])
-                .map_err(err)?;
+                .map_err(err)
+            {
+                task.fail(e.clone());
+                return Err(e);
+            }
             task.finish();
             return Ok(
                 json!({"jobId": job, "duplicates": duplicates, "added": added, "existing": existing, "scanning": false}),
             );
         }
+        // Cancel any thumbnail backfill on this album (scanning writes thumbnails
+        // itself), and refuse if a real album operation (Identify, Rerun, Write)
+        // is already running on it so we never fail mid-pipeline.
+        let mut waiting_for_fill = None;
+        {
+            let ops = lock(&self.operations);
+            let suffix = format!(":{job}");
+            for (k, flag) in ops.iter() {
+                if !k.ends_with(&suffix) {
+                    continue;
+                }
+                if k.starts_with("Filling thumbnails:") {
+                    flag.store(true, Ordering::Relaxed);
+                    waiting_for_fill = Some(k.clone());
+                } else {
+                    let msg = "This album already has a task running. Wait for it to finish or cancel it first.".to_string();
+                    task.fail(msg.clone());
+                    return Err(msg);
+                }
+            }
+        }
+        if let Some(fill_key) = waiting_for_fill {
+            for _ in 0..20 {
+                if !lock(&self.operations).contains_key(&fill_key) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
+
         let mut active = lock(&self.active);
         if let Some((running, _)) = active
             .as_ref()
             .filter(|(_, s)| !s.is_finished() || self.finishing.load(Ordering::Acquire))
         {
             if *running == job {
-                return Err("That album is already scanning".into());
+                let msg = "That album is already scanning".to_string();
+                task.fail(msg.clone());
+                return Err(msg);
             }
             // One scan at a time: the album is already made (its rows, its
             // settings), so it waits its turn and starts when this one ends.
+            drop(active);
             task.finish();
             let position = self.enqueue(job)?;
             return Ok(json!({
@@ -1754,35 +1947,22 @@ impl Desktop {
                 "queuePosition": position,
             }));
         }
-        self.db
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        if let Err(e) = lock(&self.db)
             .execute("UPDATE jobs SET status='scanning' WHERE id=?", [job])
-            .map_err(err)?;
+            .map_err(err)
+        {
+            task.fail(e.clone());
+            return Err(e);
+        }
         // A run that reads frames starts the pipeline at the scan; one that
         // only continues a stage keeps the stage it already recorded.
         if from == Tail::Scan {
             self.note_resume_stage(job, Tail::Scan);
-            // Capture times and seeded units before the cull lane reads a
-            // pixel: frames carry a burst identity and a resume boundary. A
-            // header that cannot be read only costs that frame its early time,
-            // never the scan.
-            let seeding = self.hub.start("Reading capture times", 0);
-            match crate::seed::seed(self, job) {
-                Ok(units) => {
-                    seeding.detail(format!("{units} bursts"));
-                    seeding.finish();
-                }
-                Err(e) => {
-                    seeding.fail(e.clone());
-                    self.hub
-                        .note(format!("Could not seed bursts from capture time: {e}"));
-                }
-            }
         }
         task.finish();
         let desktop = self.clone();
         let eligibility = self.clone();
+        let seeder = self.clone();
         // One progress object per scan: the pools write to it and the app
         // emits its snapshot as `scan-progress`.
         let faces_on = settings.lanes().faces;
@@ -1813,12 +1993,37 @@ impl Desktop {
         for stage in control.skipped_stages() {
             progress.skip_stage(stage);
         }
-        let scan = Arc::new(crate::scan_files_filtered(
+        let run_seed = from == Tail::Scan && !paths.is_empty();
+        let scan = Arc::new(crate::scan_files_with_setup(
             paths,
             settings.clone(),
             ScanProfile::parse(&settings.scan_profile),
             self.hub.clone(),
             Some(progress.clone()),
+            move |stop| {
+                if !run_seed {
+                    return;
+                }
+                // Capture times and seeded units on the background scan thread
+                // (never holding `Desktop.active` during IPC!), stopping early
+                // if the user cancels while EXIF headers are read.
+                let seeding = seeder.hub.start("Reading capture times", 0);
+                match crate::seed::seed_cancellable(&seeder, job, Some(stop)) {
+                    Ok(_units) if stop.load(Ordering::Relaxed) => {
+                        seeding.cancel();
+                    }
+                    Ok(units) => {
+                        seeding.detail(format!("{units} bursts"));
+                        seeding.finish();
+                    }
+                    Err(e) => {
+                        seeding.fail(e.clone());
+                        seeder
+                            .hub
+                            .note(format!("Could not seed bursts from capture time: {e}"));
+                    }
+                }
+            },
             move |path| {
                 // The frame's row, which a hand reject or a missing row skips.
                 let image_id = eligibility
@@ -1867,20 +2072,26 @@ impl Desktop {
                 }
             }
         }
+        drop(active);
         let desktop = self.clone();
         // A one-shot scan runs every stage to the end: bursts and keepers, then
         // identification when the album's preset reads numbers or plates.
         let one_shot = stage == ScanStage::All;
         std::thread::spawn(move || {
-            // ponytail: polls an AtomicBool rather than joining a handle
-            // because `scan` has none to join -- its workers report through
-            // `finished`/`error`, not a thread we own here. A Condvar paired
-            // with that flag would remove the poll if the wakeup latency
-            // ever matters.
+            // Guarantees `finishing` is always released even if a post-scan step
+            // panics, so the scan slot can never wedge permanently.
+            struct FinishingGuard(Arc<Desktop>);
+            impl Drop for FinishingGuard {
+                fn drop(&mut self) {
+                    self.0.finishing.store(false, Ordering::Release);
+                }
+            }
+            let _finishing_guard = FinishingGuard(desktop.clone());
+
             while !scan.is_finished() {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            let stopped = scan.stop.load(Ordering::Relaxed);
+            let mut stopped = scan.stop.load(Ordering::Relaxed);
             let mut final_status = if stopped {
                 "stopped"
             } else if lock(&scan.error).is_some() {
@@ -1923,17 +2134,20 @@ impl Desktop {
                             final_status = "stopped";
                         }
                     }
-                    desktop.note_resume_stage(job, Tail::Pick);
+                    if final_status == "done" {
+                        desktop.note_resume_stage(job, Tail::Pick);
+                    }
                 }
-                if from <= Tail::Pick {
+                if final_status == "done" && from <= Tail::Pick {
                     if let Some(p) = &desktop.progress() {
                         p.phase("pick");
                     }
+                }
+                if final_status == "done" && from <= Tail::Identify {
                     // Identify when this shoot's presets read numbers or plates:
                     // identification is the slow lane, so it runs last and the
                     // scan is not "done" until it is.
                     let wants_identify = one_shot
-                        && final_status == "done"
                         && crate::operations::settings(&desktop, job).is_ok_and(|cfg| {
                             wants_identify(
                                 cfg.workflow(),
@@ -1952,20 +2166,46 @@ impl Desktop {
                         // (keepers unless it chose everything).
                         if let Err(e) = crate::operations::identify(&desktop, job, None, true) {
                             desktop.hub.start("Identification", 0).fail(e);
+                            final_status = "error";
                         } else {
                             // `identify` runs as its own operation; hold the scan
-                            // open until it has finished, so Review waits for the
-                            // whole pipeline rather than opening half-identified.
+                            // open until it has finished, propagating Stop into
+                            // the identify operation's cancel flag.
                             let key = format!("Identifying:{job}");
+                            let op_flag = lock(&desktop.operations).get(&key).cloned();
                             while lock(&desktop.operations).contains_key(&key) {
+                                if scan.stop.load(Ordering::Relaxed) {
+                                    if let Some(flag) = &op_flag {
+                                        flag.store(true, Ordering::Relaxed);
+                                    }
+                                }
                                 std::thread::sleep(std::time::Duration::from_millis(100));
+                            }
+                            if scan.stop.load(Ordering::Relaxed)
+                                || op_flag
+                                    .as_ref()
+                                    .is_some_and(|flag| flag.load(Ordering::Relaxed))
+                            {
+                                final_status = "stopped";
+                            } else if let Some(live) = desktop.identify_live() {
+                                let snap = live.snapshot();
+                                if snap["job_id"].as_i64() == Some(job) {
+                                    match snap["state"].as_str() {
+                                        Some("stopped") => final_status = "stopped",
+                                        Some("error") => final_status = "error",
+                                        _ => {}
+                                    }
+                                }
                             }
                         }
                     }
                 }
                 // The learned taste order comes last, after the pick it sits
                 // beside: without a head file it is skipped without a word.
-                if final_status == "done" && from <= Tail::Taste {
+                if final_status == "done"
+                    && from <= Tail::Taste
+                    && !scan.stop.load(Ordering::Relaxed)
+                {
                     desktop.note_resume_stage(job, Tail::Taste);
                     if let Some(p) = &desktop.progress() {
                         p.phase("pick");
@@ -1973,6 +2213,10 @@ impl Desktop {
                     crate::taste::after_scan(&desktop, job);
                 }
             }
+            // Re-evaluate `stopped` after all post-scan stages so stopping
+            // during Group, Pick, Identify, or Taste is never misclassified as
+            // `done` and preserves its recorded `native_resume_stage`.
+            stopped = stopped || scan.stop.load(Ordering::Relaxed) || final_status == "stopped";
             // Every unit's last stage has finished: make its frames visible in
             // one transaction per burst. A stopped or failed album shows
             // everything instead of looking empty.
@@ -2007,16 +2251,15 @@ impl Desktop {
             };
             let outcome = album_status(stopped, final_status == "error", incomplete, errors);
             if !stopped {
-                desktop.note_resume_stage(
-                    job,
-                    match outcome {
-                        "done" => Tail::Done,
-                        // The failed frames are a scan again, even though the
-                        // rest of the pipeline finished.
-                        "done_errors" => Tail::Scan,
-                        _ => from,
-                    },
-                );
+                match outcome {
+                    "done" => desktop.note_resume_stage(job, Tail::Done),
+                    // The failed frames are a scan again, even though the
+                    // rest of the pipeline finished.
+                    "done_errors" => desktop.note_resume_stage(job, Tail::Scan),
+                    // On `error`, keep whichever stage recorded the failure
+                    // (`Group`, `Identify`, etc.) so Resume picks up there.
+                    _ => {}
+                }
             }
             if let Err(e) = lock(&desktop.db)
                 .execute("UPDATE jobs SET status=? WHERE id=?", params![outcome, job])
@@ -2026,7 +2269,7 @@ impl Desktop {
             if let Some(progress) = desktop.progress() {
                 progress.finish(outcome);
             }
-            desktop.finishing.store(false, Ordering::Release);
+            drop(_finishing_guard);
             // The photographer's folders get their verdicts without a second
             // command: stars, and a pick colour because Lightroom stores pick
             // flags in the catalog only. The bridge package follows, so an
@@ -3990,6 +4233,15 @@ mod tests {
             Tail::Identify,
             "a vision run that stopped resumes at vision"
         );
+        // Legacy nested `extra.native_scan_stage` (written before top-level
+        // promotion) must still resolve to ScanStage::All on resume.
+        let nested_all =
+            json!({"extra": {"native_scan_stage": "all"}, "native_resume_stage": "identify"});
+        assert_eq!(
+            stored_stage(nested_all.as_object().unwrap()),
+            ScanStage::All,
+            "nested extra.native_scan_stage must resume as one-shot all"
+        );
         let indexed = json!({"native_scan_stage": "index"});
         assert_eq!(
             stored_stage(indexed.as_object().unwrap()),
@@ -4014,6 +4266,71 @@ mod tests {
         lib.sql("UPDATE images SET status='pending' WHERE id=?", [waiting]);
         let paths = unfinished_paths(&lib.db(), lib.job).unwrap();
         assert_eq!(paths, vec![lib.root.join("waiting.jpg")]);
+    }
+
+    #[test]
+    fn hardening_reconcile_queued_delete_precedence_and_finishing_status() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("hardening");
+        // 1. A crash-orphaned `queued` album is reconciled to `stopped`, and
+        //    unqueue also heals a stale `queued` DB row not in the memory queue.
+        lib.sql("UPDATE jobs SET status='queued' WHERE id=?", [lib.job]);
+        assert!(lib.run("unqueue", json!({"jobId": lib.job})).is_ok());
+        let st: String = lib.one("SELECT status FROM jobs WHERE id=?", [lib.job]);
+        assert_eq!(st, "stopped");
+
+        lib.sql("UPDATE jobs SET status='queued' WHERE id=?", [lib.job]);
+        assert_eq!(lib.d().reconcile_interrupted().unwrap(), 1);
+        let st: String = lib.one("SELECT status FROM jobs WHERE id=?", [lib.job]);
+        assert_eq!(st, "stopped");
+
+        // 2. While a scan is in `finishing` (post-scan Group/Identify/Taste),
+        //    `status().activeJob` stays set even after Stage A finishes, while
+        //    `cull_running()` is false (so `wait_for_cull` does not deadlock).
+        let scan = Arc::new(Scan::held());
+        scan.release();
+        *lock(&lib.d().active) = Some((lib.job, scan));
+        lib.d().finishing.store(true, Ordering::Release);
+        assert!(!lib.d().cull_running());
+        assert!(lib.d().scanning());
+        let status = lib.d().status();
+        assert_eq!(status["activeJob"], json!(lib.job));
+        assert!(status["scan"].is_null());
+
+        // 3. `delete_job` precedence: deleting an UNRELATED album succeeds
+        //    even while another album has `finishing == true`.
+        let other = conrod_store::create_job(
+            &lib.db(),
+            &lib.root.join("other"),
+            Some("Other"),
+            &json!(Settings::default()),
+        )
+        .unwrap();
+        assert!(
+            lib.run("delete_job", json!({"jobId": other})).is_ok(),
+            "another album finishing must not block deleting an unrelated album"
+        );
+        // Deleting the finishing album itself is still refused.
+        assert!(lib.run("delete_job", json!({"jobId": lib.job})).is_err());
+        lib.d().finishing.store(false, Ordering::Release);
+        *lock(&lib.d().active) = None;
+
+        // 4. Starting a fresh scan on a missing or empty folder fails cleanly
+        //    without dropping an unfinished Task ("stopped without finishing").
+        let empty_dir = lib.root.join("empty-shoot");
+        std::fs::create_dir_all(&empty_dir).unwrap();
+        assert!(lib
+            .run("scan", json!({"root": empty_dir.to_string_lossy()}))
+            .is_err());
+        assert!(
+            !lib.d()
+                .hub
+                .log()
+                .iter()
+                .any(|l| l.contains("stopped without finishing")),
+            "early scan validation errors must never drop an unfinished Task: {:?}",
+            lib.d().hub.log()
+        );
     }
 
     #[test]

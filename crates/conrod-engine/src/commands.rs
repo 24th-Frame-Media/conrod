@@ -542,7 +542,13 @@ pub enum Command {
     /// The moment lane's model list: only decision-capable, photo-capable
     /// models the service itself offers (OpenRouter keeps free text).
     DecisionModels(ProviderModelsArgs),
+    #[serde(rename = "openrouter_check", alias = "open_router_check")]
     OpenRouterCheck(OpenRouterCheckArgs),
+    #[serde(
+        rename = "openCodeCheck",
+        alias = "opencode_check",
+        alias = "open_code_check"
+    )]
     OpenCodeCheck(OpenCodeCheckArgs),
     Write(WriteArgs),
     CancelOperation(KeyArgs),
@@ -694,6 +700,18 @@ mod tests {
         assert!(matches!(
             Command::parse("models_status", json!({})),
             Ok(Command::ModelsStatus {})
+        ));
+        assert!(matches!(
+            Command::parse("openrouter_check", json!({"key": "sk-test"})),
+            Ok(Command::OpenRouterCheck(_))
+        ));
+        assert!(matches!(
+            Command::parse("openCodeCheck", json!({"key": "oc-test"})),
+            Ok(Command::OpenCodeCheck(_))
+        ));
+        assert!(matches!(
+            Command::parse("opencode_check", json!({"key": "oc-test"})),
+            Ok(Command::OpenCodeCheck(_))
         ));
     }
 

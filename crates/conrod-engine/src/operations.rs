@@ -191,10 +191,9 @@ pub(crate) fn wait_for_cull(
     stop: &AtomicBool,
     task: &conrod_core::tasks::Task,
 ) -> bool {
-    // ponytail: polls desktop state instead of blocking on a signal so the
-    // `stop` flag stays checkable every 200ms; a Condvar woken on both scan
-    // completion and cancellation would remove the poll if needed later.
-    while !d.status()["activeJob"].is_null() {
+    // Wait only for the cull lane (Stage A) — not for the post-scan wrapper
+    // (`self.finishing`) that invokes `identify` itself.
+    while d.cull_running() {
         if stop.load(Ordering::Relaxed) {
             return false;
         }
@@ -228,9 +227,16 @@ fn identify_workers(settings: &Settings) -> usize {
 /// The Vision stage's model line: the service that will actually answer.
 fn vision_models(settings: &Settings) -> (String, &'static str) {
     match settings.enabled_vlm_service() {
-        Some(service) => (
+        Some(service) if service.provider.eq_ignore_ascii_case("builtin") => {
+            ("Qwen3-VL 8B (built-in)".into(), "GPU")
+        }
+        Some(service) if service.provider.eq_ignore_ascii_case("ollama") => (
             format!("{} via {}", service.model, service.provider),
             "ollama",
+        ),
+        Some(service) => (
+            format!("{} via {}", service.model, service.provider),
+            "cloud",
         ),
         None => ("no vision service".into(), "CPU"),
     }
@@ -1044,6 +1050,9 @@ pub(crate) fn identify_stage(
         if vision_on && settings.group_vehicles {
             needs.extend(setup::SIMILARITY);
         }
+        if vision_on && vlm::uses_builtin_vision(&iosettings) && models::vision_server().is_none() {
+            needs.push(models::DECIDER_RUNTIME);
+        }
         setup::ensure(&d.hub, stop, &needs)?;
         let ocr_engine = if ocr_on && reads_text {
             let dir = models::ocr_dir().ok_or_else(|| {
@@ -1328,7 +1337,7 @@ pub(crate) fn identify_stage(
                                     Some(Err(e)) => {
                                         lock(failure).get_or_insert(e);
                                         if let Some(p) = progress.as_ref() {
-                                            p.worker_failed(IDENTIFY_OCR, lane);
+                                            p.worker_failed(IDENTIFY_VISION, lane);
                                         }
                                         return;
                                     }
@@ -1355,13 +1364,13 @@ pub(crate) fn identify_stage(
                                     ) {
                                         lock(failure).get_or_insert(e);
                                         if let Some(p) = progress.as_ref() {
-                                            p.worker_failed(IDENTIFY_OCR, lane);
+                                            p.worker_failed(IDENTIFY_VISION, lane);
                                         }
                                         return;
                                     }
                                 }
                                 if let Some(p) = progress.as_ref() {
-                                    p.idle(IDENTIFY_OCR, lane);
+                                    p.idle(IDENTIFY_VISION, lane);
                                 }
                             });
                         }

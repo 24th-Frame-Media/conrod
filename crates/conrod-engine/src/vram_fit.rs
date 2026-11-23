@@ -131,6 +131,14 @@ pub fn local_vision(settings: &Settings) -> Option<(String, String)> {
         return None;
     }
     let local = |provider: &str, host: &str, model: &str| {
+        if provider.eq_ignore_ascii_case("builtin") {
+            let label = if model.trim().is_empty() {
+                "qwen3-vl:8b"
+            } else {
+                model.trim()
+            };
+            return Some(("builtin".to_string(), label.to_string()));
+        }
         let host = if host.trim().is_empty() {
             conrod_core::settings::DEFAULT_VLM_HOST
         } else {
@@ -564,5 +572,28 @@ mod tests {
         );
         assert_eq!(res, Ok((5, Some(6))));
         assert_eq!(*log.borrow(), ["decision", "handoff", "vision"]);
+    }
+
+    #[test]
+    fn builtin_vision_counts_as_local_and_triggers_serial_on_small_cards() {
+        let settings = Settings {
+            use_vlm: true,
+            vlm_services: vec![VlmService {
+                id: "vlm-builtin".into(),
+                provider: "builtin".into(),
+                model: "qwen3-vl:8b".into(),
+                enabled: true,
+                ..VlmService::default()
+            }],
+            ..Settings::default()
+        };
+        let found = local_vision(&settings);
+        assert_eq!(
+            found,
+            Some(("builtin".to_string(), "qwen3-vl:8b".to_string())),
+            "built-in Qwen3-VL competes for this machine's GPU"
+        );
+        let serial = fit(8 * GIB, DECIDER_INT8_BYTES, VISION_BYTES);
+        assert_eq!(serial.mode, Mode::Serial);
     }
 }

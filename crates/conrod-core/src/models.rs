@@ -122,6 +122,17 @@ pub fn decider_runtime() -> Option<PathBuf> {
     dir.join("llama.dll").is_file().then_some(dir)
 }
 
+/// The bundled `llama-server` executable inside [`decider_runtime`] used to
+/// serve the built-in Qwen3-VL vision model locally without Ollama.
+pub fn vision_server() -> Option<PathBuf> {
+    let dir = decider_runtime()?;
+    #[cfg(windows)]
+    let exe = dir.join("llama-server.exe");
+    #[cfg(not(windows))]
+    let exe = dir.join("llama-server");
+    exe.is_file().then_some(exe)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

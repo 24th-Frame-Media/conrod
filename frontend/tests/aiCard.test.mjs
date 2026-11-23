@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {
   ADD_ORDER, BUILTIN, DECIDER_QUANTS, HELPERS, IN_TOK, OUT_TOK, SERVICE_TYPES, SHARING,
   SIMPLE_CONTROLS, THINK_HINT,
-  addService, builtinRowStates, cardsFromDraft, checkOutcome, costLine, decisionCandidates,
+  addService, builtinRowStates, builtinVisionEnabled, cardsFromDraft, checkOutcome, costLine, decisionCandidates,
   decisionModels, defaultThinking, downloadProgress, fmtUsd, helperStatus, isPicked, makeCard,
   modelLine, momentsStatus, patchService, photoCost, poolCount, providerToType, removeService,
-  servingFor, setSharing, sharingValue, summaryText, visionCandidates,
+  servingFor, setBuiltinVision, setSharing, sharingValue, summaryText, visionCandidates,
 } from '../src/lib/aiCard.mjs';
 
 test('the card is exactly seven helpers, with plain names, no model words at rest, and real setting keys', () => {
@@ -352,4 +352,24 @@ test('downloadProgress surfaces real totals and never invents a percent', () => 
   assert.equal(downloadProgress(6_186_814_624, 6_186_814_624).pct, 100);
   // Over-read (resume accounting) clamps, never exceeds 100.
   assert.equal(downloadProgress(7e9, 6_186_814_624).pct, 100);
+});
+
+test('built-in vision toggle writes provider:builtin to vlm_services without creating an external card', () => {
+  const base = { vlm_services: [{ id: 'vlm-1', provider: 'ollama', model: 'qwen3-vl:8b', host: 'http://127.0.0.1:11434', enabled: false }] };
+  assert.equal(builtinVisionEnabled(base), false);
+
+  const onList = setBuiltinVision(base, true);
+  assert.equal(onList.length, 2);
+  assert.equal(onList[1].provider, 'builtin');
+  assert.equal(onList[1].enabled, true);
+  assert.equal(builtinVisionEnabled({ vlm_services: onList }), true);
+  // External cards list excludes provider:'builtin' (it lives on the Built-in card).
+  assert.equal(cardsFromDraft({ vlm_services: onList }).length, 1);
+
+  const offList = setBuiltinVision({ vlm_services: onList }, false);
+  assert.equal(builtinVisionEnabled({ vlm_services: offList }), false);
+
+  const rows = [{ id: 'builtin-vision', ready: true, downloaded: true }];
+  assert.equal(builtinRowStates(rows, false, false)['qwen3-vl:8b'].on, false);
+  assert.equal(builtinRowStates(rows, false, true)['qwen3-vl:8b'].on, true);
 });

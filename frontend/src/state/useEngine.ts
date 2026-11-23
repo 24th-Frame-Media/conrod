@@ -138,17 +138,22 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
     const was = wasActive.current;
     wasActive.current = status.activeJob;
     if (was == null || status.activeJob != null) return;
-    const name = latest.current.jobs.find((j) => j.id === was)?.label;
-    const last = status.tasks.reduce<Status['tasks'][number] | null>((a, t) => (!a || t.id > a.id ? t : a), null);
-    if (last?.state === 'cancelled' || (last?.state === 'failed' && last.error === 'stopped')) toast('Scan stopped. You can resume it later.');
-    else if (last?.state === 'failed') {
-      const words = classifyScanError(last.error ?? '', { label: name ?? '' });
+    const endedJob = latest.current.jobs.find((j) => j.id === was);
+    const name = endedJob?.label;
+    // Only inspect scan-pipeline tasks so an unrelated failed background task
+    // (e.g. a model check or thumbnail backfill) never triggers a bogus scan-error toast.
+    const scanTasks = status.tasks.filter((t) => /^(Culling|Loading|Grouping|Identifying|Indexing|Identification|Saving scan|Reading capture)\b/.test(t.label));
+    const last = scanTasks.reduce<Status['tasks'][number] | null>((a, t) => (!a || t.id > a.id ? t : a), null);
+    if (endedJob?.status === 'stopped' || last?.state === 'cancelled' || (last?.state === 'failed' && last.error === 'stopped')) {
+      toast('Scan stopped. You can resume it later.');
+    } else if (endedJob?.status === 'error' || last?.state === 'failed') {
+      const words = classifyScanError(last?.error ?? endedJob?.error_samples?.[0] ?? '', { label: name ?? '' });
       toast(`${words.title}. Open Ingest for the reason and a way to resume.`, { tone: 'error' });
     } else if (status.scan?.job === was && status.scan.errors > 0) {
       const n = status.scan.errors;
       toast(`${name ?? 'Scan'} finished with ${n.toLocaleString()} ${n === 1 ? 'photo' : 'photos'} that could not be read. ${status.scan.error_samples[0] ?? ''}`.trim(), { tone: 'error' });
     } else toast(name ? `Scan complete: ${name}` : 'Scan complete', { tone: 'ok' });
-    if (inTauri) void getCurrentWindow().requestUserAttention(last?.state === 'failed' ? UserAttentionType.Critical : UserAttentionType.Informational);
+    if (inTauri) void getCurrentWindow().requestUserAttention(endedJob?.status === 'error' || last?.state === 'failed' ? UserAttentionType.Critical : UserAttentionType.Informational);
   }, [status, toast]);
 
   return { ready, jobs, setJobs, settings, setSettings, models, identifyVram, refreshIdentifyVram, status, setStatus, refreshJobs, refreshModels, dev, devUrl, devServer, devHome };
