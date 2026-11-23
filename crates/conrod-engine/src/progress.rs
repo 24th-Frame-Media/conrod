@@ -68,11 +68,17 @@ struct StageState {
     model: String,
     device: String,
     workers_total: u32,
+    /// The worker count the scan laid this stage out with; an un-skip restores
+    /// it after a skip zeroed the live count.
+    workers_planned: u32,
     done: u64,
     total: u64,
     errors: u64,
     status: &'static str,
     error: Option<String>,
+    /// The plain line skipping this stage would show; `None` when it cannot be
+    /// skipped.
+    skip_consequence: Option<&'static str>,
     meter: RateMeter,
 }
 
@@ -171,11 +177,13 @@ impl Progress {
                         model: s.model,
                         device: s.device,
                         workers_total: s.workers,
+                        workers_planned: s.workers,
                         done: 0,
                         total: 0,
                         errors: 0,
                         status: if s.skipped { "skipped" } else { "pending" },
                         error: None,
+                        skip_consequence: conrod_core::progress::skip_consequence(s.id),
                         meter: RateMeter::new(8.0),
                     })
                     .collect(),
@@ -292,6 +300,19 @@ impl Progress {
         });
     }
 
+    /// A skipped stage was un-skipped: it is pending again, with the workers it
+    /// was laid out with.
+    pub fn reset_stage(&self, stage: &'static str) {
+        self.with_node(stage, |node| {
+            node.status = "pending";
+            node.done = 0;
+            node.total = 0;
+            node.errors = 0;
+            node.workers_total = node.workers_planned;
+            node.error = None;
+        });
+    }
+
     /// This stage failed, with the plain reason the screen shows.
     pub fn fail_stage(&self, stage: &'static str, reason: impl Into<String>) {
         self.with_node(stage, |node| {
@@ -301,19 +322,22 @@ impl Progress {
     }
 
     /// This stage is paused between items: it says so instead of looking busy.
+    /// A finished stage keeps `done`; pausing it would be a lie about work that
+    /// is over.
     pub fn pause_stage(&self, stage: &'static str) {
         self.with_node(stage, |node| {
-            if node.status != "skipped" && node.status != "failed" {
+            if matches!(node.status, "pending" | "running") {
                 node.status = "paused";
             }
         });
     }
 
-    /// A stage left `paused` and is working again.
+    /// A stage left `paused` and is working again. A stage that had not started
+    /// goes back to `pending`; the snapshot derives `running` from real work.
     pub fn resume_stage(&self, stage: &'static str) {
         self.with_node(stage, |node| {
             if node.status == "paused" {
-                node.status = "running";
+                node.status = if node.done > 0 { "running" } else { "pending" };
             }
         });
     }
@@ -355,6 +379,24 @@ impl Progress {
     /// `pool`'s worker `index` has nothing in hand.
     pub fn idle(&self, pool: &'static str, index: usize) {
         self.lane(pool, index, pool, IDLE, None, None, None);
+    }
+
+    /// `pool`'s worker `index` is parked at a stage pause point: it keeps the
+    /// stage, step and file it was on, but says `paused` instead of looking
+    /// busy. Only a worker that is not already failed changes.
+    pub fn worker_paused(&self, pool: &'static str, index: usize) {
+        let mut lanes = crate::lock(&self.lanes);
+        let Some(lane) = lanes
+            .iter_mut()
+            .find(|lane| lane.pool == pool && lane.index as usize == index)
+        else {
+            return;
+        };
+        if lane.state != FAILED {
+            lane.state = WAITING;
+            lane.waiting_for = Some("paused");
+            lane.last_report_at = now_ms();
+        }
     }
 
     /// `pool`'s worker `index` failed: it stays on the stage and step it was on,
@@ -543,6 +585,7 @@ impl Progress {
                 errors: node.errors,
                 status: status.to_string(),
                 error: node.error.clone(),
+                skip_consequence: node.skip_consequence.map(str::to_owned),
                 rate_per_s: rate,
                 eta_s: eta,
             });
@@ -1202,6 +1245,52 @@ mod tests {
             node.error.as_deref(),
             Some("The vision service did not answer"),
             "a failure carries a plain reason"
+        );
+    }
+
+    #[test]
+    fn a_progress_node_carries_its_skip_consequence_and_can_be_unskipped() {
+        let progress = fake(14);
+        let node = |id: &str| {
+            progress
+                .snapshot()
+                .pipeline
+                .stages
+                .into_iter()
+                .find(|s| s.id == id)
+                .unwrap()
+        };
+        assert_eq!(
+            node(IDENTIFY_VISION).skip_consequence.as_deref(),
+            conrod_core::progress::skip_consequence(IDENTIFY_VISION)
+        );
+        assert_eq!(
+            node("read").skip_consequence,
+            None,
+            "a feed stage cannot be skipped, so it has no consequence"
+        );
+        progress.skip_stage(IDENTIFY_VISION);
+        assert_eq!(node(IDENTIFY_VISION).status, "skipped");
+        progress.reset_stage(IDENTIFY_VISION);
+        let back = node(IDENTIFY_VISION);
+        assert_eq!(back.status, "pending");
+        assert_eq!(
+            back.workers_total, 1,
+            "the laid-out worker count comes back with the un-skip"
+        );
+    }
+
+    #[test]
+    fn a_paused_worker_reports_paused_even_from_the_cull_pool() {
+        let progress = fake(15);
+        progress.busy("read", 0, "detect", "detect", "IMG_1.CR3");
+        progress.worker_paused("read", 0);
+        let lane = &progress.snapshot().pipeline.workers[0];
+        assert_eq!(lane.state, "paused");
+        assert_eq!(lane.waiting_for.as_deref(), Some("paused"));
+        assert_eq!(
+            lane.stage, "detect",
+            "the lane keeps the stage it was on, but is not busy in it"
         );
     }
 

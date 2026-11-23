@@ -324,6 +324,7 @@ fn run_with(
         feed.begin_phase(MOMENTS_PHASE, frames.len());
     }
     let (next, judged) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let control = d.stage_control(job);
     let workers = (cfg.identify_worker_count().max(1) as usize)
         .min(4)
         .min(frames.len().max(1));
@@ -336,6 +337,11 @@ fn run_with(
                 let Some(frame) = frames.get(next.fetch_add(1, Ordering::Relaxed)) else {
                     break;
                 };
+                // Between asks: a paused Decision stage parks here, so the call
+                // already in flight finishes and the worker then holds.
+                if !control.park_with(IDENTIFY_DECISION, stop, progress) {
+                    break;
+                }
                 let id = frame["id"].as_i64().unwrap_or_default();
                 let label = frame_label(frame["path"].as_str().unwrap_or_default());
                 let thumb = thumb_of(frame["preview_path"].as_str());
@@ -462,10 +468,15 @@ pub(crate) fn run_type_round(
         feed.begin_phase(MOMENTS_PHASE, total);
     }
     let context = lanes.preset.prompt_context();
+    let control = d.stage_control(job);
     let mut done = 0usize;
     for members in &sampled {
         for frame in members {
             if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            // Between asks: the pause takes effect here, never inside a call.
+            if !control.park_with(IDENTIFY_DECISION, stop, progress) {
                 break;
             }
             let id = frame["id"].as_i64().unwrap_or_default();
@@ -536,6 +547,12 @@ fn auto_type_round(
         .take(TYPE_SAMPLE)
         .collect();
     let mut images = Vec::new();
+    if !d
+        .stage_control(job)
+        .park_with(IDENTIFY_DECISION, stop, progress)
+    {
+        return Ok(None);
+    }
     for frame in &chosen {
         let Ok(image) = picture(
             frame["preview_path"].as_str(),
@@ -642,8 +659,14 @@ fn peaks(
         feed.begin_phase(PEAKS_PHASE, total);
     }
     task.progress(0, total as u64);
+    let control = d.stage_control(job);
     for (i, members) in bursts.iter().enumerate() {
         if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        // Between asks: a paused Decision stage parks before comparing the next
+        // burst; a judged burst was never planned.
+        if !control.park_with(IDENTIFY_DECISION, stop, progress) {
             break;
         }
         task.progress(i as u64, total as u64);

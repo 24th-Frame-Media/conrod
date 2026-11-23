@@ -341,9 +341,40 @@ struct Run<'a> {
     /// Settings folded with the resolved shoot type: the vision stage's reader
     /// flags and prompts come from these, while OCR uses the album's own.
     vision_settings: &'a Settings,
+    /// The album's stage controls: pause parks between asks, never inside one.
+    control: &'a crate::stage_control::StageControl,
+    /// The run's stop flag, so a park is released by a Stop.
+    stop: &'a AtomicBool,
 }
 
 impl Run<'_> {
+    /// Park at an ask boundary: the lane says `paused`, never busy, until the
+    /// photographer resumes or the run stops. Called between asks only, so a
+    /// model call already in flight always finishes. False when stopped.
+    fn park(&self, stage: &'static str, lane: usize, file: &str, step: &'static str) -> bool {
+        // A skip pressed while the stage runs takes effect at this boundary:
+        // the worker stops taking units, and the stage's finish path says
+        // `skipped` instead of `done`.
+        if self.control.is_skipped(stage) {
+            return false;
+        }
+        if !self.control.is_paused(stage) {
+            return !self.stop.load(Ordering::Relaxed);
+        }
+        self.task.paused(true);
+        if let Some(p) = self.progress {
+            p.pause_stage(stage);
+            p.waiting(IDENTIFY_OCR, lane, stage, "paused", "paused", file);
+        }
+        let go = self.control.park(stage, self.stop);
+        if let Some(p) = self.progress {
+            p.resume_stage(stage);
+            p.busy(IDENTIFY_OCR, lane, stage, step, file);
+        }
+        self.task.paused(false);
+        go
+    }
+
     /// Say which file this worker is on.
     fn busy(&self, stage: &'static str, lane: usize, file: &str, step: &'static str) {
         if let Some(p) = self.progress {
@@ -403,6 +434,10 @@ impl Run<'_> {
         let raw = conrod_io::raw::read(Path::new(path))?;
         let image = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
         for row in wanted {
+            // Between asks: a paused OCR stage parks here, never inside a read.
+            if !self.park(IDENTIFY_OCR, lane, &filename, "ocr") {
+                return Ok(());
+            }
             let id = row["id"].as_i64().ok_or("Invalid detection")?;
             if !ml_eligible(self.d, id)? {
                 self.stage_advance(IDENTIFY_OCR, 1);
@@ -542,6 +577,11 @@ impl Run<'_> {
         let raw = conrod_io::raw::read(Path::new(path))?;
         let image = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
         for row in wanted {
+            // Between asks: a paused vision stage parks here, so the model call
+            // already in flight finishes and the worker then holds.
+            if !self.park(IDENTIFY_VISION, lane, &filename, "vision") {
+                return Ok(());
+            }
             let id = row["id"].as_i64().ok_or("Invalid detection")?;
             let image_id = row["image_id"].as_i64().unwrap_or_default();
             if !ml_eligible(self.d, id)? {
@@ -789,6 +829,9 @@ pub(crate) fn identify_with_kind(
 ) -> Result<Value> {
     let settings = settings(d, job)?;
     let vision_off = vision_off(d, job)?;
+    // The photographer's per-stage controls: a skipped stage does not run even
+    // when the album has it on, and a paused one parks between asks.
+    let control = d.stage_control(job);
     let lanes = settings.lanes();
     let finds_faces = lanes.names;
     if !lanes.identifies() && !finds_faces && !lanes.moments_detect {
@@ -819,7 +862,7 @@ pub(crate) fn identify_with_kind(
                 p.skip_stage(IDENTIFY_DECISION);
             }
             // No vehicles to read, but the shoot may still have moments to judge.
-            if lanes.moments_detect {
+            if lanes.moments_detect && !control.is_skipped(IDENTIFY_DECISION) {
                 let progress = d.progress();
                 if let Some(p) = &progress {
                     p.phase(IDENTIFY_DECISION);
@@ -841,7 +884,7 @@ pub(crate) fn identify_with_kind(
                     }
                 }
                 if judged.unwrap_or(0) > 0 {
-                    crate::passes::pick_keepers(d, job)?;
+                    pick_keepers_controlled(d, job, stop, &control)?;
                 }
             }
             return Ok(());
@@ -863,9 +906,10 @@ pub(crate) fn identify_with_kind(
         // its own. Nothing is applied silently.
         let (vision_settings, prompt_context) = resolved_vision_settings(d, job, &settings);
         let ocr_on = settings.identify_ocr
-            && (settings.read_plates || settings.read_numbers || settings.read_text);
-        let decision_on = lanes.moments_detect;
-        let vision_on = vision_off.is_none();
+            && (settings.read_plates || settings.read_numbers || settings.read_text)
+            && !control.is_skipped(IDENTIFY_OCR);
+        let decision_on = lanes.moments_detect && !control.is_skipped(IDENTIFY_DECISION);
+        let vision_on = vision_off.is_none() && !control.is_skipped(IDENTIFY_VISION);
         // The live feed the identify screen draws, replaced by the next run and
         // kept after this one so its summary stays on screen. The guard ends an
         // early return (`?`) as an error rather than leaving the feed running.
@@ -913,7 +957,7 @@ pub(crate) fn identify_with_kind(
                     }
                 }
                 if judged.unwrap_or(0) > 0 {
-                    crate::passes::pick_keepers(d, job)?;
+                    pick_keepers_controlled(d, job, stop, &control)?;
                 }
             } else if let Some(p) = &progress {
                 p.skip_stage(IDENTIFY_DECISION);
@@ -1009,6 +1053,8 @@ pub(crate) fn identify_with_kind(
             burst_numbers: Mutex::new(HashMap::new()),
             prompt_context,
             vision_settings: &vision_settings,
+            control: &control,
+            stop,
         };
 
         // --- Identify: OCR ---------------------------------------------------
@@ -1076,7 +1122,9 @@ pub(crate) fn identify_with_kind(
                 return Err(e);
             }
             if let Some(p) = &progress {
-                if !stop.load(Ordering::Relaxed) {
+                if control.is_skipped(IDENTIFY_OCR) {
+                    p.skip_stage(IDENTIFY_OCR);
+                } else if !stop.load(Ordering::Relaxed) {
                     p.finish_stage(IDENTIFY_OCR);
                 }
             }
@@ -1110,6 +1158,9 @@ pub(crate) fn identify_with_kind(
             };
             if let Some(p) = &progress {
                 match judged {
+                    Some(_) if control.is_skipped(IDENTIFY_DECISION) => {
+                        p.skip_stage(IDENTIFY_DECISION);
+                    }
                     Some(_) if !stop.load(Ordering::Relaxed) => p.finish_stage(IDENTIFY_DECISION),
                     Some(_) => {}
                     None => p.skip_stage(IDENTIFY_DECISION),
@@ -1190,7 +1241,9 @@ pub(crate) fn identify_with_kind(
                 return Err(e);
             }
             if let Some(p) = &progress {
-                if !stop.load(Ordering::Relaxed) {
+                if control.is_skipped(IDENTIFY_VISION) {
+                    p.skip_stage(IDENTIFY_VISION);
+                } else if !stop.load(Ordering::Relaxed) {
                     p.finish_stage(IDENTIFY_VISION);
                 }
             }
@@ -1202,10 +1255,25 @@ pub(crate) fn identify_with_kind(
             if lanes.names {
                 crate::passes::embed_faces_missing(d, job, stop, task)?;
             }
-            task.detail("Grouping similar vehicles");
-            crate::passes::consolidate(d, job, task)?;
-            task.detail("Finding re-shot frames");
-            crate::passes::near_duplicates(d, job, stop)?;
+            // Grouping is one whole-album pass: its pause and skip act at its
+            // edge, before any burst is re-keyed.
+            if control.is_skipped("group") {
+                if let Some(p) = &progress {
+                    p.skip_stage("group");
+                }
+            } else {
+                if let Some(p) = &progress {
+                    p.phase("group");
+                }
+                if control.park_with("group", stop, progress.as_deref()) {
+                    task.detail("Grouping similar vehicles");
+                    crate::passes::consolidate(d, job, task)?;
+                    task.detail("Finding re-shot frames");
+                    crate::passes::near_duplicates(d, job, stop)?;
+                }
+            }
+            // The cross-album registry is not grouping: it is filled even when
+            // the photographer kept the seed units.
             crate::catalog::seed(d, Some(job))?;
             // Groups are now known, so the keeper of each pass can be chosen
             // properly: the one-shot scan ends on this stage.
@@ -1214,7 +1282,7 @@ pub(crate) fn identify_with_kind(
             }
             // Moments were joined above, while the cars were read, so the pick ranks on them.
             task.detail("Picking keepers");
-            crate::passes::pick_keepers(d, job)?;
+            pick_keepers_controlled(d, job, stop, &control)?;
             note_identify_stale(d, job, false);
             end.finish("done");
         } else {
@@ -1222,6 +1290,28 @@ pub(crate) fn identify_with_kind(
         }
         Ok(())
     })
+}
+
+/// Pick keepers unless the photographer skipped the Pick stage. A skip leaves
+/// every hand pick and every reviewed frame exactly as it is: the stage only
+/// ever wrote suggestions. A pause takes effect before the pass starts.
+fn pick_keepers_controlled(
+    d: &Desktop,
+    job: i64,
+    stop: &AtomicBool,
+    control: &crate::stage_control::StageControl,
+) -> Result<()> {
+    let progress = d.progress().filter(|p| p.job() == job);
+    if control.is_skipped("pick") {
+        if let Some(p) = &progress {
+            p.skip_stage("pick");
+        }
+        return Ok(());
+    }
+    if control.park_with("pick", stop, progress.as_deref()) {
+        crate::passes::pick_keepers(d, job)?;
+    }
+    Ok(())
 }
 
 /// Ends a live identify feed exactly once. The explicit paths say `done`,
