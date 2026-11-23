@@ -642,6 +642,7 @@ pub fn vocabulary(preset: ShootPreset) -> &'static [Moment] {
         EventShows => SHOWS,
         EventParties => PARTIES,
         Mix => MIX,
+        Auto => MIX,
         Portrait => PORTRAIT,
         PortraitGroup => GROUP,
         PortraitCouple => COUPLE,

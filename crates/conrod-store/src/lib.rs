@@ -300,6 +300,14 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // every frame visible, so nothing changes until they are scanned again.
     ("images", "unit_id", "INTEGER"),
     ("images", "visible", "INTEGER NOT NULL DEFAULT 1"),
+    // The shoot type the Decision stage suggested for an `auto` album, and how
+    // sure it was. A suggestion only: `scan_profile` stays `auto` until the
+    // photographer accepts it.
+    ("jobs", "shoot_type_suggested", "TEXT"),
+    ("jobs", "shoot_type_confidence", "REAL"),
+    // The type accepted for this album's not-yet-run vision stage. NULL while
+    // the suggestion is still only shown.
+    ("jobs", "shoot_type_accepted", "TEXT"),
 ];
 
 fn now_unix() -> f64 {
@@ -476,6 +484,9 @@ pub struct Job {
     pub created_at: f64,
     pub status: String,
     pub settings_json: Option<Value>,
+    pub shoot_type_suggested: Option<String>,
+    pub shoot_type_confidence: Option<f64>,
+    pub shoot_type_accepted: Option<String>,
 }
 
 pub fn job_from_row(row: &Row<'_>) -> Result<Job> {
@@ -486,6 +497,9 @@ pub fn job_from_row(row: &Row<'_>) -> Result<Job> {
         created_at: row.get("created_at")?,
         status: row.get("status")?,
         settings_json: opt_json(row.get("settings_json")?),
+        shoot_type_suggested: row.get("shoot_type_suggested").ok(),
+        shoot_type_confidence: row.get("shoot_type_confidence").ok(),
+        shoot_type_accepted: row.get("shoot_type_accepted").ok(),
     })
 }
 
@@ -1468,6 +1482,38 @@ mod tests {
             .unwrap();
         let rows = stmt.query_map([], |row| row.get::<_, String>(1)).unwrap();
         rows.map(Result::unwrap).collect()
+    }
+
+    #[test]
+    fn a_fresh_jobs_table_gets_the_type_suggestion_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        migrate(&conn).unwrap();
+        let cols = columns(&conn, "jobs");
+        for col in [
+            "shoot_type_suggested",
+            "shoot_type_confidence",
+            "shoot_type_accepted",
+        ] {
+            assert!(cols.contains(col), "missing jobs.{col}: {cols:?}");
+        }
+        conn.execute(
+            "INSERT INTO jobs(id,root,created_at) VALUES(1,'C:\\Photos',0)",
+            [],
+        )
+        .unwrap();
+        let (suggested, confidence, accepted): (Option<String>, Option<f64>, Option<String>) =
+            conn.query_row(
+                "SELECT shoot_type_suggested,shoot_type_confidence,shoot_type_accepted FROM jobs WHERE id=1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (suggested, confidence, accepted),
+            (None, None, None),
+            "an existing album has no suggestion and no accepted type"
+        );
     }
 
     #[test]

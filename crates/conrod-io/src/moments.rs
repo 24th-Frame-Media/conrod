@@ -53,6 +53,18 @@ pub trait MomentJudge: Send + Sync {
     fn peak(&self, _context: &str, _images: &[String]) -> Result<Option<Vec<f64>>, String> {
         Ok(None)
     }
+
+    /// What sort of shoot a spread sample of frames fits: `(stored name,
+    /// confidence)`. Only a decision model can answer; a judge that cannot
+    /// says `Ok(None)` so the album keeps its own type.
+    fn choose(
+        &self,
+        _context: &str,
+        _options: &[(&str, &str)],
+        _images: &[String],
+    ) -> Result<Option<(String, f64)>, String> {
+        Ok(None)
+    }
 }
 
 /// The base64 body of a data URL (what the vision model providers want).
@@ -194,6 +206,17 @@ impl MomentJudge for DeciderJudge {
         let request = decision::peak_request(context, images.to_vec());
         let response = self.transport.decide(&request)?;
         Ok(decision::read_peak(&response, images.len()))
+    }
+
+    fn choose(
+        &self,
+        context: &str,
+        options: &[(&str, &str)],
+        images: &[String],
+    ) -> Result<Option<(String, f64)>, String> {
+        let request = decision::type_request(context, options, images.to_vec());
+        let response = self.transport.decide(&request)?;
+        Ok(decision::read_type(&response))
     }
 }
 
@@ -554,6 +577,20 @@ impl MomentJudge for ServiceJudge {
                 Some(fallback) => fallback.peak(context, images),
                 None => Err(format!("not judged: {why}")),
             },
+        }
+    }
+
+    fn choose(
+        &self,
+        context: &str,
+        options: &[(&str, &str)],
+        images: &[String],
+    ) -> Result<Option<(String, f64)>, String> {
+        let request = decision::type_request(context, options, images.to_vec());
+        match self.decide_with(&request) {
+            Ok(response) => Ok(decision::read_type(&response)),
+            // The car reader cannot answer a choice question: no suggestion.
+            Err(_) => Ok(None),
         }
     }
 }

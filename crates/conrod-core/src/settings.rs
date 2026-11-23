@@ -542,6 +542,10 @@ pub struct Settings {
     /// subject, culled or not). Normalised by [`identify_scope_word`]; an album
     /// saved without it keeps "keepers".
     pub identify_scope: String,
+    /// Read plates, numbers and visible text before the decision and vision
+    /// stages. On by default, which is today's behaviour; a per-album override
+    /// turns it off in either direction.
+    pub identify_ocr: bool,
     pub sharp_at: f64,
     pub blurred_below: f64,
     pub focus_scale: i64,
@@ -731,6 +735,7 @@ impl Default for Settings {
             grouping_stacks: true,
             workflow_mode: WORKFLOW_BOTH.into(),
             identify_scope: IDENTIFY_KEEPERS.into(),
+            identify_ocr: true,
             sharp_at: SHARP_AT,
             blurred_below: BLURRED_BELOW,
             focus_scale: FOCUS_SCALE,
@@ -1150,6 +1155,9 @@ impl Settings {
         self.read_plates &= lanes.plates;
         self.read_numbers &= lanes.numbers;
         self.read_text &= lanes.numbers || lanes.plates || lanes.sponsors;
+        // OCR needs at least one reader; with all of them off the stage is
+        // skipped, not a lane with nothing to do.
+        self.identify_ocr &= self.read_plates || self.read_numbers || self.read_text;
         self.identify_make_model &= lanes.make_model;
         self.identify_team &= lanes.sponsors;
         // With every vision service switched off there is nothing to ask.
@@ -1424,6 +1432,27 @@ mod tests {
         let mut fresh: Map<String, Value> = Map::new();
         assert!(migrate_burst_gap(&mut fresh));
         assert_eq!(fresh.get("burst_gap"), None);
+    }
+
+    #[test]
+    fn identify_ocr_defaults_on_for_an_older_album_and_can_be_turned_off() {
+        // An album stored before the switch existed keeps today's behaviour.
+        let older: Settings = serde_json::from_str(r#"{"scan_profile":"motorsport"}"#).unwrap();
+        assert!(older.identify_ocr, "OCR is on by default");
+        let patch: Map<String, Value> = serde_json::from_str(r#"{"identify_ocr":false}"#).unwrap();
+        assert!(
+            !Settings::default().apply(&patch).identify_ocr,
+            "the album's own choice wins"
+        );
+        // With every reader off the resolved run has nothing for OCR to do.
+        let no_readers = Settings {
+            read_plates: false,
+            read_numbers: false,
+            read_text: false,
+            ..Settings::default()
+        }
+        .resolved();
+        assert!(!no_readers.identify_ocr);
     }
 
     #[test]
