@@ -40,6 +40,10 @@ pub struct Context<'a> {
     /// How often each number was already read in this frame's burst, so an
     /// equally prominent second panel can be settled by the burst's history.
     pub seen_numbers: &'a HashMap<String, u32>,
+    /// The resolved shoot type's guidance, when the vision prompt should carry
+    /// it (an `auto` album whose suggestion was accepted). `None` keeps the
+    /// long-standing prompt for every album with a type of its own.
+    pub prompt_context: Option<&'a str>,
 }
 
 pub struct Analysed {
@@ -78,6 +82,64 @@ pub fn analyze_with(
     readers: &mut Readers,
     on_prompt: Option<&dyn Fn(&str)>,
 ) -> Result<Analysed, String> {
+    let pass = read_ocr(crop, native, kind, is_bike, ctx, readers)?;
+    read_vision(crop, kind, is_bike, ctx, readers, pass, on_prompt)
+}
+
+/// What the OCR stage read off one subject: its plate, the number roundels and
+/// whole-crop tokens behind that number, and the number candidate itself. The
+/// vision stage merges these with the model's answer; a vision-off run keeps
+/// them as the subject's reading.
+#[derive(Debug, Clone, Default)]
+pub struct OcrPass {
+    /// The analysis so far: kind, plate, and the provisional number candidate.
+    pub analysis: VehicleAnalysis,
+    /// Number roundels the plate detector picked up, with their scores.
+    pub roundels: Vec<(String, f64)>,
+    /// Whole-crop OCR tokens: the number and the visible text both come from
+    /// these.
+    pub tokens: Vec<ocr::Token>,
+    /// The number the crop itself gives, before the model is asked.
+    pub ocr_reading: OcrReading,
+    /// Readers that failed on this crop. A reader failure never ends the run.
+    pub failures: Vec<String>,
+}
+
+impl OcrPass {
+    /// The OCR fields a previous run stored, for a vision-only pass: the plate
+    /// and provisional number survive, while the tokens that are not stored
+    /// stay empty. Text corroboration degrades; the identity does not.
+    pub fn from_stored(analysis: VehicleAnalysis) -> OcrPass {
+        let source = analysis.number_source.as_deref();
+        let ocr_reading = match source {
+            Some("ocr" | "roundel") => OcrReading {
+                number: analysis.race_number.clone(),
+                confidence: analysis.number_conf,
+                source: source.unwrap_or("ocr").to_string(),
+            },
+            _ => OcrReading::default(),
+        };
+        OcrPass {
+            analysis,
+            roundels: Vec::new(),
+            tokens: Vec::new(),
+            ocr_reading,
+            failures: Vec::new(),
+        }
+    }
+}
+
+/// The first identify sub-step: read the plate, the number roundels and the
+/// whole-crop text. No model is asked here, and nothing is written: the vision
+/// stage (or, with vision off, the caller) persists the result.
+pub fn read_ocr(
+    crop: &Rgb,
+    native: Option<&Rgb>,
+    kind: &str,
+    is_bike: bool,
+    ctx: &Context,
+    readers: &mut Readers,
+) -> Result<OcrPass, String> {
     let s = ctx.settings;
     let mut a = VehicleAnalysis {
         kind: kind.into(),
@@ -88,36 +150,8 @@ pub fn analyze_with(
     let Readers {
         plates: plate_models,
         ocr: text_engine,
-        vlm: describer,
+        ..
     } = readers;
-
-    // The question for the vision model needs nothing OCR reads, so build it (and
-    // let a live feed show it) as soon as the car arrives. The model is still
-    // asked after the readers, but the panel fills when the car reaches VISION.
-    let (entries, entry_warning) = entry_list(&s.entry_list);
-    // What this album reads: the preset's policy with its overrides. A
-    // competition shoot reads numbers and does not ask the model for plates.
-    let lanes = s.lanes();
-    let racing = lanes.numbers && !lanes.plates;
-    let subject = vlm::SubjectKind::from_class(kind);
-    let mut vlm_prompt = None;
-    if s.use_vlm && lanes.asks_model() {
-        if let Some((_, io)) = describer.as_ref() {
-            let hints = vlm::VlmHints {
-                subject,
-                racing,
-                candidates: entries
-                    .as_deref()
-                    .map(EntryList::candidates)
-                    .unwrap_or_default(),
-            };
-            let prompt = vlm::vehicle_prompt(io, is_bike, &hints);
-            if let Some(on_prompt) = on_prompt {
-                on_prompt(&prompt);
-            }
-            vlm_prompt = Some(prompt);
-        }
-    }
 
     // 1. Registration, and any number roundels the same detector picked up.
     let mut roundels: Vec<(String, f64)> = Vec::new();
@@ -158,12 +192,75 @@ pub fn analyze_with(
         _ => Vec::new(),
     };
 
-    // 2. Competition number.
-    let mut ocr_reading = if s.read_numbers {
+    // 2. Competition number, as a candidate the vision stage may confirm.
+    let ocr_reading = if s.read_numbers {
         ocr_number(&roundels, &tokens, a.plate.as_deref(), s)
     } else {
         OcrReading::default()
     };
+    a.race_number = ocr_reading.number.clone();
+    a.number_source = (!ocr_reading.source.is_empty()).then(|| ocr_reading.source.clone());
+    a.number_conf = ocr_reading.confidence;
+
+    Ok(OcrPass {
+        analysis: a,
+        roundels,
+        tokens,
+        ocr_reading,
+        failures,
+    })
+}
+
+/// The vision sub-step: ask the resolved type's question about the subject,
+/// then merge its answer with the OCR candidate and the entry list. The number
+/// tie-break runs here, at the end of the stage, and only when OCR and the
+/// model actually disagree.
+pub fn read_vision(
+    crop: &Rgb,
+    kind: &str,
+    is_bike: bool,
+    ctx: &Context,
+    readers: &mut Readers,
+    pass: OcrPass,
+    on_prompt: Option<&dyn Fn(&str)>,
+) -> Result<Analysed, String> {
+    let s = ctx.settings;
+    let OcrPass {
+        analysis: mut a,
+        roundels,
+        tokens,
+        mut ocr_reading,
+        mut failures,
+    } = pass;
+    a.kind = kind.into();
+    a.is_bike = is_bike;
+    let Readers { vlm: describer, .. } = readers;
+
+    let (entries, entry_warning) = entry_list(&s.entry_list);
+    // What this album reads: the preset's policy with its overrides. A
+    // competition shoot reads numbers and does not ask the model for plates.
+    let lanes = s.lanes();
+    let racing = lanes.numbers && !lanes.plates;
+    let subject = vlm::SubjectKind::from_class(kind);
+    let mut vlm_prompt = None;
+    if s.use_vlm && lanes.asks_model() {
+        if let Some((_, io)) = describer.as_ref() {
+            let hints = vlm::VlmHints {
+                subject,
+                racing,
+                candidates: entries
+                    .as_deref()
+                    .map(EntryList::candidates)
+                    .unwrap_or_default(),
+                context: ctx.prompt_context.map(str::to_owned),
+            };
+            let prompt = vlm::vehicle_prompt(io, is_bike, &hints);
+            if let Some(on_prompt) = on_prompt {
+                on_prompt(&prompt);
+            }
+            vlm_prompt = Some(prompt);
+        }
+    }
 
     failures.extend(entry_warning);
 
@@ -180,6 +277,7 @@ pub fn analyze_with(
                 .as_deref()
                 .map(EntryList::candidates)
                 .unwrap_or_default(),
+            context: ctx.prompt_context.map(str::to_owned),
         };
         match vlm::describe_with_reply(client, crop, io, is_bike, &hints) {
             Ok((d, reply, attempts)) => {
@@ -236,9 +334,9 @@ pub fn analyze_with(
         ocr_reading = OcrReading::default();
     }
 
-    // 4. Reconcile the number. An entry-list number the model read is trusted
-    // on its own, and beats an OCR read the list does not have (OCR over-reads
-    // digits off sponsor and livery text).
+    // 4. The number tie-break: OCR, the model and the entry list, resolved
+    // once at the end of the vision stage. Only a real disagreement is a
+    // tie-break; a subject the model did not number simply keeps OCR's read.
     let listed = |n: &str| entries.as_deref().is_some_and(|list| list.get(n).is_some());
     // With a race list, a whole-crop OCR digit run the list does not have is a
     // livery or sponsor read ("220" off a GR Supra), not a number.
@@ -262,21 +360,15 @@ pub fn analyze_with(
             )
         })
         .flatten();
+    let decision = decide_number(
+        &ocr_reading,
+        vlm_number.as_deref(),
+        described.number_confidence,
+        s.ocr_accept_confidence,
+        listed,
+    );
+    let (number, source, mut confidence) = (decision.number, decision.source, decision.confidence);
     let ocr_listed = ocr_reading.number.as_deref().is_some_and(listed);
-    let (number, source, confidence) = match vlm_number.as_deref() {
-        Some(v) if listed(v) && !ocr_listed => merge_number(
-            &OcrReading::default(),
-            Some(v),
-            described.number_confidence,
-            s.ocr_accept_confidence,
-        ),
-        _ => merge_number(
-            &ocr_reading,
-            vlm_number.as_deref(),
-            described.number_confidence,
-            s.ocr_accept_confidence,
-        ),
-    };
     let mut trace = vec![
         format!(
             "vlm {vlm_attempts} ask(s): number {:?} ({:?}), make {:?}, model {:?}, evidence {:?}, competition {}",
@@ -298,14 +390,18 @@ pub fn analyze_with(
             described.plate, a.plate
         ),
     ];
+    if decision.tie_break {
+        trace.push(format!(
+            "tie-break: ocr {:?} vs vlm {:?} -> {number:?} from {source:?}",
+            ocr_reading.number, vlm_number
+        ));
+    }
     // Agreement can score above the model's own confidence; keep that ceiling,
     // so a nose-board read keeps its penalty even when OCR agrees.
     let from_vlm = vlm_number.is_some() && number == vlm_number;
-    let confidence = if from_vlm {
-        confidence.min(described.number_confidence)
-    } else {
-        confidence
-    };
+    if from_vlm {
+        confidence = confidence.min(described.number_confidence);
+    }
     a.race_number = number;
     a.number_source = source;
     a.number_conf = confidence;
@@ -392,6 +488,48 @@ pub fn analyze_with(
         vlm_attempts,
         vlm_prompt,
     })
+}
+
+/// The number one subject's candidates settle on, with whether this was a real
+/// tie-break (OCR and the model both spoke and disagreed).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumberDecision {
+    pub number: Option<String>,
+    pub source: Option<String>,
+    pub confidence: f64,
+    pub tie_break: bool,
+}
+
+/// The OCR/VLM/entry-list candidate choice, run once per subject at the end of
+/// the vision stage. Kept deterministic and identical to the long-standing
+/// merge gates, so number accuracy does not move.
+pub fn decide_number(
+    ocr: &OcrReading,
+    vlm_number: Option<&str>,
+    vlm_confidence: f64,
+    accept_confidence: f64,
+    listed: impl Fn(&str) -> bool,
+) -> NumberDecision {
+    let ocr_listed = ocr.number.as_deref().is_some_and(&listed);
+    let tie_break = match (ocr.number.as_deref(), vlm_number) {
+        (Some(ocr), Some(vlm)) => ocr != vlm,
+        _ => false,
+    };
+    let (number, source, confidence) = match vlm_number {
+        Some(v) if listed(v) && !ocr_listed => merge_number(
+            &OcrReading::default(),
+            Some(v),
+            vlm_confidence,
+            accept_confidence,
+        ),
+        _ => merge_number(ocr, vlm_number, vlm_confidence, accept_confidence),
+    };
+    NumberDecision {
+        number,
+        source,
+        confidence,
+        tie_break,
+    }
 }
 
 /// The number the crop itself gives: a roundel read (a localised, upscaled
@@ -932,6 +1070,32 @@ mod tests {
     }
 
     #[test]
+    fn the_number_tie_break_runs_only_when_ocr_and_the_model_disagree() {
+        let ocr = OcrReading {
+            number: Some("7".into()),
+            confidence: 0.9,
+            source: "ocr".into(),
+        };
+        let agreed = decide_number(&ocr, Some("7"), 0.9, 0.8, |_| false);
+        assert!(!agreed.tie_break, "agreement is not a tie-break");
+        assert_eq!(agreed.number.as_deref(), Some("7"));
+
+        let differed = decide_number(&ocr, Some("9"), 0.9, 0.8, |_| false);
+        assert!(differed.tie_break, "two candidates, one choice");
+        assert!(differed.number.is_some());
+
+        let ocr_only = decide_number(&ocr, None, 0.0, 0.8, |_| false);
+        assert!(!ocr_only.tie_break, "no model answer is not a disagreement");
+        assert_eq!(ocr_only.number.as_deref(), Some("7"));
+
+        // An entry-list number the model read beats an OCR read the list lacks.
+        let listed = decide_number(&ocr, Some("12"), 0.9, 0.8, |n| n == "12");
+        assert!(listed.tie_break);
+        assert_eq!(listed.number.as_deref(), Some("12"));
+        assert_eq!(listed.source.as_deref(), Some("vlm"));
+    }
+
+    #[test]
     fn the_tiebreak_prefers_a_listed_number_then_the_biggest_panel() {
         let racer = VehicleDescription {
             race_number: Some("99".into()),
@@ -1017,6 +1181,7 @@ mod tests {
             plates: &plates::PlateOptions::default(),
             known: &known,
             seen_numbers: &empty,
+            prompt_context: None,
         };
         let out = analyze(
             &Rgb {

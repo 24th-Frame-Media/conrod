@@ -271,6 +271,10 @@ pub enum ShootPreset {
     EventShows,
     EventParties,
     Mix,
+    /// The album's type is not chosen yet: the Decision stage suggests one from
+    /// a spread sample of the frames. It behaves like [`ShootPreset::Mix`]
+    /// until the suggestion is accepted.
+    Auto,
     SportField,
     SportCourt,
     SportRodeo,
@@ -335,6 +339,7 @@ impl ShootPreset {
             "event-shows" => ShootPreset::EventShows,
             "event-parties" => ShootPreset::EventParties,
             "mix" => ShootPreset::Mix,
+            "auto" => ShootPreset::Auto,
             "sport-field" => ShootPreset::SportField,
             "sport-court" => ShootPreset::SportCourt,
             "sport-rodeo" => ShootPreset::SportRodeo,
@@ -369,6 +374,7 @@ impl ShootPreset {
             ShootPreset::EventShows => "event-shows",
             ShootPreset::EventParties => "event-parties",
             ShootPreset::Mix => "mix",
+            ShootPreset::Auto => "auto",
             ShootPreset::SportField => "sport-field",
             ShootPreset::SportCourt => "sport-court",
             ShootPreset::SportRodeo => "sport-rodeo",
@@ -406,6 +412,7 @@ impl ShootPreset {
             ShootPreset::EventShows => "Shows",
             ShootPreset::EventParties => "Parties",
             ShootPreset::Mix => "Mixed",
+            ShootPreset::Auto => "Auto (decide from the frames)",
             ShootPreset::SportField => "Field sports",
             ShootPreset::SportCourt => "Court sports",
             ShootPreset::SportRodeo => "Rodeo",
@@ -464,6 +471,9 @@ impl ShootPreset {
             }
             ShootPreset::Mix => {
                 "Mixed shoot: inspect all visible subjects without assuming a dominant type."
+            }
+            ShootPreset::Auto => {
+                "Automatic: work out what sort of shoot this is from the frames before reading subjects."
             }
             ShootPreset::SportField => {
                 "Field sports: capture the ball, the contest, and the players' effort."
@@ -586,8 +596,9 @@ impl ShootPreset {
                 .min_box(0.5)
                 .floor(24)
                 .vlm(VlmTargets::NAMES),
-            // Unknown mix: look for everything, read everything.
-            ShootPreset::Mix => PresetPolicy::new(Mix)
+            // Unknown mix: look for everything, read everything. Auto is the
+            // same until the Decision stage suggests a concrete type.
+            ShootPreset::Mix | ShootPreset::Auto => PresetPolicy::new(Mix)
                 .vehicles()
                 .animals()
                 .pan()
@@ -1237,6 +1248,22 @@ mod tests {
             assert_eq!(ScanProfile::parse(preset.name()), preset.profile());
             assert_eq!(ShootPreset::parse(&format!(" {} ", preset.name())), preset);
         }
+    }
+
+    #[test]
+    fn an_auto_album_parses_and_behaves_as_a_mix_until_a_type_is_chosen() {
+        assert_eq!(ShootPreset::parse(" AUTO "), ShootPreset::Auto);
+        assert_eq!(ShootPreset::Auto.name(), "auto");
+        assert_eq!(ShootPreset::Auto.profile(), ScanProfile::Mix);
+        assert_eq!(
+            ShootPreset::Auto.policy(),
+            ShootPreset::Mix.policy(),
+            "an unresolved auto album looks for the same subjects as a mix"
+        );
+        assert!(
+            !ShootPreset::ALL.contains(&ShootPreset::Auto),
+            "auto is an album state, not a concrete type the setup lists"
+        );
     }
 
     #[test]

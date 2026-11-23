@@ -477,6 +477,51 @@ pub fn read_peak(response: &Response, frames: usize) -> Option<Vec<f64>> {
         .then_some(ps)
 }
 
+/// The id of the "what sort of shoot is this" question.
+pub const SHOOT_TYPE_ID: &str = "shoot_type";
+
+/// One `choice` request over a spread sample of an album whose type is
+/// `auto`: what sort of shoot do these frames fit? `options` is
+/// `(stored name, plain description)` in the order shown.
+pub fn type_request(context: &str, options: &[(&str, &str)], images: Vec<String>) -> Request {
+    let mut questions = Ordered::new();
+    questions.push(
+        SHOOT_TYPE_ID,
+        Question::choice(
+            "What sort of shoot do these photographs fit?",
+            options
+                .iter()
+                .map(|(name, description)| (*name, Some((*description).to_string()))),
+        ),
+    );
+    Request {
+        state: json!(format!(
+            "{context} These are a spread of frames from one album, in shooting order."
+        )),
+        questions,
+        images,
+    }
+}
+
+/// The option the type answer picked and how sure it is, or `None` when the
+/// reply names nothing this build knows. A missing confidence falls back to the
+/// option's own probability, so a gateway that omits `confidence` still reads.
+pub fn read_type(response: &Response) -> Option<(String, f64)> {
+    let answer = response.answers.get(SHOOT_TYPE_ID)?;
+    let choice = answer.choice.as_deref()?.trim();
+    if choice.is_empty() {
+        return None;
+    }
+    let confidence = answer.confidence.unwrap_or_else(|| {
+        answer
+            .bars()
+            .into_iter()
+            .find(|(name, _)| name == choice)
+            .map_or(0.0, |(_, p)| p)
+    });
+    Some((choice.to_string(), confidence.clamp(0.0, 1.0)))
+}
+
 /// The frame a peak answer picks, when one stands out: the likeliest frame,
 /// if it clears `floor` and beats the runner-up. Otherwise none: a flat
 /// answer carries no tie-break.
@@ -642,6 +687,47 @@ mod tests {
             serde_json::from_str(r#"{"answers":{"peak":{"probabilities":{"f01":7.0}}}}"#).unwrap();
         assert_eq!(read_peak(&bad, 1), None);
         assert_eq!(read_peak(&Response::default(), 2), None);
+    }
+
+    #[test]
+    fn a_type_question_reads_the_chosen_type_and_its_confidence() {
+        let options = [
+            ("sport-rodeo", "Rodeo: riders on bucking animals"),
+            ("wedding", "Weddings"),
+        ];
+        let req = type_request(
+            "Automatic.",
+            &options,
+            vec!["data:image/jpeg;base64,AA".into()],
+        );
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["questions"][SHOOT_TYPE_ID]["type"], "choice");
+        let wire = r#"{"answers":{"shoot_type":{"choice":"sport-rodeo","probabilities":{"sport-rodeo":0.82,"wedding":0.18}}}}"#;
+        let response: Response = serde_json::from_str(wire).unwrap();
+        assert_eq!(
+            read_type(&response),
+            Some(("sport-rodeo".to_string(), 0.82)),
+            "a missing confidence reads the option's own probability"
+        );
+        let confident = Answer {
+            choice: Some("wedding".into()),
+            confidence: Some(0.91),
+            ..Answer::default()
+        };
+        let mut answers = Ordered::new();
+        answers.push(SHOOT_TYPE_ID.to_string(), confident);
+        assert_eq!(
+            read_type(&Response {
+                answers,
+                usage: None
+            }),
+            Some(("wedding".to_string(), 0.91))
+        );
+        assert_eq!(
+            read_type(&Response::default()),
+            None,
+            "no answer, no suggestion"
+        );
     }
 
     #[test]

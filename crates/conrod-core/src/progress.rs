@@ -9,18 +9,37 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
+/// The identification sub-stage that reads plates, numbers and visible text.
+pub const IDENTIFY_OCR: &str = "identify:ocr";
+/// The identification sub-stage that asks the decision model the shoot's
+/// questions and compares each burst for its peak.
+pub const IDENTIFY_DECISION: &str = "identify:decision";
+/// The identification sub-stage that asks the vision model about each subject.
+pub const IDENTIFY_VISION: &str = "identify:vision";
+
 /// The stages a one-shot scan runs, in order: `(id, label)`. The ids are the
 /// wire format; the frontend draws the flowchart from the snapshot's own
 /// `pipeline.stages`, which carries these in this order.
-pub const STAGES: [(&str, &str); 7] = [
+///
+/// Identify is three first-class stages, in this order: OCR reads the frame,
+/// Decision asks the shoot's questions and picks each burst's peak, and Vision
+/// reads each subject. An older snapshot that still says `identify` renders:
+/// [`ScanProgress::stage_index`] maps it onto the first sub-stage.
+pub const STAGES: [(&str, &str); 9] = [
     ("read", "Read"),
     ("detect", "Detect"),
     ("sharpness", "Sharpness"),
     ("faces", "Faces"),
-    ("identify", "Identify"),
+    (IDENTIFY_OCR, "Identify · OCR"),
+    (IDENTIFY_DECISION, "Identify · Decision"),
+    (IDENTIFY_VISION, "Identify · Vision"),
     ("group", "Group"),
     ("pick", "Pick"),
 ];
+
+/// The old single identify stage id, kept so a snapshot written before the
+/// split still resolves to a place in the flowchart.
+pub const LEGACY_IDENTIFY: &str = "identify";
 
 /// How many recent frames a snapshot carries.
 pub const RECENT_LIMIT: usize = 24;
@@ -239,8 +258,22 @@ pub struct StageNode {
     /// Frames that failed inside this stage in this run.
     #[serde(default)]
     pub errors: u64,
+    /// `pending`, `running`, `paused`, `skipped`, `done` or `failed`. A stage
+    /// that is switched off for the album says `skipped` and keeps its
+    /// counters at zero: it never pretends to have work.
+    #[serde(default = "pending_status")]
+    pub status: String,
+    /// The plain reason a stage failed, if it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     pub rate_per_s: f64,
     pub eta_s: Option<f64>,
+}
+
+/// The default [`StageNode::status`] for a snapshot written before the field
+/// existed: the caller knows from its counters and worker count.
+fn pending_status() -> String {
+    "pending".into()
 }
 
 /// One worker lane: what that worker is doing this instant.
@@ -252,11 +285,19 @@ pub struct WorkerLane {
     /// every lane the snapshot lists.
     #[serde(default)]
     pub lane: u32,
-    /// `idle`, `busy` or `waiting`.
+    /// `working`, `paused`, `done` or `failed`: what the worker is doing right
+    /// now, in the UI's own lifecycle words. A blocked worker (waiting on a
+    /// detector, the GPU or a lock) is still `working`; `waiting_for` says what
+    /// it is blocked on.
     pub state: String,
     /// Why it is waiting: `detector` (a detector session), `faces` (the face
-    /// pool), `lock`, `ollama` or `paused`. `null` unless `state` is `waiting`.
+    /// pool), `lock`, `ollama` or `paused`. `null` unless `state` is `working`
+    /// and it is blocked.
     pub waiting_for: Option<String>,
+    /// When this worker last reported, in Unix epoch milliseconds. The screen
+    /// uses it to tell a slow ask from a dead one honestly.
+    #[serde(default)]
+    pub last_report_at: i64,
     /// The file, as a name the UI can show next to a thumbnail.
     pub file: Option<String>,
     pub step: Option<String>,
@@ -313,9 +354,17 @@ pub struct ScanProgress {
 
 impl ScanProgress {
     /// The stage index (0-based) of `id` in [`STAGES`]; `None` for a stage the
-    /// snapshot does not carry.
+    /// snapshot does not carry. The old single `identify` id resolves to the
+    /// OCR sub-stage, so an old snapshot still has a place in the flowchart.
     pub fn stage_index(id: &str) -> Option<usize> {
-        STAGES.iter().position(|(stage, _)| *stage == id)
+        STAGES
+            .iter()
+            .position(|(stage, _)| *stage == id)
+            .or_else(|| {
+                (id == LEGACY_IDENTIFY)
+                    .then(|| STAGES.iter().position(|(stage, _)| *stage == IDENTIFY_OCR))
+                    .flatten()
+            })
     }
 }
 
@@ -420,6 +469,8 @@ mod tests {
                     done: 40,
                     total: 140,
                     errors: 0,
+                    status: "running".into(),
+                    error: None,
                     rate_per_s: 20.0,
                     eta_s: Some(5.0),
                 }],
@@ -427,8 +478,9 @@ mod tests {
                     stage: "detect".into(),
                     worker_index: 1,
                     lane: 1,
-                    state: "waiting".into(),
+                    state: "working".into(),
                     waiting_for: Some("lock".into()),
+                    last_report_at: 1_700_000_000_000,
                     file: Some("IMG_4231.CR3".into()),
                     step: Some("detect:wait".into()),
                     ms_in_step: 12.5,
@@ -489,6 +541,7 @@ mod tests {
             "done",
             "total",
             "errors",
+            "status",
             "rate_per_s",
         ] {
             assert!(stage.get(key).is_some(), "missing stage.{key}: {stage}");
@@ -500,6 +553,7 @@ mod tests {
             "lane",
             "state",
             "waiting_for",
+            "last_report_at",
             "file",
             "step",
             "ms_in_step",
@@ -508,8 +562,33 @@ mod tests {
             assert!(worker.get(key).is_some(), "missing worker.{key}: {worker}");
         }
         assert_eq!(value["pipeline"]["workers"][0]["waiting_for"], "lock");
+        assert_eq!(value["pipeline"]["workers"][0]["state"], "working");
+        assert_eq!(
+            value["pipeline"]["workers"][0]["last_report_at"],
+            1_700_000_000_000i64
+        );
         assert_eq!(ScanProgress::stage_index("faces"), Some(3));
+        assert_eq!(
+            ScanProgress::stage_index("identify"),
+            ScanProgress::stage_index("identify:ocr"),
+            "an old snapshot's single identify stage still finds its place"
+        );
         assert_eq!(ScanProgress::stage_index("nope"), None);
+        assert_eq!(
+            STAGES.map(|(id, _)| id),
+            [
+                "read",
+                "detect",
+                "sharpness",
+                "faces",
+                "identify:ocr",
+                "identify:decision",
+                "identify:vision",
+                "group",
+                "pick"
+            ],
+            "OCR, then Decision, then Vision"
+        );
         let recent = &value["recent"][0];
         assert_eq!(recent["file"], "IMG_4212.CR3");
         assert_eq!(recent["stars"], 4);

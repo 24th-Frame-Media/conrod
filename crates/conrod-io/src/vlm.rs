@@ -1932,6 +1932,10 @@ pub struct VlmHints {
     pub candidates: Vec<String>,
     /// What the crop shows, when it is not a car or motorcycle.
     pub subject: SubjectKind,
+    /// The resolved shoot type's one-line attention guidance. `None` keeps
+    /// the long-standing prompt exactly as it was; an `auto` album that
+    /// accepted a suggestion adds it so the read is finetuned for that type.
+    pub context: Option<String>,
 }
 
 /// The kind of machine in the crop, so the model is never asked about a car
@@ -2001,13 +2005,20 @@ pub fn vehicle_prompt(settings: &Settings, is_bike: bool, hints: &VlmHints) -> S
     } else {
         "Set number to null."
     };
-    // No shoot-preset context here. A preset sentence ("capture vehicle
+    // No shoot-preset context by default. A preset sentence ("capture vehicle
     // identity, competition details, livery, and action") makes the model
     // spend its answer on livery and drop a windscreen number it had read, and
-    // the bench reads the same crops better without it. The closing line asking
-    // for one compact object keeps the reply short enough to finish.
+    // the bench reads the same crops better without it. An `auto` album that
+    // accepted a suggested type opts in, once, with that type's guidance.
+    let guidance = hints
+        .context
+        .as_deref()
+        .map(str::trim)
+        .filter(|context| !context.is_empty())
+        .map(|context| format!("Shoot guidance: {context}\n"))
+        .unwrap_or_default();
     format!(
-        "{}\n\nContext guides attention only; never infer unseen details. {targets}\nReply with one JSON object only.",
+        "{guidance}{}\n\nContext guides attention only; never infer unseen details. {targets}\nReply with one JSON object only.",
         body.trim()
     )
 }

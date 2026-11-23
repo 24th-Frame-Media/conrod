@@ -74,6 +74,14 @@
         {
           "section": "Fixed",
           "text": "The moments job says who is actually doing the work: when a cloud service like OpenCode JEV judges your photos, the AI services card and the live DECIDER step name that service and its model, instead of claiming the local decision model is not installed."
+        },
+        {
+          "section": "Improved",
+          "text": "Identify is three honest steps you can watch in order: read the plates and numbers, ask the decision model what matters in this shoot and which frame is the peak, then read each subject with the vision model. Each step has its own progress, and skipping one shows plainly what was skipped instead of pretending it ran."
+        },
+        {
+          "section": "New",
+          "text": "An album can now be set to decide its own shoot type. The decision model looks at a spread of frames, suggests a type with a confidence, and waits for you to accept it: your chosen type always wins, and accepting only changes the vision reads that have not run yet."
         }
       ]
     }
