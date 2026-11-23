@@ -171,6 +171,10 @@ function makeDb(): Db {
   ];
   // QA only: ?mock=1&empty seeds no albums so the empty state can be screenshotted.
   if (params().has('empty')) jobs.length = 0;
+  // `&profile=<preset id>` is the album's shoot type (so a rodeo run words its
+  // flowchart from the rodeo preset), not only the global default.
+  const prof = params().get('profile');
+  if (prof) for (const job of jobs) job.scan_profile = prof;
   const known: KnownVehicle[] = CARS.map(([make, model, colour, team, race_number, plate]) => ({ plate, make, model, colour, team, race_number }));
   // `&ai=empty|configured|decision|local` seed the two-zone Photo helpers card's
   // screenshot states: nothing set up, cloud key saved, decision panel, local models.
