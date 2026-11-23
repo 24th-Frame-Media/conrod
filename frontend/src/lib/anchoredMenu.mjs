@@ -29,13 +29,15 @@ export function placeAnchoredMenu(anchor, menu, align = 'left') {
   const m = menu.getBoundingClientRect();
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const maxH = Math.max(48, vh - 2 * MENU_MARGIN);
+  const below = a.bottom + MENU_GAP;
+  const belowAvail = Math.max(48, vh - below - MENU_MARGIN);
+  const aboveAvail = Math.max(48, a.top - MENU_GAP - MENU_MARGIN);
+  const openBelow = m.height <= belowAvail || belowAvail >= aboveAvail;
+  const maxH = Math.min(openBelow ? belowAvail : aboveAvail, Math.max(48, vh - 2 * MENU_MARGIN));
   const w = m.width;
   const h = Math.min(m.height, maxH);
 
-  const below = a.bottom + MENU_GAP;
-  const above = a.top - MENU_GAP - h;
-  let top = below + h <= vh - MENU_MARGIN ? below : (above >= MENU_MARGIN ? above : below);
+  let top = openBelow ? below : a.top - MENU_GAP - h;
 
   let left = align === 'center' ? a.left + a.width / 2 - w / 2
     : align === 'right' ? a.right - w
@@ -53,6 +55,6 @@ export function placeAnchoredMenu(anchor, menu, align = 'left') {
   menu.style.left = `${Math.round(left)}px`;
   menu.style.right = 'auto';
   menu.style.maxHeight = `${Math.round(maxH)}px`;
-  menu.style.overflowY = m.height > maxH ? 'auto' : 'visible';
+  menu.style.overflowY = 'auto';
   menu.style.visibility = 'visible';
 }

@@ -68,7 +68,10 @@ function WindowControls() {
   );
 }
 
-/** The health light of the Python header, grown into a popover: active tasks, live scans list, pause / stop, models, event log. */
+/** Strip internal `:<jobId>` suffixes from operation keys before showing them in the UI. */
+const cleanOpLabel = (key: string) => key.replace(/:\d+$/, '');
+
+/** Compact two-tab activity popover: Activity (running ops, live scans, history) and Models (readiness). */
 function StatusPill({
   status, jobs, models, health, actions, defaultOpen, scanRows, activeJobId, onOpenJob,
 }: {
@@ -76,28 +79,16 @@ function StatusPill({
   scanRows?: DropdownJob[]; activeJobId?: number | null; onOpenJob?: (id: number) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [tab, setTab] = useState<'activity' | 'models'>('activity');
   const [stopping, setStopping] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const popover = useRef<HTMLDivElement>(null);
-  /* The activity dashboard opens below the health light. Static `right: 0`
-     `top: calc(100% + 8px)` let it run off the bottom/right window edge;
-     place it against the viewport and re-place on resize and any scroll. */
-  useLayoutEffect(() => {
-    if (!open || !box.current || !popover.current) return;
-    const place = () => placeAnchoredMenu(box.current!, popover.current!, 'right');
-    place();
-    window.addEventListener('resize', place);
-    document.addEventListener('scroll', place, true);
-    return () => {
-      window.removeEventListener('resize', place);
-      document.removeEventListener('scroll', place, true);
-    };
-  }, [open]);
-  useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
-  useEffect(() => { if (status.activeJob == null) setStopping(false); }, [status.activeJob]);
+
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const { local, optional, vision } = modelGroups(models);
   const readyModels = local.filter((model) => model.ready).length;
+  const visionReady = vision.filter((model) => model.ready).length;
+  const modelsAttention = (local.length > 0 && readyModels < local.length) || vision.some((m) => !m.ready);
   const activeTasks = status.tasks.filter((task) => task.state === 'running' || task.state === 'paused').sort((a, b) => b.id - a.id);
   const finishedTasks = status.tasks.filter((task) => task.state !== 'running' && task.state !== 'paused').sort((a, b) => b.id - a.id);
   const activeJob = jobs.find((job) => job.id === status.activeJob);
@@ -114,22 +105,60 @@ function StatusPill({
     return Boolean(m && Number(m[1]) === activeJob.id);
   };
   const activeScanTask = activeJob
-    ? (activeTasks.find(isScanTask) ?? activeTasks.find((t) => !/^(Writing|Rerunning|Exporting|Importing|Installing)\b/i.test(t.label ?? '')))
+    ? (activeTasks.find(isScanTask) ?? activeTasks.find((t) => !/^(Writing|Rerunning|Exporting|Importing|Installing|Filling)\b/i.test(t.label ?? '')))
     : undefined;
   const summaryTask = activeScanTask ?? active;
   const shownActiveTasks = activeInScans && activeJob != null && activeScanTask
     ? activeTasks.filter((t) => t.id !== activeScanTask.id)
     : activeTasks;
-  const showRunningNow = !hasScansList || shownActiveTasks.length > 0 || status.operations.length > 0;
+
+  // Match each running background task to its cancellable operation key so Cancel lives inline without leaking `:jobId`.
+  const matchedOpFor = (t: Task): string | undefined => {
+    const cleanTask = workLabel(t.label).toLowerCase();
+    const rawTask = (t.label ?? '').toLowerCase();
+    return status.operations.find((key) => {
+      const base = cleanOpLabel(key).toLowerCase();
+      return base === cleanTask || rawTask.startsWith(base);
+    });
+  };
+  const matchedOps = new Set(shownActiveTasks.map(matchedOpFor).filter((k): k is string => Boolean(k)));
+  const unmatchedOps = status.operations.filter((key) => !matchedOps.has(key));
+  const showRunningNow = shownActiveTasks.length > 0 || unmatchedOps.length > 0 || (!activeInScans && status.activeJob != null);
+
   const activeMeta = (() => {
     if (!activeScanTask) return '';
     if (activeScanTask.error) return activeScanTask.error;
     const parts: string[] = [];
-    if (activeScanTask.total > 0) parts.push(`${activeScanTask.done.toLocaleString()} of ${activeScanTask.total.toLocaleString()}`);
+    if (activeScanTask.total > 0) parts.push(`${activeScanTask.done.toLocaleString()} / ${activeScanTask.total.toLocaleString()}`);
     else if (activeScanTask.detail) parts.push(activeScanTask.detail);
     if (activeScanTask.eta != null) parts.push(etaText(activeScanTask.eta));
     return parts.join(' · ');
   })();
+
+  const taskMeta = (t: Task) => {
+    if (t.error) return t.error;
+    const parts: string[] = [];
+    if (t.total > 0) parts.push(`${t.done.toLocaleString()} / ${t.total.toLocaleString()}`);
+    else if (t.detail) parts.push(t.detail);
+    if (t.eta != null) parts.push(etaText(t.eta));
+    return parts.join(' · ');
+  };
+
+  useLayoutEffect(() => {
+    if (!open || !box.current || !popover.current) return;
+    const place = () => placeAnchoredMenu(box.current!, popover.current!, 'right');
+    place();
+    window.addEventListener('resize', place);
+    document.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      document.removeEventListener('scroll', place, true);
+    };
+  }, [open, tab, shownActiveTasks.length, scanRows?.length]);
+
+  useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
+  useEffect(() => { if (!open) setTab('activity'); }, [open]);
+  useEffect(() => { if (status.activeJob == null) setStopping(false); }, [status.activeJob]);
 
   useEffect(() => {
     if (!open) return;
@@ -140,191 +169,258 @@ function StatusPill({
     return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
   }, [open]);
 
+  const busyNow = activeTasks.length > 0 || status.activeJob != null || status.operations.length > 0;
+
   return (
     <div className="status" ref={box}>
-      <button className={`health ${tone}`} aria-expanded={open} aria-haspopup="dialog" title={health.detail || 'Notifications and activity'} onClick={() => setOpen((v) => !v)}>
+      <button className={`health ${tone}`} aria-expanded={open} aria-haspopup="dialog" title={health.detail || 'Activity and models'} onClick={() => setOpen((v) => !v)}>
         <span className="light" />
         <span className="health-text">{health.label}</span>
         {active && active.total > 0 && <small>{active.done.toLocaleString()}/{active.total.toLocaleString()}</small>}
         <Icon name="chevron" size={13} />
       </button>
       {open && (
-        <div className="popover activity-dashboard" role="dialog" aria-label="Notifications and activity" ref={popover}>
-          <div className="popover-head"><h3>Background work</h3><span className={`state ${tone === 'busy' ? 'running' : tone === 'error' ? 'failed' : tone === 'warn' ? 'paused' : 'done'}`}>{health.label}</span></div>
-          <div className="activity-summary">
-            <div><b>{activeJob && summaryTask?.total ? `${summaryTask.done.toLocaleString()} / ${summaryTask.total.toLocaleString()}` : '—'}</b><small>{activeJob ? activeJob.label : 'No active scan'}</small></div>
-            <div><b>{readyModels} / {local.length}</b><small>Models ready</small></div>
-            <div><b>{activeTasks.length}</b><small>Active tasks</small></div>
+        <div className="popover activity-dashboard" role="dialog" aria-label="Activity and models" ref={popover}>
+          <div className="act-head">
+            <div className="act-tabs" role="tablist" aria-label="Activity sections">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'activity'}
+                className={`act-tab${tab === 'activity' ? ' on' : ''}`}
+                onClick={() => setTab('activity')}
+              >
+                {busyNow && <span className="act-tab-dot busy" aria-hidden="true" />}
+                Activity
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'models'}
+                className={`act-tab${tab === 'models' ? ' on' : ''}`}
+                onClick={() => setTab('models')}
+              >
+                <span className={`act-tab-dot ${modelsAttention ? 'warn' : 'ok'}`} aria-hidden="true" />
+                Models
+                {local.length > 0 && <span className="act-tab-count">{readyModels}/{local.length}</span>}
+              </button>
+            </div>
+            <span className={`act-pill state ${tone === 'busy' ? 'running' : tone === 'error' ? 'failed' : tone === 'warn' ? 'paused' : 'done'}`}>
+              {health.label}
+            </span>
           </div>
-          {!hasScansList && waiting.length > 0 && (
-            <>
-              <div className="activity-section"><span>Waiting to scan</span><span>{waiting.length}</span></div>
-              <p className="muted activity-empty">Next: {waiting[0].label}, {waiting.length} waiting</p>
-              {waiting.map((job, i) => (
-                <div className="task" key={job.id}>
-                  <div className="task-row"><b>{job.label}</b><span className="state">{i + 1}</span></div>
-                  <button className="ghost small" onClick={() => actions.unqueue(job)}>Remove from queue</button>
-                </div>
-              ))}
-            </>
-          )}
-          {showRunningNow && (
-            <>
-              <div className="activity-section"><span>Running now</span><span>{shownActiveTasks.length || status.operations.length}</span></div>
-              {shownActiveTasks.length === 0 && status.operations.length === 0 && <p className="muted activity-empty">No background tasks</p>}
-              {shownActiveTasks.map((t) => (
-                <div className="task" key={t.id}>
-                  <div className="task-row"><b>{workLabel(t.label)}</b><span className={`state ${t.state}`}>{t.state}</span></div>
-                  {t.total > 0 && <div className="bar"><div className="fill" style={{ width: `${pct(t.done, t.total)}%` }} /></div>}
-                  <small className="muted">{t.error || (t.detail ? `Now: ${t.detail}` : t.total > 0 ? `${t.done.toLocaleString()} of ${t.total.toLocaleString()}` : '')}{t.eta != null && ` · ${etaText(t.eta)}`}</small>
-                </div>
-              ))}
-              {((!activeInScans && status.activeJob != null) || status.operations.length > 0) && (
-                <div className="popover-actions">
-                  {!activeInScans && status.activeJob != null && (
-                    <>
-                      <button className="ghost small" onClick={summaryTask?.state === 'paused' ? actions.resume : actions.pause}>{summaryTask?.state === 'paused' ? 'Resume' : 'Pause'}</button>
-                      <button className="ghost small danger" disabled={stopping} onClick={() => { setStopping(true); actions.stop(); }}>{stopping ? 'Stopping…' : 'Stop scan'}</button>
-                    </>
+
+          {tab === 'activity' ? (
+            <div className="act-body" role="tabpanel">
+              {showRunningNow && (
+                <div className="act-group">
+                  <div className="act-label"><span>Running</span><span>{shownActiveTasks.length || unmatchedOps.length}</span></div>
+                  {shownActiveTasks.map((t) => {
+                    const opKey = matchedOpFor(t);
+                    const meta = taskMeta(t);
+                    return (
+                      <div className="act-op" key={t.id}>
+                        <div className="act-op-top">
+                          <b>{workLabel(t.label)}</b>
+                          {opKey ? (
+                            <button type="button" className="act-inline-btn danger" onClick={() => actions.cancel(opKey)}>
+                              Cancel
+                            </button>
+                          ) : (
+                            <span className={`state ${t.state}`}>{t.state}</span>
+                          )}
+                        </div>
+                        {t.total > 0 && (
+                          <div className="jobs-bar">
+                            <span className={`jobs-bar-fill ${t.state === 'paused' ? 'paused' : 'running'}`} style={{ width: `${pct(t.done, t.total)}%` }} />
+                          </div>
+                        )}
+                        {meta && <small className="act-meta muted">{meta}</small>}
+                      </div>
+                    );
+                  })}
+                  {(!activeInScans && status.activeJob != null) && (
+                    <div className="act-op-actions">
+                      <button type="button" className="ghost small" onClick={summaryTask?.state === 'paused' ? actions.resume : actions.pause}>
+                        {summaryTask?.state === 'paused' ? 'Resume' : 'Pause'}
+                      </button>
+                      <button type="button" className="ghost small danger" disabled={stopping} onClick={() => { setStopping(true); actions.stop(); }}>
+                        {stopping ? 'Stopping…' : 'Stop scan'}
+                      </button>
+                    </div>
                   )}
-                  {status.operations.map((key) => <button key={key} className="ghost small" onClick={() => actions.cancel(key)}>Cancel {key}</button>)}
+                  {unmatchedOps.length > 0 && (
+                    <div className="act-op-actions">
+                      {unmatchedOps.map((key) => (
+                        <button type="button" key={key} className="ghost small danger" onClick={() => actions.cancel(key)}>
+                          Cancel {cleanOpLabel(key)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
-            </>
-          )}
-          {scanRows && onOpenJob && (
-            <>
-              <div className="activity-section"><span>Scans</span><span>{scanRows.length}</span></div>
-              {scanRows.length === 0 ? (
-                <p className="muted activity-empty">No albums yet. Import a folder to start one.</p>
-              ) : (
-                <div className="activity-scans" role="list" aria-label="Scans">
-                  {scanRows.map((row) => {
-                    const isActive = row.id === activeJobId;
-                    if (isActive) {
-                      const isPaused = activeScanTask?.state === 'paused' || row.chip.state === 'paused';
-                      return (
-                        <div key={row.id} role="listitem" className="jobs-row jobs-row-card active">
-                          <button
-                            type="button"
-                            className="jobs-row-main"
-                            onClick={() => { onOpenJob(row.id); setOpen(false); }}
-                          >
-                            <span className="jobs-row-top">
-                              <b className="jobs-row-label">{row.label}</b>
-                              <span className={`jobs-chip ${row.chip.tone}`}>{row.chip.word}</span>
-                            </span>
-                            {row.chip.progress != null && (
-                              <span className="jobs-bar" aria-label={`${Math.round(row.chip.progress * 100)} percent`}>
-                                <span className={`jobs-bar-fill ${row.chip.tone}`} style={{ width: `${Math.max(0, Math.min(100, Math.round(row.chip.progress * 100)))}%` }} />
-                              </span>
-                            )}
-                            {activeMeta && (
-                              <span className="jobs-row-meta muted" title={activeScanTask?.detail || undefined}>{activeMeta}</span>
-                            )}
-                          </button>
-                          {status.activeJob != null && (
-                            <div className="jobs-row-actions">
-                              <button type="button" className="ghost small" onClick={isPaused ? actions.resume : actions.pause}>
-                                {isPaused ? 'Resume' : 'Pause'}
+
+              {!hasScansList && waiting.length > 0 && (
+                <div className="act-group">
+                  <div className="act-label"><span>Queued</span><span>{waiting.length}</span></div>
+                  {waiting.map((job) => (
+                    <div className="jobs-row jobs-row-card queued" key={job.id}>
+                      <span className="jobs-row-top">
+                        <b className="jobs-row-label">{job.label}</b>
+                        <button type="button" className="act-inline-btn" onClick={() => actions.unqueue(job)}>Remove</button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {scanRows && onOpenJob && (
+                <div className="act-group">
+                  <div className="act-label"><span>Scans</span><span>{scanRows.length}</span></div>
+                  {scanRows.length === 0 ? (
+                    <p className="muted activity-empty">No albums yet. Import a folder to start one.</p>
+                  ) : (
+                    <div className="activity-scans" role="list" aria-label="Scans">
+                      {scanRows.map((row) => {
+                        const isActive = row.id === activeJobId;
+                        const progressPct = row.chip.progress != null ? Math.max(0, Math.min(100, Math.round(row.chip.progress * 100))) : null;
+                        if (isActive) {
+                          const isPaused = activeScanTask?.state === 'paused' || row.chip.state === 'paused';
+                          return (
+                            <div key={row.id} role="listitem" className="jobs-row jobs-row-card active">
+                              <button
+                                type="button"
+                                className="jobs-row-main"
+                                onClick={() => { onOpenJob(row.id); setOpen(false); }}
+                              >
+                                <span className="jobs-row-top">
+                                  <b className="jobs-row-label">{row.label}</b>
+                                  <span className={`jobs-chip ${row.chip.tone}`}>{row.chip.word}</span>
+                                </span>
+                                {progressPct != null && (
+                                  <span className="jobs-bar" aria-label={`${progressPct} percent`}>
+                                    <span className={`jobs-bar-fill ${row.chip.tone}`} style={{ width: `${progressPct}%` }} />
+                                  </span>
+                                )}
+                                {activeMeta && (
+                                  <span className="jobs-row-meta muted" title={activeScanTask?.detail || undefined}>{activeMeta}</span>
+                                )}
+                              </button>
+                              {status.activeJob != null && (
+                                <div className="jobs-row-actions">
+                                  <button type="button" className="act-inline-btn" onClick={isPaused ? actions.resume : actions.pause}>
+                                    {isPaused ? 'Resume' : 'Pause'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="act-inline-btn danger"
+                                    disabled={stopping}
+                                    onClick={() => { setStopping(true); actions.stop(); }}
+                                  >
+                                    {stopping ? 'Stopping…' : 'Stop'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+                        const queuedJob = row.chip.state === 'queued' ? jobs.find((j) => j.id === row.id) : undefined;
+                        if (queuedJob) {
+                          return (
+                            <div key={row.id} role="listitem" className="jobs-row jobs-row-card queued">
+                              <button
+                                type="button"
+                                className="jobs-row-main"
+                                onClick={() => { onOpenJob(row.id); setOpen(false); }}
+                              >
+                                <span className="jobs-row-top">
+                                  <b className="jobs-row-label">{row.label}</b>
+                                  <span className={`jobs-chip ${row.chip.tone}`}>{row.chip.word}</span>
+                                </span>
                               </button>
                               <button
                                 type="button"
-                                className="ghost small danger"
-                                disabled={stopping}
-                                onClick={() => { setStopping(true); actions.stop(); }}
+                                className="act-inline-btn"
+                                aria-label={`Remove ${queuedJob.label} from queue`}
+                                onClick={() => actions.unqueue(queuedJob)}
                               >
-                                {stopping ? 'Stopping…' : 'Stop scan'}
+                                Remove
                               </button>
                             </div>
-                          )}
-                        </div>
-                      );
-                    }
-                    const queuedJob = row.chip.state === 'queued' ? jobs.find((j) => j.id === row.id) : undefined;
-                    if (queuedJob) {
-                      return (
-                        <div key={row.id} role="listitem" className="jobs-row jobs-row-card queued">
+                          );
+                        }
+                        const isDone = row.chip.state === 'done' || row.chip.state === 'done_errors';
+                        const showPartialBar = !isDone && progressPct != null && progressPct > 0 && progressPct < 100;
+                        return (
                           <button
                             type="button"
-                            className="jobs-row-main"
+                            key={row.id}
+                            role="listitem"
+                            className={`jobs-row${isDone ? ' is-done' : ''}`}
                             onClick={() => { onOpenJob(row.id); setOpen(false); }}
                           >
                             <span className="jobs-row-top">
                               <b className="jobs-row-label">{row.label}</b>
+                              {showPartialBar && <span className="jobs-row-pct">{progressPct}%</span>}
                               <span className={`jobs-chip ${row.chip.tone}`}>{row.chip.word}</span>
                             </span>
-                            {row.chip.progress != null && row.chip.progress > 0 && (
-                              <span className="jobs-bar" aria-label={`${Math.round(row.chip.progress * 100)} percent`}>
-                                <span className={`jobs-bar-fill ${row.chip.tone}`} style={{ width: `${Math.max(0, Math.min(100, Math.round(row.chip.progress * 100)))}%` }} />
+                            {showPartialBar && (
+                              <span className="jobs-bar thin" aria-label={`${progressPct} percent`}>
+                                <span className={`jobs-bar-fill ${row.chip.tone}`} style={{ width: `${progressPct}%` }} />
                               </span>
                             )}
                           </button>
-                          <div className="jobs-row-actions">
-                            <button
-                              type="button"
-                              className="ghost small"
-                              aria-label={`Remove ${queuedJob.label} from queue`}
-                              onClick={() => actions.unqueue(queuedJob)}
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    }
-                    return (
-                      <button
-                        type="button"
-                        key={row.id}
-                        role="listitem"
-                        className="jobs-row"
-                        onClick={() => { onOpenJob(row.id); setOpen(false); }}
-                      >
-                        <span className="jobs-row-top">
-                          <b className="jobs-row-label">{row.label}</b>
-                          <span className={`jobs-chip ${row.chip.tone}`}>{row.chip.word}</span>
-                        </span>
-                        {row.chip.progress != null && (
-                          <span className="jobs-bar" aria-label={`${Math.round(row.chip.progress * 100)} percent`}>
-                            <span className={`jobs-bar-fill ${row.chip.tone}`} style={{ width: `${Math.max(0, Math.min(100, Math.round(row.chip.progress * 100)))}%` }} />
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
-            </>
-          )}
-          <div className="activity-section"><span>Setup models</span><span>{readyModels}/{local.length}</span></div>
-          <ul className="activity-models">
-            {local.map((model) => <li key={model.file ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span className="activity-model-name" title={model.name}>{healthName(model)}</span><small>{healthState(model)}</small></li>)}
-            {!local.length && <li className="muted">Checking model availability…</li>}
-          </ul>
-          {vision.length > 0 && <div className="activity-section"><span>Vision services</span><span>{vision.filter((model) => model.ready).length}/{vision.length}</span></div>}
-          {vision.length > 0 && (
-            <ul className="activity-models">
-              {vision.map((model) => <li key={model.id ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span className="activity-model-name" title={model.name}>{healthName(model)}</span><small title={model.detail}>{healthState(model)}</small></li>)}
-            </ul>
-          )}
-          {optional.length > 0 && <div className="activity-section"><span>Optional models</span><span>{optional.filter((model) => model.ready).length}/{optional.length}</span></div>}
-          {optional.length > 0 && (
-            <ul className="activity-models">
-              {optional.map((model) => <li key={model.file ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span className="activity-model-name" title={model.name}>{healthName(model)}</span><small>{healthState(model)}</small></li>)}
-            </ul>
-          )}
-          <details className="activity-history">
-            <summary>Recent activity ({finishedTasks.length})</summary>
-            {finishedTasks.map((t) => (
-              <div className="task" key={t.id}>
-                <div className="task-row"><b>{t.label}</b><span className={`state ${t.state}`}>{t.state}</span></div>
-                <small className="muted">{t.error || t.detail || (t.total > 0 ? `${t.done.toLocaleString()} of ${t.total.toLocaleString()}` : '')}</small>
+
+              <details className="activity-history">
+                <summary>Recent activity ({finishedTasks.length})</summary>
+                <div className="activity-history-list">
+                  {finishedTasks.map((t) => (
+                    <div className="task" key={t.id}>
+                      <div className="task-row"><b>{t.label}</b><span className={`state ${t.state}`}>{t.state}</span></div>
+                      {(t.error || t.detail || t.total > 0) && (
+                        <small className="muted">{t.error || t.detail || `${t.done.toLocaleString()} of ${t.total.toLocaleString()}`}</small>
+                      )}
+                    </div>
+                  ))}
+                  {!finishedTasks.length && <p className="muted activity-empty">Nothing finished yet</p>}
+                  <details><summary>Event log</summary><pre className="log mono">{status.log.join('\n') || 'Nothing yet.'}</pre></details>
+                </div>
+              </details>
+            </div>
+          ) : (
+            <div className="act-body" role="tabpanel">
+              <div className="act-group">
+                <div className="act-label"><span>Setup models</span><span>{readyModels}/{local.length}</span></div>
+                <ul className="activity-models">
+                  {local.map((model) => <li key={model.file ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span className="activity-model-name" title={model.name}>{healthName(model)}</span><small>{healthState(model)}</small></li>)}
+                  {!local.length && <li className="muted">Checking model availability…</li>}
+                </ul>
               </div>
-            ))}
-            {!finishedTasks.length && <p className="muted activity-empty">Nothing finished yet</p>}
-            <details><summary>Event log</summary><pre className="log mono">{status.log.join('\n') || 'Nothing yet.'}</pre></details>
-          </details>
+              {vision.length > 0 && (
+                <div className="act-group">
+                  <div className="act-label"><span>Vision services</span><span>{visionReady}/{vision.length}</span></div>
+                  <ul className="activity-models">
+                    {vision.map((model) => <li key={model.id ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span className="activity-model-name" title={model.name}>{healthName(model)}</span><small title={model.detail}>{healthState(model)}</small></li>)}
+                  </ul>
+                </div>
+              )}
+              {optional.length > 0 && (
+                <div className="act-group">
+                  <div className="act-label"><span>Optional models</span><span>{optional.filter((model) => model.ready).length}/{optional.length}</span></div>
+                  <ul className="activity-models">
+                    {optional.map((model) => <li key={model.file ?? model.name}><span className={`dot ${model.ready ? 'ok' : 'no'}`} /><span className="activity-model-name" title={model.name}>{healthName(model)}</span><small>{healthState(model)}</small></li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
