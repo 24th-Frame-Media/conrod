@@ -3668,6 +3668,25 @@ mod tests {
         lock(&desktop.db)
             .execute("UPDATE jobs SET status='scanning' WHERE id=?", [job])
             .unwrap();
+        // A crash inside the identify lane leaves `identifying` (the stage a
+        // later build writes); it is reconciled the same way, and its hidden
+        // frame is shown again instead of the album looking empty.
+        let later = conrod_store::create_job(
+            &lock(&desktop.db),
+            &root,
+            Some("Identifying"),
+            &json!(Settings::default()),
+        )
+        .unwrap();
+        lock(&desktop.db)
+            .execute(
+                "INSERT INTO images(job_id,path,status,visible) VALUES(?,?,'done',0)",
+                params![later, root.join("car.jpg").to_string_lossy()],
+            )
+            .unwrap();
+        lock(&desktop.db)
+            .execute("UPDATE jobs SET status='identifying' WHERE id=?", [later])
+            .unwrap();
         drop(desktop);
 
         let reopened = Desktop::open(root.clone()).unwrap();
@@ -3689,6 +3708,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!((frames, done), (2, 1), "nothing is deleted or re-read");
+        let (identify_status, visible): (String, i64) = lock(&reopened.db)
+            .query_row(
+                "SELECT j.status,COALESCE(i.visible,1) FROM jobs j JOIN images i ON i.job_id=j.id WHERE j.id=?",
+                [later],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            identify_status, "stopped",
+            "an identify lane cut short is resumable too"
+        );
+        assert_eq!(visible, 1, "its hidden frame is shown again");
         drop(reopened);
         std::fs::remove_dir_all(&root).unwrap();
     }

@@ -657,6 +657,14 @@ impl Service {
         result.map(|(r, _)| r)
     }
 
+    /// A new identification run starts. The live page (frames decided, their
+    /// answers and timing) belongs to one run: start it clean so a re-run never
+    /// shows the previous run's frames as work this run has already done.
+    pub fn begin_run(&self) {
+        *lock(&self.live) = Live::default();
+        self.bump();
+    }
+
     /// Called every tick: free the GPU after a quiet spell.
     pub fn tick(&self) {
         if self.active.load(Ordering::Acquire) > 0 || self.queued.load(Ordering::Acquire) > 0 {
