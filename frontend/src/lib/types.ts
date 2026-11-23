@@ -98,6 +98,36 @@ export type Status = {
   scan?: { job: number; errors: number; error_samples: string[] } | null;
 };
 
+/** The one status chip shared by the flowchart, badge and jobs dropdown. */
+export type JobChip = { word: string; state: string; tone: string; progress: number | null };
+/** A row in the TitleBar jobs dropdown, derived from the single run snapshot. */
+export type DropdownJob = { id: number; label: string; chip: JobChip };
+/** A failed stage, with a plain reason, for the failed node + retry banner. */
+export type StageFailure = { id: string; label: string; reason: string };
+export type ScanFailureShape = { jobId?: number | null; label?: string; title?: string; message?: string; detail?: string; args?: unknown; raw?: string; [k: string]: unknown };
+
+/**
+ * The ONE normalized run snapshot (plan §6.1). `buildRunSnapshot` produces this
+ * from the engine `status` + live events (hydrate-then-live); every screen reads
+ * from it and nothing invents a stage, worker or status. Stage-agnostic.
+ */
+export type RunSnapshot = {
+  activeJob: number | null;
+  paused: boolean;
+  view: { state: string; source?: string; progress?: ScanProgress | null; errors?: number; errorSamples?: string[]; resumeStage?: string | null; paused?: boolean; terminal?: boolean; queuePosition?: number | null };
+  progress: ScanProgress | null;
+  stages: PipelineStage[];
+  workers: PipelineWorker[];
+  counters: { done: number; total: number; fraction: number | null; stage: string | null };
+  runActive: boolean;
+  badge: JobChip;
+  jobs: DropdownJob[];
+  failedStages: StageFailure[];
+  error: ScanFailureShape | null;
+  now: number;
+  stallMs: number;
+};
+
 /** The `scan_status` answer for one album: what its scan is doing now, snapshot or not. */
 export type ScanStatus = {
   state: 'running' | 'queued' | 'done' | 'done_errors' | 'stopped' | 'error';
@@ -322,7 +352,7 @@ export function profileLabel(id: string): string {
 
 /** One stage node of the scan pipeline (the flowchart on the scan screen). */
 export type PipelineStage = {
-  /** `read` | `detect` | `sharpness` | `faces` | `identify` | `group` | `pick`. */
+  /** Any stage id the engine reports; the UI renders whatever it carries (stage-agnostic). */
   id: string;
   label: string;
   /** The model actually loaded: e.g. `yolo11s-960.onnx`, `qwen2.5vl:7b via ollama`. */
@@ -339,6 +369,12 @@ export type PipelineStage = {
   errors?: number;
   rate_per_s: number;
   eta_s: number | null;
+  /** Explicit stage lifecycle from B1: a stage that stopped with an error is `failed`. */
+  state?: string;
+  failed?: boolean;
+  /** A plain reason for a failed stage, surfaced on the failed node and banner. */
+  reason?: string | null;
+  error?: string | null;
 };
 
 /** A step a scan lane moves a frame through, in order. See docs/plans/ingest-live-contract.md. */
@@ -371,8 +407,8 @@ export type AfKind = 'point' | 'grid';
 export type PipelineWorker = {
   stage: string;
   worker_index: number;
-  /** `paused` is a lane that holds a frame but is frozen by Pause; older engines report it as `busy`. */
-  state: 'idle' | 'busy' | 'waiting' | 'paused';
+  /** B1 contract: `working` | `paused` | `done` | `failed`. Legacy engines emit `busy` | `waiting` | `idle` | `paused`. */
+  state: 'idle' | 'busy' | 'waiting' | 'paused' | 'working' | 'done' | 'failed' | 'stalled';
   /** Why it is waiting: `gpu`/`detector`, `faces`, `lock`, `writer`, `disk`, `ollama` or `paused`; null unless waiting. */
   waiting_for: 'gpu' | 'detector' | 'faces' | 'lock' | 'writer' | 'disk' | 'ollama' | 'paused' | null;
   /** The file name, to show beside a thumbnail. */
@@ -381,6 +417,8 @@ export type PipelineWorker = {
   ms_in_step: number;
   /** A stable lane id (0-based) that survives the lane changing `stage`; without it the card is keyed by stage + worker_index. */
   lane?: number;
+  /** Epoch ms of the worker's last report (B1). Past the generous window the UI shows it stalled, never busy. */
+  last_report_at?: number;
   /** The frame this lane holds, with what has been found on it so far. */
   current?: LaneFrame | null;
 };

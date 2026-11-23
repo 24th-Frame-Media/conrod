@@ -13,11 +13,12 @@ import { readsSubjects, subjectWords } from '../lib/subjects.mjs';
 import { confidencePercent, confidenceTone, displayItem, elapsed, phaseLabel, progressPercent, rateLabel, workerLanes } from '../lib/identifyFlow.mjs';
 import {
   etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneKey, laneState, leftLabel,
-  phaseRunning, phaseTone, phaseWord, selectLanes, starsText, stripItems, verdictText, visionExpected,
+  phaseRunning, phaseTone, phaseWord, starsText, stripItems, verdictText, visionExpected,
 } from '../lib/ingest.mjs';
+import { activeWorkers, scanSeedFor } from '../lib/runSnapshot.mjs';
 import { visionHeader, visionModelWords, visionOffReason, type VisionAction } from '../lib/vision.mjs';
 import { etaLabel, etaRemaining, formatRate, orderStages, overallEta, overallFraction, summaryLine } from '../lib/scan.mjs';
-import type { IdentifyLive, Job, ScanFound, ScanRecentFrame, Settings, Status } from '../lib/types';
+import type { IdentifyLive, Job, RunSnapshot, ScanFound, ScanRecentFrame, Settings, Status } from '../lib/types';
 import { scanFailureFor, type ScanFailure } from '../lib/scanError.mjs';
 import type { Runner } from '../state/hooks';
 import type { ScanLive } from '../state/useScanProgress';
@@ -54,6 +55,8 @@ export type IngestProps = {
   onUnqueue?: (job: Job) => void;
   /** A scan that failed before or during the run; shown as a persistent banner with Resume. */
   scanError?: ScanFailure | null;
+  /** The single run snapshot (plan §6.1): stages, workers, counters, failed stages. */
+  runSnapshot?: RunSnapshot;
   /** Retry the failed scan; the banner's Resume. */
   onRetryScan?: () => void;
   /** A stopped or failed identification: continue it where it stopped, asking only
@@ -103,7 +106,7 @@ export function ScanFailureBanner({ failure, onRetry, onLibrary }: { failure: Sc
  */
 export function IngestScreen({
   mode, job, scan, identify, status, model, decisionService = null, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onCancel,
-  onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue, scanError, onRetryScan, onContinueIdentify,
+  onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue, scanError, runSnapshot, onRetryScan, onContinueIdentify,
 }: IngestProps) {
   const [picked, setPicked] = useState<Pick | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
@@ -114,7 +117,11 @@ export function IngestScreen({
   const prompts = useRef<Record<number, string>>({});
   const p = mode === 'ingest' ? scan?.progress : undefined;
   const operation = job ? status.operations.find((key) => key.startsWith('Identifying:') && key.endsWith(`:${job.id}`)) : undefined;
-  const stages = p ? orderStages(p.pipeline.stages) : [];
+  // The ONE snapshot for this run (plan §6.1): stages, workers, counters and
+  // failed stages all come from it. Stage-agnostic — whatever the engine sent.
+  const snap = runSnapshot && runSnapshot.activeJob === job?.id ? runSnapshot : null;
+  const stages = snap ? snap.stages : (p ? orderStages(p.pipeline.stages) : []);
+  const failedMap: Record<string, string> = Object.fromEntries((snap?.failedStages ?? []).map((f) => [f.id, f.reason]));
   const idLive = mode === 'identify' ? identify : ingestIdentify(identify, { planned: visionExpected(stages, null), identifying: Boolean(operation) });
   // The decision model's newest feed: the dedicated event, else the copy the identify snapshot
   // carries so the identify page shows it even before the first `decider-progress` arrives.
@@ -130,7 +137,9 @@ export function IngestScreen({
 
   const scanState = !p ? (running ? 'starting' : job?.status === 'error' ? 'error' : job?.status === 'done' || job?.status === 'done_errors' ? 'done' : 'idle')
     : p.state === 'running' && !running && job?.status !== 'scanning' ? 'stopped' : p.state === 'done_errors' ? 'done' : p.state;
-  const seed = scanError && (scanError.jobId == null || scanError.jobId === job?.id) ? scanError : null;
+  // Bound strictly to this album: a null-job import failure shows ONLY on the
+  // empty Scan page, never on every album (§6.6, audit P2-2).
+  const seed = scanSeedFor(scanError ?? null, job?.id ?? null);
   const failure = mode === 'ingest' ? scanFailureFor({ job, progress: p, status, seed }) : null;
   const phase = ingestPhase({ mode, scan: mode === 'ingest' ? { state: scanState, stage: p?.stage } : null, identify: idLive, identifying: Boolean(operation) });
   if (!job || phase === 'idle') {
@@ -178,12 +187,18 @@ export function IngestScreen({
   const frac = mode === 'identify' ? progressPercent(idLive?.done, idLive?.total) / 100
     : phase === 'done' ? 1 : ingestFraction({ scanFraction: scanFrac, identify: idLive, vision });
   const pct = Math.round(frac * 100);
-  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive, decisionService, subject) : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService, subject, reads });
+  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive, decisionService, subject)
+    : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService, subject, reads, failed: failedMap });
 
   const visionLanes = workerLanes(idLive);
   const scanFilter = filter && filter !== 'vision' && filter !== 'decider' ? filter : null;
-  const picks = selectLanes(p?.pipeline.workers, { filter: scanFilter, cap: 8, all: showAll, paused, identify: !idLive });
-  const allScan = selectLanes(p?.pipeline.workers, { cap: 1000, paused, identify: !idLive }).lanes;
+  // Worker lifecycle (§6.4): ONLY active workers, each on its real step. Done/failed
+  // leave the grid (result → recent feed), a worker past the last-report window is
+  // shown honestly as stalled, and run end / stage transitions clear stale lanes.
+  const workerOpts = { now: Date.now(), stallMs: snap?.stallMs ?? 45000, paused, identify: !idLive, runActive: snap ? snap.runActive : live };
+  const snapWorkers = snap ? snap.workers : p?.pipeline.workers;
+  const picks = activeWorkers(snapWorkers, { ...workerOpts, filter: scanFilter, cap: 8, all: showAll });
+  const allScan = activeWorkers(snapWorkers, { ...workerOpts, cap: 1000 }).lanes;
   const awake = allScan.filter((w) => laneState(w, paused) !== 'idle').length;
   // Scan lanes that have nothing left to do give way to the barrier note (group, pick) and to the vision workers.
   const barrier = mode === 'ingest' && (phase === 'group' || phase === 'pick') && filter == null;
@@ -290,6 +305,7 @@ export function IngestScreen({
                 <span className="id-node-top">
                   <span className="id-node-num mono">{node.number}</span>
                   {node.state === 'done' && <Icon name="check" size={12} />}
+                  {node.state === 'failed' && <Icon name="x" size={12} />}
                   {node.state === 'active' && <i className="id-node-dot" aria-hidden="true" />}
                 </span>
                 <b>{node.label}</b>
@@ -312,6 +328,21 @@ export function IngestScreen({
             );
           })}
         </ol>
+
+        {/* Every stage failure is visible with a plain reason and a retry on the
+            failed stage (§6.6). Stage-agnostic: whatever ids the engine sent. */}
+        {snap && snap.failedStages.length > 0 && (
+          <section className="scan-summary scan-failure ing-stage-failure" role="alert" aria-label="Failed stages">
+            <div className="ss-mark"><Icon name="x" size={20} /></div>
+            <div className="ss-text">
+              <b>These stages need another try</b>
+              <span className="muted">{snap.failedStages.map((f) => `${f.label}: ${f.reason}`).join(' · ')}</span>
+            </div>
+            <div className="ss-actions">
+              {onRetryScan && <button className="primary" onClick={onRetryScan}>Retry the failed stage</button>}
+            </div>
+          </section>
+        )}
 
         {(phase === 'done' || phase === 'stopped') && mode === 'ingest' && p && (
           <section className="scan-summary" aria-label="Scan summary">

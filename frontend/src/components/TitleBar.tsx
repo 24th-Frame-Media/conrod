@@ -5,7 +5,7 @@ import { etaText, pct, plural } from '../lib/format';
 import { applyTheme, storedTheme } from '../lib/theme.mjs';
 import { modelGroups, modelWord, workLabel, type HealthStatus } from '../lib/health.mjs';
 import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
-import type { DevInfo, Job, ModelInfo, Page, ReloadState, Status } from '../lib/types';
+import type { DevInfo, DropdownJob, Job, JobChip, ModelInfo, Page, ReloadState, RunSnapshot, Status } from '../lib/types';
 import { profileLabel } from '../lib/types';
 import { DevCluster } from './DevStatus';
 import { Icon, Mark } from './basics';
@@ -192,13 +192,70 @@ function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { st
   );
 }
 
+/**
+ * The jobs dropdown (plan §6.7). Lists recent/active jobs with a LIVE status chip
+ * and progress, derived from the ONE run snapshot — the same status poll/push that
+ * drives every screen, with NO second poll loop. It updates while closed: a pushed
+ * status or a live event changes `rows`/`badge` on the next render. One click opens
+ * that job's run view via the existing openJob routing (hydrate, then live).
+ */
+function JobsDropdown({ rows, badge, activeJob, onOpenJob }: { rows: DropdownJob[]; badge: JobChip; activeJob: number | null; onOpenJob: (id: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('pointerdown', away);
+    window.addEventListener('keydown', esc);
+    return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', esc); };
+  }, [open]);
+  return (
+    <div className="jobs" ref={box}>
+      <button type="button" className={`jobs-trigger ${badge.tone}`} aria-expanded={open} aria-haspopup="menu"
+        aria-label={`Scans — ${badge.word}`} title="Your scans — opens a job's live run" onClick={() => setOpen((v) => !v)}>
+        <Icon name="images" size={15} />
+        <span>Scans</span>
+        {badge.state === 'running' && <i className="jobs-live" aria-label="running" />}
+        <span className={`jobs-chip ${badge.tone}`}>{badge.word}</span>
+        <Icon name="chevron" size={13} />
+      </button>
+      {open && (
+        <div className="jobs-pop" role="menu" aria-label="Scans">
+          <div className="jobs-pop-head"><b>Scans</b><small className="muted">updates live</small></div>
+          {rows.length === 0 && <p className="muted jobs-empty">No albums yet. Import a folder to start one.</p>}
+          {rows.map((row) => (
+            <button type="button" key={row.id} role="menuitem" className={`jobs-row${row.id === activeJob ? ' active' : ''}`}
+              onClick={() => { onOpenJob(row.id); setOpen(false); }}>
+              <span className="jobs-row-top">
+                <b className="jobs-row-label">{row.label}</b>
+                <span className={`jobs-chip ${row.chip.tone}`}>{row.chip.word}</span>
+              </span>
+              {row.chip.progress != null && (
+                <span className="jobs-bar" aria-label={`${Math.round(row.chip.progress * 100)} percent`}>
+                  <span className={`jobs-bar-fill ${row.chip.tone}`} style={{ width: `${Math.max(0, Math.min(100, Math.round(row.chip.progress * 100)))}%` }} />
+                </span>
+              )}
+            </button>
+          ))}
+          <p className="muted jobs-pop-foot">One click opens the run — it hydrates, then goes live.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 type Props = {
   page: Page; setPage: (page: Page) => void; jobs: Job[]; models: ModelInfo[]; status: Status; profile: string;
   health: HealthStatus; actions: StatusActions; popoverOpen: boolean; dev: DevInfo | null; reloadState: ReloadState;
+  /** The single run snapshot (plan §6.1): badge + jobs dropdown both read from it. */
+  runSnapshot?: RunSnapshot;
+  /** Open a job's run view (hydrate-then-live); the dropdown's one-click entry. */
+  onOpenJob?: (id: number) => void;
 };
 
 /** Topbar and title bar in one: brand, tabs, stats, scan type, status pill, window controls. Drag it to move the window. */
-export function TitleBar({ page, setPage, jobs, models, status, profile, health, actions, popoverOpen, dev, reloadState }: Props) {
+export function TitleBar({ page, setPage, jobs, models, status, profile, health, actions, popoverOpen, dev, reloadState, runSnapshot, onOpenJob }: Props) {
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const photos = jobs.reduce((n, j) => n + j.total, 0);
   const [theme, setTheme] = useState(storedTheme);
@@ -239,6 +296,9 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, health,
       >
         <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
       </button>
+      {runSnapshot && onOpenJob && (
+        <JobsDropdown rows={runSnapshot.jobs} badge={runSnapshot.badge} activeJob={runSnapshot.activeJob} onOpenJob={onOpenJob} />
+      )}
       <StatusPill status={status} jobs={jobs} models={models} health={health} actions={actions} defaultOpen={popoverOpen} />
       <WindowControls />
       {active && active.total > 0 && <i className="topbar-progress" style={{ width: `${pct(active.done, active.total)}%` }} />}

@@ -8,7 +8,7 @@
 export function openJobPage(job, activeJob = null) {
   if (!job) return 'Review';
   if (activeJob === job.id) return 'Scan';
-  return ['queued', 'scanning', 'stopped', 'error'].includes(job.status) ? 'Scan' : 'Review';
+  return ['queued', 'scanning', 'stopped', 'error', 'incomplete'].includes(job.status) ? 'Scan' : 'Review';
 }
 
 /**

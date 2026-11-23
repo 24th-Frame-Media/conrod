@@ -55,15 +55,19 @@ export function failedWords(errors) {
   return count > 0 ? `${count.toLocaleString('en-US')} failed` : '';
 }
 
-function scanNode(id, stage, finished, subject) {
+function scanNode(id, stage, finished, subject, failures = {}) {
   const status = stage ? stageStatus(stage) : 'pending';
   const off = status === 'off';
-  const state = off ? 'pending' : finished ? 'done' : status === 'done' ? 'done' : status === 'active' ? 'active' : 'pending';
+  // A stage the engine marked failed draws a FAILED node with the plain reason
+  // (§6.6), whatever its id — stage-agnostic so B1's new stages work unchanged.
+  const reason = failures[id] ?? '';
+  const isFailed = Boolean(reason) && !off;
+  const state = isFailed ? 'failed' : off ? 'pending' : finished ? 'done' : status === 'done' ? 'done' : status === 'active' ? 'active' : 'pending';
   const workers = stage?.workers_total ?? 0;
   const busy = stage?.workers_busy ?? 0;
   const model = stage?.model ?? '';
   const purpose = stagePurpose(id, subject) ?? stage?.label ?? id;
-  const sub = off ? 'not used' : purpose;
+  const sub = isFailed ? reason : off ? 'not used' : purpose;
   const count = !off && stage && stage.total > 0 ? `${n(stage.done)} / ${n(stage.total)}` : '';
   const progress = !off && PHASES.has(id) ? (state === 'done' ? 'done' : state === 'active' ? 'working' : 'queued') : '';
   const crew = workers > 0 ? (state === 'done' ? `${workers} ${workers === 1 ? 'worker' : 'workers'}` : `${busy}/${workers} busy`) : '';
@@ -72,6 +76,7 @@ function scanNode(id, stage, finished, subject) {
   return {
     id, number: '', label: stage?.label ? String(stage.label).toUpperCase() : NODE_LABELS[id] ?? String(id).toUpperCase(),
     sub, meta, title: [sub, count, progress, failed, crew, model, stage?.device].filter(Boolean).join(' · '), state, off,
+    failed: isFailed, reason,
     filter: off || PHASES.has(id) ? null : id,
   };
 }
@@ -102,13 +107,13 @@ function visionNode(identify, identifyStage, model, finished, subject) {
  * `subject` is the album's own words; `reads` is false for a shoot whose identify run only judges moments, which draws no
  * VISION node because there is nothing to read.
  */
-export function ingestNodes({ stages, identify = null, model = '', finished = false, decider = null, serving = null, subject = SUBJECT_WORDS.subjects, reads = true } = {}) {
+export function ingestNodes({ stages, identify = null, model = '', finished = false, decider = null, serving = null, subject = SUBJECT_WORDS.subjects, reads = true, failed = {} } = {}) {
   const ordered = orderStages(stages);
   const byId = new Map(ordered.map((s) => [s.id, s]));
   const ids = [...SCAN_NODE_IDS, ...ordered.map((s) => s.id).filter((id) => id !== 'identify' && !SCAN_NODE_IDS.includes(id))];
   const rank = (id) => { const i = STAGE_ORDER.indexOf(id); return i < 0 ? STAGE_ORDER.length : i; };
   ids.sort((a, b) => rank(a) - rank(b));
-  const nodes = ids.map((id) => scanNode(id, byId.get(id), finished, subject));
+  const nodes = ids.map((id) => scanNode(id, byId.get(id), finished, subject, failed));
   if (reads && visionExpected(ordered, identify)) nodes.push(visionNode(identify, byId.get('identify'), model, finished, subject));
   // The decision model sits after VISION: it answers about the same frames, on the same GPU, when the shoot type asks it.
   // Its run-level phase (judging moments, then comparing bursts) is what its tick waits for.
@@ -234,6 +239,9 @@ export function laneNumber(worker) {
  */
 export function laneState(worker, paused = false) {
   if (!worker || worker.state === 'idle') return 'idle';
+  // A stalled worker is honest, never busy (plan §6.4). The engine decides
+  // done-vs-stalled; past the window the UI only flags it, showing its last step.
+  if (worker.state === 'stalled') return 'stalled';
   if (worker.state === 'paused' || worker.waiting_for === 'paused' || paused) return 'paused';
   return worker.state === 'waiting' ? 'waiting' : 'busy';
 }
@@ -248,16 +256,18 @@ export function laneText(worker, paused = false) {
   const state = laneState(worker, paused);
   if (state === 'idle') return 'idle';
   if (state === 'paused') return 'paused';
+  if (state === 'stalled') return worker.current?.step ?? worker.step ?? 'no recent report';
   if (state === 'waiting') return WAITING_WORDS[worker.waiting_for] ?? 'waiting';
   return worker.current?.step ?? worker.step ?? 'working';
 }
 
 /** The badge on the frame. */
 export function laneBadge(state) {
-  return state === 'busy' ? 'LIVE' : state === 'waiting' ? 'WAITING' : state === 'paused' ? 'PAUSED' : 'IDLE';
+  return state === 'busy' ? 'LIVE' : state === 'waiting' ? 'WAITING' : state === 'paused' ? 'PAUSED' : state === 'stalled' ? 'STALLED' : 'IDLE';
 }
 
-const PRIORITY = { busy: 0, paused: 0, waiting: 1, idle: 2 };
+// Stalled lanes stay visible (honest), but never outrank a genuinely working lane.
+const PRIORITY = { busy: 0, paused: 0, stalled: 0, waiting: 1, idle: 2 };
 
 /**
  * The scan lanes the grid draws. Group and pick are barriers, not lanes. `filter` is a flowchart node id (a scan stage keeps that stage's

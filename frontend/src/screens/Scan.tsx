@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
-import type { IdentifyLive, Job, Settings, Status } from '../lib/types';
+import type { IdentifyLive, Job, RunSnapshot, Settings, Status } from '../lib/types';
 import type { VisionAction } from '../lib/vision.mjs';
 import { scanFailureFor, type ScanFailure } from '../lib/scanError.mjs';
+import { scanSeedFor } from '../lib/runSnapshot.mjs';
 import { scanView } from '../lib/scanStatus.mjs';
 import { Icon } from '../components/basics';
 import type { Runner } from '../state/hooks';
@@ -27,6 +28,8 @@ type Props = {
   onResumeJob?: () => void;
   /** A scan call that threw before the album existed, shown by the same banner as a failed run. */
   scanError?: ScanFailure | null;
+  /** The single run snapshot (plan §6.1), passed through to the live Ingest screen. */
+  runSnapshot?: RunSnapshot;
   /** Retry the scan after the failure's cause is fixed. */
   onRetryScan?: () => void;
 };
@@ -54,9 +57,11 @@ function photos(count: number) {
  * An album's worker screen at any moment. A running scan is the live Ingest page, fed by the snapshot when no event is
  * in hand; a queued, stopped, failed or finished album gets the same screen's summary with the one action that helps.
  */
-export function ScanScreen({ job, live, scanStatus, status, paused, queue, onUnqueue, onResumeJob, onReview, onLibrary, scanError, onRetryScan, ...rest }: Props) {
+export function ScanScreen({ job, live, scanStatus, status, paused, queue, onUnqueue, onResumeJob, onReview, onLibrary, scanError, runSnapshot, onRetryScan, ...rest }: Props) {
   const view = scanView({ job, live, hydrate: scanStatus, activeJob: status.activeJob });
-  const seed = scanError && (scanError.jobId == null || scanError.jobId === job?.id) ? scanError : null;
+  // Bound strictly to this album: a null-job import failure can never match
+  // every album (§6.6, audit P2-2).
+  const seed = scanSeedFor(scanError ?? null, job?.id ?? null);
 
   if (job && seed) {
     return (
@@ -114,5 +119,5 @@ export function ScanScreen({ job, live, scanStatus, status, paused, queue, onUnq
   const snapshot = view.progress;
   const scanLive = view.source === 'live' && live ? live : snapshot ? { progress: snapshot, stable: false, history: [], at: scanStatus?.at ?? 0 } : undefined;
   return <IngestScreen {...rest} mode="ingest" scan={scanLive} job={job} status={status} paused={paused} running={view.state === 'running'}
-    queue={queue} onUnqueue={onUnqueue} onReview={onReview} onLibrary={onLibrary} onRetryScan={onRetryScan} scanError={scanError ?? undefined} />;
+    queue={queue} onUnqueue={onUnqueue} onReview={onReview} onLibrary={onLibrary} onRetryScan={onRetryScan} scanError={scanError ?? undefined} runSnapshot={runSnapshot} />;
 }

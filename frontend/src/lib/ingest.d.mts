@@ -1,6 +1,6 @@
 import type { DeciderLive, IdentifyItem, IdentifyLive, LaneBox, LaneStep, PipelineStage, PipelineWorker, ScanRecentFrame } from './types';
 
-export type NodeState = 'done' | 'active' | 'pending';
+export type NodeState = 'done' | 'active' | 'pending' | 'failed';
 export type IngestNode = {
   /** Stage id (`read`…`pick`), `vision`, `done`; the identify-only chart uses the lower-cased label. */
   id: string;
@@ -14,11 +14,14 @@ export type IngestNode = {
   state: NodeState;
   /** A stage this shoot does not run. */
   off: boolean;
+  /** A stage the engine reported as failed, with a plain reason. */
+  failed?: boolean;
+  reason?: string;
   /** What clicking the node filters the worker grid to; null when the node is not a filter. */
   filter: string | null;
 };
 export type IngestPhase = 'idle' | 'starting' | 'scan' | 'group' | 'pick' | 'vision' | 'peaks' | 'done' | 'stopped' | 'error';
-export type LaneUiState = 'busy' | 'waiting' | 'paused' | 'idle';
+export type LaneUiState = 'busy' | 'waiting' | 'paused' | 'idle' | 'stalled';
 export type LaneFrameView = {
   file: string;
   step: LaneStep | string | null;
@@ -39,7 +42,7 @@ export const STEP_STAGE: Readonly<Record<string, string>>;
 export function stageOfStep(step: string | null | undefined, fallback?: string): string;
 export function stepIndex(step: string | null | undefined): number;
 export function visionExpected(stages: PipelineStage[] | null | undefined, identify?: IdentifyLive | null): boolean;
-export function ingestNodes(input?: { stages?: PipelineStage[] | null; identify?: IdentifyLive | null; model?: string; finished?: boolean; decider?: import('./types').DeciderLive | null; serving?: string | null; subject?: import('./subjects.mjs').SubjectWords | null; reads?: boolean }): IngestNode[];
+export function ingestNodes(input?: { stages?: PipelineStage[] | null; identify?: IdentifyLive | null; model?: string; finished?: boolean; decider?: import('./types').DeciderLive | null; serving?: string | null; subject?: import('./subjects.mjs').SubjectWords | null; reads?: boolean; failed?: Record<string, string> }): IngestNode[];
 export function identifyNodes(live: IdentifyLive | null | undefined, model?: string | null, decider?: DeciderLive | null, serving?: string | null, subject?: import('./subjects.mjs').SubjectWords | null): IngestNode[];
 export function ingestPhase(input?: {
   mode?: 'ingest' | 'identify';
