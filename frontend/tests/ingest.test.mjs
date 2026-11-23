@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   boxLabel, boxRole, boxStyle, comparingBursts, etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase,
   laneBadge, laneFrame, laneKey, laneNumber, laneState, laneText, leftLabel, mainVehicle, phaseRunning, phaseTone, phaseWord, roleLabel,
-  selectLanes, stageOfStep, starsText, stepIndex, stripItems, verdictText, visionExpected, tagFits, tagWidth, afLabel, afTagSpot, failedWords,
+  selectLanes, stageOfStep, stagePlace, starsText, stepIndex, stripItems, verdictText, visionExpected, tagFits, tagWidth, afLabel, afTagSpot, failedWords,
   TAG_HEIGHT,
 } from '../src/lib/ingest.mjs';
 import { SUBJECT_WORDS } from '../src/lib/subjects.mjs';
@@ -11,6 +11,18 @@ const vehicles = SUBJECT_WORDS.vehicles;
 
 const stage = (id, done, total, busy = 0, workers = 2, extra = {}) => ({ id, label: id[0].toUpperCase() + id.slice(1), model: `${id}-model`, device: 'CPU', workers_total: workers, workers_busy: busy, queue_len: 0, done, total, rate_per_s: 0, eta_s: null, ...extra });
 const worker = (stage, worker_index, state = 'busy', extra = {}) => ({ stage, worker_index, state, waiting_for: null, file: null, step: null, ms_in_step: 0, ...extra });
+
+test('the header counts only steps that run: a greyed-off step is never "8 of 6"', () => {
+  const nodes = [
+    { id: 'read', off: false }, { id: 'detect', off: false }, { id: 'sharpness', off: false }, { id: 'faces', off: false },
+    { id: 'identify:ocr', off: true }, { id: 'identify:decision', off: true }, { id: 'identify:vision', off: true },
+    { id: 'group', off: false }, { id: 'pick', off: false }, { id: 'done', off: false },
+  ];
+  assert.deepEqual(stagePlace(nodes, 'group'), { at: 5, total: 6 });
+  assert.deepEqual(stagePlace(nodes, 'identify:ocr'), { at: 0, total: 6 }, 'an off step is not a place');
+  assert.deepEqual(stagePlace(nodes, 'done'), { at: 0, total: 6 }, 'DONE is a card, not a stage');
+  assert.deepEqual(stagePlace(nodes, 'read'), { at: 1, total: 6 });
+});
 
 test('steps map onto the flowchart stage they belong to', () => {
   assert.equal(stageOfStep('decode'), 'read');

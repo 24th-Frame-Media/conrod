@@ -41,6 +41,8 @@ export const SCAN_STEPS: readonly LaneStep[];
 export const STEP_STAGE: Readonly<Record<string, string>>;
 export function stageOfStep(step: string | null | undefined, fallback?: string): string;
 export function stepIndex(step: string | null | undefined): number;
+/** 1-based place of the head stage among the steps that actually run (off nodes and DONE never count). */
+export function stagePlace(nodes: ReadonlyArray<{ id: string; off?: boolean }> | null | undefined, headId: string | null | undefined): { at: number; total: number };
 export function visionExpected(stages: PipelineStage[] | null | undefined, identify?: IdentifyLive | null): boolean;
 export function ingestNodes(input?: { stages?: PipelineStage[] | null; identify?: IdentifyLive | null; model?: string; finished?: boolean; decider?: import('./types').DeciderLive | null; serving?: string | null; subject?: import('./subjects.mjs').SubjectWords | null; reads?: boolean; failed?: Record<string, string> }): IngestNode[];
 export function identifyNodes(live: IdentifyLive | null | undefined, model?: string | null, decider?: DeciderLive | null, serving?: string | null, subject?: import('./subjects.mjs').SubjectWords | null): IngestNode[];

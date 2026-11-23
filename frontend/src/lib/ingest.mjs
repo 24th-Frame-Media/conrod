@@ -22,6 +22,18 @@ export function stepIndex(step) {
   return SCAN_STEPS.indexOf(step);
 }
 
+/**
+ * Where the head stage sits among the steps that ACTUALLY RUN: greyed-off
+ * nodes (§6.3) never count, and the trailing DONE card is not a stage. The
+ * header says "Stage 5 of 6", never "Stage 8 of 6" on an album with three
+ * steps turned off.
+ */
+export function stagePlace(nodes, headId) {
+  const list = Array.isArray(nodes) ? nodes.filter((n) => !n.off && n.id !== 'done') : [];
+  const at = list.findIndex((n) => n.id === headId);
+  return { at: at < 0 ? 0 : at + 1, total: list.length };
+}
+
 const SCAN_NODE_IDS = ['read', 'detect', 'sharpness', 'faces', 'group', 'pick'];
 const NODE_LABELS = { read: 'READ', detect: 'DETECT', sharpness: 'SHARPNESS', faces: 'FACES', group: 'GROUP', pick: 'PICK' };
 /** What each stage is for, in a photographer's words; the model's own file name lives in the title. */

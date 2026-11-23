@@ -14,7 +14,7 @@ import { readsSubjects, subjectWords } from '../lib/subjects.mjs';
 import { confidencePercent, confidenceTone, displayItem, elapsed, phaseLabel, progressPercent, rateLabel, workerLanes } from '../lib/identifyFlow.mjs';
 import {
   etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneKey, laneState, leftLabel,
-  phaseRunning, phaseTone, phaseWord, starsText, stripItems, verdictText, visionExpected,
+  phaseRunning, phaseTone, phaseWord, stagePlace, starsText, stripItems, verdictText, visionExpected,
 } from '../lib/ingest.mjs';
 import { activeWorkers, scanSeedFor } from '../lib/runSnapshot.mjs';
 import { visionHeader, visionModelWords, visionOffReason, type VisionAction } from '../lib/vision.mjs';
@@ -234,9 +234,12 @@ export function IngestScreen({
     ? [leftLabel(etaLabel(identifyEta(idLive), done >= 3))]
     : etaLines({ vision, scanDone: identifying || phase === 'done', scanEta: smoothed ?? (p ? overallEta(stages, p.overall) : null), scanStable: Boolean(scan?.stable), identify: idLive, subject });
   const rate = identifying ? (idLive ? rateLabel(idLive.done, idLive.elapsed_ms, subject) : '') : frameRate(formatRate(p?.rate_per_s));
-  // Off/greyed steps never count toward progress (§6.3).
-  const stageTotal = surfaceNodes ? surface.stageTotal : nodes.filter((node) => node.id !== 'done').length;
-  const stageAt = nodes.findIndex((node) => node.id === (head?.id ?? p?.stage)) + 1;
+  // Off/greyed steps never count toward progress (§6.3). The head stage's
+  // "Stage N of M" must use the same set, or an album with three steps off
+  // reads "Stage 8 of 6".
+  const place = stagePlace(nodes, head?.id ?? p?.stage);
+  const stageTotal = surfaceNodes ? place.total : nodes.filter((node) => node.id !== 'done').length;
+  const stageAt = surfaceNodes ? place.at : nodes.findIndex((node) => node.id === (head?.id ?? p?.stage)) + 1;
   const sub = phase === 'starting' ? (mode === 'identify' ? (reads ? `Waiting for the first ${subject.one}…` : 'Starting the judge…') : 'Reading the folder…')
     : phase === 'peaks' ? (phaseLabel(idLive?.phase) || 'Comparing bursts')
       : phase === 'vision' ? (!reads ? (phaseLabel(idLive?.phase) || 'Judging moments')
