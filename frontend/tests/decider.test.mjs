@@ -46,6 +46,8 @@ test('the ingest DECIDER node waits for the bursts phase before it ticks', () =>
   assert.equal(deciderNode(live({ done: 40 }), null, phase('done')).state, 'done');
   // Older snapshots carry no phase: the old rule stands.
   assert.equal(deciderNode(live({ done: 40 })).state, 'done');
+  // A run cut short mid-phase is not a run still working: the node stops pulsing.
+  assert.equal(deciderNode(live({ done: 40 }), null, phase('stopped')).state, 'pending');
   // A cloud service names the node, and the tick still waits for the phase.
   const cloud = 'jev-1.13 via OpenCode';
   const serving = deciderNode(live({ state: 'not_installed', done: 40 }), cloud, phase('running'));
@@ -93,6 +95,13 @@ test('the identify flow shows the decision model beside vision, with its questio
   assert.equal(off.sub, 'off');
   // No decider in the snapshot: the original six nodes are unchanged.
   assert.equal(identifyNodes({ stage: 'vision' }, 'qwen').length, 6);
+});
+
+test('a re-run shows the DECIDER for its own remaining work, and a stopped run is not finished', () => {
+  const snapshot = { stage: 'vision', state: 'stopped', phase: { name: 'moments', done: 0, total: 3, state: 'stopped' } };
+  const node = identifyNodes(snapshot, 'qwen', live({ done: 12 }))[4];
+  assert.equal(node.state, 'pending', 'work left undone is not a finished run');
+  assert.equal(node.sub, 'Judging moments 0/3', 'the count is the frames this run has left');
 });
 
 test('DECIDER node names the serving cloud service, never the local "not installed" state', () => {

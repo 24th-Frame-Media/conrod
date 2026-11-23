@@ -53,6 +53,9 @@ export type IngestProps = {
   scanError?: ScanFailure | null;
   /** Retry the failed scan; the banner's Resume. */
   onRetryScan?: () => void;
+  /** A stopped or failed identification: continue it where it stopped, asking only
+   *  the frames nobody decided and the subjects nobody read. Never fired by itself. */
+  onContinueIdentify?: () => void;
 };
 
 type Pick = { kind: 'car' | 'frame'; id: number };
@@ -97,7 +100,7 @@ export function ScanFailureBanner({ failure, onRetry, onLibrary }: { failure: Sc
  */
 export function IngestScreen({
   mode, job, scan, identify, status, model, decisionService = null, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onCancel,
-  onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue, scanError, onRetryScan,
+  onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue, scanError, onRetryScan, onContinueIdentify,
 }: IngestProps) {
   const [picked, setPicked] = useState<Pick | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
@@ -325,7 +328,11 @@ export function IngestScreen({
                 ? (idLive?.errors?.[0] ?? 'Check the activity log in the top bar.')
                 : 'Identifications are suggestions until you accept them. Nothing is written until you say so.'}</span>
             </div>
-            <button className="primary" onClick={onReview}>Back to review</button>
+            <div className="ss-actions">
+              {(phase === 'stopped' || phase === 'error') && onContinueIdentify
+                && <button className="primary" onClick={onContinueIdentify}>Continue identification</button>}
+              <button className="ghost" onClick={onReview}>Back to review</button>
+            </div>
           </section>
         )}
 

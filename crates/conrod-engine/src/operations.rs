@@ -621,6 +621,10 @@ pub(crate) fn identify_with_kind(
     // An incremental run leaves every subject that has already been read
     // alone; a full run reads them again (the photographer asked for it).
     launch(d, job, kind, move |d, stop, task| {
+        // This run's decision record starts empty: the screen shows the frames
+        // this run decides, never the previous run's answers as if it were
+        // working through them again.
+        crate::decider::service().begin_run();
         if !wait_for_cull(d, stop, task) {
             return Ok(());
         }

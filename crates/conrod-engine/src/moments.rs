@@ -167,6 +167,36 @@ pub(crate) fn run(
             return Ok(0);
         }
     };
+    run_with(
+        d,
+        job,
+        stop,
+        task,
+        cfg,
+        lanes,
+        scope,
+        rejudge,
+        judge.as_ref(),
+    )
+}
+
+/// [`run`] with the judge already chosen: the seam the tests use to count who
+/// was asked, without a model on the card. Everything below is the run itself;
+/// a frame that already carries a verdict is never asked again (unless the
+/// photographer asked for a rejudge).
+#[allow(clippy::too_many_arguments)]
+fn run_with(
+    d: &Desktop,
+    job: i64,
+    stop: &AtomicBool,
+    task: &conrod_core::tasks::Task,
+    cfg: &Settings,
+    lanes: &Lanes,
+    scope: &str,
+    rejudge: bool,
+    judge: &dyn MomentJudge,
+) -> Result<usize> {
+    let vocab: &[Moment] = lanes.moments();
     let everything = scope == settings::IDENTIFY_EVERYTHING;
     let frames = pending(d, job, everything, rejudge)?;
     let context = lanes.preset.prompt_context();
@@ -230,7 +260,7 @@ pub(crate) fn run(
         }
     });
     let ranked = if lanes.moments_rank && !stop.load(Ordering::Relaxed) {
-        peaks(d, job, stop, task, judge.as_ref(), context, feed.as_deref())
+        peaks(d, job, stop, task, judge, context, feed.as_deref())
     } else {
         Ok(())
     };
@@ -282,7 +312,14 @@ fn peaks(
             .or_default()
             .push(frame);
     }
-    let bursts: Vec<&Vec<&Value>> = bursts.values().filter(|b| b.len() >= 2).collect();
+    // The bursts nobody has compared yet: a re-run counts and asks only those,
+    // so its header, task and DECIDER node show the real remaining work instead
+    // of the whole album again.
+    let bursts: Vec<&Vec<&Value>> = bursts
+        .values()
+        .filter(|b| b.len() >= 2)
+        .filter(|b| !judged_burst(b.as_slice()))
+        .collect();
     let total = bursts.len();
     // The header and the DECIDER node follow this pass by its own count.
     if let Some(feed) = feed {
@@ -297,9 +334,6 @@ fn peaks(
         task.detail(format!("Comparing bursts {}/{}", i + 1, total));
         if let Some(feed) = feed {
             feed.phase_progress(i);
-        }
-        if judged_burst(members.as_slice()) {
-            continue;
         }
         // At most eight, evenly spread, so the request stays small.
         let step = members.len().div_ceil(PEAK_FRAMES);
@@ -364,6 +398,19 @@ mod tests {
         Box::leak(Box::default())
     }
 
+    /// A real 16x16 JPEG in the album's folder, so the frame decodes.
+    fn preview(lib: &crate::testkit::Lib, name: &str) -> String {
+        use image::ImageEncoder;
+        let path = lib.root.join(name);
+        let pixels: Vec<u8> = (0..16 * 16).flat_map(|i| [i as u8, 200, 30]).collect();
+        let mut bytes = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 80)
+            .write_image(&pixels, 16, 16, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
     #[test]
     fn the_seat_is_empty_unless_the_decision_model_is_on_and_ready() {
         // A fresh service is switched off: the judge falls back (OpenRouter, or nothing).
@@ -403,18 +450,6 @@ mod tests {
                         .collect(),
                 ))
             }
-        }
-
-        fn preview(lib: &Lib, name: &str) -> String {
-            use image::ImageEncoder;
-            let path = lib.root.join(name);
-            let pixels: Vec<u8> = (0..16 * 16).flat_map(|i| [i as u8, 200, 30]).collect();
-            let mut bytes = Vec::new();
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 80)
-                .write_image(&pixels, 16, 16, image::ExtendedColorType::Rgb8)
-                .unwrap();
-            std::fs::write(&path, bytes).unwrap();
-            path.to_string_lossy().into_owned()
         }
 
         let lib = Lib::new("peaks-skip");
@@ -467,29 +502,146 @@ mod tests {
             Some(0.9),
             "an already judged burst keeps its peak"
         );
-        // A second pass asks nobody: every burst now carries a peak.
-        peaks_now();
-        assert_eq!(
-            judge.0.load(Ordering::Relaxed),
-            1,
-            "a re-run asks no burst again"
-        );
-
-        // The task counts bursts, and the live feed names the phase and ends it.
+        // The task and the DECIDER phase count only the bursts this pass will
+        // compare, so a re-run never claims the album's whole burst count again.
         let task = lib.task("Judging moments");
         assert_eq!(
             (task["done"].as_u64(), task["total"].as_u64()),
-            (Some(2), Some(2)),
+            (Some(1), Some(1)),
             "the status area shows bursts compared, not frames judged"
         );
-        assert_eq!(task["detail"], "Compared 2 bursts for their peak");
+        assert_eq!(task["detail"], "Compared 1 bursts for their peak");
         let phase = feed.snapshot()["phase"].clone();
         assert_eq!(phase["name"], "peaks");
         assert_eq!(
             phase["state"], "done",
             "the DECIDER may check off only at its end"
         );
-        assert_eq!(phase["total"], 2);
+        assert_eq!(phase["total"], 1);
+
+        // A second pass asks nobody and counts nobody: every burst now carries a peak.
+        peaks_now();
+        assert_eq!(
+            judge.0.load(Ordering::Relaxed),
+            1,
+            "a re-run asks no burst again"
+        );
+        let task = lib.task("Judging moments");
+        assert_eq!(
+            (task["done"].as_u64(), task["total"].as_u64()),
+            (Some(0), Some(0)),
+            "a re-run's real remaining work is none"
+        );
+        assert_eq!(task["detail"], "Compared 0 bursts for their peak");
+        assert_eq!(feed.snapshot()["phase"]["total"], 0);
+    }
+
+    #[test]
+    fn a_re_run_decides_only_the_frames_nobody_has_judged() {
+        use crate::testkit::Lib;
+        use conrod_core::profile::{Feature, Lanes, Overrides};
+
+        /// Counts the frames it is shown, and fails its first `fail` calls: an
+        /// interrupted run leaves exactly those frames without a verdict.
+        struct Fake {
+            asked: AtomicUsize,
+            fail: usize,
+        }
+        impl MomentJudge for Fake {
+            fn name(&self) -> &'static str {
+                "fake"
+            }
+            fn judge(
+                &self,
+                _context: &str,
+                _vocab: &[Moment],
+                _image: &str,
+            ) -> std::result::Result<MomentVerdict, String> {
+                let at = self.asked.fetch_add(1, Ordering::Relaxed);
+                if at < self.fail {
+                    Err("interrupted".into())
+                } else {
+                    Ok(MomentVerdict::default())
+                }
+            }
+        }
+
+        let lib = Lib::new("moments-resume");
+        let shot = preview(&lib, "frame.jpg");
+        // Three keepers; the judge answers two and is cut off at the third.
+        for name in ["a1.jpg", "a2.jpg", "a3.jpg"] {
+            let id = lib.frame(name, None);
+            lib.sql(
+                "UPDATE images SET preview_path=?,burst_pick=1 WHERE id=?",
+                rusqlite::params![shot, id],
+            );
+        }
+        let mut overrides = Overrides::default();
+        overrides.set(Feature::MomentsDetect, Some(true));
+        overrides.set(Feature::MomentsRank, Some(false));
+        let lanes = Lanes::resolve(ShootPreset::Motorsport, false, &overrides);
+        assert!(lanes.moments_detect, "the run has moments to judge");
+        let cfg = Settings::default();
+        let feed = Arc::new(IdentifyLive::new(lib.job, 0));
+        *lock(&lib.d().identify) = Some(feed.clone());
+        let task = lib.d().hub.start("Judging moments", 0);
+        let stop = AtomicBool::new(false);
+        let judge = Fake {
+            asked: AtomicUsize::new(0),
+            fail: 1,
+        };
+        let judged = run_with(
+            lib.d(),
+            lib.job,
+            &stop,
+            &task,
+            &cfg,
+            &lanes,
+            "keepers",
+            false,
+            &judge,
+        )
+        .unwrap();
+        assert_eq!(judged, 2, "two frames were decided before the cut-off");
+        assert_eq!(judge.asked.load(Ordering::Relaxed), 3);
+        let decided: i64 = lib.one(
+            "SELECT count(*) FROM images WHERE job_id=? AND moments IS NOT NULL",
+            [lib.job],
+        );
+        assert_eq!(decided, 2, "the answers that came back are kept");
+
+        // The re-run asks only the frame the interrupted pass left undecided,
+        // and the DECIDER phase counts that frame, not the whole album.
+        let judged = run_with(
+            lib.d(),
+            lib.job,
+            &stop,
+            &task,
+            &cfg,
+            &lanes,
+            "keepers",
+            false,
+            &judge,
+        )
+        .unwrap();
+        assert_eq!(judged, 1);
+        assert_eq!(
+            judge.asked.load(Ordering::Relaxed),
+            4,
+            "only the undecided frame is asked again"
+        );
+        let phase = feed.snapshot()["phase"].clone();
+        assert_eq!(phase["name"], "moments");
+        assert_eq!(
+            phase["total"], 1,
+            "the DECIDER shows the remaining frames, not the album again"
+        );
+        assert_eq!(phase["state"], "done");
+        let undecided: i64 = lib.one(
+            "SELECT count(*) FROM images WHERE job_id=? AND moments IS NULL",
+            [lib.job],
+        );
+        assert_eq!(undecided, 0);
     }
 
     #[test]

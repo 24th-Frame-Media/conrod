@@ -104,6 +104,8 @@ fn rerun_moments(d: &Arc<Desktop>, job: i64, cfg: Settings) -> Result<Value> {
     let lanes = cfg.lanes();
     let scope = crate::operations::run_scope(&cfg.identify_scope, None);
     launch(d, job, &format!("{KIND} moments"), move |d, stop, task| {
+        // A rejudge is a new decision pass: its own frames and answers.
+        crate::decider::service().begin_run();
         let judged = crate::moments::run(d, job, stop, task, &cfg, &lanes, scope, true)?;
         if stop.load(Ordering::Relaxed) {
             return Ok(());

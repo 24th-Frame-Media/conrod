@@ -98,10 +98,13 @@ export function deciderStepNode(live, serving = null, phase = null) {
   const run = phase && typeof phase === 'object' ? phase : null;
   const work = phaseLabel(run);
   const finished = run?.state === 'done';
+  // A run that stopped mid-phase leaves work undone: the node must not keep
+  // pulsing as if the model were still working through it.
+  const stopped = run?.state === 'stopped';
   const sub = off ? 'off' : cloud ? serving : shortAsk(ask) || work || (frames ? `${frames} frames` : 'waiting');
   const per = live.avg_ms ? `${msWords(live.avg_ms)}/frame` : '';
   const meta = off ? '' : [frames ? `${frames} frames` : '', per, work, answer].filter(Boolean).join(' · ');
-  const state = off ? 'pending' : finished ? 'done' : busy || run ? 'active' : frames > 0 ? 'done' : 'pending';
+  const state = off ? 'pending' : finished ? 'done' : busy || (run && !stopped) ? 'active' : stopped ? 'pending' : frames > 0 ? 'done' : 'pending';
   const title = cloud
     ? [serving, shortAsk(ask), answer].filter(Boolean).join(' · ')
     : [sub, live.message, answer].filter(Boolean).join(' · ');
