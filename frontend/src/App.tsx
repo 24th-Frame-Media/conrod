@@ -285,7 +285,17 @@ export function App() {
         {view === 'Identify' && (
           <IdentifyScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? identifyLive[jobId] : undefined}
             status={status} model={vlmModelLabel(eng.settings)} decisionService={decisionService}
-            paused={identifyPaused} onCancel={actions.cancel} onVisionAction={visionAction} onReview={() => setPage('Review')} />
+            paused={identifyPaused} onCancel={actions.cancel} onVisionAction={visionAction} onReview={() => setPage('Review')}
+            onContinueIdentify={() => {
+              if (jobId == null) return;
+              const job = eng.jobs.find((j) => j.id === jobId);
+              // A scan cut short resumes at the stage it recorded, which is the
+              // identify it was in. A finished album whose identify ran on its
+              // own reads only the subjects nobody has; both decide only the
+              // frames nobody has judged, so nothing paid for runs twice.
+              if (job && job.status !== 'done' && job.status !== 'done_errors') void startScan({ jobId });
+              else identify(jobId, undefined, true);
+            }} />
         )}
         {view === 'Review' && (
           <ReviewScreen rv={rv} jobs={eng.jobs} jobId={jobId} scanning={status.activeJob === jobId && jobId !== null} status={status} settings={eng.settings}

@@ -199,6 +199,10 @@ test('the DECIDER node ticks only when the moments lane has finished, and names 
   assert.match(peaks.meta, /Comparing bursts 12\/214/);
   // Only the phase's own terminal checks off.
   assert.equal(deciderStepNode(decider, null, { name: 'peaks', done: 214, total: 214, state: 'done' }).state, 'done');
+  // A run that stopped mid-phase leaves work undone: the node is pending, not pulsing.
+  const stopped = deciderStepNode(decider, null, { name: 'peaks', done: 12, total: 214, state: 'stopped' });
+  assert.equal(stopped.state, 'pending');
+  assert.equal(stopped.sub, 'Comparing bursts 12/214', 'the remaining work stays visible');
   // A cloud service names the node even while the local model is not installed, and its tick waits too.
   const cloud = deciderStepNode({ ...decider, state: 'not_installed' }, 'jev-1.13 via OpenCode', { name: 'peaks', done: 12, total: 214, state: 'running' });
   assert.deepEqual([cloud.off, cloud.sub, cloud.state], [false, 'jev-1.13 via OpenCode', 'active']);
