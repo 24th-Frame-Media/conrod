@@ -7,7 +7,8 @@ const params = (search) => new URLSearchParams(search);
 test('the window title only carries the dev suffix in dev mode', () => {
   assert.equal(windowTitle('Conrod', false), 'Conrod');
   assert.equal(windowTitle('Conrod', true), `Conrod ${DEV_TITLE}`);
-  assert.equal(DEV_TITLE, '[Dev]');
+  assert.equal(windowTitle('Conrod', true), 'Conrod [DEV]');
+  assert.equal(DEV_TITLE, '[DEV]');
   assert.equal(DEV_BADGE, 'DEV');
 });
 
