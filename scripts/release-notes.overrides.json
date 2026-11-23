@@ -79,6 +79,10 @@
     }
   },
   "commits": {
+    "56e94f7": {
+      "section": "Fixed",
+      "text": "Your own picks can't be overwritten any more. If you pick, star or reject a frame in Review while Conrod is still writing metadata for that album, your choice stays and that frame is left out of that write instead of being marked as a reject."
+    },
     "12fcff8": "The Test button tells the truth: it checks the key or host with the real service, and when the service refuses it says plainly why it is not ready instead of claiming it is ready.",
     "95636e9": [
       "Download now actually installs the missing model and waits until that model appears before offering its switch, instead of pretending a short timer finished the job.",
