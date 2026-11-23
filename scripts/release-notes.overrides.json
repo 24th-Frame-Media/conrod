@@ -111,6 +111,10 @@
     }
   },
   "commits": {
+    "7007399": {
+      "section": "Fixed",
+      "text": "The live scan header counts only the steps that are actually running: an album with OCR, Decision and Vision switched off no longer says it is on stage 8 of 6 while it groups and picks."
+    },
     "d9f6308": {
       "section": "Improved",
       "text": "On a graphics card that can hold only one of the two reading models, Conrod finishes every photo with the decision model before the vision model loads, instead of running out of video memory. If your card holds both, they stay loaded together and the album's own worker counts decide how much runs at once."
