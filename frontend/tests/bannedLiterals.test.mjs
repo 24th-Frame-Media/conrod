@@ -141,6 +141,10 @@ function uiFiles() {
     for (const name of readdirSync(join(SRC, dir))) if (name.endsWith('.tsx')) files.push(join(SRC, dir, name));
   }
   files.push(join(SRC, 'App.tsx'));
+  // The dev mock's decision questions are shown verbatim in the DECIDER lane
+  // (`?mock=1`), so its wording follows the same rule as the real screens (§6.2:
+  // the sweep covers mock data). Other data modules stay whitelisted.
+  files.push(join(SRC, 'lib', 'mockDecider.ts'));
   return files;
 }
 

@@ -290,6 +290,19 @@ test('buildRunSnapshot still carries B4 plumbing fields alongside the B5 surface
   assert.equal(s.surface.jobId, s.activeJob);
 });
 
+// ---- Rodeo wording on the grouped surface (§10 item 1) ----
+
+test('a rodeo run words every surface node for animals and riders, never vehicles', () => {
+  const input = SEEDS.subNodes();
+  input.subject = subjectWords(applyOverrides(defaultSummary('sport-rodeo')));
+  const s = buildRunSnapshot(input).surface;
+  const words = JSON.stringify(s.nodes);
+  assert.doesNotMatch(words, /\b(vehicles?|cars?)\b/i, 'no node claims a vehicle on a rodeo');
+  assert.match(words, /the shoot's subjects|main subject/i, 'the detector and sharpness nodes use the album’s own subject');
+  assert.match(node(s, 'identify:vision').controls.skip.consequence, /subjects/);
+  assert.doesNotMatch(node(s, 'identify:vision').controls.skip.consequence, /vehicle/i);
+});
+
 test('Manage shoot exposes OCR / Decision / Vision toggles wired to B1 settings', () => {
   const s = surface('greyedOff');
   assert.deepEqual(s.toggles.map((t) => t.key), ['ocr', 'decision', 'vision']);
