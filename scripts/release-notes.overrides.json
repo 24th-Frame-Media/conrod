@@ -79,6 +79,10 @@
     }
   },
   "commits": {
+    "1c94116": {
+      "section": "Fixed",
+      "text": "A bull, a horse or any other animal in the photo is listed under Animals in the viewer instead of being counted as a vehicle."
+    },
     "13f1c0d": {
       "section": "Fixed",
       "text": "A rodeo shoot is judged on the rider and the bull, not on cars: the live identification strip and the ingest screen now name the subjects that shoot actually reads, and say they are judging moments when there is nothing to read. No lane claims vehicles for a shoot with none."
