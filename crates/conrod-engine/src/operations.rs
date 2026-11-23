@@ -269,18 +269,17 @@ fn decision_models(settings: &Settings) -> (String, &'static str) {
     }
 }
 
-/// The settings and prompt guidance the vision stage uses. A typed album keeps
-/// its own settings; an `auto` album that accepted a suggestion reads with that
-/// type's prompts. An `auto` album with only a shown suggestion keeps the
-/// neutral mix policy and no guidance, because nothing was applied silently.
-fn resolved_vision_settings(
+/// The settings and prompt guidance the vision stage uses. An accepted type
+/// governs the vision reads still to come, whether the album started as `auto`
+/// or with a hand-set type: the suggestion itself is never applied, only the
+/// photographer's explicit accept. Without an accept, a typed album keeps its
+/// own settings and an `auto` album keeps the neutral mix policy, because
+/// nothing was applied silently.
+pub(crate) fn resolved_vision_settings(
     d: &Desktop,
     job: i64,
     settings: &Settings,
 ) -> (Settings, Option<&'static str>) {
-    if ShootPreset::parse(&settings.scan_profile) != ShootPreset::Auto {
-        return (settings.clone(), None);
-    }
     let accepted: Option<String> = lock(&d.db)
         .query_row(
             "SELECT shoot_type_accepted FROM jobs WHERE id=?",

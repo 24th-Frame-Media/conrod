@@ -230,6 +230,16 @@ pub struct StageRerunArgs {
     pub full: bool,
 }
 
+/// The explicit accept of the Decision stage's type suggestion. Only the
+/// vision reads still to come use the accepted type.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceptTypeSuggestionArgs {
+    #[serde(deserialize_with = "positive")]
+    pub job_id: i64,
+    pub r#type: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MarkArgs {
@@ -591,6 +601,8 @@ pub enum Command {
     StageSkip(StageSkipArgs),
     /// Run one stage again by its wire id, through the same guards as a rerun.
     StageRerun(StageRerunArgs),
+    /// Accept the Decision stage's type suggestion for this album.
+    AcceptTypeSuggestion(AcceptTypeSuggestionArgs),
     BulkEdit(BulkArgs),
     RenameJob(RenameArgs),
     UpdateJobSettings(UpdateJobSettingsArgs),
@@ -768,6 +780,15 @@ mod tests {
         };
         assert_eq!((a.job_id, a.stage.as_str(), a.full), (7, "pick", false));
         assert!(Command::parse("stage_skip", json!({"jobId": 0, "stage": "pick"})).is_err());
+
+        let Ok(Command::AcceptTypeSuggestion(a)) = Command::parse(
+            "accept_type_suggestion",
+            json!({"jobId": 7, "type": "sport-rodeo"}),
+        ) else {
+            panic!()
+        };
+        assert_eq!((a.job_id, a.r#type.as_str()), (7, "sport-rodeo"));
+        assert!(Command::parse("accept_type_suggestion", json!({"jobId": 7})).is_err());
     }
 
     #[test]
