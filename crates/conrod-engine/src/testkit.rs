@@ -82,15 +82,17 @@ impl Lib {
     }
 
     /// Wait for the album's background operation to end. Model loading on a
-    /// busy machine can take longer than a minute.
+    /// A busy machine (full suite in parallel, a build running beside it) can
+    /// hold a background operation for far longer than a minute.
     pub fn wait_idle(&self) {
-        for _ in 0..2400 {
+        for _ in 0..9600 {
             if lock(&self.d().operations).is_empty() {
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(25));
         }
-        panic!("the background operation did not finish");
+        let pending: Vec<_> = lock(&self.d().operations).keys().cloned().collect();
+        panic!("the background operation did not finish; still pending: {pending:?}");
     }
 
     /// The last task of the hub whose label starts with `label`.
