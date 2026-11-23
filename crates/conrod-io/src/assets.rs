@@ -49,6 +49,16 @@ impl Asset {
             data_root().join("models")
         }
     }
+
+    /// Whether the manifest really pins this file: a full SHA-256 and a real
+    /// size. A placeholder entry (all-zero hash, size 1) is NOT pinned: it has
+    /// no trustworthy source yet and must never be fetched or called ready.
+    pub fn pinned(&self) -> bool {
+        self.size > 0
+            && self.sha256.len() == 64
+            && self.sha256.chars().all(|c| c.is_ascii_hexdigit())
+            && self.sha256.chars().any(|c| c != '0')
+    }
 }
 
 /// The committed manifest.
@@ -124,7 +134,38 @@ fn install_from(
     stop: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<PathBuf, String> {
+    // The volume query needs an existing directory to name the volume.
     std::fs::create_dir_all(into).map_err(|e| format!("{}: {e}", into.display()))?;
+    install_with_free(asset, urls, into, stop, progress, free_bytes(into))
+}
+
+/// Like [install_from], but the volume's free space is given (tests refuse a
+/// download on a nearly-full disk without needing one).
+fn install_with_free(
+    asset: &Asset,
+    urls: &[String],
+    into: &Path,
+    stop: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+    free: Option<u64>,
+) -> Result<PathBuf, String> {
+    if !asset.pinned() {
+        return Err(format!(
+            "{} is not available yet: its checksum is not pinned, so there is nothing trustworthy to download.",
+            asset.name
+        ));
+    }
+    if urls.is_empty() {
+        return Err(format!(
+            "{} is not available yet: no download source is pinned for it.",
+            asset.name
+        ));
+    }
+    std::fs::create_dir_all(into).map_err(|e| format!("{}: {e}", into.display()))?;
+    // Refuse before writing a byte when the volume cannot hold the file (an
+    // extracted tool needs room for the archive AND its unpacked contents).
+    let need = asset.size.saturating_mul(if asset.extract { 2 } else { 1 });
+    check_space(into, &asset.name, need, free)?;
     let part = into.join(format!("{}.part", asset.name));
     let mut failures = Vec::new();
     for url in urls {
@@ -146,6 +187,73 @@ fn install_from(
         "could not install {}: {}",
         asset.name,
         failures.join("; ")
+    ))
+}
+
+/// Headroom on top of the file itself: filesystem slack, and the brief moment
+/// where a renamed file and its directory entry both exist.
+const SPACE_HEADROOM: u64 = 64 << 20;
+
+/// Free bytes on the volume holding `path`, when the OS can say. Windows is
+/// the app's platform; elsewhere the check is skipped rather than guessed.
+pub fn free_bytes(path: &Path) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetDiskFreeSpaceExW(
+                directory: *const u16,
+                free_to_caller: *mut u64,
+                total: *mut u64,
+                total_free: *mut u64,
+            ) -> i32;
+        }
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut free = 0u64;
+        // SAFETY: `wide` is a NUL-terminated UTF-16 path that lives across the
+        // call; the out pointer is a valid local; the two unused outs are null.
+        let ok = unsafe {
+            GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        (ok != 0).then_some(free)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// Plain-language refusal when the destination volume is too full. `free` of
+/// `None` means the OS could not tell us, so the download is allowed to try.
+fn check_space(into: &Path, name: &str, need: u64, free: Option<u64>) -> Result<(), String> {
+    let Some(free) = free else {
+        return Ok(());
+    };
+    if free >= need.saturating_add(SPACE_HEADROOM) {
+        return Ok(());
+    }
+    let gb = |b: u64| format!("{:.1} GB", b as f64 / (1u64 << 30) as f64);
+    let mb = |b: u64| format!("{} MB", b / (1u64 << 20));
+    let volume = into
+        .components()
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .unwrap_or_else(|| "the disk".into());
+    Err(format!(
+        "Not enough disk space for {name}: it needs {} free on {volume}, but only {} is left. Free some space and try again.",
+        gb(need),
+        if free < (1u64 << 30) { mb(free) } else { gb(free) },
     ))
 }
 
@@ -299,7 +407,15 @@ pub fn fetch(
 fn finish(asset: &Asset, part: &Path, into: &Path) -> Result<PathBuf, String> {
     if !asset.extract {
         let target = into.join(&asset.name);
-        std::fs::rename(part, &target).map_err(|e| format!("{}: {e}", target.display()))?;
+        // Windows' rename refuses an existing destination; a stale or partial
+        // file of the same name must not block the verified one.
+        if target.exists() {
+            std::fs::remove_file(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+        }
+        std::fs::rename(part, &target).map_err(|e| {
+            let _ = std::fs::remove_file(part);
+            format!("{}: {e}", target.display())
+        })?;
         return Ok(target);
     }
     // Windows 10+ ships bsdtar, which reads zips; GNU tar on PATH would not, so
@@ -480,6 +596,111 @@ mod tests {
         assert!(err.contains("does not match its checksum"), "{err}");
         assert!(!into.join("model.onnx").exists() && !into.join("model.onnx.part").exists());
         std::fs::remove_dir_all(&into).unwrap();
+    }
+
+    #[test]
+    fn a_nearly_full_disk_is_refused_before_a_byte_is_written() {
+        let body = vec![3u8; 500_000];
+        let mut big = asset(&body);
+        big.size = 100 << 20; // the file claims 100 MB; the volume has 66 MB
+        let into = scratch("full");
+        let err = install_with_free(
+            &big,
+            &["http://127.0.0.1:1/never".into()],
+            &into,
+            &AtomicBool::new(false),
+            &mut |_, _| {},
+            Some(66 << 20), // the real E: drive one night: 66 MB free
+        )
+        .unwrap_err();
+        assert!(err.contains("Not enough disk space"), "{err}");
+        assert!(err.contains("model.onnx"), "{err}");
+        assert!(err.contains("Free some space"), "{err}");
+        assert!(!into.join("model.onnx.part").exists());
+        std::fs::remove_dir_all(&into).unwrap();
+    }
+
+    #[test]
+    fn an_unpinned_placeholder_is_not_available_and_never_fetched() {
+        let mut a = asset(b"x");
+        a.sha256 = "0".repeat(64); // the nima TODO entry's shape
+        a.size = 1;
+        assert!(!a.pinned());
+        let into = scratch("unpinned");
+        let err = install_with_free(
+            &a,
+            &["http://127.0.0.1:1/never".into()],
+            &into,
+            &AtomicBool::new(false),
+            &mut |_, _| {},
+            None,
+        )
+        .unwrap_err();
+        assert!(err.contains("not available yet"), "{err}");
+        // Refused before anything was created: no directory, no part file.
+        assert!(!into.exists());
+    }
+
+    #[test]
+    fn a_pinned_asset_with_no_source_is_not_available() {
+        let into = scratch("nosource");
+        let err = install_with_free(
+            &asset(b"x"),
+            &[],
+            &into,
+            &AtomicBool::new(false),
+            &mut |_, _| {},
+            None,
+        )
+        .unwrap_err();
+        assert!(err.contains("not available yet"), "{err}");
+        assert!(err.contains("no download source"), "{err}");
+        assert!(!into.exists());
+    }
+
+    #[test]
+    fn a_verified_download_replaces_a_stale_file_of_the_same_name() {
+        let body = vec![4u8; 4096];
+        let base = serve(vec![("/model.onnx", body.clone())], 1);
+        let into = scratch("replace");
+        std::fs::create_dir_all(&into).unwrap();
+        std::fs::write(into.join("model.onnx"), b"stale").unwrap();
+        let path = install_from(
+            &asset(&body),
+            &[format!("{base}/model.onnx")],
+            &into,
+            &AtomicBool::new(false),
+            &mut |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), body);
+        std::fs::remove_dir_all(&into).unwrap();
+    }
+
+    #[test]
+    fn the_builtin_vision_model_is_pinned_opt_in_and_resumable() {
+        let assets = manifest();
+        for name in [
+            conrod_core::models::VISION,
+            conrod_core::models::VISION_MMPROJ,
+        ] {
+            let a = assets.iter().find(|a| a.name == name).expect(name);
+            assert!(a.pinned(), "{name} is not pinned");
+            assert!(a.optional, "{name} must be opt-in");
+            assert!(a.size >= 256 << 20, "{name} should resume");
+            assert!(
+                a.sources
+                    .iter()
+                    .any(|u| u.starts_with("https://huggingface.co/Qwen/")),
+                "{name} needs its official upstream source"
+            );
+        }
+        // The nima placeholder stays honestly unpinned until the owner stages it.
+        let nima = assets
+            .iter()
+            .find(|a| a.name == conrod_core::models::QUALITY)
+            .expect("nima entry");
+        assert!(!nima.pinned(), "nima must not pretend to be pinned");
     }
 }
 
