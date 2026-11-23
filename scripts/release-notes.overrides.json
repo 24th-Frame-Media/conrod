@@ -82,6 +82,14 @@
         {
           "section": "New",
           "text": "An album can now be set to decide its own shoot type. The decision model looks at a spread of frames, suggests a type with a confidence, and waits for you to accept it: your chosen type always wins, and accepting only changes the vision reads that have not run yet."
+        },
+        {
+          "section": "New",
+          "text": "Every step of a scan can be paused or skipped on its own. A pause takes effect between photos, so a read already in flight finishes rather than being cut off, and a paused step says paused instead of looking busy. Skipping a step shows plainly what that leaves out, such as no make or model reads when Vision is skipped, and the app keeps your pause and skip choices after a crash or a restart."
+        },
+        {
+          "section": "Improved",
+          "text": "Each step of a scan can be run again by itself, and a re-run only does the work not already done: cars already read and bursts already judged are left alone, and your own picks, stars and edits are never overwritten."
         }
       ]
     }
