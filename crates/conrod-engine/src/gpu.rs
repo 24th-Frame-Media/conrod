@@ -8,6 +8,12 @@
 //!
 //! No cycle is possible: the scan's guard is released when its sessions drop, and a scan
 //! never waits on a moment judgement (the judge waits for the scan, never the reverse).
+//!
+//! The identify stages use the same gate for the deciderΓåövision handoff: on a card that
+//! holds only one model, the Vision stage holds a [`stage`] guard after the decider has
+//! been unloaded, so an in-process model call waits for the Vision stage to finish
+//! instead of loading beside it. Ollama is out of process and is released through its
+//! own `keep_alive: 0` (see `conrod_io::vlm::release_local_models`).
 
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
@@ -93,5 +99,16 @@ mod tests {
         assert!(entered.load(Ordering::SeqCst));
         assert!(!LOCAL.busy(), "released when the call returns");
         let _again = LOCAL.stage();
+    }
+
+    #[test]
+    fn the_vision_stage_keeps_a_model_call_out_until_it_finishes() {
+        // The identify handoff: the serial Vision stage holds the card, so a
+        // model call (the decider now, in-process vision later) cannot load.
+        let gate = Gate::new();
+        let vision_stage = gate.stage();
+        assert!(matches!(gate.0.try_write(), Err(TryLockError::WouldBlock)));
+        drop(vision_stage);
+        assert!(gate.0.try_write().is_ok(), "the handoff releases the card");
     }
 }

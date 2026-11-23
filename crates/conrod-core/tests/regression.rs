@@ -1275,6 +1275,10 @@ fn settings_match_snapshot() {
         m.remove("use_quality_score"); // Rust-only
         m.remove("use_decider"); // Rust-only: opt-in decision model
         m.remove("decider_quant"); // Rust-only
+                                   // Rust-only: identify seats when both models run locally.
+        m.remove("identify_vision_workers");
+        m.remove("identify_decision_workers");
+        m.remove("identify_ocr"); // Rust-only: the OCR stage's album toggle
         m.remove("blur_strictness"); // Rust-only
         m.remove("entry_list"); // Rust-only
         m.remove("workflow_mode"); // Rust-only: album-level scan/identify workflow
@@ -1314,13 +1318,9 @@ fn settings_match_snapshot() {
             }
         }) && a.as_object().unwrap().len() == b.as_object().unwrap().len()
     };
-    assert!(
-        same(
-            &as_map(&Settings::default()),
-            &prune(fixture["defaults"].clone())
-        ),
-        "defaults differ"
-    );
+    let a = as_map(&Settings::default());
+    let b = prune(fixture["defaults"].clone());
+    assert!(same(&a, &b), "defaults differ");
     let dir = std::env::temp_dir().join(format!("conrod-settings-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("settings.json");

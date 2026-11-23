@@ -617,6 +617,15 @@ pub struct Settings {
     pub use_decider: bool,
     /// uto (by free video memory), int8 or int4.
     pub decider_quant: String,
+    /// How many workers the Vision stage uses when both the decision model and
+    /// a local vision model run on this card (0 follows `analysis_workers`).
+    /// Clamped by the identify cap and applied only when both models are
+    /// local; the stages themselves always run one after the other.
+    pub identify_vision_workers: i64,
+    /// How many workers the Decision stage uses when both models run locally
+    /// (0 follows `analysis_workers`). Same clamp and the same both-local rule
+    /// as `identify_vision_workers`.
+    pub identify_decision_workers: i64,
     /// How hard blur culls: "strict", "moderate" or "lenient". Unknown text
     /// reads as "moderate".
     pub blur_strictness: String,
@@ -736,6 +745,8 @@ impl Default for Settings {
             workflow_mode: WORKFLOW_BOTH.into(),
             identify_scope: IDENTIFY_KEEPERS.into(),
             identify_ocr: true,
+            identify_vision_workers: 0,
+            identify_decision_workers: 0,
             sharp_at: SHARP_AT,
             blurred_below: BLURRED_BELOW,
             focus_scale: FOCUS_SCALE,
@@ -1241,6 +1252,29 @@ impl Settings {
         clamp_workers(self.analysis_workers, caps.identify, default)
     }
 
+    /// Vision-stage seats when both models run locally: the album's own
+    /// preference within the identify cap, else today's identify count.
+    pub fn identify_vision_worker_count(&self) -> i64 {
+        let caps = worker_caps();
+        clamp_workers(
+            self.identify_vision_workers,
+            caps.identify,
+            self.identify_worker_count(),
+        )
+    }
+
+    /// Decision-stage seats when both models run locally. The decision model
+    /// answers one request at a time, so this is a queue depth, not extra
+    /// throughput; the cap keeps it with the identify pool.
+    pub fn identify_decision_worker_count(&self) -> i64 {
+        let caps = worker_caps();
+        clamp_workers(
+            self.identify_decision_workers,
+            caps.identify,
+            self.identify_worker_count(),
+        )
+    }
+
     /// Every configured Ollama host, the main one first, de-duplicated.
     pub fn ollama_hosts(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
@@ -1588,6 +1622,36 @@ mod tests {
         assert_eq!(clamp_workers(0, caps.identify, 3), 3);
         assert_eq!(clamp_workers(-2, caps.preview, 40), 4);
         assert_eq!(clamp_workers(2, caps.cull, 4), 2);
+    }
+
+    #[test]
+    fn identify_seats_follow_the_album_and_clamp_to_the_identify_cap() {
+        let caps = worker_caps();
+        let mut settings = Settings {
+            analysis_workers: 3,
+            ..Settings::default()
+        };
+        // Unset: today's identify count shapes both stages.
+        assert_eq!(settings.identify_vision_worker_count(), 3);
+        assert_eq!(settings.identify_decision_worker_count(), 3);
+        // A chosen seat is kept, and a nonsense or oversized one is clamped.
+        settings.identify_vision_workers = 2;
+        settings.identify_decision_workers = 1;
+        assert_eq!(settings.identify_vision_worker_count(), 2);
+        assert_eq!(settings.identify_decision_worker_count(), 1);
+        settings.identify_vision_workers = 40;
+        settings.identify_decision_workers = -3;
+        assert_eq!(settings.identify_vision_worker_count(), caps.identify);
+        assert_eq!(settings.identify_decision_worker_count(), 3);
+        // A stored album carries them through a save/load like any setting.
+        let root = std::env::temp_dir().join(format!("conrod-seats-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        settings.identify_vision_workers = 2;
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).identify_vision_workers, 2);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     fn map(text: &str) -> Map<String, Value> {

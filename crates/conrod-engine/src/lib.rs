@@ -154,6 +154,7 @@ pub mod taste;
 mod testkit;
 #[cfg(test)]
 mod vlmeval;
+pub mod vram_fit;
 pub mod watching;
 
 pub const EXTENSIONS: [&str; 4] = ["cr3", "cr2", "jpg", "jpeg"];

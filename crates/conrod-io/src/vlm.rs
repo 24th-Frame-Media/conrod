@@ -872,11 +872,75 @@ pub fn guard_remote(url: &str, setting: &str) -> Result<(), VlmError> {
     Ok(())
 }
 
+/// The local Ollama models identify can hold on this machine, as
+/// `(host, model)`: every enabled plain-http service on a local/private host,
+/// or the legacy single-provider fields when no service list is configured.
+/// A cloud service or a remote server never leaks into this list.
+pub fn local_ollama_models(settings: &Settings) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut push = |provider: &str, host: &str, model: &str| {
+        let host = if host.trim().is_empty() {
+            conrod_core::settings::DEFAULT_VLM_HOST
+        } else {
+            host.trim()
+        };
+        let host = host.trim_end_matches('/').to_string();
+        if provider.eq_ignore_ascii_case("ollama")
+            && is_local_host(&host)
+            && !model.trim().is_empty()
+            && !out.iter().any(|(h, m)| *h == host && *m == model)
+        {
+            out.push((host, model.trim().to_string()));
+        }
+    };
+    if !settings.vlm_services.is_empty() {
+        for service in settings.vlm_services.iter().filter(|s| s.enabled) {
+            push(&service.provider, &service.host, &service.model);
+        }
+    } else {
+        push(
+            &settings.vlm_provider,
+            &settings.vlm_host,
+            &settings.vlm_model,
+        );
+    }
+    out
+}
+
+/// Ask every local Ollama endpoint identify uses to drop its model now
+/// (`keep_alive: 0`), so the next stage's model gets the whole card. This is
+/// the serial-by-stage discipline: Ollama would otherwise keep the vision model
+/// resident for its `keep_alive` window. Best effort and quick: a host that is
+/// down, remote or refuses is skipped and never fails a run. Returns how many
+/// endpoints were asked.
+pub fn release_local_models(settings: &Settings) -> usize {
+    let mut asked = 0;
+    for (host, model) in local_ollama_models(settings) {
+        let url = format!("{host}/api/generate");
+        // A plain-http host that is not local must never be contacted, even to
+        // unload; the guard answers before a socket is opened.
+        if guard_remote(&url, "vlm_host").is_err() {
+            continue;
+        }
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_global(Some(Duration::from_secs(2)))
+            .build()
+            .into();
+        let body = json!({"model": model, "prompt": "", "stream": false, "keep_alive": 0});
+        // The reply is deliberately ignored: an unload is a hint to the server,
+        // and a model that stays resident still leaves the run correct.
+        let _ = agent.post(&url).send_json(&body);
+        asked += 1;
+    }
+    asked
+}
+
 /// `localhost`, a loopback address, or a private-network address (RFC 1918,
 /// unique-local IPv6): where an unencrypted request stays on the user's own
 /// network, e.g. Ollama or a gateway on the LAN. Link-local addresses (cloud
 /// metadata services) are not included.
-fn is_local_host(url: &str) -> bool {
+pub fn is_local_host(url: &str) -> bool {
     let Some(host) = url
         .parse::<ureq::http::Uri>()
         .ok()
@@ -3428,5 +3492,113 @@ mod tests {
         };
         let err = build_request(&ollama, "x", &[], &json!({}), 10).unwrap_err();
         assert!(matches!(err, VlmError::Misconfigured(_)), "{err}");
+    }
+
+    fn capture_one_request() -> (String, std::thread::JoinHandle<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut buf).unwrap_or(0);
+                seen.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&seen).to_string();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let len = text
+                        .lines()
+                        .find_map(|l| {
+                            let l = l.to_ascii_lowercase();
+                            l.strip_prefix("content-length:")
+                                .map(|v| v.trim().to_string())
+                        })
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if n == 0 || seen.len() >= end + 4 + len {
+                        break;
+                    }
+                } else if n == 0 {
+                    break;
+                }
+            }
+            let body = String::from_utf8_lossy(&seen).to_string();
+            let body = match body.find("\r\n\r\n") {
+                Some(end) => body[end + 4..].to_string(),
+                None => body,
+            };
+            let reply = br#"{"response":"","done":true}"#;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                reply.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(reply);
+            body
+        });
+        (base, server)
+    }
+
+    #[test]
+    fn releasing_the_vision_model_sends_keep_alive_zero_to_local_ollama_only() {
+        let (base, server) = capture_one_request();
+        let settings = Settings {
+            vlm_services: vec![
+                VlmService {
+                    id: "local".into(),
+                    provider: "ollama".into(),
+                    model: "qwen3-vl:8b".into(),
+                    host: base.clone(),
+                    enabled: true,
+                    ..VlmService::default()
+                },
+                VlmService {
+                    id: "remote".into(),
+                    provider: "ollama".into(),
+                    model: "qwen3-vl:8b".into(),
+                    host: "https://box.example:11434".into(),
+                    enabled: true,
+                    ..VlmService::default()
+                },
+            ],
+            ..Settings::default()
+        };
+        assert_eq!(
+            local_ollama_models(&settings)
+                .into_iter()
+                .map(|(_, model)| model)
+                .collect::<Vec<_>>(),
+            ["qwen3-vl:8b"],
+            "only the local server is asked"
+        );
+        assert_eq!(release_local_models(&settings), 1);
+        let sent: Value = serde_json::from_str(server.join().unwrap().trim()).unwrap();
+        assert_eq!(sent["model"], "qwen3-vl:8b");
+        assert_eq!(sent["keep_alive"], 0, "the model is released now");
+        assert_eq!(sent["stream"], false);
+    }
+
+    #[test]
+    fn a_legacy_local_ollama_vision_is_released_and_a_cloud_one_is_not() {
+        let legacy = Settings {
+            vlm_provider: "ollama".into(),
+            vlm_model: "qwen3-vl:8b".into(),
+            vlm_host: "http://127.0.0.1:11434/".into(),
+            vlm_services: Vec::new(),
+            ..Settings::default()
+        };
+        assert_eq!(
+            local_ollama_models(&legacy),
+            [(
+                "http://127.0.0.1:11434".to_string(),
+                "qwen3-vl:8b".to_string()
+            )]
+        );
+        let cloud = Settings {
+            vlm_provider: "openrouter".into(),
+            vlm_model: "qwen/qwen3-vl".into(),
+            ..legacy.clone()
+        };
+        assert!(local_ollama_models(&cloud).is_empty());
     }
 }

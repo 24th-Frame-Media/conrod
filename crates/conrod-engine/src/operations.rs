@@ -834,6 +834,18 @@ pub(crate) fn identify_with_kind(
     let control = d.stage_control(job);
     let lanes = settings.lanes();
     let finds_faces = lanes.names;
+    // The card: whether the decision model and a local vision model can be
+    // resident at once (plan ┬º5). The fit check never blocks: a card that holds
+    // one runs the stages serially by stage, each model released before the
+    // next loads; the album's seats shape the workers within each stage.
+    let card = crate::vram_fit::plan(&settings);
+    let seats = crate::vram_fit::seats_for(&settings, card.both_local());
+    let iosettings = IoSettings::from_core(&settings);
+    // Serial card: the Decision stage needs the whole card, so release any
+    // vision model an earlier run left resident before the decider loads.
+    if card.mode == crate::vram_fit::Mode::Serial && card.both_local() {
+        vlm::release_local_models(&iosettings);
+    }
     if !lanes.identifies() && !finds_faces && !lanes.moments_detect {
         return Err("There are no identifiable subjects in this shoot preset".into());
     }
@@ -875,6 +887,7 @@ pub(crate) fn identify_with_kind(
                     &settings,
                     &lanes,
                     scope,
+                    seats.decision,
                     progress.as_deref(),
                 )?;
                 if let Some(p) = &progress {
@@ -948,6 +961,7 @@ pub(crate) fn identify_with_kind(
                     &settings,
                     &lanes,
                     scope,
+                    seats.decision,
                     progress.as_deref(),
                 )?;
                 if let Some(p) = &progress {
@@ -1036,6 +1050,9 @@ pub(crate) fn identify_with_kind(
             p.describe(IDENTIFY_VISION, vision_model, vision_device);
         }
         let workers = identify_workers(&settings).min(frames.len().max(1)).max(1);
+        // The Vision stage's own seats: the album's preference when both models
+        // run locally, else today's identify count. OCR keeps `workers`.
+        let vision_workers = seats.vision.min(frames.len().max(1)).max(1);
         live.set_workers(workers);
         let passes: Mutex<HashMap<i64, analyze::OcrPass>> = Mutex::new(HashMap::new());
         let run = Run {
@@ -1132,123 +1149,159 @@ pub(crate) fn identify_with_kind(
             p.skip_stage(IDENTIFY_OCR);
         }
 
-        // --- Identify: Decision, before Vision --------------------------------
-        if decision_on {
-            if let Some(p) = &progress {
-                p.phase(IDENTIFY_DECISION);
-            }
-            let judged = match crate::moments::run_decision(
-                d,
-                job,
-                stop,
-                task,
-                &settings,
-                &lanes,
-                scope,
-                progress.as_deref(),
-            ) {
-                Ok(judged) => judged,
-                Err(e) => {
+        // One order for every card (review decision D2): the Decision stage
+        // finishes every eligible frame and burst, then the Vision stage reads
+        // every subject. A serial card's handoff unloads the decision model and
+        // releases the vision host between them, so the two never share the
+        // card; a concurrent card goes straight on with both allowed resident.
+        let (decision_stage, vision_stage) = crate::vram_fit::run_in_order(
+            card.mode,
+            || -> Result<()> {
+                if decision_on {
                     if let Some(p) = &progress {
-                        p.fail_stage(IDENTIFY_DECISION, &e);
+                        p.phase(IDENTIFY_DECISION);
                     }
-                    end.finish("error");
-                    return Err(e);
-                }
-            };
-            if let Some(p) = &progress {
-                match judged {
-                    Some(_) if control.is_skipped(IDENTIFY_DECISION) => {
-                        p.skip_stage(IDENTIFY_DECISION);
-                    }
-                    Some(_) if !stop.load(Ordering::Relaxed) => p.finish_stage(IDENTIFY_DECISION),
-                    Some(_) => {}
-                    None => p.skip_stage(IDENTIFY_DECISION),
-                }
-            }
-        } else if let Some(p) = &progress {
-            p.skip_stage(IDENTIFY_DECISION);
-        }
-
-        // --- Identify: Vision -------------------------------------------------
-        if vision_on {
-            if let Some(p) = &progress {
-                p.phase(IDENTIFY_VISION);
-                p.total(IDENTIFY_VISION, pending.len() as u64);
-            }
-            let (next, failure) = (AtomicUsize::new(0), Mutex::new(None));
-            std::thread::scope(|s| {
-                for lane in 0..workers {
-                    let (vision_settings, stop, next, failure, frames, pending, run) = (
-                        &vision_settings,
+                    let judged = crate::moments::run_decision(
+                        d,
+                        job,
                         stop,
-                        &next,
-                        &failure,
-                        &frames,
-                        &pending,
-                        &run,
-                    );
-                    let (progress, passes) = (&progress, &passes);
-                    s.spawn(move || {
-                        let mut readers = load_vision_readers(vision_settings);
-                        let mut embedder = match vision_settings.group_vehicles.then(|| {
-                            similarity::Embedder::load(
-                                &conrod_core::models::expected(conrod_core::models::SIMILARITY),
-                                Device::Cpu,
-                            )
-                        }) {
-                            Some(Err(e)) => {
-                                lock(failure).get_or_insert(e);
-                                if let Some(p) = progress.as_ref() {
-                                    p.worker_failed(IDENTIFY_OCR, lane);
-                                }
-                                return;
-                            }
-                            Some(Ok(e)) => Some(e),
-                            None => None,
-                        };
-                        while !stop.load(Ordering::Relaxed) && lock(failure).is_none() {
-                            let Some(frame) = frames.get(next.fetch_add(1, Ordering::Relaxed))
-                            else {
-                                break;
-                            };
-                            if let Err(e) = run.vision_frame(
-                                &pending[frame.clone()],
-                                &mut readers,
-                                &mut embedder,
-                                lane,
-                                passes,
-                            ) {
-                                lock(failure).get_or_insert(e);
-                                if let Some(p) = progress.as_ref() {
-                                    p.worker_failed(IDENTIFY_OCR, lane);
-                                }
-                                return;
-                            }
+                        task,
+                        &settings,
+                        &lanes,
+                        scope,
+                        seats.decision,
+                        progress.as_deref(),
+                    )
+                    .inspect_err(|e| {
+                        if let Some(p) = &progress {
+                            p.fail_stage(IDENTIFY_DECISION, e);
                         }
-                        if let Some(p) = progress.as_ref() {
-                            p.idle(IDENTIFY_OCR, lane);
+                    })?;
+                    if let Some(p) = &progress {
+                        match judged {
+                            Some(_) if control.is_skipped(IDENTIFY_DECISION) => {
+                                p.skip_stage(IDENTIFY_DECISION);
+                            }
+                            Some(_) if !stop.load(Ordering::Relaxed) => {
+                                p.finish_stage(IDENTIFY_DECISION)
+                            }
+                            Some(_) => {}
+                            None => p.skip_stage(IDENTIFY_DECISION),
+                        }
+                    }
+                } else if let Some(p) = &progress {
+                    p.skip_stage(IDENTIFY_DECISION);
+                }
+                Ok(())
+            },
+            || {
+                // Only a handoff into a stage that will run is worth the
+                // unload: a skipped Vision stage leaves the decider for the
+                // next album, and its idle timer still frees the card.
+                if vision_on {
+                    crate::decider::service().unload();
+                    vlm::release_local_models(&IoSettings::from_core(&vision_settings));
+                }
+            },
+            || -> Result<()> {
+                // --- Identify: Vision -------------------------------------------------
+                if vision_on {
+                    // A serial card's handoff guard: while the vision stage holds the
+                    // card, any in-process model call (the decider now, in-process
+                    // vision when phase V lands) waits for this stage rather than
+                    // loading beside it.
+                    let _gpu = (card.mode == crate::vram_fit::Mode::Serial).then(crate::gpu::stage);
+                    if let Some(p) = &progress {
+                        p.phase(IDENTIFY_VISION);
+                        p.total(IDENTIFY_VISION, pending.len() as u64);
+                    }
+                    live.set_workers(vision_workers);
+                    let (next, failure) = (AtomicUsize::new(0), Mutex::new(None));
+                    std::thread::scope(|s| {
+                        for lane in 0..vision_workers {
+                            let (vision_settings, stop, next, failure, frames, pending, run) = (
+                                &vision_settings,
+                                stop,
+                                &next,
+                                &failure,
+                                &frames,
+                                &pending,
+                                &run,
+                            );
+                            let (progress, passes) = (&progress, &passes);
+                            s.spawn(move || {
+                                let mut readers = load_vision_readers(vision_settings);
+                                let mut embedder = match vision_settings.group_vehicles.then(|| {
+                                    similarity::Embedder::load(
+                                        &conrod_core::models::expected(
+                                            conrod_core::models::SIMILARITY,
+                                        ),
+                                        Device::Cpu,
+                                    )
+                                }) {
+                                    Some(Err(e)) => {
+                                        lock(failure).get_or_insert(e);
+                                        if let Some(p) = progress.as_ref() {
+                                            p.worker_failed(IDENTIFY_OCR, lane);
+                                        }
+                                        return;
+                                    }
+                                    Some(Ok(e)) => Some(e),
+                                    None => None,
+                                };
+                                while !stop.load(Ordering::Relaxed) && lock(failure).is_none() {
+                                    let Some(frame) =
+                                        frames.get(next.fetch_add(1, Ordering::Relaxed))
+                                    else {
+                                        break;
+                                    };
+                                    if let Err(e) = run.vision_frame(
+                                        &pending[frame.clone()],
+                                        &mut readers,
+                                        &mut embedder,
+                                        lane,
+                                        passes,
+                                    ) {
+                                        lock(failure).get_or_insert(e);
+                                        if let Some(p) = progress.as_ref() {
+                                            p.worker_failed(IDENTIFY_OCR, lane);
+                                        }
+                                        return;
+                                    }
+                                }
+                                if let Some(p) = progress.as_ref() {
+                                    p.idle(IDENTIFY_OCR, lane);
+                                }
+                            });
                         }
                     });
-                }
-            });
-            let failure = failure.into_inner().unwrap_or_else(|e| e.into_inner());
-            if let Some(e) = failure {
-                if let Some(p) = &progress {
-                    p.fail_stage(IDENTIFY_VISION, &e);
-                }
-                end.finish("error");
-                return Err(e);
-            }
-            if let Some(p) = &progress {
-                if control.is_skipped(IDENTIFY_VISION) {
+                    let failure = failure.into_inner().unwrap_or_else(|e| e.into_inner());
+                    if let Some(e) = failure {
+                        if let Some(p) = &progress {
+                            p.fail_stage(IDENTIFY_VISION, &e);
+                        }
+                        return Err(e);
+                    }
+                    if let Some(p) = &progress {
+                        if control.is_skipped(IDENTIFY_VISION) {
+                            p.skip_stage(IDENTIFY_VISION);
+                        } else if !stop.load(Ordering::Relaxed) {
+                            p.finish_stage(IDENTIFY_VISION);
+                        }
+                    }
+                } else if let Some(p) = &progress {
                     p.skip_stage(IDENTIFY_VISION);
-                } else if !stop.load(Ordering::Relaxed) {
-                    p.finish_stage(IDENTIFY_VISION);
                 }
-            }
-        } else if let Some(p) = &progress {
-            p.skip_stage(IDENTIFY_VISION);
+                Ok(())
+            },
+        );
+        if let Err(e) = decision_stage {
+            end.finish("error");
+            return Err(e);
+        }
+        if let Err(e) = vision_stage {
+            end.finish("error");
+            return Err(e);
         }
 
         if !stop.load(Ordering::Relaxed) {
