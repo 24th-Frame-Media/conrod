@@ -17,7 +17,7 @@ use conrod_io::moments::{judge_for, MomentJudge};
 use conrod_io::{settings::Settings as IoSettings, vlm};
 use conrod_vision::imageops::Rgb;
 use rusqlite::params;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -602,6 +602,39 @@ fn auto_type_round(
     Ok(Some((choice, confidence)))
 }
 
+/// `accept_type_suggestion {jobId, type}`: the photographer accepting the
+/// suggestion the Decision stage showed. The accepted type is stored on the
+/// job and governs only the vision reads still to come; already-read subjects,
+/// judged bursts and every hand-set reading stay exactly as they are. An album
+/// whose vision stage already finished has nothing left to affect, so it is a
+/// plain no-op.
+pub(crate) fn accept_type_suggestion(d: &Desktop, job: i64, name: &str) -> Result<Value> {
+    let wanted = name.trim();
+    let preset = ShootPreset::ALL
+        .iter()
+        .copied()
+        .find(|p| *p != ShootPreset::Auto && p.name().eq_ignore_ascii_case(wanted))
+        .ok_or_else(|| format!("Unknown shoot type `{wanted}`"))?;
+    crate::library::require_job(d, job)?;
+    let status: String = lock(&d.db)
+        .query_row("SELECT status FROM jobs WHERE id=?", [job], |r| r.get(0))
+        .map_err(err)?;
+    if matches!(status.as_str(), "done" | "done_errors") {
+        return Ok(json!({
+            "accepted": false,
+            "type": preset.name(),
+            "note": "The vision stage has already run; the type only changes reads still to come.",
+        }));
+    }
+    lock(&d.db)
+        .execute(
+            "UPDATE jobs SET shoot_type_accepted=? WHERE id=?",
+            params![preset.name(), job],
+        )
+        .map_err(err)?;
+    Ok(json!({"accepted": true, "type": preset.name()}))
+}
+
 /// The peak a frame's stored verdict already carries, if any: the burst pass
 /// writes it on the one frame it picks, and a re-read must keep it.
 fn stored_peak(frame: &Value) -> Option<f64> {
@@ -1079,6 +1112,151 @@ mod tests {
             accepted, None,
             "nothing was accepted on the photographer's behalf"
         );
+    }
+
+    #[test]
+    fn accepting_the_type_marks_it_and_resolves_the_vision_prompts() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("accept-type-applies");
+        lib.sql(
+            "UPDATE jobs SET settings_json='{\"scan_profile\":\"auto\"}', shoot_type_suggested='sport-rodeo', shoot_type_confidence=0.83 WHERE id=?",
+            [lib.job],
+        );
+        let out = lib
+            .run(
+                "accept_type_suggestion",
+                json!({"jobId": lib.job, "type": "sport-rodeo"}),
+            )
+            .unwrap();
+        assert_eq!(out["accepted"], true);
+        assert_eq!(out["type"], "sport-rodeo");
+        let accepted: String =
+            lib.one("SELECT shoot_type_accepted FROM jobs WHERE id=?", [lib.job]);
+        assert_eq!(accepted, "sport-rodeo");
+        let settings = crate::operations::settings(lib.d(), lib.job).unwrap();
+        let (vision, context) =
+            crate::operations::resolved_vision_settings(lib.d(), lib.job, &settings);
+        assert_eq!(vision.scan_profile, "sport-rodeo");
+        assert_eq!(context, Some(ShootPreset::SportRodeo.prompt_context()));
+    }
+
+    #[test]
+    fn accepting_the_type_leaves_read_subjects_and_judged_bursts_alone() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("accept-type-unrun");
+        let read = lib.detection(lib.frame("read.jpg", Some(3)), "vehicle", 0.9);
+        lib.sql(
+            "UPDATE detections SET attributes='{\"make\":\"Honda\"}',plate='ABC123',read_at=1,reviewed=1 WHERE id=?",
+            [read],
+        );
+        let judged = lib.frame("judged.jpg", Some(4));
+        lib.sql(
+            "UPDATE images SET moments='{\"peak\":0.9}' WHERE id=?",
+            [judged],
+        );
+        lib.sql(
+            "UPDATE jobs SET settings_json='{\"scan_profile\":\"auto\"}' WHERE id=?",
+            [lib.job],
+        );
+        lib.run(
+            "accept_type_suggestion",
+            json!({"jobId": lib.job, "type": "wedding"}),
+        )
+        .unwrap();
+        let attributes: String = lib.one("SELECT attributes FROM detections WHERE id=?", [read]);
+        assert_eq!(attributes, "{\"make\":\"Honda\"}");
+        let plate: String = lib.one("SELECT plate FROM detections WHERE id=?", [read]);
+        assert_eq!(plate, "ABC123");
+        let reviewed: i64 = lib.one("SELECT reviewed FROM detections WHERE id=?", [read]);
+        assert_eq!(reviewed, 1, "a reviewed subject is never read again");
+        let moments: String = lib.one("SELECT moments FROM images WHERE id=?", [judged]);
+        assert_eq!(
+            moments, "{\"peak\":0.9}",
+            "a judged burst is not re-decided"
+        );
+    }
+
+    #[test]
+    fn an_unknown_shoot_type_is_refused() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("accept-type-invalid");
+        lib.sql(
+            "UPDATE jobs SET settings_json='{\"scan_profile\":\"auto\"}' WHERE id=?",
+            [lib.job],
+        );
+        let err = lib
+            .run(
+                "accept_type_suggestion",
+                json!({"jobId": lib.job, "type": "not-a-shoot"}),
+            )
+            .unwrap_err();
+        assert!(err.contains("Unknown shoot type"), "{err}");
+        let err = lib
+            .run(
+                "accept_type_suggestion",
+                json!({"jobId": lib.job, "type": "auto"}),
+            )
+            .unwrap_err();
+        assert!(err.contains("Unknown shoot type"), "{err}");
+        let accepted: Option<String> =
+            lib.one("SELECT shoot_type_accepted FROM jobs WHERE id=?", [lib.job]);
+        assert_eq!(accepted, None, "nothing is accepted on a refusal");
+    }
+
+    #[test]
+    fn a_finished_album_has_no_vision_left_to_affect() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("accept-type-finished");
+        lib.sql(
+            "UPDATE jobs SET status='done', settings_json='{\"scan_profile\":\"auto\"}', shoot_type_suggested='wedding' WHERE id=?",
+            [lib.job],
+        );
+        let out = lib
+            .run(
+                "accept_type_suggestion",
+                json!({"jobId": lib.job, "type": "wedding"}),
+            )
+            .unwrap();
+        assert_eq!(out["accepted"], false);
+        assert!(
+            out["note"].as_str().unwrap().contains("already run"),
+            "{out}"
+        );
+        let accepted: Option<String> =
+            lib.one("SELECT shoot_type_accepted FROM jobs WHERE id=?", [lib.job]);
+        assert_eq!(accepted, None, "a finished album is a no-op");
+    }
+
+    #[test]
+    fn a_hand_set_type_wins_until_the_photographer_accepts() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("accept-type-hand-set");
+        lib.sql(
+            "UPDATE jobs SET settings_json='{\"scan_profile\":\"portrait\"}', shoot_type_suggested='motorsport' WHERE id=?",
+            [lib.job],
+        );
+        let settings = crate::operations::settings(lib.d(), lib.job).unwrap();
+        let (before, context) =
+            crate::operations::resolved_vision_settings(lib.d(), lib.job, &settings);
+        assert_eq!(before.scan_profile, "portrait");
+        assert_eq!(
+            context, None,
+            "the shown suggestion is never applied silently"
+        );
+
+        lib.run(
+            "accept_type_suggestion",
+            json!({"jobId": lib.job, "type": "motorsport"}),
+        )
+        .unwrap();
+        let settings = crate::operations::settings(lib.d(), lib.job).unwrap();
+        let (after, context) =
+            crate::operations::resolved_vision_settings(lib.d(), lib.job, &settings);
+        assert_eq!(
+            after.scan_profile, "motorsport",
+            "the explicit accept replaces the hand-set type for vision"
+        );
+        assert_eq!(context, Some(ShootPreset::Motorsport.prompt_context()));
     }
 
     #[test]

@@ -1014,6 +1014,9 @@ impl Desktop {
             Command::StagePause(a) => crate::stage_control::pause(self, &a),
             Command::StageSkip(a) => crate::stage_control::skip(self, &a),
             Command::StageRerun(a) => crate::stage_control::rerun(self, &a),
+            Command::AcceptTypeSuggestion(a) => {
+                crate::moments::accept_type_suggestion(self, a.job_id, &a.r#type)
+            }
             Command::BulkEdit(a) => crate::edits::bulk_edit(self, &a),
             Command::RenameJob(a) => crate::library::rename_job(self, &a),
             Command::UpdateJobSettings(a) => {
