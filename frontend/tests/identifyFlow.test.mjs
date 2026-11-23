@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FLOW_NODES, IDENTIFY_STAGES, actionLabel, activeStage, confidencePercent, confidenceTone, deciderStepNode, displayItem,
-  displayPath, elapsed, flowNodes, phaseLabel, prettyReply, progressPercent, rateLabel, sourceLabel, workerLanes,
+  displayPath, elapsed, flowNodes, phaseLabel, prettyReply, progressPercent, rateLabel, sourceLabel, visibleWorkerLanes, workerLanes,
 } from '../src/lib/identifyFlow.mjs';
 import { SUBJECT_WORDS } from '../src/lib/subjects.mjs';
 const vehicles = SUBJECT_WORDS.vehicles;
@@ -73,6 +73,22 @@ test('one lane per worker: the live car, else its last finished car', () => {
   assert.equal(workerLanes({ active: [], recent: [] }).length, 0);
   // Snapshots without a worker count still lay out one lane per worker seen.
   assert.equal(workerLanes({ active: [{ detection_id: 5, worker: 1 }], recent: [] }).length, 2);
+});
+
+test('visibleWorkerLanes hides empty placeholders and hides non-live cards during Decision', () => {
+  const lanes = [
+    { worker: 0, item: { detection_id: 1 }, live: true },
+    { worker: 1, item: { detection_id: 2 }, live: false },
+    { worker: 2, item: null, live: false },
+  ];
+  // Normal OCR/Vision: keeps live and finished lanes, drops blank idle placeholders.
+  assert.deepEqual(visibleWorkerLanes(lanes, { name: 'ocr', state: 'running' }).map((l) => l.worker), [0, 1]);
+  assert.deepEqual(visibleWorkerLanes(lanes, null).map((l) => l.worker), [0, 1]);
+  // Decision (moments/peaks): only live lanes survive, so blank/stale vision cards never crowd DECIDER.
+  assert.deepEqual(visibleWorkerLanes(lanes, { name: 'moments', state: 'running' }).map((l) => l.worker), [0]);
+  assert.deepEqual(visibleWorkerLanes([{ worker: 0, item: null, live: false }], { name: 'peaks', state: 'running' }), []);
+  // Once Decision ends, finished lanes are visible again.
+  assert.deepEqual(visibleWorkerLanes(lanes, { name: 'peaks', state: 'done' }).map((l) => l.worker), [0, 1]);
 });
 
 test('an in-flight car can be pinned before it finishes', () => {

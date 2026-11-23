@@ -110,9 +110,15 @@ fn frame_label(path: &str) -> String {
         .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
 }
 
-/// The cached preview of a frame, when there is one on disk.
-fn thumb_of(preview: Option<&str>) -> Option<PathBuf> {
-    preview.map(PathBuf::from).filter(|p| p.is_file())
+/// The cached preview or thumbnail of a frame, when one exists on disk.
+/// Most freshly scanned frames only have a thumbnail until opened in Review,
+/// so falling back to `thumb_path` lets the DECIDER lane show the photo live.
+fn thumb_of(preview: Option<&str>, thumb: Option<&str>) -> Option<PathBuf> {
+    [preview, thumb]
+        .into_iter()
+        .flatten()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
 }
 
 fn data_url(image: &Rgb, edge: u32) -> String {
@@ -149,7 +155,7 @@ fn pending(d: &Desktop, job: i64, everything: bool, rejudge: bool) -> Result<Vec
     let unread = if rejudge { "" } else { "AND i.moments IS NULL" };
     rows(
         &lock(&d.reader),
-        &format!("SELECT i.id,i.path,i.preview_path,i.moments,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 {unread} {keepers} ORDER BY i.id"),
+        &format!("SELECT i.id,i.path,i.preview_path,i.thumb_path,i.moments,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 {unread} {keepers} ORDER BY i.id"),
         [job],
     )
 }
@@ -360,7 +366,7 @@ fn run_with(
                 }
                 let id = frame["id"].as_i64().unwrap_or_default();
                 let label = frame_label(frame["path"].as_str().unwrap_or_default());
-                let thumb = thumb_of(frame["preview_path"].as_str());
+                let thumb = thumb_of(frame["preview_path"].as_str(), frame["thumb_path"].as_str());
                 let Ok(image) = picture(
                     frame["preview_path"].as_str(),
                     frame["path"].as_str().unwrap_or_default(),
@@ -456,7 +462,7 @@ pub(crate) fn run_type_round(
     }
     let frames = rows(
         &lock(&d.reader),
-        "SELECT i.id,i.burst_key,i.path,i.preview_path,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.burst_key IS NOT NULL AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 AND i.moments IS NULL ORDER BY i.burst_key,i.id",
+        "SELECT i.id,i.burst_key,i.path,i.preview_path,i.thumb_path,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.burst_key IS NOT NULL AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 AND i.moments IS NULL ORDER BY i.burst_key,i.id",
         [job],
     )?;
     let mut bursts: BTreeMap<i64, Vec<Value>> = BTreeMap::new();
@@ -519,7 +525,7 @@ pub(crate) fn run_type_round(
                 .and_then(|bytes| Rgb::decode_jpeg(&bytes, 1).ok())
                 .map(|image| data_url(&image, PEAK_EDGE));
             let label = frame_label(frame["path"].as_str().unwrap_or_default());
-            let thumb = thumb_of(frame["preview_path"].as_str());
+            let thumb = thumb_of(frame["preview_path"].as_str(), frame["thumb_path"].as_str());
             let verdict = shown_as(&label, thumb, || {
                 judge.judge_pair(context, vocab, &url, crop.as_deref())
             });
@@ -558,7 +564,7 @@ fn auto_type_round(
 ) -> Result<Option<(String, f64)>> {
     let frames = rows(
         &lock(&d.reader),
-        "SELECT i.id,i.path,i.preview_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 ORDER BY i.id",
+        "SELECT i.id,i.path,i.preview_path,i.thumb_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 ORDER BY i.id",
         [job],
     )?;
     let control = d.stage_control(job);
@@ -599,7 +605,7 @@ fn auto_type_round(
     let label = format!("Album type ({} frames)", images.len());
     let thumb = chosen
         .first()
-        .and_then(|frame| thumb_of(frame["preview_path"].as_str()));
+        .and_then(|frame| thumb_of(frame["preview_path"].as_str(), frame["thumb_path"].as_str()));
     let answer = shown_as(&label, thumb, || {
         judge.choose(
             ShootPreset::Auto.prompt_context(),
@@ -699,7 +705,7 @@ fn peaks(
     }
     let frames = rows(
         &lock(&d.reader),
-        "SELECT i.id,i.path,i.preview_path,i.burst_key,i.moments FROM images i WHERE i.job_id=? AND i.burst_key IS NOT NULL AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 ORDER BY i.burst_key,i.id",
+        "SELECT i.id,i.path,i.preview_path,i.thumb_path,i.burst_key,i.moments FROM images i WHERE i.job_id=? AND i.burst_key IS NOT NULL AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 ORDER BY i.burst_key,i.id",
         [job],
     )?;
     let mut bursts: BTreeMap<i64, Vec<&Value>> = BTreeMap::new();
@@ -765,7 +771,10 @@ fn peaks(
         }
         // A broken answer is no opinion: the burst keeps its order.
         let label = format!("Burst of {} frames", chosen.len());
-        let thumb = thumb_of(chosen[0]["preview_path"].as_str());
+        let thumb = thumb_of(
+            chosen[0]["preview_path"].as_str(),
+            chosen[0]["thumb_path"].as_str(),
+        );
         let Ok(Some(ps)) = shown_as(&label, thumb, || judge.peak(context, &images)) else {
             continue;
         };
@@ -1059,8 +1068,8 @@ mod tests {
     #[test]
     fn a_frame_names_the_calls_made_for_it_and_only_for_it() {
         assert_eq!(frame_label("D:\\shoot\\IMG_0042.CR3"), "IMG_0042.CR3");
-        assert!(thumb_of(None).is_none());
-        assert!(thumb_of(Some("Z:\\nowhere\\p.jpg")).is_none());
+        assert!(thumb_of(None, None).is_none());
+        assert!(thumb_of(Some("Z:\\nowhere\\p.jpg"), None).is_none());
         let seen = shown_as("IMG_1.CR3", None, || SHOWN.with(|s| s.borrow().clone()));
         assert_eq!(seen.unwrap().0, "IMG_1.CR3");
         assert!(SHOWN.with(|s| s.borrow().is_none()), "cleared afterwards");
@@ -1544,5 +1553,27 @@ mod tests {
             1,
             "skipping mid-round stops at the next ask boundary"
         );
+    }
+
+    #[test]
+    fn thumb_of_falls_back_to_thumbnail_when_preview_is_missing() {
+        let lib = crate::testkit::Lib::new("moments_thumb_fallback");
+        let thumb_path = preview(&lib, "thumb-1.jpg");
+        let preview_path = preview(&lib, "preview-1.jpg");
+        assert_eq!(
+            thumb_of(None, Some(&thumb_path)),
+            Some(PathBuf::from(&thumb_path)),
+            "freshly scanned frames only have thumb_path on disk"
+        );
+        assert_eq!(
+            thumb_of(Some("does-not-exist.jpg"), Some(&thumb_path)),
+            Some(PathBuf::from(&thumb_path))
+        );
+        assert_eq!(
+            thumb_of(Some(&preview_path), Some(&thumb_path)),
+            Some(PathBuf::from(&preview_path)),
+            "preview_path wins when it exists on disk"
+        );
+        assert_eq!(thumb_of(None, None), None);
     }
 }

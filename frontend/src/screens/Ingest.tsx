@@ -11,7 +11,7 @@ import { asset } from '../lib/api';
 import { albumSetting } from '../lib/album.mjs';
 import { applyOverrides, defaultSummary, overridesOf } from '../lib/presetPolicy.mjs';
 import { readsSubjects, subjectWords } from '../lib/subjects.mjs';
-import { confidencePercent, confidenceTone, displayItem, elapsed, phaseLabel, progressPercent, rateLabel, workerLanes } from '../lib/identifyFlow.mjs';
+import { confidencePercent, confidenceTone, displayItem, elapsed, phaseLabel, progressPercent, rateLabel, visibleWorkerLanes, workerLanes } from '../lib/identifyFlow.mjs';
 import {
   etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneKey, laneState, leftLabel,
   phaseRunning, phaseTone, phaseWord, stagePlace, starsText, stripItems, verdictText, visionExpected,
@@ -217,6 +217,7 @@ export function IngestScreen({
     : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService, subject, reads, failed: failedMap }));
 
   const visionLanes = workerLanes(idLive);
+  const shownVisionLanes = visibleWorkerLanes(visionLanes, idLive?.phase);
   const scanFilter = filter && filter !== 'vision' && filter !== 'decider' ? filter : null;
   // Render only active workers on their current step: done/failed workers leave
   // the grid (results move to the recent feed), workers past the report window
@@ -228,9 +229,9 @@ export function IngestScreen({
   const awake = allScan.filter((w) => laneState(w, paused) !== 'idle').length;
   // Scan lanes that have nothing left to do give way to the barrier note (group, pick) and to the vision workers.
   const barrier = mode === 'ingest' && (phase === 'group' || phase === 'pick') && filter == null;
-  const hideScan = filter == null && awake === 0 && (barrier || visionLanes.length > 0);
+  const hideScan = filter == null && awake === 0 && (barrier || shownVisionLanes.length > 0);
   const showScan = mode === 'ingest' && Boolean(p) && filter !== 'vision' && filter !== 'decider' && !hideScan;
-  const showVision = visionLanes.length > 0 && (filter == null || filter === 'vision');
+  const showVision = shownVisionLanes.length > 0 && (filter == null || filter === 'vision');
   // The decision model's page: when picked in the flowchart, or while it has something to show.
   // Identify runs it beside vision, so the page is not limited to the scan screen.
   const showDecider = deciderLive != null && (filter === 'decider' || (filter == null && deciderActive(deciderLive)));
@@ -456,7 +457,7 @@ export function IngestScreen({
                   <div className="id-lanes ing-lanes">
               {showDecider && deciderLive && <DeciderLane live={deciderLive} serving={decisionService} />}
                     {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} />)}
-                    {showVision && visionLanes.map((lane) => (
+                    {showVision && shownVisionLanes.map((lane) => (
                       <IdentifyLane key={`vision:${lane.worker}`} name={ocrPhase ? 'OCR' : 'VISION'} ocrOnly={ocrPhase} worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject}
                         prompt={lane.item ? lane.item.prompt ?? prompts.current[lane.item.detection_id] : undefined}
                         onOpen={() => lane.item && pickCar(lane.item.detection_id)} />

@@ -168,6 +168,17 @@ export function workerLanes(live) {
   }));
 }
 
+/**
+ * Worker lanes worth drawing in the grid: drops completely empty placeholder cards
+ * (`!live && !item`), and during the Decision phase (`moments` / `peaks`) drops
+ * non-live cards so blank or stale OCR/Vision cards do not crowd out the DECIDER card.
+ */
+export function visibleWorkerLanes(lanes, phase = null) {
+  if (!Array.isArray(lanes)) return [];
+  const deciderRunning = phase?.state === 'running' && (phase.name === 'moments' || phase.name === 'peaks');
+  return lanes.filter((lane) => (deciderRunning ? Boolean(lane?.live) : Boolean(lane?.live || lane?.item)));
+}
+
 /** Human labels for the vision model's action tags. */
 const ACTION_LABELS = {
   airborne: 'Airborne', dust: 'Dust', tyre_smoke: 'Tyre smoke', spray: 'Spray',

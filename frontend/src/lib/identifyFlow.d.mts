@@ -9,7 +9,7 @@ export const FLOW_NODES: readonly Omit<FlowNode, 'state'>[];
 export function activeStage(stage: string | null | undefined): number;
 export function flowNodes(live: IdentifyLive | null | undefined, model?: string | null, stage?: IdentifyStage | null, subject?: import('./subjects.mjs').SubjectWords | null): FlowNode[];
 export type IdentifyPhase = {
-  name: 'moments' | 'peaks' | string;
+  name: 'ocr' | 'moments' | 'peaks' | string;
   done: number;
   total: number;
   state: 'running' | 'done' | 'stopped';
@@ -27,6 +27,8 @@ export function fileName(item: IdentifyItem | null | undefined): string;
 export function displayItem(live: IdentifyLive | null | undefined, selectedId?: number | null): IdentifyItem | null;
 /** One entry per worker: the car it is reading, else the last it finished, else null. */
 export function workerLanes(live: IdentifyLive | null | undefined): { worker: number; item: IdentifyItem | null; live: boolean }[];
+/** Filter out empty placeholder cards (and non-live lanes during Decision) so blank workers never clutter the grid. */
+export function visibleWorkerLanes(lanes: { worker: number; item: IdentifyItem | null; live: boolean }[], phase?: IdentifyPhase | null): { worker: number; item: IdentifyItem | null; live: boolean }[];
 export function actionLabel(id: string | null | undefined): string;
 export function confidencePercent(conf: number | null | undefined): number | null;
 export function confidenceTone(conf: number | null | undefined): 'good' | 'warn' | 'bad' | 'none';
