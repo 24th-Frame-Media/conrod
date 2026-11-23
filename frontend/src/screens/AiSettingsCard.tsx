@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { engine, mocked } from '../lib/api';
 import * as ai from '../lib/aiCard.mjs';
-import type { ModelInfo, SettingValue, Settings as SettingsMap, Toaster } from '../lib/types';
+import type { ModelInfo, ModelsStatus, SettingValue, Settings as SettingsMap, Toaster } from '../lib/types';
 import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
 import '../styles/aiSettings.css';
 
@@ -63,7 +63,15 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   // Which built-in model is installing right now (null = none): a real running
   // state that ends only when the manifest shows the model appeared.
   const [downloading, setDownloading] = useState<string | null>(null);
+  // Live disk-truth rows from `models_status` (never the health list, which
+  // carries cloud service rows). Null until the first re-check lands; the
+  // Bootstrap `models` prop is only the fallback before then.
+  const [liveRows, setLiveRows] = useState<ModelInfo[] | null>(null);
+  const [installInfo, setInstallInfo] = useState<ModelsStatus['install']>(null);
+  const [dlError, setDlError] = useState<Record<string, string>>({});
   const pollRef = useRef<number | null>(null);
+  const sawInstallRef = useRef(false);
+  const startedAtRef = useRef(0);
   // One ref for every pending timer so unmount never leaves one behind.
   const timeoutsRef = useRef<Set<number>>(new Set());
   const aliveRef = useRef(true);
@@ -72,15 +80,16 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   // Built-in rows read the engine's model manifest + the real use_decider
   // setting, never hardcoded flags. Only an explicit switch toggle is local.
   const [switchOverrides, setSwitchOverrides] = useState<Record<string, boolean>>({});
+  const rowSource = liveRows ?? models;
   const derivedRows = useMemo(
-    () => A.builtinRowStates(models, Boolean(draft.use_decider)) as Record<string, { on: boolean; downloaded: boolean }>,
-    [models, draft.use_decider],
+    () => A.builtinRowStates(rowSource, Boolean(draft.use_decider)) as Record<string, { on: boolean; downloaded: boolean; available: boolean }>,
+    [rowSource, draft.use_decider],
   );
-  const builtinRows = useMemo<Record<string, { on: boolean; downloaded: boolean }>>(() => {
-    const out: Record<string, { on: boolean; downloaded: boolean }> = {};
+  const builtinRows = useMemo<Record<string, { on: boolean; downloaded: boolean; available: boolean }>>(() => {
+    const out: Record<string, { on: boolean; downloaded: boolean; available: boolean }> = {};
     for (const id of Object.keys(derivedRows)) {
       const d = derivedRows[id];
-      out[id] = { downloaded: d.downloaded, on: d.downloaded ? (switchOverrides[id] ?? d.on) : false };
+      out[id] = { downloaded: d.downloaded, available: d.available, on: d.downloaded ? (switchOverrides[id] ?? d.on) : false };
     }
     return out;
   }, [derivedRows, switchOverrides]);
@@ -119,21 +128,28 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   }, [openPopup, addMenuOpen]);
 
   /* Non-AI helpers run on Conrod's own bundled models, read from the app's
-     model manifest/status (the `models` prop). No cloud provider is involved. */
+     live model rows. No cloud provider is involved, and a missing row is
+     never assumed ready. */
   const bundled = useMemo(() => {
-    const find = (needle: string) => models.find((m) => m.name.toLowerCase().includes(needle));
+    const find = (needle: string) => rowSource.find((m) => m.name.toLowerCase().includes(needle));
     const mk = (needle: string, fallback: string) => {
       const m = find(needle);
-      return { id: m ? (m.file || m.name) : fallback, ready: m ? m.ready : true };
+      return { id: m ? (m.file || m.name) : fallback, ready: m ? Boolean(m.downloaded ?? m.ready) : false };
     };
+    const quality = rowSource.find((m) => m.id === 'quality');
     return {
       'cars-people': [mk('detector', 'Vehicle detector (YOLO)'), mk('person', 'Person detector')],
-      sharpness: [mk('sharp', 'Edge sharpness'), { id: 'Quality tie-break', ready: true }],
+      sharpness: [{ id: 'Edge sharpness', ready: true }, {
+        // Edge sharpness is Conrod's own measure, not a downloadable model:
+        // it is always here. The quality tie-break IS a model (opt-in).
+        id: quality && quality.available === false ? 'Quality tie-break (not available yet)' : 'Quality tie-break',
+        ready: quality ? Boolean(quality.downloaded ?? quality.ready) : false,
+      }],
       faces: [mk('face', 'Face + eye model')],
       plates: [mk('plate', 'Plate reader (OCR)'), { id: 'Plate spell-check', ready: true }],
       'race-numbers': [mk('text', 'Text reader (OCR)'), mk('plate', 'Number OCR')],
     } as Record<string, { id: string; ready: boolean }[]>;
-  }, [models]);
+  }, [rowSource]);
 
   const ctx = useMemo(() => {
     const v = builtinRows['qwen3-vl:8b'];
@@ -223,17 +239,78 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
       timeoutsRef.current.clear();
     };
   }, []);
-  /* A Download is finished only when the real manifest shows the model: the
-     derived built-in row then flips from its Download button to its switch. */
+
+  /* Truth on open: re-read every local model row from disk the moment the
+     card mounts, instead of trusting the Bootstrap snapshot (which can be
+     stale, and whose health refresh carries cloud rows). */
+  const refreshLive = async () => {
+    try {
+      const res = await engine.modelsStatus();
+      if (!aliveRef.current) return;
+      setLiveRows(res.rows || []);
+      setInstallInfo(res.install ?? null);
+      if (res.install && res.install.id) sawInstallRef.current = true;
+      // An install already in flight (started here, or before the card opened)
+      // keeps its live progress polling; a finished or failed one stops it.
+      if (res.install && !res.install.error) {
+        if (pollRef.current == null) pollRef.current = window.setInterval(() => { void refreshLive(); }, 1000);
+      } else if (downloading == null) {
+        stopPolling();
+      }
+    } catch { /* the engine will answer on the next poll */ }
+  };
+  useEffect(() => {
+    void refreshLive();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* A Download is finished only when the real manifest shows the model's files
+     on disk (the engine flips `downloaded` only after hash verification). A
+     failure is the engine's own plain reason, never a timer pretending success. */
   useEffect(() => {
     if (!downloading) return;
-    const d = A.builtinRowStates(models, Boolean(draft.use_decider))[downloading] as { downloaded: boolean } | undefined;
-    if (!d || !d.downloaded) return;
-    stopPolling();
-    setDownloading(null);
-    toast('The built-in model is ready on this PC.', { tone: 'ok' });
+    const engineId = A.BUILTIN_ROW_ID[downloading] as string;
+    const st = A.builtinRowStates(liveRows ?? models, Boolean(draft.use_decider))[downloading] as { downloaded: boolean } | undefined;
+    if (st?.downloaded) {
+      stopPolling();
+      setDownloading(null);
+      setDlError((s) => { const n = { ...s }; delete n[downloading]; return n; });
+      toast('The built-in model is ready on this PC.', { tone: 'ok' });
+      onModelsChanged?.();
+      return;
+    }
+    const fail = (reason: string) => {
+      stopPolling();
+      setDownloading(null);
+      setDlError((s) => ({ ...s, [downloading]: reason }));
+      toast(`Install failed — ${reason}`, { tone: 'error' });
+    };
+    if (installInfo && installInfo.id === engineId && installInfo.error) {
+      fail(String(installInfo.error));
+      return;
+    }
+    // The install ended (tracker cleared) without the model appearing: it was
+    // stopped or died. Only conclude this once we actually saw it running.
+    if (!installInfo && sawInstallRef.current) {
+      fail('The install stopped before the model was verified. Check disk space and try again.');
+      return;
+    }
+    if (!installInfo && !sawInstallRef.current && Date.now() - startedAtRef.current > 15000) {
+      fail('The install did not start. Check the activity list and try again.');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [models, downloading, draft.use_decider]);
+  }, [liveRows, installInfo, downloading, draft.use_decider]);
+
+  /* A failed install the engine still remembers shows on its row when the card
+     opens: the plain reason and a Retry, not a silent Download button. */
+  useEffect(() => {
+    if (!installInfo?.error || downloading) return;
+    const entry = Object.entries(A.BUILTIN_ROW_ID as Record<string, string>).find(([, eid]) => eid === installInfo.id);
+    if (!entry) return;
+    const [cardId] = entry;
+    const reason = String(installInfo.error);
+    setDlError((s) => (s[cardId] === reason ? s : { ...s, [cardId]: reason }));
+  }, [installInfo, downloading]);
 
   /* ---------- settings write-through ---------- */
   const applyPatch = (p: { vlm_services: unknown[]; moments_services: unknown[] }) => {
@@ -308,33 +385,33 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   const downloadBuiltin = (id: string) => {
     const row = A.BUILTIN.models.find((m: { id: string }) => m.id === id);
     if (!row || builtinRows[id]?.downloaded || downloading) return;
+    if (installInfo && !installInfo.error) return; // one install at a time on the card
+    if (builtinRows[id]?.available === false) return; // nothing pinned to fetch
     setDownloading(id);
-    const cmd = row.role === 'decisions' ? engine.installDecider() : engine.installModels();
+    setDlError((s) => { const n = { ...s }; delete n[id]; return n; });
+    setInstallInfo(null);
+    sawInstallRef.current = false;
+    startedAtRef.current = Date.now();
+    // Exactly the clicked model's assets (vision), or the decider's own
+    // installer (weights + projector + runtime, VRAM-gated quant).
+    const cmd = row.role === 'decisions' ? engine.installDecider() : engine.installModels(row.assets as string[]);
     void Promise.resolve(cmd).then(
       () => {
         if (!aliveRef.current) return;
-        let tries = 0;
-        // Poll the real models status (onModelsChanged -> health -> `models`)
-        // until the model appears. No timer pretends an install finished.
-        pollRef.current = window.setInterval(() => {
-          tries += 1;
-          if (!aliveRef.current || tries > 30) {
-            stopPolling();
-            if (aliveRef.current) {
-              setDownloading(null);
-              toast('The model has not appeared yet. Check its status and try again.', { tone: 'error' });
-            }
-            return;
-          }
-          onModelsChanged?.();
-        }, 1200);
-        onModelsChanged?.();
+        // Poll the live models status until the row's files are verified on
+        // disk, or the engine reports a plain failure. No timer pretends an
+        // install finished, and a multi-GB download is never cut off by a
+        // short try-count.
+        stopPolling();
+        pollRef.current = window.setInterval(() => { void refreshLive(); }, 1000);
+        void refreshLive();
       },
       (err) => {
         stopPolling();
         if (aliveRef.current) {
           setDownloading(null);
           const reason = (A.checkOutcome(null, err) as { reason: string }).reason;
+          setDlError((s) => ({ ...s, [id]: reason }));
           toast(`Install failed — ${reason}`, { tone: 'error' });
         }
       },
@@ -431,15 +508,42 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
   };
 
   const builtinRow = (m: { id: string; role: string; dl?: string; variants?: string[] }) => {
-    const st = builtinRows[m.id] || { on: false, downloaded: false };
+    const st = builtinRows[m.id] || { on: false, downloaded: false, available: true };
     const missing = !st.downloaded;
-    const meta = missing ? (m.dl ? `${m.dl} · not downloaded` : 'not downloaded') : 'on this PC';
-    const running = downloading === m.id;
-    const ctl = missing
-      ? <button className={`btn small primary mo-dl${running ? ' running' : ''}`} disabled={downloading !== null} onClick={() => downloadBuiltin(m.id)}>
-          {running ? <><span className="mo-spin" aria-hidden="true" />Installing…</> : 'Download'}
-        </button>
-      : <Switch mini on={st.on} ariaLabel={m.id} onChange={(v) => setSwitchOverrides((s) => ({ ...s, [m.id]: v }))} />;
+    const engineId = A.BUILTIN_ROW_ID[m.id] as string;
+    // Running is the engine's own install state for this row (or a command we
+    // just sent whose tracker entry has not landed yet), never a local guess.
+    const running = downloading === m.id || Boolean(installInfo && installInfo.id === engineId && !installInfo.error);
+    const anyRunning = downloading !== null || Boolean(installInfo && !installInfo.error);
+    const failed = !running && missing && dlError[m.id];
+    const prog = running && installInfo && installInfo.id === engineId
+      ? A.downloadProgress(installInfo.done, installInfo.total) as { known: boolean; pct: number | null; label: string }
+      : null;
+    const meta = st.available === false ? 'not available yet'
+      : running ? (prog ? prog.label : 'Downloading…')
+        : missing ? (m.dl ? `${m.dl} · not downloaded` : 'not downloaded')
+          : 'on this PC';
+    let ctl;
+    if (st.available === false) {
+      // No pinned source exists: never offer a Download that cannot work.
+      ctl = <span className="mo-na">Not available yet</span>;
+    } else if (running) {
+      ctl = <button className="btn small primary mo-dl running" disabled>
+        <span className="mo-spin" aria-hidden="true" />Installing…
+      </button>;
+    } else if (missing) {
+      ctl = <button className={`btn small primary mo-dl${failed ? ' retry' : ''}`} disabled={anyRunning} onClick={() => downloadBuiltin(m.id)}>
+        {failed ? 'Retry' : 'Download'}
+      </button>;
+    } else {
+      ctl = <Switch mini on={st.on} ariaLabel={m.id} onChange={(v) => {
+        // The decision row's switch is the real use_decider setting (the
+        // moments lane reads it); the vision row's stays a local preference
+        // until the in-process runner ships.
+        if (m.role === 'decisions') onChange('use_decider', v);
+        else setSwitchOverrides((s) => ({ ...s, [m.id]: v }));
+      }} />;
+    }
     let variant = null;
     if (st.on && st.downloaded && m.variants && m.variants.length) {
       const key = `builtin:${m.id}:variant`;
@@ -452,8 +556,14 @@ export function AiSettingsCard({ draft, models, onChange, toast, onModelsChanged
       );
     }
     return (
-      <div className={`mo${st.on && st.downloaded ? '' : ' off'}`}>
+      <div className={`mo${st.on && st.downloaded ? '' : ' off'}`} key={m.id}>
         <div className="mo-line">{ctl}<div className="mo-name"><span className="mono">{m.id}</span><span className="mo-meta">{meta}</span></div></div>
+        {running && prog?.known && (
+          <div className="mo-progress" role="progressbar" aria-valuenow={prog.pct ?? 0} aria-valuemin={0} aria-valuemax={100} aria-label={`Downloading ${m.id}`}>
+            <span style={{ width: `${prog.pct}%` }} />
+          </div>
+        )}
+        {failed && <p className="mo-fail" role="status">{dlError[m.id]}</p>}
         {variant}
       </div>
     );

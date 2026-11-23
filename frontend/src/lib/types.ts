@@ -161,7 +161,13 @@ export type Settings = Record<string, SettingValue> & {
   identify_scope?: Scope;
   workflow_mode?: string;
 };
-export type ModelInfo = { id?: string; name: string; file: string; ready: boolean; detail?: string; /** Opt-in (the decision model): not counted against the machine when missing. */ optional?: boolean };
+export type ModelInfo = { id?: string; name: string; file: string; ready: boolean; detail?: string; /** Opt-in (the decision model): not counted against the machine when missing. */ optional?: boolean; /** Disk truth: the files are installed (independent of serving/on state). */ downloaded?: boolean; /** False when no trustworthy pinned source exists yet ("not available yet"). */ available?: boolean };
+
+/** `models_status`: live local-model rows plus the install in flight (real bytes). */
+export type ModelsStatus = {
+  rows: ModelInfo[];
+  install: { id: string; done: number; total: number; error?: string | null } | null;
+};
 
 /** The decision model's states: what the DECIDER node and the Settings card say. */
 export type DeciderState = 'off' | 'not_installed' | 'installing' | 'no_gpu' | 'no_vram' | 'ready' | 'loading' | 'running' | 'error';

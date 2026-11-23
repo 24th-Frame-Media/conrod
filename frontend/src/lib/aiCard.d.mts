@@ -91,7 +91,14 @@ export const SERVICE_TYPES: Record<string, ServiceTypeDef>;
 export const ADD_ORDER: readonly string[];
 export const ADD_DESC: Record<string, string>;
 export const THINK_HINT: string;
-export const BUILTIN: { name: string; tag: string; note: string; models: readonly ServiceModel[] };
+export const BUILTIN: { name: string; tag: string; note: string; models: readonly (ServiceModel & { role: string; group: string; dl?: string; assets?: readonly string[] | null })[] };
+/** The engine row id each built-in card row reads (stable, never a name search). */
+export const BUILTIN_ROW_ID: Record<string, string>;
+export type BuiltinRowState = { downloaded: boolean; on: boolean; available: boolean };
+/** Built-in row states from the engine's live model rows + the use_decider setting. */
+export function builtinRowStates(models?: readonly Record<string, unknown>[], useDecider?: boolean): Record<string, BuiltinRowState>;
+/** Honest download progress: real byte totals, indeterminate only when unknown. */
+export function downloadProgress(done: number, total: number): { known: boolean; pct: number | null; label: string };
 export const SHARING: readonly SharingOption[];
 export const SHARING_HINT: string;
 export const PRICE_BY_ID: Record<string, { pM: number; cM: number }>;

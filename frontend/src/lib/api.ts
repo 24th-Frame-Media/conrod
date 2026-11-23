@@ -69,8 +69,11 @@ export const engine = {
   cancelOperation: (key: string) => call('cancel_operation', { key }),
   deciderStatus: () => call<import('./types').DeciderStatus>('decider_status'),
   installDecider: () => call('install_decider'),
-  /** The Setup / model-manifest installer (InstallModels -> install_missing). */
-  installModels: () => call('install_models'),
+  /** Live local-model rows + the install in flight (real bytes), re-read from disk. */
+  modelsStatus: () => call<import('./types').ModelsStatus>('models_status'),
+  /** The model installer. No ids = everything missing (Setup card); named ids
+   *  install exactly those assets (a built-in row's Download button). */
+  installModels: (ids?: string[]) => call('install_models', ids && ids.length ? { ids } : {}),
   saveSettings: (settings: Settings) => call<Settings>('save_settings', settings),
   workerLimits: () => call<import('./types').WorkerLimits>('worker_limits'),
   known: () => call<KnownVehicle[]>('known'),

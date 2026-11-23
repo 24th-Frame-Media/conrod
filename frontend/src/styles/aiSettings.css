@@ -186,6 +186,22 @@
   animation: mo-spin .7s linear infinite;
 }
 @keyframes mo-spin { to { transform: rotate(360deg); } }
+/* Real byte progress while a download runs (indeterminate only when unknown). */
+.ai-settings .mo-progress {
+  margin: 6px 0 0 47px; height: 4px; border-radius: 999px;
+  background: var(--surface-3); overflow: hidden;
+}
+.ai-settings .mo-progress > span {
+  display: block; height: 100%; border-radius: 999px;
+  background: var(--good); transition: width .4s var(--ease);
+}
+/* A plain-language install failure stays on the row, with Retry. */
+.ai-settings .mo-fail { color: var(--bad); font-size: 11px; line-height: 1.4; margin: 5px 0 0 47px; }
+/* No pinned source: an honest dead end, not a Download button. */
+.ai-settings .mo-na {
+  flex: none; font-size: 10.5px; color: var(--text-mute);
+  border: 1px dashed var(--line); border-radius: 6px; padding: 3px 8px;
+}
 
 /* ---- toggle switch ---- */
 .ai-settings .switch {
