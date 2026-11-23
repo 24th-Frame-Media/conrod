@@ -42,6 +42,17 @@ pub fn rerun_stage(
     full: bool,
     scope: Option<&str>,
 ) -> Result<Value> {
+    rerun_stage_only(d, job, stage, full, scope, None)
+}
+
+pub fn rerun_stage_only(
+    d: &Arc<Desktop>,
+    job: i64,
+    stage: RerunStage,
+    full: bool,
+    scope: Option<&str>,
+    only_stage: Option<&'static str>,
+) -> Result<Value> {
     require_job(d, job)?;
     let status = d.status();
     if !status["activeJob"].is_null() {
@@ -69,11 +80,21 @@ pub fn rerun_stage(
         RerunStage::Detect => rerun_detect(d, job, cfg),
         RerunStage::Rate => rerun_rate(d, job, cfg),
         // The existing identify run: incremental by default (only the subjects
-        // nobody has read), `full` reads every unaccepted subject again.
-        RerunStage::Identify => {
-            crate::operations::identify_with_kind(d, job, scope, !full, &format!("{KIND} identify"))
+        // nobody has read), `full` reads every unaccepted subject again. When
+        // `only_stage` is set (`identify:ocr` or `identify:vision`), only that
+        // sub-stage runs.
+        RerunStage::Identify => crate::operations::identify_stage(
+            d,
+            job,
+            scope,
+            !full,
+            &format!("{KIND} identify"),
+            only_stage,
+        ),
+        RerunStage::Moments => {
+            let rejudge = only_stage.is_none() || full;
+            rerun_moments(d, job, cfg, rejudge)
         }
-        RerunStage::Moments => rerun_moments(d, job, cfg),
         RerunStage::Pick => rerun_pick(d, job, cfg),
     }
 }
@@ -97,16 +118,18 @@ fn rerun_rate(d: &Arc<Desktop>, job: i64, cfg: Settings) -> Result<Value> {
 }
 
 /// `moments`: ask the judge again about every keeper frame (or every frame in the
-/// everything scope), judged or not, then re-pick so the new decisions rank. A
-/// failed answer leaves a frame's old verdict in place. Returns the counts the
-/// screen toasts.
-fn rerun_moments(d: &Arc<Desktop>, job: i64, cfg: Settings) -> Result<Value> {
+/// everything scope), then re-pick so the new decisions rank. A full `moments`
+/// rerun rejudges every frame (`rejudge = true`), while a per-stage
+/// `identify:decision` rerun respects `full` (incremental by default). A failed
+/// answer leaves a frame's old verdict in place. Returns the counts the screen
+/// toasts.
+fn rerun_moments(d: &Arc<Desktop>, job: i64, cfg: Settings, rejudge: bool) -> Result<Value> {
     let lanes = cfg.lanes();
     let scope = crate::operations::run_scope(&cfg.identify_scope, None);
     launch(d, job, &format!("{KIND} moments"), move |d, stop, task| {
         // A rejudge is a new decision pass: its own frames and answers.
         crate::decider::service().begin_run();
-        let judged = crate::moments::run(d, job, stop, task, &cfg, &lanes, scope, true)?;
+        let judged = crate::moments::run(d, job, stop, task, &cfg, &lanes, scope, rejudge)?;
         if stop.load(Ordering::Relaxed) {
             return Ok(());
         }

@@ -334,12 +334,6 @@ struct Run<'a> {
     /// How often each number was read in each burst, for the tiebreak that
     /// settles two equally prominent panels. Keyed by `images.burst_key`.
     burst_numbers: Mutex<HashMap<i64, HashMap<String, u32>>>,
-    /// The resolved type's guidance, only for an `auto` album that accepted a
-    /// suggestion; `None` keeps the long-standing prompt.
-    prompt_context: Option<&'a str>,
-    /// Settings folded with the resolved shoot type: the vision stage's reader
-    /// flags and prompts come from these, while OCR uses the album's own.
-    vision_settings: &'a Settings,
     /// The album's stage controls: pause parks between asks, never inside one.
     control: &'a crate::stage_control::StageControl,
     /// The run's stop flag, so a park is released by a Stop.
@@ -371,7 +365,7 @@ impl Run<'_> {
             p.busy(IDENTIFY_OCR, lane, stage, step, file);
         }
         self.task.paused(false);
-        go
+        go && !self.control.is_skipped(stage)
     }
 
     /// Say which file this worker is on.
@@ -399,12 +393,14 @@ impl Run<'_> {
     /// text once, store the partial reading, and hand the pass to the vision
     /// stage. The wavelet is not asked and read_at waits for the vision stage
     /// (or for this stage when vision is off).
+    #[allow(clippy::too_many_arguments)]
     fn ocr_frame(
         &self,
         rows: &[Value],
         readers: &mut Readers,
         lane: usize,
         mark_read: bool,
+        advance_task: bool,
         passes: &Mutex<HashMap<i64, analyze::OcrPass>>,
     ) -> Result<()> {
         let s = self.settings;
@@ -416,7 +412,7 @@ impl Run<'_> {
         }
         for _ in 0..(rows.len() - wanted.len()) {
             self.stage_advance(IDENTIFY_OCR, 1);
-            if mark_read {
+            if advance_task {
                 self.task_advance(1);
             }
         }
@@ -440,7 +436,7 @@ impl Run<'_> {
             let id = row["id"].as_i64().ok_or("Invalid detection")?;
             if !ml_eligible(self.d, id)? {
                 self.stage_advance(IDENTIFY_OCR, 1);
-                if mark_read {
+                if advance_task {
                     self.task_advance(1);
                 }
                 continue;
@@ -463,7 +459,7 @@ impl Run<'_> {
                     live.finish_error(id, message);
                 }
                 self.stage_advance(IDENTIFY_OCR, 1);
-                if mark_read {
+                if advance_task {
                     self.task_advance(1);
                 }
                 continue;
@@ -484,7 +480,7 @@ impl Run<'_> {
                 plates: self.plates,
                 known: self.known,
                 seen_numbers: &seen_numbers,
-                prompt_context: self.prompt_context,
+                prompt_context: None,
             };
             let pass = analyze::read_ocr(&crop, native, kind, kind == "motorcycle", &ctx, readers)?;
             for failure in &pass.failures {
@@ -533,7 +529,7 @@ impl Run<'_> {
                 .map_err(err)?;
             lock(passes).insert(id, pass);
             self.stage_advance(IDENTIFY_OCR, 1);
-            if mark_read {
+            if advance_task {
                 self.task_advance(1);
             }
         }
@@ -544,15 +540,18 @@ impl Run<'_> {
     /// with the model's read, resolve the number at the end of the stage, and
     /// write the final reading. The live re-read guard is the `reviewed=0`
     /// condition on the one write; a hand-set reading is never overwritten.
+    #[allow(clippy::too_many_arguments)]
     fn vision_frame(
         &self,
         rows: &[Value],
+        vision_settings: &Settings,
+        prompt_context: Option<&str>,
         readers: &mut Readers,
         embedder: &mut Option<similarity::Embedder>,
         lane: usize,
         passes: &Mutex<HashMap<i64, analyze::OcrPass>>,
     ) -> Result<()> {
-        let s = self.vision_settings;
+        let s = vision_settings;
         let mut wanted = Vec::new();
         for row in rows {
             if ml_eligible(self.d, row["id"].as_i64().ok_or("Invalid detection")?)? {
@@ -634,7 +633,7 @@ impl Run<'_> {
                 plates: self.plates,
                 known: self.known,
                 seen_numbers: &seen_numbers,
-                prompt_context: self.prompt_context,
+                prompt_context,
             };
             let outcome = analyze::read_vision(
                 &crop,
@@ -761,6 +760,7 @@ pub(crate) fn identify_setting_key(key: &str) -> bool {
             | "include_people"
             | "use_vlm"
             | "identify_ocr"
+            | "identify_decision"
             | "scan_profile"
             | "identify_scope"
     )
@@ -826,6 +826,20 @@ pub(crate) fn identify_with_kind(
     only_new: bool,
     kind: &str,
 ) -> Result<Value> {
+    identify_stage(d, job, scope, only_new, kind, None)
+}
+
+/// [`identify_with_kind`], optionally restricted to a single identify sub-stage
+/// (`IDENTIFY_OCR` or `IDENTIFY_VISION`) for per-stage reruns. `None` runs all
+/// enabled stages in order: OCR -> Decision -> Vision.
+pub(crate) fn identify_stage(
+    d: &Arc<Desktop>,
+    job: i64,
+    scope: Option<&str>,
+    only_new: bool,
+    kind: &str,
+    only_stage: Option<&'static str>,
+) -> Result<Value> {
     let settings = settings(d, job)?;
     let vision_off = vision_off(d, job)?;
     // The photographer's per-stage controls: a skipped stage does not run even
@@ -834,7 +848,7 @@ pub(crate) fn identify_with_kind(
     let lanes = settings.lanes();
     let finds_faces = lanes.names;
     // The card: whether the decision model and a local vision model can be
-    // resident at once (plan ┬º5). The fit check never blocks: a card that holds
+    // resident at once (plan §5). The fit check never blocks: a card that holds
     // one runs the stages serially by stage, each model released before the
     // next loads; the album's seats shape the workers within each stage.
     let card = crate::vram_fit::plan(&settings);
@@ -842,7 +856,13 @@ pub(crate) fn identify_with_kind(
     let iosettings = IoSettings::from_core(&settings);
     // Serial card: the Decision stage needs the whole card, so release any
     // vision model an earlier run left resident before the decider loads.
-    if card.mode == crate::vram_fit::Mode::Serial && card.both_local() {
+    if card.mode == crate::vram_fit::Mode::Serial
+        && card.both_local()
+        && settings.identify_decision
+        && lanes.moments_detect
+        && only_stage.is_none()
+        && !control.is_skipped(IDENTIFY_DECISION)
+    {
         vlm::release_local_models(&iosettings);
     }
     if !lanes.identifies() && !finds_faces && !lanes.moments_detect {
@@ -863,6 +883,9 @@ pub(crate) fn identify_with_kind(
             return Ok(());
         }
         if !lanes.identifies() {
+            if only_stage.is_some() {
+                return Ok(());
+            }
             if lanes.names {
                 let faces = crate::passes::embed_faces_missing(d, job, stop, task)?;
                 task.detail(format!("Prepared {faces} faces for name suggestions"));
@@ -873,7 +896,10 @@ pub(crate) fn identify_with_kind(
                 p.skip_stage(IDENTIFY_DECISION);
             }
             // No vehicles to read, but the shoot may still have moments to judge.
-            if lanes.moments_detect && !control.is_skipped(IDENTIFY_DECISION) {
+            if settings.identify_decision
+                && lanes.moments_detect
+                && !control.is_skipped(IDENTIFY_DECISION)
+            {
                 let progress = d.progress();
                 if let Some(p) = &progress {
                     p.phase(IDENTIFY_DECISION);
@@ -891,11 +917,20 @@ pub(crate) fn identify_with_kind(
                 )?;
                 if let Some(p) = &progress {
                     match judged {
-                        Some(_) => p.finish_stage(IDENTIFY_DECISION),
+                        Some(_) if control.is_skipped(IDENTIFY_DECISION) => {
+                            p.skip_stage(IDENTIFY_DECISION);
+                        }
+                        Some(_) if !stop.load(Ordering::Relaxed) => {
+                            p.finish_stage(IDENTIFY_DECISION)
+                        }
+                        Some(_) => {}
                         None => p.skip_stage(IDENTIFY_DECISION),
                     }
                 }
-                if judged.unwrap_or(0) > 0 {
+                if judged.unwrap_or(0) > 0
+                    && !stop.load(Ordering::Relaxed)
+                    && !control.is_skipped(IDENTIFY_DECISION)
+                {
                     pick_keepers_controlled(d, job, stop, &control)?;
                 }
             }
@@ -913,15 +948,17 @@ pub(crate) fn identify_with_kind(
             &pending_detections(region, eligibility, only_new),
             [job],
         )?;
-        // The vision stage reads with the resolved type: an `auto` album whose
-        // suggestion was accepted uses that type's prompts; a typed album keeps
-        // its own. Nothing is applied silently.
-        let (vision_settings, prompt_context) = resolved_vision_settings(d, job, &settings);
         let ocr_on = settings.identify_ocr
             && (settings.read_plates || settings.read_numbers || settings.read_text)
+            && matches!(only_stage, None | Some(IDENTIFY_OCR))
             && !control.is_skipped(IDENTIFY_OCR);
-        let decision_on = lanes.moments_detect && !control.is_skipped(IDENTIFY_DECISION);
-        let vision_on = vision_off.is_none() && !control.is_skipped(IDENTIFY_VISION);
+        let decision_on = settings.identify_decision
+            && lanes.moments_detect
+            && only_stage.is_none()
+            && !control.is_skipped(IDENTIFY_DECISION);
+        let vision_on = vision_off.is_none()
+            && matches!(only_stage, None | Some(IDENTIFY_VISION))
+            && !control.is_skipped(IDENTIFY_VISION);
         // The live feed the identify screen draws, replaced by the next run and
         // kept after this one so its summary stays on screen. The guard ends an
         // early return (`?`) as an error rather than leaving the feed running.
@@ -932,12 +969,12 @@ pub(crate) fn identify_with_kind(
         // comes from the enabled service, never the old fallback fields.
         match vision_off {
             Some(reason) => live.set_vision_off(reason.word()),
-            None => live.set_model(&vision_settings.vision_model()),
+            None => live.set_model(&settings.vision_model()),
         }
         *lock(&d.identify) = Some(live.clone());
         let mut end = LiveRun(live.clone());
         if pending.is_empty() {
-            if lanes.names {
+            if lanes.names && only_stage.is_none() {
                 crate::passes::embed_faces_missing(d, job, stop, task)?;
             }
             task.detail(if scope == conrod_core::settings::IDENTIFY_EVERYTHING {
@@ -949,9 +986,11 @@ pub(crate) fn identify_with_kind(
             if let Some(p) = &progress {
                 p.skip_stage(IDENTIFY_OCR);
                 p.skip_stage(IDENTIFY_VISION);
-                p.phase(IDENTIFY_DECISION);
             }
-            if decision_on {
+            if decision_on && !stop.load(Ordering::Relaxed) {
+                if let Some(p) = &progress {
+                    p.phase(IDENTIFY_DECISION);
+                }
                 let judged = crate::moments::run_decision(
                     d,
                     job,
@@ -965,33 +1004,48 @@ pub(crate) fn identify_with_kind(
                 )?;
                 if let Some(p) = &progress {
                     match judged {
-                        Some(_) => p.finish_stage(IDENTIFY_DECISION),
+                        Some(_) if control.is_skipped(IDENTIFY_DECISION) => {
+                            p.skip_stage(IDENTIFY_DECISION);
+                        }
+                        Some(_) if !stop.load(Ordering::Relaxed) => {
+                            p.finish_stage(IDENTIFY_DECISION)
+                        }
+                        Some(_) => {}
                         None => p.skip_stage(IDENTIFY_DECISION),
                     }
                 }
-                if judged.unwrap_or(0) > 0 {
+                if judged.unwrap_or(0) > 0
+                    && !stop.load(Ordering::Relaxed)
+                    && !control.is_skipped(IDENTIFY_DECISION)
+                {
                     pick_keepers_controlled(d, job, stop, &control)?;
                 }
             } else if let Some(p) = &progress {
                 p.skip_stage(IDENTIFY_DECISION);
             }
-            note_identify_stale(d, job, false);
-            end.finish("done");
+            if only_stage.is_none() && !stop.load(Ordering::Relaxed) {
+                note_identify_stale(d, job, false);
+            }
+            end.finish(if stop.load(Ordering::Relaxed) {
+                "stopped"
+            } else {
+                "done"
+            });
             return Ok(());
         }
         let reads_text = settings.read_plates || settings.read_numbers || settings.read_text;
         let mut needs: Vec<&str> = Vec::new();
-        if settings.read_plates {
+        if ocr_on && settings.read_plates {
             needs.extend(setup::IDENTIFY_PLATES);
         }
-        if reads_text {
+        if ocr_on && reads_text {
             needs.extend(setup::TEXT);
         }
-        if settings.group_vehicles {
+        if vision_on && settings.group_vehicles {
             needs.extend(setup::SIMILARITY);
         }
         setup::ensure(&d.hub, stop, &needs)?;
-        let ocr_engine = if reads_text {
+        let ocr_engine = if ocr_on && reads_text {
             let dir = models::ocr_dir().ok_or_else(|| {
                 format!(
                     "Missing OCR models ({} and its recogniser)",
@@ -1043,7 +1097,7 @@ pub(crate) fn identify_with_kind(
         if let Some(p) = &progress {
             let (ocr_model, ocr_device) = ocr_models(&settings);
             let (decision_model, decision_device) = decision_models(&settings);
-            let (vision_model, vision_device) = vision_models(&vision_settings);
+            let (vision_model, vision_device) = vision_models(&settings);
             p.describe(IDENTIFY_OCR, ocr_model, ocr_device);
             p.describe(IDENTIFY_DECISION, decision_model, decision_device);
             p.describe(IDENTIFY_VISION, vision_model, vision_device);
@@ -1067,8 +1121,6 @@ pub(crate) fn identify_with_kind(
             progress: progress.as_deref(),
             live: Some(&live),
             burst_numbers: Mutex::new(HashMap::new()),
-            prompt_context,
-            vision_settings: &vision_settings,
             control: &control,
             stop,
         };
@@ -1079,6 +1131,12 @@ pub(crate) fn identify_with_kind(
                 p.phase(IDENTIFY_OCR);
                 p.total(IDENTIFY_OCR, pending.len() as u64);
             }
+            // Mark `read_at` in OCR only when Vision is off/skipped for the
+            // album (so an OCR-only rerun on a Vision-enabled album leaves
+            // unread subjects available to a subsequent incremental Vision
+            // rerun). Advance the task bar whenever Vision won't run here.
+            let mark_read = vision_off.is_some() || control.is_skipped(IDENTIFY_VISION);
+            let advance_task = !vision_on;
             let (next, failure) = (AtomicUsize::new(0), Mutex::new(None));
             std::thread::scope(|s| {
                 for lane in 0..workers {
@@ -1104,7 +1162,10 @@ pub(crate) fn identify_with_kind(
                                 return;
                             }
                         };
-                        while !stop.load(Ordering::Relaxed) && lock(failure).is_none() {
+                        while !stop.load(Ordering::Relaxed)
+                            && !run.control.is_skipped(IDENTIFY_OCR)
+                            && lock(failure).is_none()
+                        {
                             let Some(frame) = frames.get(next.fetch_add(1, Ordering::Relaxed))
                             else {
                                 break;
@@ -1113,7 +1174,8 @@ pub(crate) fn identify_with_kind(
                                 &pending[frame.clone()],
                                 &mut readers,
                                 lane,
-                                !vision_on,
+                                mark_read,
+                                advance_task,
                                 passes,
                             ) {
                                 lock(failure).get_or_insert(e);
@@ -1148,15 +1210,25 @@ pub(crate) fn identify_with_kind(
             p.skip_stage(IDENTIFY_OCR);
         }
 
+        if stop.load(Ordering::Relaxed) {
+            end.finish("stopped");
+            return Ok(());
+        }
+
         // One order for every card (review decision D2): the Decision stage
         // finishes every eligible frame and burst, then the Vision stage reads
         // every subject. A serial card's handoff unloads the decision model and
         // releases the vision host between them, so the two never share the
         // card; a concurrent card goes straight on with both allowed resident.
-        let (decision_stage, vision_stage) = crate::vram_fit::run_in_order(
+        let stage_run = crate::vram_fit::try_run_in_order(
             card.mode,
+            stop,
             || -> Result<()> {
-                if decision_on {
+                let decision_now = settings.identify_decision
+                    && lanes.moments_detect
+                    && only_stage.is_none()
+                    && !control.is_skipped(IDENTIFY_DECISION);
+                if decision_now {
                     if let Some(p) = &progress {
                         p.phase(IDENTIFY_DECISION);
                     }
@@ -1194,23 +1266,38 @@ pub(crate) fn identify_with_kind(
                 Ok(())
             },
             || {
+                let vision_now = vision_off.is_none()
+                    && matches!(only_stage, None | Some(IDENTIFY_VISION))
+                    && !control.is_skipped(IDENTIFY_VISION);
                 // Only a handoff into a stage that will run is worth the
                 // unload: a skipped Vision stage leaves the decider for the
                 // next album, and its idle timer still frees the card.
-                if vision_on {
+                if vision_now {
                     crate::decider::service().unload();
-                    vlm::release_local_models(&IoSettings::from_core(&vision_settings));
+                    vlm::release_local_models(&iosettings);
                 }
             },
             || -> Result<()> {
                 // --- Identify: Vision -------------------------------------------------
-                if vision_on {
+                let vision_now = vision_off.is_none()
+                    && matches!(only_stage, None | Some(IDENTIFY_VISION))
+                    && !control.is_skipped(IDENTIFY_VISION);
+                if vision_now {
+                    // The vision stage reads with the freshly resolved type:
+                    // an `auto` album whose suggestion was accepted during
+                    // Decision uses that type's prompts right away; a typed
+                    // album keeps its own. Nothing is applied silently.
+                    let (vision_settings, prompt_context) =
+                        resolved_vision_settings(d, job, &settings);
+                    live.set_model(&vision_settings.vision_model());
                     // A serial card's handoff guard: while the vision stage holds the
                     // card, any in-process model call (the decider now, in-process
                     // vision when phase V lands) waits for this stage rather than
                     // loading beside it.
                     let _gpu = (card.mode == crate::vram_fit::Mode::Serial).then(crate::gpu::stage);
                     if let Some(p) = &progress {
+                        let (vision_model, vision_device) = vision_models(&vision_settings);
+                        p.describe(IDENTIFY_VISION, vision_model, vision_device);
                         p.phase(IDENTIFY_VISION);
                         p.total(IDENTIFY_VISION, pending.len() as u64);
                     }
@@ -1248,7 +1335,10 @@ pub(crate) fn identify_with_kind(
                                     Some(Ok(e)) => Some(e),
                                     None => None,
                                 };
-                                while !stop.load(Ordering::Relaxed) && lock(failure).is_none() {
+                                while !stop.load(Ordering::Relaxed)
+                                    && !run.control.is_skipped(IDENTIFY_VISION)
+                                    && lock(failure).is_none()
+                                {
                                     let Some(frame) =
                                         frames.get(next.fetch_add(1, Ordering::Relaxed))
                                     else {
@@ -1256,6 +1346,8 @@ pub(crate) fn identify_with_kind(
                                     };
                                     if let Err(e) = run.vision_frame(
                                         &pending[frame.clone()],
+                                        vision_settings,
+                                        prompt_context,
                                         &mut readers,
                                         &mut embedder,
                                         lane,
@@ -1294,48 +1386,46 @@ pub(crate) fn identify_with_kind(
                 Ok(())
             },
         );
-        if let Err(e) = decision_stage {
-            end.finish("error");
-            return Err(e);
-        }
-        if let Err(e) = vision_stage {
+        if let Err(e) = stage_run {
             end.finish("error");
             return Err(e);
         }
 
         if !stop.load(Ordering::Relaxed) {
-            if lanes.names {
-                crate::passes::embed_faces_missing(d, job, stop, task)?;
-            }
-            // Grouping is one whole-album pass: its pause and skip act at its
-            // edge, before any burst is re-keyed.
-            if control.is_skipped("group") {
+            if only_stage.is_none() {
+                if lanes.names {
+                    crate::passes::embed_faces_missing(d, job, stop, task)?;
+                }
+                // Grouping is one whole-album pass: its pause and skip act at its
+                // edge, before any burst is re-keyed.
+                if control.is_skipped("group") {
+                    if let Some(p) = &progress {
+                        p.skip_stage("group");
+                    }
+                } else {
+                    if let Some(p) = &progress {
+                        p.phase("group");
+                    }
+                    if control.park_with("group", stop, progress.as_deref()) {
+                        task.detail("Grouping similar vehicles");
+                        crate::passes::consolidate(d, job, task)?;
+                        task.detail("Finding re-shot frames");
+                        crate::passes::near_duplicates(d, job, stop)?;
+                    }
+                }
+                // The cross-album registry is not grouping: it is filled even when
+                // the photographer kept the seed units.
+                crate::catalog::seed(d, Some(job))?;
+                // Groups are now known, so the keeper of each pass can be chosen
+                // properly: the one-shot scan ends on this stage.
                 if let Some(p) = &progress {
-                    p.skip_stage("group");
+                    p.phase("pick");
                 }
-            } else {
-                if let Some(p) = &progress {
-                    p.phase("group");
-                }
-                if control.park_with("group", stop, progress.as_deref()) {
-                    task.detail("Grouping similar vehicles");
-                    crate::passes::consolidate(d, job, task)?;
-                    task.detail("Finding re-shot frames");
-                    crate::passes::near_duplicates(d, job, stop)?;
-                }
+                // Moments were joined above, while the cars were read, so the pick ranks on them.
+                task.detail("Picking keepers");
+                pick_keepers_controlled(d, job, stop, &control)?;
+                note_identify_stale(d, job, false);
             }
-            // The cross-album registry is not grouping: it is filled even when
-            // the photographer kept the seed units.
-            crate::catalog::seed(d, Some(job))?;
-            // Groups are now known, so the keeper of each pass can be chosen
-            // properly: the one-shot scan ends on this stage.
-            if let Some(p) = &progress {
-                p.phase("pick");
-            }
-            // Moments were joined above, while the cars were read, so the pick ranks on them.
-            task.detail("Picking keepers");
-            pick_keepers_controlled(d, job, stop, &control)?;
-            note_identify_stale(d, job, false);
             end.finish("done");
         } else {
             end.finish("stopped");
@@ -2176,5 +2266,38 @@ mod tests {
             !suggestion_stands(lib.d(), lib.job, &frames[2]).unwrap(),
             "the hand pick takes over its burst's suggestion too"
         );
+    }
+
+    #[test]
+    fn accepting_a_type_suggestion_mid_run_reaches_vision_resolution() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("mid-run-accept-type");
+        lib.sql(
+            "UPDATE jobs SET settings_json='{\"scan_profile\":\"auto\"}', shoot_type_suggested='sport-rodeo', shoot_type_confidence=0.88 WHERE id=?",
+            [lib.job],
+        );
+        // Snapshot the album settings as identify_stage does when it launches,
+        // before OCR or Decision runs.
+        let started_settings = settings(lib.d(), lib.job).unwrap();
+        let (before, ctx_before) = resolved_vision_settings(lib.d(), lib.job, &started_settings);
+        assert_eq!(before.scan_profile, "auto");
+        assert_eq!(ctx_before, None);
+
+        // Photographer accepts the suggestion mid-run (after Decision, before
+        // Vision resolves its settings).
+        let out = lib
+            .run(
+                "accept_type_suggestion",
+                json!({"jobId": lib.job, "type": "sport-rodeo"}),
+            )
+            .unwrap();
+        assert_eq!(out["accepted"], true);
+
+        // Vision resolves freshly against the same run-start settings and sees
+        // the accepted preset and its prompt guidance immediately.
+        let (after, ctx_after) = resolved_vision_settings(lib.d(), lib.job, &started_settings);
+        assert_eq!(after.scan_profile, "sport-rodeo");
+        assert_eq!(ctx_after, Some(ShootPreset::SportRodeo.prompt_context()));
+        assert!(identify_setting_key("identify_decision"));
     }
 }

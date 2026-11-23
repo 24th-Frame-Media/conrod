@@ -258,6 +258,10 @@ pub(crate) fn run_decision(
     if lanes.moments().is_empty() {
         return Ok(None);
     }
+    let control = d.stage_control(job);
+    if stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
+        return Ok(Some(0));
+    }
     let vlm_judge = cfg.use_vlm.then(|| {
         (
             vlm::VlmClient::new(Arc::new(vlm::RealClock::default())),
@@ -272,6 +276,9 @@ pub(crate) fn run_decision(
         }
     };
     run_type_round(d, job, stop, task, cfg, lanes, judge.as_ref(), progress)?;
+    if stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
+        return Ok(Some(0));
+    }
     let judged = run_with(
         d,
         job,
@@ -306,6 +313,10 @@ fn run_with(
     judge: &dyn MomentJudge,
     progress: Option<&crate::progress::Progress>,
 ) -> Result<usize> {
+    let control = d.stage_control(job);
+    if stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
+        return Ok(0);
+    }
     let vocab: &[Moment] = lanes.moments();
     let everything = scope == settings::IDENTIFY_EVERYTHING;
     let frames = pending(d, job, everything, rejudge)?;
@@ -328,14 +339,13 @@ fn run_with(
         feed.begin_phase(MOMENTS_PHASE, frames.len());
     }
     let (next, judged) = (AtomicUsize::new(0), AtomicUsize::new(0));
-    let control = d.stage_control(job);
     // The album's decision seats (both models local) or today's identify count;
     // the decision model answers one request at a time, so these are queues.
     let workers = seats.clamp(1, 4).min(frames.len().max(1));
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| loop {
-                if stop.load(Ordering::Relaxed) {
+                if stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
                     break;
                 }
                 let Some(frame) = frames.get(next.fetch_add(1, Ordering::Relaxed)) else {
@@ -343,7 +353,9 @@ fn run_with(
                 };
                 // Between asks: a paused Decision stage parks here, so the call
                 // already in flight finishes and the worker then holds.
-                if !control.park_with(IDENTIFY_DECISION, stop, progress) {
+                if !control.park_with(IDENTIFY_DECISION, stop, progress)
+                    || control.is_skipped(IDENTIFY_DECISION)
+                {
                     break;
                 }
                 let id = frame["id"].as_i64().unwrap_or_default();
@@ -389,7 +401,10 @@ fn run_with(
             });
         }
     });
-    let ranked = if lanes.moments_rank && !stop.load(Ordering::Relaxed) {
+    let ranked = if lanes.moments_rank
+        && !stop.load(Ordering::Relaxed)
+        && !control.is_skipped(IDENTIFY_DECISION)
+    {
         peaks(
             d,
             job,
@@ -435,6 +450,10 @@ pub(crate) fn run_type_round(
     if vocab.is_empty() {
         return Ok(None);
     }
+    let control = d.stage_control(job);
+    if stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
+        return Ok(None);
+    }
     let frames = rows(
         &lock(&d.reader),
         "SELECT i.id,i.burst_key,i.path,i.preview_path,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.burst_key IS NOT NULL AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 AND i.moments IS NULL ORDER BY i.burst_key,i.id",
@@ -472,15 +491,16 @@ pub(crate) fn run_type_round(
         feed.begin_phase(MOMENTS_PHASE, total);
     }
     let context = lanes.preset.prompt_context();
-    let control = d.stage_control(job);
     let mut done = 0usize;
     for members in &sampled {
         for frame in members {
-            if stop.load(Ordering::Relaxed) {
+            if stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
                 break;
             }
             // Between asks: the pause takes effect here, never inside a call.
-            if !control.park_with(IDENTIFY_DECISION, stop, progress) {
+            if !control.park_with(IDENTIFY_DECISION, stop, progress)
+                || control.is_skipped(IDENTIFY_DECISION)
+            {
                 break;
             }
             let id = frame["id"].as_i64().unwrap_or_default();
@@ -514,7 +534,7 @@ pub(crate) fn run_type_round(
                 feed.phase_progress(done);
             }
         }
-        if stop.load(Ordering::Relaxed) {
+        if stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
             break;
         }
     }
@@ -541,7 +561,8 @@ fn auto_type_round(
         "SELECT i.id,i.path,i.preview_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 ORDER BY i.id",
         [job],
     )?;
-    if frames.is_empty() || stop.load(Ordering::Relaxed) {
+    let control = d.stage_control(job);
+    if frames.is_empty() || stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
         return Ok(None);
     }
     let step = frames.len().div_ceil(TYPE_SAMPLE);
@@ -551,13 +572,15 @@ fn auto_type_round(
         .take(TYPE_SAMPLE)
         .collect();
     let mut images = Vec::new();
-    if !d
-        .stage_control(job)
-        .park_with(IDENTIFY_DECISION, stop, progress)
+    if !control.park_with(IDENTIFY_DECISION, stop, progress)
+        || control.is_skipped(IDENTIFY_DECISION)
     {
         return Ok(None);
     }
     for frame in &chosen {
+        if stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
+            return Ok(None);
+        }
         let Ok(image) = picture(
             frame["preview_path"].as_str(),
             frame["path"].as_str().unwrap_or_default(),
@@ -566,7 +589,7 @@ fn auto_type_round(
         };
         images.push(data_url(&image, PEAK_EDGE));
     }
-    if images.is_empty() {
+    if images.is_empty() || stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
         return Ok(None);
     }
     if let Some(p) = progress {
@@ -670,6 +693,10 @@ fn peaks(
     feed: Option<&IdentifyLive>,
     progress: Option<&crate::progress::Progress>,
 ) -> Result<()> {
+    let control = d.stage_control(job);
+    if stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
+        return Ok(());
+    }
     let frames = rows(
         &lock(&d.reader),
         "SELECT i.id,i.path,i.preview_path,i.burst_key,i.moments FROM images i WHERE i.job_id=? AND i.burst_key IS NOT NULL AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 ORDER BY i.burst_key,i.id",
@@ -696,14 +723,15 @@ fn peaks(
         feed.begin_phase(PEAKS_PHASE, total);
     }
     task.progress(0, total as u64);
-    let control = d.stage_control(job);
     for (i, members) in bursts.iter().enumerate() {
-        if stop.load(Ordering::Relaxed) {
+        if stop.load(Ordering::Relaxed) || control.is_skipped(IDENTIFY_DECISION) {
             break;
         }
         // Between asks: a paused Decision stage parks before comparing the next
         // burst; a judged burst was never planned.
-        if !control.park_with(IDENTIFY_DECISION, stop, progress) {
+        if !control.park_with(IDENTIFY_DECISION, stop, progress)
+            || control.is_skipped(IDENTIFY_DECISION)
+        {
             break;
         }
         task.progress(i as u64, total as u64);
@@ -1368,5 +1396,153 @@ mod tests {
             .decide("IMG_1", None, &request)
             .unwrap_err();
         assert!(err.contains("turned off"), "{err}");
+    }
+
+    #[test]
+    fn skipping_decision_stops_type_round_moments_and_peaks_without_asking_the_judge() {
+        use crate::testkit::Lib;
+        use conrod_core::profile::{Lanes, Overrides};
+
+        struct CountingJudge {
+            asked: AtomicUsize,
+            skip_after_first: Option<Arc<crate::stage_control::StageControl>>,
+        }
+        impl MomentJudge for CountingJudge {
+            fn name(&self) -> &'static str {
+                "fake"
+            }
+            fn judge(
+                &self,
+                _context: &str,
+                _vocab: &[Moment],
+                _image: &str,
+            ) -> std::result::Result<MomentVerdict, String> {
+                self.asked.fetch_add(1, Ordering::Relaxed);
+                if let Some(control) = &self.skip_after_first {
+                    control.set_skipped(IDENTIFY_DECISION, true);
+                }
+                Ok(MomentVerdict::default())
+            }
+            fn choose(
+                &self,
+                _context: &str,
+                _options: &[(&str, &str)],
+                _images: &[String],
+            ) -> std::result::Result<Option<(String, f64)>, String> {
+                self.asked.fetch_add(1, Ordering::Relaxed);
+                Ok(Some(("motorsport".into(), 0.9)))
+            }
+            fn peak(
+                &self,
+                _context: &str,
+                images: &[String],
+            ) -> std::result::Result<Option<Vec<f64>>, String> {
+                self.asked.fetch_add(1, Ordering::Relaxed);
+                Ok(Some(vec![0.9; images.len()]))
+            }
+        }
+
+        let lib = Lib::new("decision-skip");
+        let shot = preview(&lib, "shot.jpg");
+        for (name, burst) in [
+            ("a1.jpg", 1),
+            ("a2.jpg", 1),
+            ("a3.jpg", 1),
+            ("b1.jpg", 2),
+            ("b2.jpg", 2),
+        ] {
+            let id = lib.frame(name, Some(burst));
+            lib.sql(
+                "UPDATE images SET preview_path=?, burst_pick=1 WHERE id=?",
+                rusqlite::params![shot, id],
+            );
+        }
+        let control = lib.d().stage_control(lib.job);
+        control.set_skipped(IDENTIFY_DECISION, true);
+
+        let cfg = Settings::default();
+        let motorsport = Lanes::resolve(ShootPreset::Motorsport, false, &Overrides::default());
+        let auto = Lanes::resolve(ShootPreset::Auto, false, &Overrides::default());
+        let task = lib.d().hub.start("Judging moments", 0);
+        let stop = AtomicBool::new(false);
+        let judge = CountingJudge {
+            asked: AtomicUsize::new(0),
+            skip_after_first: None,
+        };
+
+        assert!(run_type_round(
+            lib.d(),
+            lib.job,
+            &stop,
+            &task,
+            &cfg,
+            &motorsport,
+            &judge,
+            None,
+        )
+        .unwrap()
+        .is_none());
+        assert!(
+            run_type_round(lib.d(), lib.job, &stop, &task, &cfg, &auto, &judge, None,)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            run_with(
+                lib.d(),
+                lib.job,
+                &stop,
+                &task,
+                &cfg,
+                &motorsport,
+                "keepers",
+                false,
+                1,
+                &judge,
+                None,
+            )
+            .unwrap(),
+            0
+        );
+        peaks(
+            lib.d(),
+            lib.job,
+            &stop,
+            &task,
+            &judge,
+            "Motorsport.",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            judge.asked.load(Ordering::Relaxed),
+            0,
+            "a skipped Decision stage never asks the judge"
+        );
+
+        // Live skip between asks: after the first frame in run_type_round sets
+        // skip, the remaining sampled frames are not asked.
+        control.set_skipped(IDENTIFY_DECISION, false);
+        let live_judge = CountingJudge {
+            asked: AtomicUsize::new(0),
+            skip_after_first: Some(control.clone()),
+        };
+        run_type_round(
+            lib.d(),
+            lib.job,
+            &stop,
+            &task,
+            &cfg,
+            &motorsport,
+            &live_judge,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            live_judge.asked.load(Ordering::Relaxed),
+            1,
+            "skipping mid-round stops at the next ask boundary"
+        );
     }
 }

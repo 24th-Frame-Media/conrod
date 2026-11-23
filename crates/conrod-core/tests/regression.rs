@@ -1279,6 +1279,7 @@ fn settings_match_snapshot() {
         m.remove("identify_vision_workers");
         m.remove("identify_decision_workers");
         m.remove("identify_ocr"); // Rust-only: the OCR stage's album toggle
+        m.remove("identify_decision"); // Rust-only: the Decision stage's album toggle
         m.remove("blur_strictness"); // Rust-only
         m.remove("entry_list"); // Rust-only
         m.remove("workflow_mode"); // Rust-only: album-level scan/identify workflow

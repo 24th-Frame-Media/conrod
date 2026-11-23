@@ -737,10 +737,18 @@ pub fn for_scan(
 ) -> Arc<Progress> {
     let cull = settings.cull_workers().clamp(1, 64) as u32;
     let identify = settings.identify_worker_count().clamp(1, 16) as u32;
+    let seats = crate::vram_fit::seats(settings);
+    let decision_w = (seats.decision as u32).clamp(1, 16);
+    let vision_w = (seats.vision as u32).clamp(1, 16);
+    let pool_w = identify
+        .max(decision_w)
+        .max(vision_w)
+        .max(settings.identify_decision_worker_count().clamp(1, 16) as u32)
+        .max(settings.identify_vision_worker_count().clamp(1, 16) as u32);
     let lanes = settings.lanes();
     let ocr_on = settings.identify_ocr
         && (settings.read_plates || settings.read_numbers || settings.read_text);
-    let decision_on = lanes.moments_detect;
+    let decision_on = settings.identify_decision && lanes.moments_detect;
     let vision_on = settings.use_vlm && lanes.asks_model() && settings.has_vision_service();
     let stage = |id: &'static str, workers: u32, on: bool| {
         if on {
@@ -755,20 +763,20 @@ pub fn for_scan(
         StageSpec::new("sharpness", cull),
         StageSpec::new("faces", if faces { cull } else { 0 }),
         stage(IDENTIFY_OCR, identify, ocr_on),
-        stage(IDENTIFY_DECISION, identify, decision_on),
-        stage(IDENTIFY_VISION, identify, vision_on),
+        stage(IDENTIFY_DECISION, decision_w, decision_on),
+        stage(IDENTIFY_VISION, vision_w, vision_on),
         StageSpec::new("group", 1),
         StageSpec::new("pick", 1),
     ];
     let pools: Vec<(&'static str, usize)> =
-        vec![("read", cull as usize), (IDENTIFY_OCR, identify as usize)];
-    // One crop's VLM time spread over the identify workers: a crop waits
+        vec![("read", cull as usize), (IDENTIFY_OCR, pool_w as usize)];
+    // One crop's VLM time spread over the vision workers: a crop waits
     // VLM_SECONDS_PER_CROP / workers before it comes back.
     Progress::with_identify_cost(
         job,
         stages,
         &pools,
-        VLM_SECONDS_PER_CROP / identify.max(1) as f64,
+        VLM_SECONDS_PER_CROP / vision_w.max(1) as f64,
     )
 }
 
@@ -1318,5 +1326,49 @@ mod tests {
             "skipped",
             "vision follows use_vlm"
         );
+    }
+
+    #[test]
+    fn for_scan_sizes_identify_pool_for_vision_seats_and_gates_decision() {
+        let settings = conrod_core::settings::Settings {
+            analysis_workers: 1,
+            identify_vision_workers: 4,
+            identify_decision_workers: 2,
+            identify_decision: false,
+            ..conrod_core::settings::Settings::default()
+        };
+        let highest = settings.identify_vision_worker_count().max(1) as usize - 1;
+        assert!(
+            highest >= settings.identify_worker_count() as usize,
+            "vision seat count should exceed analysis_workers"
+        );
+        let progress = for_scan(16, &settings, false);
+        progress.busy(
+            IDENTIFY_OCR,
+            highest,
+            IDENTIFY_VISION,
+            "vision",
+            "IMG_1.CR3",
+        );
+        let snap = progress.snapshot();
+        let lane = snap
+            .pipeline
+            .workers
+            .iter()
+            .find(|w| w.stage == IDENTIFY_VISION && w.worker_index as usize == highest)
+            .expect("highest vision worker index must have a lane in the identify pool");
+        assert_eq!(lane.state, "working");
+        assert_eq!(lane.file.as_deref(), Some("IMG_1.CR3"));
+        let decision = snap
+            .pipeline
+            .stages
+            .iter()
+            .find(|s| s.id == IDENTIFY_DECISION)
+            .unwrap();
+        assert_eq!(
+            decision.status, "skipped",
+            "identify_decision: false starts identify:decision as skipped"
+        );
+        assert_eq!(decision.workers_total, 0);
     }
 }

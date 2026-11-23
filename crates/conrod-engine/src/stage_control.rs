@@ -212,9 +212,10 @@ pub fn pause(d: &Arc<Desktop>, a: &StagePauseArgs) -> Result<Value> {
     control.set_paused(stage, paused);
     d.persist_stage_control(a.job_id, &control);
     // A cull stage has no per-stage worker loop of its own: its lanes are the
-    // scan, so pausing one holds the scan exactly as the run-level Pause does.
+    // scan, so pausing one holds the scan until every paused cull stage is
+    // resumed.
     if cull_stage(stage) {
-        d.set_scan_paused(paused);
+        d.set_scan_paused(control.cull_paused());
     }
     if let Some(progress) = d.progress().filter(|p| p.job() == a.job_id) {
         if paused {
@@ -294,17 +295,34 @@ pub fn rerun(d: &Arc<Desktop>, a: &StageRerunArgs) -> Result<Value> {
     match stage {
         "detect" => crate::rerun::rerun_stage(d, a.job_id, RerunStage::Detect, false, None),
         "sharpness" => crate::rerun::rerun_stage(d, a.job_id, RerunStage::Rate, false, None),
-        // The three identify sub-stages share the identify entry point, which
-        // is incremental by default: only subjects nobody has read are asked.
-        IDENTIFY_OCR | IDENTIFY_VISION => {
-            crate::rerun::rerun_stage(d, a.job_id, RerunStage::Identify, a.full, None)
-        }
-        // Decision is the type round plus the peak comparison: the established
-        // moments rerun judges again and leaves an already-judged burst's peak
-        // alone.
-        IDENTIFY_DECISION => {
-            crate::rerun::rerun_stage(d, a.job_id, RerunStage::Moments, false, None)
-        }
+        // Each identify sub-stage runs only itself, incremental by default
+        // (only subjects nobody has read are asked; `full` reads them again).
+        IDENTIFY_OCR => crate::rerun::rerun_stage_only(
+            d,
+            a.job_id,
+            RerunStage::Identify,
+            a.full,
+            None,
+            Some(IDENTIFY_OCR),
+        ),
+        IDENTIFY_VISION => crate::rerun::rerun_stage_only(
+            d,
+            a.job_id,
+            RerunStage::Identify,
+            a.full,
+            None,
+            Some(IDENTIFY_VISION),
+        ),
+        // Decision is the type round plus the peak comparison: incremental by
+        // default, full rejudge when `full` is set.
+        IDENTIFY_DECISION => crate::rerun::rerun_stage_only(
+            d,
+            a.job_id,
+            RerunStage::Moments,
+            a.full,
+            None,
+            Some(IDENTIFY_DECISION),
+        ),
         "group" => crate::passes::group(d, a.job_id),
         "pick" => crate::rerun::rerun_stage(d, a.job_id, RerunStage::Pick, false, None),
         "read" => {
@@ -490,5 +508,45 @@ mod tests {
             .run("stage_rerun", json!({"jobId": lib.job, "stage": "nope"}))
             .unwrap_err();
         assert!(err.contains("Unknown stage"), "{err}");
+    }
+
+    #[test]
+    fn resuming_one_cull_stage_keeps_cull_paused_until_every_cull_stage_resumes() {
+        let lib = Lib::new("stage-cull-multi-pause");
+        let control = lib.d().stage_control(lib.job);
+        assert!(!control.cull_paused());
+
+        lib.run(
+            "stage_pause",
+            json!({"jobId": lib.job, "stage": "read", "paused": true}),
+        )
+        .unwrap();
+        lib.run(
+            "stage_pause",
+            json!({"jobId": lib.job, "stage": "detect", "paused": true}),
+        )
+        .unwrap();
+        assert!(control.cull_paused());
+
+        // Resuming `read` while `detect` is still paused must keep cull paused.
+        lib.run(
+            "stage_pause",
+            json!({"jobId": lib.job, "stage": "read", "paused": false}),
+        )
+        .unwrap();
+        assert!(!control.is_paused("read"));
+        assert!(control.is_paused("detect"));
+        assert!(
+            control.cull_paused(),
+            "cull stays paused while another cull stage is still paused"
+        );
+
+        // Once `detect` resumes too, cull is no longer paused.
+        lib.run(
+            "stage_pause",
+            json!({"jobId": lib.job, "stage": "detect", "paused": false}),
+        )
+        .unwrap();
+        assert!(!control.cull_paused());
     }
 }

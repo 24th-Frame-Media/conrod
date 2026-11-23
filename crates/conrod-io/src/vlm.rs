@@ -873,9 +873,10 @@ pub fn guard_remote(url: &str, setting: &str) -> Result<(), VlmError> {
 }
 
 /// The local Ollama models identify can hold on this machine, as
-/// `(host, model)`: every enabled plain-http service on a local/private host,
-/// or the legacy single-provider fields when no service list is configured.
-/// A cloud service or a remote server never leaks into this list.
+/// `(host, model)`: every enabled service on a loopback host (`localhost`,
+/// `127.0.0.0/8`, `::1`), or the legacy single-provider fields when no service
+/// list is configured. A cloud service, remote host, or separate LAN server
+/// never leaks into this list.
 pub fn local_ollama_models(settings: &Settings) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut push = |provider: &str, host: &str, model: &str| {
@@ -885,12 +886,13 @@ pub fn local_ollama_models(settings: &Settings) -> Vec<(String, String)> {
             host.trim()
         };
         let host = host.trim_end_matches('/').to_string();
+        let model = model.trim();
         if provider.eq_ignore_ascii_case("ollama")
-            && is_local_host(&host)
-            && !model.trim().is_empty()
-            && !out.iter().any(|(h, m)| *h == host && *m == model)
+            && is_loopback_host(&host)
+            && !model.is_empty()
+            && !out.iter().any(|(h, m)| *h == host && m == model)
         {
-            out.push((host, model.trim().to_string()));
+            out.push((host, model.to_string()));
         }
     };
     if !settings.vlm_services.is_empty() {
@@ -955,6 +957,33 @@ pub fn is_local_host(url: &str) -> bool {
     match host.parse::<std::net::IpAddr>() {
         Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private(),
         Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+        Err(_) => false,
+    }
+}
+
+/// `localhost` or a loopback address (`127.0.0.0/8`, `::1`): a server running
+/// on *this* machine and sharing its GPU, excluding separate machines on the
+/// private LAN.
+pub fn is_loopback_host(url: &str) -> bool {
+    let trimmed = url.trim();
+    let host = trimmed
+        .parse::<ureq::http::Uri>()
+        .ok()
+        .and_then(|u| u.host().map(str::to_lowercase))
+        .or_else(|| {
+            (!trimmed.is_empty() && !trimmed.contains("://") && !trimmed.contains('/'))
+                .then(|| trimmed.to_ascii_lowercase())
+        });
+    let Some(host) = host else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback(),
         Err(_) => false,
     }
 }
@@ -3600,5 +3629,65 @@ mod tests {
             ..legacy.clone()
         };
         assert!(local_ollama_models(&cloud).is_empty());
+    }
+
+    #[test]
+    fn loopback_host_excludes_lan_ips_and_local_ollama_models_skips_lan_servers() {
+        for loopback in [
+            "http://localhost:11434",
+            "http://sub.localhost:11434",
+            "http://127.0.0.1:11434",
+            "http://127.0.1.5:11434",
+            "http://[::1]:11434",
+            "https://[::1]:11434",
+        ] {
+            assert!(is_loopback_host(loopback), "{loopback} should be loopback");
+            assert!(is_local_host(loopback), "{loopback} should also be local");
+        }
+        for bare in ["localhost", "127.0.0.1", "::1", "[::1]"] {
+            assert!(is_loopback_host(bare), "{bare} should be loopback");
+        }
+        for lan in [
+            "http://192.168.1.50:11434",
+            "http://10.0.0.5:11434",
+            "http://172.20.3.4:11434",
+            "http://[fd00::1]:11434",
+        ] {
+            assert!(
+                !is_loopback_host(lan),
+                "{lan} is on the LAN, not loopback on this machine"
+            );
+            assert!(is_local_host(lan), "{lan} stays local for guard_remote");
+        }
+        for remote in ["https://box.example:11434", "http://169.254.169.254", ""] {
+            assert!(!is_loopback_host(remote), "{remote}");
+        }
+
+        let settings = Settings {
+            vlm_services: vec![
+                VlmService {
+                    id: "lan".into(),
+                    provider: "ollama".into(),
+                    model: "qwen3-vl:8b".into(),
+                    host: "http://192.168.1.50:11434".into(),
+                    enabled: true,
+                    ..VlmService::default()
+                },
+                VlmService {
+                    id: "this-box".into(),
+                    provider: "ollama".into(),
+                    model: "qwen3-vl:8b".into(),
+                    host: "http://[::1]:11434/".into(),
+                    enabled: true,
+                    ..VlmService::default()
+                },
+            ],
+            ..Settings::default()
+        };
+        assert_eq!(
+            local_ollama_models(&settings),
+            [("http://[::1]:11434".to_string(), "qwen3-vl:8b".to_string())],
+            "a separate LAN Ollama server is not unloaded by release_local_models"
+        );
     }
 }

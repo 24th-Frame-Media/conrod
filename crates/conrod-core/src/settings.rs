@@ -546,6 +546,10 @@ pub struct Settings {
     /// stages. On by default, which is today's behaviour; a per-album override
     /// turns it off in either direction.
     pub identify_ocr: bool,
+    /// Ask the decision model for moments, type suggestions and burst peaks
+    /// between OCR and Vision. On by default, which is today's behaviour; a
+    /// per-album override turns it off.
+    pub identify_decision: bool,
     pub sharp_at: f64,
     pub blurred_below: f64,
     pub focus_scale: i64,
@@ -745,6 +749,7 @@ impl Default for Settings {
             workflow_mode: WORKFLOW_BOTH.into(),
             identify_scope: IDENTIFY_KEEPERS.into(),
             identify_ocr: true,
+            identify_decision: true,
             identify_vision_workers: 0,
             identify_decision_workers: 0,
             sharp_at: SHARP_AT,
@@ -1169,6 +1174,9 @@ impl Settings {
         // OCR needs at least one reader; with all of them off the stage is
         // skipped, not a lane with nothing to do.
         self.identify_ocr &= self.read_plates || self.read_numbers || self.read_text;
+        // Decision needs a moments vocabulary / lane; with moments off the
+        // stage has nothing to ask.
+        self.identify_decision &= lanes.moments_detect;
         self.identify_make_model &= lanes.make_model;
         self.identify_team &= lanes.sponsors;
         // With every vision service switched off there is nothing to ask.
@@ -1487,6 +1495,27 @@ mod tests {
         }
         .resolved();
         assert!(!no_readers.identify_ocr);
+    }
+
+    #[test]
+    fn identify_decision_defaults_on_for_an_older_album_and_can_be_turned_off() {
+        // An album stored before the switch existed keeps today's behaviour.
+        let older: Settings = serde_json::from_str(r#"{"scan_profile":"motorsport"}"#).unwrap();
+        assert!(older.identify_decision, "Decision is on by default");
+        let patch: Map<String, Value> =
+            serde_json::from_str(r#"{"identify_decision":false}"#).unwrap();
+        assert!(
+            !Settings::default().apply(&patch).identify_decision,
+            "the album's own choice wins"
+        );
+        // A preset with no moments vocabulary resolves Decision off.
+        let no_moments = Settings {
+            scan_profile: "property-listing".into(),
+            ..Settings::default()
+        }
+        .resolved();
+        assert!(!no_moments.lanes().moments_detect);
+        assert!(!no_moments.identify_decision);
     }
 
     #[test]

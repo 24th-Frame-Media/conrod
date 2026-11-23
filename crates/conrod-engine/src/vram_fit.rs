@@ -124,8 +124,8 @@ pub fn decider_bytes(quant: Quant) -> u64 {
 }
 
 /// The vision service identify would call when it runs on this machine.
-/// `None` for cloud, a remote Ollama server, or vision turned off: those never
-/// compete for this card.
+/// `None` for cloud, a remote or LAN Ollama server, or vision turned off: those
+/// never compete for this card.
 pub fn local_vision(settings: &Settings) -> Option<(String, String)> {
     if !settings.use_vlm {
         return None;
@@ -134,21 +134,27 @@ pub fn local_vision(settings: &Settings) -> Option<(String, String)> {
         let host = if host.trim().is_empty() {
             conrod_core::settings::DEFAULT_VLM_HOST
         } else {
-            host
+            host.trim()
         };
-        (provider.eq_ignore_ascii_case("ollama") && conrod_io::vlm::is_local_host(host))
+        (provider.eq_ignore_ascii_case("ollama") && conrod_io::vlm::is_loopback_host(host))
             .then(|| (host.trim_end_matches('/').to_string(), model.to_string()))
     };
-    match settings.enabled_vlm_service() {
-        Some(service) => local(&service.provider, &service.host, &service.model),
-        // Every configured service is off: nothing is asked, not even the
-        // legacy single-provider fields.
-        None if !settings.vlm_services.is_empty() => None,
-        None => local(
+    if !settings.vlm_services.is_empty() {
+        // Every enabled service can receive calls (failover / round-robin), so
+        // any enabled loopback Ollama counts toward this card's VRAM even when
+        // placed behind a cloud service. Every configured service off means
+        // nothing is asked (no fallback to legacy single-provider fields).
+        settings
+            .vlm_services
+            .iter()
+            .filter(|s| s.enabled)
+            .find_map(|s| local(&s.provider, &s.host, &s.model))
+    } else {
+        local(
             &settings.vlm_provider,
             &settings.vlm_host,
             &settings.vlm_model,
-        ),
+        )
     }
 }
 
@@ -209,25 +215,30 @@ pub fn seats(settings: &Settings) -> Seats {
     seats_for(settings, plan(settings).both_local())
 }
 
-/// The identify stage order every card follows (review decision D2): the
-/// Decision stage finishes every unit, then the handoff, then the Vision stage
-/// loads and reads every subject. A serial card's handoff runs between the two
-/// (drop the decision model first, then release the vision host's cached model);
-/// a concurrent card goes straight from one stage to the next. Taking the whole
-/// sequence as closures is what a test drives to prove the order, so no frame
-/// of stage one can still be in flight when stage two's model loads.
-pub(crate) fn run_in_order<D, V>(
+/// Runs the identify stages in order: Decision finishes every unit, then on a
+/// serial card `handoff` releases the decision model and vision cache, then
+/// Vision loads and reads every subject. Propagates a Decision error without
+/// touching `handoff` or `vision`, and returns `Ok((d, None))` when `stop` is
+/// set before or during Decision (or during a Serial handoff).
+pub(crate) fn try_run_in_order<D, V, E>(
     mode: Mode,
-    decision: impl FnOnce() -> D,
+    stop: &std::sync::atomic::AtomicBool,
+    decision: impl FnOnce() -> Result<D, E>,
     handoff: impl FnOnce(),
-    vision: impl FnOnce() -> V,
-) -> (D, V) {
-    let decision = decision();
+    vision: impl FnOnce() -> Result<V, E>,
+) -> Result<(D, Option<V>), E> {
+    let d = decision()?;
+    if stop.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok((d, None));
+    }
     if mode == Mode::Serial {
         handoff();
     }
-    let vision = vision();
-    (decision, vision)
+    if stop.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok((d, None));
+    }
+    let v = vision()?;
+    Ok((d, Some(v)))
 }
 
 #[cfg(test)]
@@ -365,14 +376,18 @@ mod tests {
 
     #[test]
     fn serial_order_finishes_every_decision_unit_before_the_vision_model_loads() {
+        use std::sync::atomic::AtomicBool;
+
+        let stop = AtomicBool::new(false);
         let log = std::cell::RefCell::new(Vec::new());
-        let (decided, read) = run_in_order(
+        let (decided, read) = try_run_in_order::<_, _, ()>(
             Mode::Serial,
+            &stop,
             || {
                 for frame in 0..4 {
                     log.borrow_mut().push(format!("decision:{frame}"));
                 }
-                4usize
+                Ok(4usize)
             },
             || {
                 // The handoff: the decider goes first, then the vision host's
@@ -385,10 +400,11 @@ mod tests {
                 for frame in 0..4 {
                     log.borrow_mut().push(format!("vision:{frame}"));
                 }
-                4usize
+                Ok(4usize)
             },
-        );
-        assert_eq!((decided, read), (4, 4));
+        )
+        .unwrap();
+        assert_eq!((decided, read), (4, Some(4)));
         let log = log.borrow();
         let unload = log.iter().position(|e| e == "unload-decider").unwrap();
         assert!(
@@ -403,12 +419,150 @@ mod tests {
         );
         // A card that holds both skips the handoff but keeps the order.
         let concurrent = std::cell::RefCell::new(Vec::new());
-        run_in_order(
+        try_run_in_order::<_, _, ()>(
             Mode::Concurrent,
-            || concurrent.borrow_mut().push("decision"),
+            &stop,
+            || {
+                concurrent.borrow_mut().push("decision");
+                Ok(())
+            },
             || concurrent.borrow_mut().push("handoff"),
-            || concurrent.borrow_mut().push("vision"),
-        );
+            || {
+                concurrent.borrow_mut().push("vision");
+                Ok(())
+            },
+        )
+        .unwrap();
         assert_eq!(*concurrent.borrow(), ["decision", "vision"]);
+    }
+
+    #[test]
+    fn lan_ollama_is_not_local_vision_and_loopback_behind_cloud_is() {
+        let lan_only = Settings {
+            use_vlm: true,
+            vlm_services: vec![VlmService {
+                id: "lan".into(),
+                provider: "ollama".into(),
+                model: "qwen3-vl:8b".into(),
+                host: "http://192.168.1.50:11434".into(),
+                enabled: true,
+                ..VlmService::default()
+            }],
+            ..Settings::default()
+        };
+        assert_eq!(
+            local_vision(&lan_only),
+            None,
+            "an Ollama server on a separate LAN machine does not compete for this PC's VRAM"
+        );
+
+        let cloud_then_local = Settings {
+            use_vlm: true,
+            vlm_services: vec![
+                VlmService {
+                    id: "cloud".into(),
+                    provider: "openrouter".into(),
+                    model: "qwen/qwen3-vl".into(),
+                    enabled: true,
+                    ..VlmService::default()
+                },
+                VlmService {
+                    id: "local".into(),
+                    provider: "ollama".into(),
+                    model: "qwen3-vl:8b".into(),
+                    host: "http://127.0.0.1:11434/".into(),
+                    enabled: true,
+                    ..VlmService::default()
+                },
+            ],
+            ..Settings::default()
+        };
+        assert_eq!(
+            local_vision(&cloud_then_local),
+            Some(("http://127.0.0.1:11434".into(), "qwen3-vl:8b".into())),
+            "a loopback Ollama behind an enabled cloud service still counts toward local VRAM"
+        );
+    }
+
+    #[test]
+    fn try_run_in_order_short_circuits_on_decision_error_and_stop() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // (a) Decision error skips both handoff and vision.
+        let stop = AtomicBool::new(false);
+        let log = std::cell::RefCell::new(Vec::new());
+        let res: Result<(usize, Option<usize>), &'static str> = try_run_in_order(
+            Mode::Serial,
+            &stop,
+            || {
+                log.borrow_mut().push("decision");
+                Err("boom")
+            },
+            || log.borrow_mut().push("handoff"),
+            || {
+                log.borrow_mut().push("vision");
+                Ok(2)
+            },
+        );
+        assert_eq!(res, Err("boom"));
+        assert_eq!(*log.borrow(), ["decision"]);
+
+        // (b1) Stop already set before decision finishes skips handoff and vision.
+        let stop_before = AtomicBool::new(true);
+        let log = std::cell::RefCell::new(Vec::new());
+        let res: Result<(usize, Option<usize>), &'static str> = try_run_in_order(
+            Mode::Serial,
+            &stop_before,
+            || {
+                log.borrow_mut().push("decision");
+                Ok(1)
+            },
+            || log.borrow_mut().push("handoff"),
+            || {
+                log.borrow_mut().push("vision");
+                Ok(2)
+            },
+        );
+        assert_eq!(res, Ok((1, None)));
+        assert_eq!(*log.borrow(), ["decision"]);
+
+        // (b2) Stop set during decision skips handoff and vision.
+        let stop_during = AtomicBool::new(false);
+        let log = std::cell::RefCell::new(Vec::new());
+        let res: Result<(usize, Option<usize>), &'static str> = try_run_in_order(
+            Mode::Serial,
+            &stop_during,
+            || {
+                log.borrow_mut().push("decision");
+                stop_during.store(true, Ordering::Relaxed);
+                Ok(3)
+            },
+            || log.borrow_mut().push("handoff"),
+            || {
+                log.borrow_mut().push("vision");
+                Ok(4)
+            },
+        );
+        assert_eq!(res, Ok((3, None)));
+        assert_eq!(*log.borrow(), ["decision"]);
+
+        // Normal serial execution runs all three in order and returns Some(v).
+        let go = AtomicBool::new(false);
+        let log = std::cell::RefCell::new(Vec::new());
+        let res: Result<(usize, Option<usize>), &'static str> = try_run_in_order(
+            Mode::Serial,
+            &go,
+            || {
+                log.borrow_mut().push("decision");
+                Ok(5)
+            },
+            || log.borrow_mut().push("handoff"),
+            || {
+                log.borrow_mut().push("vision");
+                Ok(6)
+            },
+        );
+        assert_eq!(res, Ok((5, Some(6))));
+        assert_eq!(*log.borrow(), ["decision", "handoff", "vision"]);
     }
 }
