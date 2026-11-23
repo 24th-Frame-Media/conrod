@@ -71,14 +71,12 @@ foreach ($a in $assets) {
   $a['sha256'] = (Get-FileHash $p -Algorithm SHA256).Hash.ToLower()
   $a['size'] = (Get-Item $p).Length
 }
-# Opt-in assets (the decision model) are pinned by hand against their upstream URLs, not
-# staged here: carry them over unchanged so regenerating the manifest does not drop them.
-$existing = Join-Path $PSScriptRoot 'assets.json'
-if (Test-Path $existing) {
-  foreach ($kept in ((Get-Content $existing -Raw | ConvertFrom-Json).assets | Where-Object { $_.optional })) {
-    $assets += [ordered]@{ name = $kept.name; dest = $kept.dest; extract = [bool]$kept.extract; optional = $true; licence = $kept.licence; sha256 = $kept.sha256; size = $kept.size; sources = @($kept.sources) }
-  }
-}
+# Carry over EVERY existing entry the staged list does not rebuild: non-optional
+# models pinned by hand (ocec_l, sface, the DINOv2 tower, the nima placeholder)
+# and opt-in downloads (decision model, built-in vision model). Regenerating the
+# manifest must never silently drop a model the app installs from.
+. (Join-Path $PSScriptRoot 'stage-assets-lib.ps1')
+$assets = Add-CarriedAssets -Staged $assets -ExistingPath (Join-Path $PSScriptRoot 'assets.json')
 $manifest = [ordered]@{ release = $releaseUrl; assets = $assets }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $PSScriptRoot 'assets.json') -Encoding UTF8
 "staged $($assets.Count) assets -> $out ; manifest scripts/assets.json ; resources populated"
