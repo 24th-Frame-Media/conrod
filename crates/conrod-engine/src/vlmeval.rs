@@ -195,6 +195,7 @@ fn vlm_production_eval() {
                 plates: &plate_opts,
                 known: &known,
                 seen_numbers: &empty,
+                prompt_context: None,
             };
             let done = analyze(&crop, None, "car", false, &ctx, &mut readers)?;
             let elapsed = t0.elapsed().as_secs_f64();

@@ -8,6 +8,8 @@ use crate::setup;
 use conrod_core::{
     analysis::VehicleAnalysis,
     keywords, models,
+    profile::ShootPreset,
+    progress::{IDENTIFY_DECISION, IDENTIFY_OCR, IDENTIFY_VISION},
     registry::{self, KnownVehicle},
     settings::{Settings, VisionOff},
 };
@@ -223,8 +225,19 @@ fn identify_workers(settings: &Settings) -> usize {
     settings.identify_worker_count() as usize
 }
 
-/// What the identify stage runs on, for the pipeline view.
-fn identify_models(settings: &Settings) -> (String, &'static str) {
+/// The Vision stage's model line: the service that will actually answer.
+fn vision_models(settings: &Settings) -> (String, &'static str) {
+    match settings.enabled_vlm_service() {
+        Some(service) => (
+            format!("{} via {}", service.model, service.provider),
+            "ollama",
+        ),
+        None => ("no vision service".into(), "CPU"),
+    }
+}
+
+/// The OCR stage's model line: no vision service is loaded here.
+fn ocr_models(settings: &Settings) -> (String, &'static str) {
     let mut parts: Vec<String> = Vec::new();
     if settings.read_plates {
         parts.push(format!("plate {}", models::PLATE_DETECTOR));
@@ -232,21 +245,77 @@ fn identify_models(settings: &Settings) -> (String, &'static str) {
     if settings.read_numbers || settings.read_text {
         parts.push("PP-OCRv4".into());
     }
-    if settings.use_vlm {
-        match settings.enabled_vlm_service() {
-            Some(service) => parts.push(format!("{} via {}", service.model, service.provider)),
-            None => parts.push("no vision service".into()),
-        }
-    }
-    if parts.is_empty() {
-        parts.push("embeddings only".into());
-    }
-    let device = if settings.use_vlm && settings.enabled_vlm_service().is_some() {
-        "ollama"
+    (parts.join(" + "), "CPU")
+}
+
+/// The Decision stage's model line: whichever service will answer.
+fn decision_models(settings: &Settings) -> (String, &'static str) {
+    if settings.use_decider {
+        (
+            format!("pplx-decider-flash ({})", settings.decider_quant),
+            "GPU",
+        )
+    } else if let Some(service) = settings
+        .moments_services
+        .iter()
+        .find(|service| service.enabled)
+    {
+        (
+            format!("{} via {}", service.model, service.provider),
+            "cloud",
+        )
     } else {
-        "CPU"
+        ("no decision service".into(), "CPU")
+    }
+}
+
+/// The settings and prompt guidance the vision stage uses. A typed album keeps
+/// its own settings; an `auto` album that accepted a suggestion reads with that
+/// type's prompts. An `auto` album with only a shown suggestion keeps the
+/// neutral mix policy and no guidance, because nothing was applied silently.
+fn resolved_vision_settings(
+    d: &Desktop,
+    job: i64,
+    settings: &Settings,
+) -> (Settings, Option<&'static str>) {
+    if ShootPreset::parse(&settings.scan_profile) != ShootPreset::Auto {
+        return (settings.clone(), None);
+    }
+    let accepted: Option<String> = lock(&d.db)
+        .query_row(
+            "SELECT shoot_type_accepted FROM jobs WHERE id=?",
+            [job],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
+    let Some(preset) = accepted
+        .as_deref()
+        .and_then(|name| ShootPreset::ALL.iter().copied().find(|p| p.name() == name))
+    else {
+        return (settings.clone(), None);
     };
-    (parts.join(" + "), device)
+    let mut resolved = settings.clone();
+    resolved.scan_profile = preset.name().into();
+    (resolved.resolved(), Some(preset.prompt_context()))
+}
+
+/// OCR workers need the plate models and the shared OCR engine, never the
+/// vision client: this stage asks no model.
+fn load_ocr_readers(settings: &Settings, ocr: &Option<Arc<ocr::Ocr>>) -> Result<Readers> {
+    let plates = if settings.read_plates {
+        Some((
+            plates::PlateDetector::load(&required(models::PLATE_DETECTOR)?, Device::Cpu)?,
+            plates::PlateReader::load(&required(models::PLATE_READER)?, Device::Cpu)?,
+        ))
+    } else {
+        None
+    };
+    Ok(Readers {
+        plates,
+        ocr: ocr.clone(),
+        vlm: None,
+    })
 }
 
 /// What every worker of one identify run shares.
@@ -266,24 +335,19 @@ struct Run<'a> {
     /// How often each number was read in each burst, for the tiebreak that
     /// settles two equally prominent panels. Keyed by `images.burst_key`.
     burst_numbers: Mutex<HashMap<i64, HashMap<String, u32>>>,
+    /// The resolved type's guidance, only for an `auto` album that accepted a
+    /// suggestion; `None` keeps the long-standing prompt.
+    prompt_context: Option<&'a str>,
+    /// Settings folded with the resolved shoot type: the vision stage's reader
+    /// flags and prompts come from these, while OCR uses the album's own.
+    vision_settings: &'a Settings,
 }
 
 impl Run<'_> {
-    fn advance(&self, by: usize) {
-        let n = self.done.fetch_add(by, Ordering::Relaxed) + by;
-        self.task.progress(n as u64, self.total as u64);
-        if let Some(p) = self.progress {
-            p.advance("identify", by as u64);
-        }
-        if let Some(live) = self.live {
-            live.advance_by(by);
-        }
-    }
-
     /// Say which file this worker is on.
-    fn busy(&self, lane: usize, file: &str, step: &'static str) {
+    fn busy(&self, stage: &'static str, lane: usize, file: &str, step: &'static str) {
         if let Some(p) = self.progress {
-            p.busy("identify", lane, "identify", step, file);
+            p.busy(IDENTIFY_OCR, lane, stage, step, file);
         }
     }
 
@@ -301,13 +365,17 @@ impl Run<'_> {
         }
     }
 
-    /// One frame's detections: the frame is decoded once, however many there are.
-    fn frame(
+    /// One frame's detections for the OCR stage: read the plate, roundels and
+    /// text once, store the partial reading, and hand the pass to the vision
+    /// stage. The wavelet is not asked and read_at waits for the vision stage
+    /// (or for this stage when vision is off).
+    fn ocr_frame(
         &self,
         rows: &[Value],
         readers: &mut Readers,
-        embedder: &mut Option<similarity::Embedder>,
         lane: usize,
+        mark_read: bool,
+        passes: &Mutex<HashMap<i64, analyze::OcrPass>>,
     ) -> Result<()> {
         let s = self.settings;
         let mut wanted = Vec::new();
@@ -316,7 +384,12 @@ impl Run<'_> {
                 wanted.push(row);
             }
         }
-        self.advance(rows.len() - wanted.len());
+        for _ in 0..(rows.len() - wanted.len()) {
+            self.stage_advance(IDENTIFY_OCR, 1);
+            if mark_read {
+                self.task_advance(1);
+            }
+        }
         if wanted.is_empty() {
             return Ok(());
         }
@@ -326,58 +399,21 @@ impl Run<'_> {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
-        self.busy(lane, &filename, "read");
-        // The frame is decoded once for all its cars. Show the first one while
-        // the RAW is being read, then each car as its turn comes.
-        let mut started: Option<i64> = None;
-        if let Some(live) = self.live {
-            if let Some(row) = wanted.first() {
-                let id = row["id"].as_i64().ok_or("Invalid detection")?;
-                live.start_item(
-                    lane,
-                    id,
-                    row["image_id"].as_i64().unwrap_or_default(),
-                    path,
-                    row["thumb_path"].as_str(),
-                    row["preview_path"].as_str(),
-                );
-                live.phase(id, identify_live::READ);
-                started = Some(id);
-            }
-        }
+        self.busy(IDENTIFY_OCR, lane, &filename, "ocr");
         let raw = conrod_io::raw::read(Path::new(path))?;
         let image = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
         for row in wanted {
             let id = row["id"].as_i64().ok_or("Invalid detection")?;
-            let image_id = row["image_id"].as_i64().unwrap_or_default();
             if !ml_eligible(self.d, id)? {
-                if started == Some(id) {
-                    if let Some(live) = self.live {
-                        live.finish_error(
-                            id,
-                            format!("detection {id} is no longer eligible and was skipped"),
-                        );
-                    }
-                    started = None;
+                self.stage_advance(IDENTIFY_OCR, 1);
+                if mark_read {
+                    self.task_advance(1);
                 }
-                self.advance(1);
                 continue;
             }
             if let Some(live) = self.live {
-                if started != Some(id) {
-                    live.start_item(
-                        lane,
-                        id,
-                        image_id,
-                        path,
-                        row["thumb_path"].as_str(),
-                        row["preview_path"].as_str(),
-                    );
-                    started = Some(id);
-                }
                 live.phase(id, identify_live::CROP);
             }
-            let item_start = Instant::now();
             let subject = ["x1", "y1", "x2", "y2"].map(|k| row[k].as_f64().unwrap_or(0.0).max(0.0));
             let bbox = subject.map(|v| v as usize);
             let tight = image.crop(
@@ -392,12 +428,12 @@ impl Run<'_> {
                 if let Some(live) = self.live {
                     live.finish_error(id, message);
                 }
-                self.advance(1);
+                self.stage_advance(IDENTIFY_OCR, 1);
+                if mark_read {
+                    self.task_advance(1);
+                }
                 continue;
             }
-            // Everything reads the padded, size-capped `cut` crop; the tight
-            // native-resolution box is only for the plate search. Reading
-            // the tight box clipped plates at its edge.
             let crop = crate::cut(
                 &image,
                 detect::expand_box(subject, image.width, image.height, self.crop),
@@ -405,39 +441,173 @@ impl Run<'_> {
             );
             let native = (s.plate_native_search && s.read_plates).then_some(&tight);
             let kind = row["cls"].as_str().unwrap_or("car");
+            let seen_numbers = lock(&self.burst_numbers)
+                .get(&row["burst_key"].as_i64().unwrap_or_default())
+                .cloned()
+                .unwrap_or_default();
+            let ctx = Context {
+                settings: s,
+                plates: self.plates,
+                known: self.known,
+                seen_numbers: &seen_numbers,
+                prompt_context: self.prompt_context,
+            };
+            let pass = analyze::read_ocr(&crop, native, kind, kind == "motorcycle", &ctx, readers)?;
+            for failure in &pass.failures {
+                self.report(failure.clone());
+            }
+            // Keep every model field an earlier run stored: this stage only
+            // owns the OCR half. `reviewed=0` is the hard guard.
+            let stored: Option<String> = lock(&self.d.reader)
+                .query_row(
+                    "SELECT attributes FROM detections WHERE id=? AND COALESCE(reviewed,0)=0",
+                    [id],
+                    |r| r.get(0),
+                )
+                .ok();
+            let mut merged = VehicleAnalysis::from_json(stored.as_deref());
+            merged.kind = pass.analysis.kind.clone();
+            merged.is_bike = pass.analysis.is_bike;
+            merged.plate = pass.analysis.plate.clone();
+            merged.plate_state = pass.analysis.plate_state.clone();
+            merged.plate_conf = pass.analysis.plate_conf;
+            merged.plate_bbox = pass.analysis.plate_bbox;
+            merged.race_number = pass.analysis.race_number.clone();
+            merged.number_source = pass.analysis.number_source.clone();
+            merged.number_conf = pass.analysis.number_conf;
+            let read_now = if mark_read {
+                "unixepoch('now')"
+            } else {
+                "NULL"
+            };
+            lock(&self.d.db)
+                .execute(
+                    &format!(
+                        "UPDATE detections SET attributes=?,plate=?,plate_state=?,plate_conf=?,number=?,number_source=?,number_conf=?,read_at=COALESCE(read_at,{read_now}) WHERE id=? AND COALESCE(reviewed,0)=0"
+                    ),
+                    params![
+                        serde_json::to_string(&merged).map_err(err)?,
+                        merged.plate,
+                        merged.plate_state,
+                        merged.plate_conf,
+                        merged.race_number,
+                        merged.number_source,
+                        merged.number_conf,
+                        id
+                    ],
+                )
+                .map_err(err)?;
+            lock(passes).insert(id, pass);
+            self.stage_advance(IDENTIFY_OCR, 1);
+            if mark_read {
+                self.task_advance(1);
+            }
+        }
+        Ok(())
+    }
+
+    /// One frame's detections for the vision stage: merge the stored OCR pass
+    /// with the model's read, resolve the number at the end of the stage, and
+    /// write the final reading. The live re-read guard is the `reviewed=0`
+    /// condition on the one write; a hand-set reading is never overwritten.
+    fn vision_frame(
+        &self,
+        rows: &[Value],
+        readers: &mut Readers,
+        embedder: &mut Option<similarity::Embedder>,
+        lane: usize,
+        passes: &Mutex<HashMap<i64, analyze::OcrPass>>,
+    ) -> Result<()> {
+        let s = self.vision_settings;
+        let mut wanted = Vec::new();
+        for row in rows {
+            if ml_eligible(self.d, row["id"].as_i64().ok_or("Invalid detection")?)? {
+                wanted.push(row);
+            }
+        }
+        for _ in 0..(rows.len() - wanted.len()) {
+            self.stage_advance(IDENTIFY_VISION, 1);
+            self.task_advance(1);
+        }
+        if wanted.is_empty() {
+            return Ok(());
+        }
+        let path = wanted[0]["path"].as_str().ok_or("Missing image path")?;
+        let filename = Path::new(path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        self.busy(IDENTIFY_VISION, lane, &filename, "vision");
+        let raw = conrod_io::raw::read(Path::new(path))?;
+        let image = Rgb::decode_jpeg(&raw.preview, 1)?.orient(raw.orientation);
+        for row in wanted {
+            let id = row["id"].as_i64().ok_or("Invalid detection")?;
+            let image_id = row["image_id"].as_i64().unwrap_or_default();
+            if !ml_eligible(self.d, id)? {
+                self.stage_advance(IDENTIFY_VISION, 1);
+                self.task_advance(1);
+                continue;
+            }
+            let pass = lock(passes).remove(&id).unwrap_or_else(|| {
+                let stored: Option<String> = lock(&self.d.reader)
+                    .query_row(
+                        "SELECT attributes FROM detections WHERE id=? AND COALESCE(reviewed,0)=0",
+                        [id],
+                        |r| r.get(0),
+                    )
+                    .ok();
+                analyze::OcrPass::from_stored(VehicleAnalysis::from_json(stored.as_deref()))
+            });
+            if let Some(live) = self.live {
+                live.start_item(
+                    lane,
+                    id,
+                    image_id,
+                    path,
+                    row["thumb_path"].as_str(),
+                    row["preview_path"].as_str(),
+                );
+                live.phase(id, identify_live::VISION);
+            }
+            let item_start = Instant::now();
+            let subject = ["x1", "y1", "x2", "y2"].map(|k| row[k].as_f64().unwrap_or(0.0).max(0.0));
+            let bbox = subject.map(|v| v as usize);
+            let crop = crate::cut(
+                &image,
+                detect::expand_box(subject, image.width, image.height, self.crop),
+                s,
+            );
+            let kind = row["cls"].as_str().unwrap_or("car");
             let burst = row["burst_key"].as_i64().unwrap_or_default();
             let seen_numbers = lock(&self.burst_numbers)
                 .get(&burst)
                 .cloned()
                 .unwrap_or_default();
             self.task.detail(format!("{filename} · {kind}"));
-            self.busy(lane, &filename, "identify");
-            if let Some(live) = self.live {
-                live.phase(id, identify_live::VISION);
-            }
-            // The prompt goes out while the model is thinking, not after it
-            // answers, so the screen can show what was asked.
+            self.busy(IDENTIFY_VISION, lane, &filename, "vision");
             let prompt_sink = self.live.as_ref().map(|live| {
                 let live = Arc::clone(live);
                 move |prompt: &str| live.set_prompt(id, prompt)
             });
-            let outcome = analyze::analyze_with(
+            let ctx = Context {
+                settings: s,
+                plates: self.plates,
+                known: self.known,
+                seen_numbers: &seen_numbers,
+                prompt_context: self.prompt_context,
+            };
+            let outcome = analyze::read_vision(
                 &crop,
-                native,
                 kind,
                 kind == "motorcycle",
-                &Context {
-                    settings: s,
-                    plates: self.plates,
-                    known: self.known,
-                    seen_numbers: &seen_numbers,
-                },
+                &ctx,
                 readers,
+                pass,
                 prompt_sink.as_ref().map(|sink| sink as &dyn Fn(&str)),
             )?;
             if let Some(live) = self.live {
                 live.phase(id, identify_live::MERGE);
-                // Fallback for a prompt that the callback could not attach.
                 if let Some(prompt) = outcome.vlm_prompt.as_deref() {
                     live.set_prompt(id, prompt);
                 }
@@ -454,7 +624,6 @@ impl Run<'_> {
                     .and_modify(|count| *count += 1)
                     .or_insert(1);
             }
-            // What the frame reads as, for the live strip on the scan screen.
             if let Some(label) = analysis
                 .race_number
                 .clone()
@@ -491,32 +660,42 @@ impl Run<'_> {
                     Some(&crop_path),
                 );
             }
-            self.advance(1);
+            self.stage_advance(IDENTIFY_VISION, 1);
+            self.task_advance(1);
         }
         Ok(())
     }
+
+    /// One subject through the OCR stage's counter only.
+    fn stage_advance(&self, stage: &'static str, by: usize) {
+        if let Some(p) = self.progress {
+            p.advance(stage, by as u64);
+        }
+    }
+
+    /// One subject finished for the run's own bar and the live feed.
+    fn task_advance(&self, by: usize) {
+        let n = self.done.fetch_add(by, Ordering::Relaxed) + by;
+        self.task.progress(n as u64, self.total as u64);
+        if let Some(live) = self.live {
+            live.advance_by(by);
+        }
+    }
 }
 
-/// One worker's own readers: its plate models and vision client, and the shared OCR.
-fn load_readers(settings: &Settings, ocr: &Option<Arc<ocr::Ocr>>) -> Result<Readers> {
-    let plates = if settings.read_plates {
-        Some((
-            plates::PlateDetector::load(&required(models::PLATE_DETECTOR)?, Device::Cpu)?,
-            plates::PlateReader::load(&required(models::PLATE_READER)?, Device::Cpu)?,
-        ))
-    } else {
-        None
-    };
-    Ok(Readers {
-        plates,
-        ocr: ocr.clone(),
+/// Vision workers need only the vision client: the OCR stage already read the
+/// plate, number and text, and the pass travels with the subject.
+fn load_vision_readers(settings: &Settings) -> Readers {
+    Readers {
+        plates: None,
+        ocr: None,
         vlm: settings.use_vlm.then(|| {
             (
                 vlm::VlmClient::new(Arc::new(vlm::RealClock::default())),
                 IoSettings::from_core(settings),
             )
         }),
-    })
+    }
 }
 
 /// The album setting that says its last identification is out of date because
@@ -542,6 +721,7 @@ pub(crate) fn identify_setting_key(key: &str) -> bool {
             | "include_bikes"
             | "include_people"
             | "use_vlm"
+            | "identify_ocr"
             | "scan_profile"
             | "identify_scope"
     )
@@ -633,9 +813,36 @@ pub(crate) fn identify_with_kind(
                 let faces = crate::passes::embed_faces_missing(d, job, stop, task)?;
                 task.detail(format!("Prepared {faces} faces for name suggestions"));
             }
+            if let Some(p) = d.progress() {
+                p.skip_stage(IDENTIFY_OCR);
+                p.skip_stage(IDENTIFY_VISION);
+                p.skip_stage(IDENTIFY_DECISION);
+            }
             // No vehicles to read, but the shoot may still have moments to judge.
-            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope, false)? > 0 {
-                crate::passes::pick_keepers(d, job)?;
+            if lanes.moments_detect {
+                let progress = d.progress();
+                if let Some(p) = &progress {
+                    p.phase(IDENTIFY_DECISION);
+                }
+                let judged = crate::moments::run_decision(
+                    d,
+                    job,
+                    stop,
+                    task,
+                    &settings,
+                    &lanes,
+                    scope,
+                    progress.as_deref(),
+                )?;
+                if let Some(p) = &progress {
+                    match judged {
+                        Some(_) => p.finish_stage(IDENTIFY_DECISION),
+                        None => p.skip_stage(IDENTIFY_DECISION),
+                    }
+                }
+                if judged.unwrap_or(0) > 0 {
+                    crate::passes::pick_keepers(d, job)?;
+                }
             }
             return Ok(());
         }
@@ -651,6 +858,14 @@ pub(crate) fn identify_with_kind(
             &pending_detections(region, eligibility, only_new),
             [job],
         )?;
+        // The vision stage reads with the resolved type: an `auto` album whose
+        // suggestion was accepted uses that type's prompts; a typed album keeps
+        // its own. Nothing is applied silently.
+        let (vision_settings, prompt_context) = resolved_vision_settings(d, job, &settings);
+        let ocr_on = settings.identify_ocr
+            && (settings.read_plates || settings.read_numbers || settings.read_text);
+        let decision_on = lanes.moments_detect;
+        let vision_on = vision_off.is_none();
         // The live feed the identify screen draws, replaced by the next run and
         // kept after this one so its summary stays on screen. The guard ends an
         // early return (`?`) as an error rather than leaving the feed running.
@@ -661,7 +876,7 @@ pub(crate) fn identify_with_kind(
         // comes from the enabled service, never the old fallback fields.
         match vision_off {
             Some(reason) => live.set_vision_off(reason.word()),
-            None => live.set_model(&settings.vision_model()),
+            None => live.set_model(&vision_settings.vision_model()),
         }
         *lock(&d.identify) = Some(live.clone());
         let mut end = LiveRun(live.clone());
@@ -674,8 +889,34 @@ pub(crate) fn identify_with_kind(
             } else {
                 "No keepers need identification"
             });
-            if crate::moments::run(d, job, stop, task, &settings, &lanes, scope, false)? > 0 {
-                crate::passes::pick_keepers(d, job)?;
+            let progress = d.progress();
+            if let Some(p) = &progress {
+                p.skip_stage(IDENTIFY_OCR);
+                p.skip_stage(IDENTIFY_VISION);
+                p.phase(IDENTIFY_DECISION);
+            }
+            if decision_on {
+                let judged = crate::moments::run_decision(
+                    d,
+                    job,
+                    stop,
+                    task,
+                    &settings,
+                    &lanes,
+                    scope,
+                    progress.as_deref(),
+                )?;
+                if let Some(p) = &progress {
+                    match judged {
+                        Some(_) => p.finish_stage(IDENTIFY_DECISION),
+                        None => p.skip_stage(IDENTIFY_DECISION),
+                    }
+                }
+                if judged.unwrap_or(0) > 0 {
+                    crate::passes::pick_keepers(d, job)?;
+                }
+            } else if let Some(p) = &progress {
+                p.skip_stage(IDENTIFY_DECISION);
             }
             note_identify_stale(d, job, false);
             end.finish("done");
@@ -739,19 +980,20 @@ pub(crate) fn identify_with_kind(
                 _ => frames.push(i..i + 1),
             }
         }
-        let (next, done) = (AtomicUsize::new(0), AtomicUsize::new(0));
-        let failure: Mutex<Option<String>> = Mutex::new(None);
-        let reported = Mutex::new(HashSet::new());
-        // The scan screen shows this lane when the one-shot scan gets here.
+        let (done, reported) = (AtomicUsize::new(0), Mutex::new(HashSet::new()));
+        // The scan screen shows these lanes when the one-shot scan gets here.
         let progress = d.progress();
         if let Some(p) = &progress {
-            let (model, device) = identify_models(&settings);
-            p.describe("identify", model, device);
-            p.total("identify", pending.len() as u64);
-            p.phase("identify");
+            let (ocr_model, ocr_device) = ocr_models(&settings);
+            let (decision_model, decision_device) = decision_models(&settings);
+            let (vision_model, vision_device) = vision_models(&vision_settings);
+            p.describe(IDENTIFY_OCR, ocr_model, ocr_device);
+            p.describe(IDENTIFY_DECISION, decision_model, decision_device);
+            p.describe(IDENTIFY_VISION, vision_model, vision_device);
         }
-        let workers = identify_workers(&settings).min(frames.len().max(1));
+        let workers = identify_workers(&settings).min(frames.len().max(1)).max(1);
         live.set_workers(workers);
+        let passes: Mutex<HashMap<i64, analyze::OcrPass>> = Mutex::new(HashMap::new());
         let run = Run {
             d,
             settings: &settings,
@@ -765,73 +1007,197 @@ pub(crate) fn identify_with_kind(
             progress: progress.as_deref(),
             live: Some(&live),
             burst_numbers: Mutex::new(HashMap::new()),
+            prompt_context,
+            vision_settings: &vision_settings,
         };
-        let fail = |e: String| {
-            lock(&failure).get_or_insert(e);
-        };
-        // Moments run from the start, beside the vision workers, so the decision model answers
-        // each frame as it comes rather than sitting silent until the end of the run. They are
-        // joined before the pick, which ranks on them.
-        let moments: Mutex<Option<Result<usize>>> = Mutex::new(None);
-        std::thread::scope(|s| {
-            s.spawn(|| {
-                let result =
-                    crate::moments::run(d, job, stop, task, &settings, &lanes, scope, false);
-                *lock(&moments) = Some(result);
-            });
-            for lane in 0..workers {
-                let (settings, ocr_engine, stop, next, failure, frames, pending, run) = (
-                    &settings,
-                    &ocr_engine,
-                    &stop,
-                    &next,
-                    &failure,
-                    &frames,
-                    &pending,
-                    &run,
-                );
-                let (progress, fail) = (&progress, &fail);
-                s.spawn(move || {
-                    let mut readers = match load_readers(settings, ocr_engine) {
-                        Ok(r) => r,
-                        Err(e) => return fail(e),
-                    };
-                    let mut embedder = match settings.group_vehicles.then(|| {
-                        similarity::Embedder::load(
-                            &conrod_core::models::expected(conrod_core::models::SIMILARITY),
-                            Device::Cpu,
-                        )
-                    }) {
-                        Some(Err(e)) => return fail(e),
-                        Some(Ok(e)) => Some(e),
-                        None => None,
-                    };
-                    while !stop.load(Ordering::Relaxed) && lock(failure).is_none() {
-                        let Some(frame) = frames.get(next.fetch_add(1, Ordering::Relaxed)) else {
-                            break;
-                        };
-                        if let Err(e) =
-                            run.frame(&pending[frame.clone()], &mut readers, &mut embedder, lane)
-                        {
-                            return fail(e);
-                        }
-                    }
-                    if let Some(p) = progress.as_ref() {
-                        p.idle("identify", lane);
-                    }
-                });
+
+        // --- Identify: OCR ---------------------------------------------------
+        if ocr_on {
+            if let Some(p) = &progress {
+                p.phase(IDENTIFY_OCR);
+                p.total(IDENTIFY_OCR, pending.len() as u64);
             }
-        });
-        if let Some(e) = failure.into_inner().unwrap_or_else(|e| e.into_inner()) {
-            end.finish("error");
-            return Err(e);
+            let (next, failure) = (AtomicUsize::new(0), Mutex::new(None));
+            std::thread::scope(|s| {
+                for lane in 0..workers {
+                    let (settings, ocr_engine, stop, next, failure, frames, pending, run) = (
+                        &settings,
+                        &ocr_engine,
+                        stop,
+                        &next,
+                        &failure,
+                        &frames,
+                        &pending,
+                        &run,
+                    );
+                    let (progress, passes) = (&progress, &passes);
+                    s.spawn(move || {
+                        let mut readers = match load_ocr_readers(settings, ocr_engine) {
+                            Ok(readers) => readers,
+                            Err(e) => {
+                                lock(failure).get_or_insert(e);
+                                if let Some(p) = progress.as_ref() {
+                                    p.worker_failed(IDENTIFY_OCR, lane);
+                                }
+                                return;
+                            }
+                        };
+                        while !stop.load(Ordering::Relaxed) && lock(failure).is_none() {
+                            let Some(frame) = frames.get(next.fetch_add(1, Ordering::Relaxed))
+                            else {
+                                break;
+                            };
+                            if let Err(e) = run.ocr_frame(
+                                &pending[frame.clone()],
+                                &mut readers,
+                                lane,
+                                !vision_on,
+                                passes,
+                            ) {
+                                lock(failure).get_or_insert(e);
+                                if let Some(p) = progress.as_ref() {
+                                    p.worker_failed(IDENTIFY_OCR, lane);
+                                }
+                                return;
+                            }
+                        }
+                        if let Some(p) = progress.as_ref() {
+                            p.idle(IDENTIFY_OCR, lane);
+                        }
+                    });
+                }
+            });
+            let failure = failure.into_inner().unwrap_or_else(|e| e.into_inner());
+            if let Some(e) = failure {
+                if let Some(p) = &progress {
+                    p.fail_stage(IDENTIFY_OCR, &e);
+                }
+                end.finish("error");
+                return Err(e);
+            }
+            if let Some(p) = &progress {
+                if !stop.load(Ordering::Relaxed) {
+                    p.finish_stage(IDENTIFY_OCR);
+                }
+            }
+        } else if let Some(p) = &progress {
+            p.skip_stage(IDENTIFY_OCR);
         }
-        if let Some(Err(e)) = moments.into_inner().unwrap_or_else(|e| e.into_inner()) {
-            // The frame reads are done; a moments failure still ends the run the way it did
-            // when moments were the last step.
-            end.finish("error");
-            return Err(e);
+
+        // --- Identify: Decision, before Vision --------------------------------
+        if decision_on {
+            if let Some(p) = &progress {
+                p.phase(IDENTIFY_DECISION);
+            }
+            let judged = match crate::moments::run_decision(
+                d,
+                job,
+                stop,
+                task,
+                &settings,
+                &lanes,
+                scope,
+                progress.as_deref(),
+            ) {
+                Ok(judged) => judged,
+                Err(e) => {
+                    if let Some(p) = &progress {
+                        p.fail_stage(IDENTIFY_DECISION, &e);
+                    }
+                    end.finish("error");
+                    return Err(e);
+                }
+            };
+            if let Some(p) = &progress {
+                match judged {
+                    Some(_) if !stop.load(Ordering::Relaxed) => p.finish_stage(IDENTIFY_DECISION),
+                    Some(_) => {}
+                    None => p.skip_stage(IDENTIFY_DECISION),
+                }
+            }
+        } else if let Some(p) = &progress {
+            p.skip_stage(IDENTIFY_DECISION);
         }
+
+        // --- Identify: Vision -------------------------------------------------
+        if vision_on {
+            if let Some(p) = &progress {
+                p.phase(IDENTIFY_VISION);
+                p.total(IDENTIFY_VISION, pending.len() as u64);
+            }
+            let (next, failure) = (AtomicUsize::new(0), Mutex::new(None));
+            std::thread::scope(|s| {
+                for lane in 0..workers {
+                    let (vision_settings, stop, next, failure, frames, pending, run) = (
+                        &vision_settings,
+                        stop,
+                        &next,
+                        &failure,
+                        &frames,
+                        &pending,
+                        &run,
+                    );
+                    let (progress, passes) = (&progress, &passes);
+                    s.spawn(move || {
+                        let mut readers = load_vision_readers(vision_settings);
+                        let mut embedder = match vision_settings.group_vehicles.then(|| {
+                            similarity::Embedder::load(
+                                &conrod_core::models::expected(conrod_core::models::SIMILARITY),
+                                Device::Cpu,
+                            )
+                        }) {
+                            Some(Err(e)) => {
+                                lock(failure).get_or_insert(e);
+                                if let Some(p) = progress.as_ref() {
+                                    p.worker_failed(IDENTIFY_OCR, lane);
+                                }
+                                return;
+                            }
+                            Some(Ok(e)) => Some(e),
+                            None => None,
+                        };
+                        while !stop.load(Ordering::Relaxed) && lock(failure).is_none() {
+                            let Some(frame) = frames.get(next.fetch_add(1, Ordering::Relaxed))
+                            else {
+                                break;
+                            };
+                            if let Err(e) = run.vision_frame(
+                                &pending[frame.clone()],
+                                &mut readers,
+                                &mut embedder,
+                                lane,
+                                passes,
+                            ) {
+                                lock(failure).get_or_insert(e);
+                                if let Some(p) = progress.as_ref() {
+                                    p.worker_failed(IDENTIFY_OCR, lane);
+                                }
+                                return;
+                            }
+                        }
+                        if let Some(p) = progress.as_ref() {
+                            p.idle(IDENTIFY_OCR, lane);
+                        }
+                    });
+                }
+            });
+            let failure = failure.into_inner().unwrap_or_else(|e| e.into_inner());
+            if let Some(e) = failure {
+                if let Some(p) = &progress {
+                    p.fail_stage(IDENTIFY_VISION, &e);
+                }
+                end.finish("error");
+                return Err(e);
+            }
+            if let Some(p) = &progress {
+                if !stop.load(Ordering::Relaxed) {
+                    p.finish_stage(IDENTIFY_VISION);
+                }
+            }
+        } else if let Some(p) = &progress {
+            p.skip_stage(IDENTIFY_VISION);
+        }
+
         if !stop.load(Ordering::Relaxed) {
             if lanes.names {
                 crate::passes::embed_faces_missing(d, job, stop, task)?;
@@ -1207,7 +1573,7 @@ mod tests {
             ],
             ..Settings::default()
         };
-        let (model, _) = identify_models(&settings);
+        let (model, _) = vision_models(&settings);
         assert!(model.contains("glm-5.3-flash via opencode-go"), "{model}");
         assert!(!model.contains("qwen2.5vl"), "{model}");
 
@@ -1215,7 +1581,7 @@ mod tests {
             vlm_services: vec![service("off", "ollama", "qwen2.5vl:7b", false)],
             ..settings
         };
-        let (model, device) = identify_models(&all_off);
+        let (model, device) = vision_models(&all_off);
         assert_eq!(model, "no vision service");
         assert_eq!(device, "CPU");
     }

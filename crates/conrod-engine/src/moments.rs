@@ -10,7 +10,8 @@ use crate::identify_live::{IdentifyLive, MOMENTS_PHASE, PEAKS_PHASE};
 use crate::{err, lock};
 use conrod_core::decision::{peak_frame, InProcess};
 use conrod_core::moments::{Moment, MomentVerdict};
-use conrod_core::profile::Lanes;
+use conrod_core::profile::{Lanes, ShootPreset};
+use conrod_core::progress::IDENTIFY_DECISION;
 use conrod_core::settings::{self, Settings};
 use conrod_io::moments::{judge_for, MomentJudge};
 use conrod_io::{settings::Settings as IoSettings, vlm};
@@ -22,6 +23,41 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+
+/// Frames of one burst the type round asks about: enough to see the action
+/// without asking about the whole burst.
+const TYPE_FRAMES_PER_BURST: usize = 3;
+/// Frames of the album the `auto` type question sees, spread evenly.
+const TYPE_SAMPLE: usize = 8;
+/// The concrete types an `auto` album can be told it fits. A suggestion only;
+/// the photographer still accepts it.
+const TYPE_CHOICES: [(&str, &str); 10] = [
+    (
+        "motorsport",
+        "Circuit racing or a track day: cars and motorcycles in action",
+    ),
+    (
+        "motorsport-meet",
+        "A car meet or show: parked and posed vehicles",
+    ),
+    ("sport-rodeo", "A rodeo: riders on bucking bulls or horses"),
+    (
+        "sport-equestrian",
+        "Equestrian: horses and riders over fences",
+    ),
+    ("wedding", "A wedding: the couple, vows and guests"),
+    (
+        "portrait",
+        "A portrait session: people posed for the camera",
+    ),
+    ("event", "An event: people, performers and the crowd"),
+    ("concert", "A concert: performers and stage light"),
+    ("wildlife-birds", "Birds or wildlife: animals in the wild"),
+    (
+        "landscape",
+        "Landscape or property: places, rooms and horizons",
+    ),
+];
 
 /// Longest side of a frame sent to the judge: well inside the decider's 1.6 MP.
 const FRAME_EDGE: u32 = 1280;
@@ -118,6 +154,28 @@ fn pending(d: &Desktop, job: i64, everything: bool, rejudge: bool) -> Result<Vec
     )
 }
 
+/// How many bursts still need comparing for their peak: at least two frames
+/// and no frame carrying a peak from an earlier pass.
+fn remaining_bursts(d: &Desktop, job: i64) -> Result<usize> {
+    let frames = rows(
+        &lock(&d.reader),
+        "SELECT i.id,i.burst_key,i.moments FROM images i WHERE i.job_id=? AND i.burst_key IS NOT NULL AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 ORDER BY i.burst_key,i.id",
+        [job],
+    )?;
+    let mut bursts: BTreeMap<i64, Vec<&Value>> = BTreeMap::new();
+    for frame in &frames {
+        bursts
+            .entry(frame["burst_key"].as_i64().unwrap_or_default())
+            .or_default()
+            .push(frame);
+    }
+    Ok(bursts
+        .values()
+        .filter(|b| b.len() >= 2)
+        .filter(|b| !judged_burst(b.as_slice()))
+        .count())
+}
+
 /// The live identify feed this run narrates its post-cars phases to, when one
 /// is still running. A standalone judge run has none: the album's feed belongs
 /// to an earlier run that has already finished.
@@ -177,7 +235,54 @@ pub(crate) fn run(
         scope,
         rejudge,
         judge.as_ref(),
+        None,
     )
+}
+
+/// The whole Decision stage: the type round, then the frame/peak round, on one
+/// judge and one set of counters. `None` means no decision service could be
+/// chosen, so the stage is skipped rather than failed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_decision(
+    d: &Desktop,
+    job: i64,
+    stop: &AtomicBool,
+    task: &conrod_core::tasks::Task,
+    cfg: &Settings,
+    lanes: &Lanes,
+    scope: &str,
+    progress: Option<&crate::progress::Progress>,
+) -> Result<Option<usize>> {
+    if lanes.moments().is_empty() {
+        return Ok(None);
+    }
+    let vlm_judge = cfg.use_vlm.then(|| {
+        (
+            vlm::VlmClient::new(Arc::new(vlm::RealClock::default())),
+            IoSettings::from_core(cfg),
+        )
+    });
+    let judge = match judge_for(cfg, vlm_judge, in_process_seat()) {
+        Ok(judge) => judge,
+        Err(why) => {
+            task.detail(format!("Moments skipped: {why}"));
+            return Ok(None);
+        }
+    };
+    run_type_round(d, job, stop, task, cfg, lanes, judge.as_ref(), progress)?;
+    let judged = run_with(
+        d,
+        job,
+        stop,
+        task,
+        cfg,
+        lanes,
+        scope,
+        false,
+        judge.as_ref(),
+        progress,
+    )?;
+    Ok(Some(judged))
 }
 
 /// [`run`] with the judge already chosen: the seam the tests use to count who
@@ -195,10 +300,22 @@ fn run_with(
     scope: &str,
     rejudge: bool,
     judge: &dyn MomentJudge,
+    progress: Option<&crate::progress::Progress>,
 ) -> Result<usize> {
     let vocab: &[Moment] = lanes.moments();
     let everything = scope == settings::IDENTIFY_EVERYTHING;
     let frames = pending(d, job, everything, rejudge)?;
+    // The stage's counters: every frame still to judge plus every burst still
+    // to compare. A judged burst is not planned again, so a re-run's header
+    // shows the real remaining work.
+    let burst_total = if lanes.moments_rank {
+        remaining_bursts(d, job)?
+    } else {
+        0
+    };
+    if let Some(p) = progress {
+        p.plan(IDENTIFY_DECISION, (frames.len() + burst_total) as u64);
+    }
     let context = lanes.preset.prompt_context();
     task.detail(format!("Judging moments with the {} backend", judge.name()));
     // The identify screen names this work: judging frames, then the bursts.
@@ -256,11 +373,23 @@ fn run_with(
                 if let Some(feed) = &feed {
                     feed.phase_progress(read);
                 }
+                if let Some(p) = progress {
+                    p.advance(IDENTIFY_DECISION, 1);
+                }
             });
         }
     });
     let ranked = if lanes.moments_rank && !stop.load(Ordering::Relaxed) {
-        peaks(d, job, stop, task, judge, context, feed.as_deref())
+        peaks(
+            d,
+            job,
+            stop,
+            task,
+            judge,
+            context,
+            feed.as_deref(),
+            progress,
+        )
     } else {
         Ok(())
     };
@@ -269,6 +398,191 @@ fn run_with(
     }
     ranked?;
     Ok(judged.load(Ordering::Relaxed))
+}
+
+/// The type round that opens the Decision stage.
+///
+/// A typed album asks its own finetuned questions on a small sample of each
+/// burst. An `auto` album instead asks one choice question over a spread sample
+/// of the album and stores the suggested type (and confidence) on the job:
+/// a suggestion only, never applied, so the photographer's own type always
+/// wins. A failed ask is no opinion, never a failed scan.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_type_round(
+    d: &Desktop,
+    job: i64,
+    stop: &AtomicBool,
+    task: &conrod_core::tasks::Task,
+    cfg: &Settings,
+    lanes: &Lanes,
+    judge: &dyn MomentJudge,
+    progress: Option<&crate::progress::Progress>,
+) -> Result<Option<(String, f64)>> {
+    if lanes.preset == ShootPreset::Auto {
+        return auto_type_round(d, job, stop, task, cfg, judge, progress);
+    }
+    let vocab = lanes.moments();
+    if vocab.is_empty() {
+        return Ok(None);
+    }
+    let frames = rows(
+        &lock(&d.reader),
+        "SELECT i.id,i.burst_key,i.path,i.preview_path,(SELECT d.crop_path FROM detections d WHERE d.image_id=i.id AND d.crop_path IS NOT NULL AND d.crop_path!='' ORDER BY COALESCE(d.sharpness,0) DESC,d.id LIMIT 1) AS crop_path FROM images i WHERE i.job_id=? AND i.burst_key IS NOT NULL AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 AND i.moments IS NULL ORDER BY i.burst_key,i.id",
+        [job],
+    )?;
+    let mut bursts: BTreeMap<i64, Vec<Value>> = BTreeMap::new();
+    for frame in frames {
+        bursts
+            .entry(frame["burst_key"].as_i64().unwrap_or_default())
+            .or_default()
+            .push(frame);
+    }
+    // A small, even sample per burst: enough to see the action, not the whole
+    // burst. A burst an earlier pass already judged is left alone.
+    let sampled: Vec<Vec<Value>> = bursts
+        .into_values()
+        .map(|members| {
+            let step = (members.len() / TYPE_FRAMES_PER_BURST).max(1);
+            members
+                .into_iter()
+                .step_by(step)
+                .take(TYPE_FRAMES_PER_BURST)
+                .collect()
+        })
+        .collect();
+    let total: usize = sampled.iter().map(Vec::len).sum();
+    if total == 0 {
+        return Ok(None);
+    }
+    if let Some(p) = progress {
+        p.plan(IDENTIFY_DECISION, total as u64);
+    }
+    let feed = live_feed(d);
+    if let Some(feed) = &feed {
+        feed.begin_phase(MOMENTS_PHASE, total);
+    }
+    let context = lanes.preset.prompt_context();
+    let mut done = 0usize;
+    for members in &sampled {
+        for frame in members {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let id = frame["id"].as_i64().unwrap_or_default();
+            let Ok(image) = picture(
+                frame["preview_path"].as_str(),
+                frame["path"].as_str().unwrap_or_default(),
+            ) else {
+                done += 1;
+                continue;
+            };
+            let url = data_url(&image, FRAME_EDGE);
+            let crop = frame["crop_path"]
+                .as_str()
+                .filter(|path| Path::new(path).is_file())
+                .and_then(|path| std::fs::read(path).ok())
+                .and_then(|bytes| Rgb::decode_jpeg(&bytes, 1).ok())
+                .map(|image| data_url(&image, PEAK_EDGE));
+            let label = frame_label(frame["path"].as_str().unwrap_or_default());
+            let thumb = thumb_of(frame["preview_path"].as_str());
+            let verdict = shown_as(&label, thumb, || {
+                judge.judge_pair(context, vocab, &url, crop.as_deref())
+            });
+            if let Ok(verdict) = verdict {
+                let _ = store(d, id, &verdict);
+            }
+            done += 1;
+            if let Some(p) = progress {
+                p.advance(IDENTIFY_DECISION, 1);
+            }
+            if let Some(feed) = &feed {
+                feed.phase_progress(done);
+            }
+        }
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+    }
+    if let Some(feed) = &feed {
+        feed.end_phase();
+    }
+    task.detail(format!("Asked the {total} sampled frames about this shoot"));
+    Ok(None)
+}
+
+/// The `auto` album's type question: a spread sample of the whole album, one
+/// choice answer, stored as a suggestion on the job.
+fn auto_type_round(
+    d: &Desktop,
+    job: i64,
+    stop: &AtomicBool,
+    task: &conrod_core::tasks::Task,
+    cfg: &Settings,
+    judge: &dyn MomentJudge,
+    progress: Option<&crate::progress::Progress>,
+) -> Result<Option<(String, f64)>> {
+    let frames = rows(
+        &lock(&d.reader),
+        "SELECT i.id,i.path,i.preview_path FROM images i WHERE i.job_id=? AND i.status='done' AND COALESCE(i.rejected,0)=0 AND COALESCE(i.copy_of,0)=0 ORDER BY i.id",
+        [job],
+    )?;
+    if frames.is_empty() || stop.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
+    let step = frames.len().div_ceil(TYPE_SAMPLE);
+    let chosen: Vec<&Value> = frames
+        .iter()
+        .step_by(step.max(1))
+        .take(TYPE_SAMPLE)
+        .collect();
+    let mut images = Vec::new();
+    for frame in &chosen {
+        let Ok(image) = picture(
+            frame["preview_path"].as_str(),
+            frame["path"].as_str().unwrap_or_default(),
+        ) else {
+            continue;
+        };
+        images.push(data_url(&image, PEAK_EDGE));
+    }
+    if images.is_empty() {
+        return Ok(None);
+    }
+    if let Some(p) = progress {
+        p.plan(IDENTIFY_DECISION, 1);
+        p.advance(IDENTIFY_DECISION, 1);
+    }
+    let label = format!("Album type ({} frames)", images.len());
+    let thumb = chosen
+        .first()
+        .and_then(|frame| thumb_of(frame["preview_path"].as_str()));
+    let answer = shown_as(&label, thumb, || {
+        judge.choose(
+            ShootPreset::Auto.prompt_context(),
+            &TYPE_CHOICES,
+            images.as_slice(),
+        )
+    });
+    let Ok(Some((choice, confidence))) = answer else {
+        task.detail("No type suggestion: the decision model gave no opinion");
+        return Ok(None);
+    };
+    if !TYPE_CHOICES.iter().any(|(name, _)| *name == choice) {
+        task.detail(format!("No type suggestion: the model named {choice}"));
+        return Ok(None);
+    }
+    lock(&d.db)
+        .execute(
+            "UPDATE jobs SET shoot_type_suggested=?, shoot_type_confidence=? WHERE id=?",
+            params![choice, confidence, job],
+        )
+        .map_err(err)?;
+    task.detail(format!(
+        "Suggested shoot type: {choice} ({:.0}% sure)",
+        confidence * 100.0
+    ));
+    let _ = cfg;
+    Ok(Some((choice, confidence)))
 }
 
 /// The peak a frame's stored verdict already carries, if any: the burst pass
@@ -291,6 +605,7 @@ fn judged_burst(members: &[&Value]) -> bool {
 /// mark the one it picks clearly. Everything else in the burst loses any
 /// earlier mark. A burst an earlier pass already judged is left alone, so a
 /// re-run only asks about the bursts nobody has compared yet.
+#[allow(clippy::too_many_arguments)]
 fn peaks(
     d: &Desktop,
     job: i64,
@@ -299,6 +614,7 @@ fn peaks(
     judge: &dyn MomentJudge,
     context: &str,
     feed: Option<&IdentifyLive>,
+    progress: Option<&crate::progress::Progress>,
 ) -> Result<()> {
     let frames = rows(
         &lock(&d.reader),
@@ -334,6 +650,9 @@ fn peaks(
         task.detail(format!("Comparing bursts {}/{}", i + 1, total));
         if let Some(feed) = feed {
             feed.phase_progress(i);
+        }
+        if let Some(p) = progress {
+            p.advance(IDENTIFY_DECISION, 1);
         }
         // At most eight, evenly spread, so the request stays small.
         let step = members.len().div_ceil(PEAK_FRAMES);
@@ -481,6 +800,7 @@ mod tests {
                 &judge,
                 "Weddings.",
                 Some(&feed),
+                None,
             )
             .unwrap()
         };
@@ -600,6 +920,7 @@ mod tests {
             "keepers",
             false,
             &judge,
+            None,
         )
         .unwrap();
         assert_eq!(judged, 2, "two frames were decided before the cut-off");
@@ -622,6 +943,7 @@ mod tests {
             "keepers",
             false,
             &judge,
+            None,
         )
         .unwrap();
         assert_eq!(judged, 1);
@@ -652,6 +974,153 @@ mod tests {
         let seen = shown_as("IMG_1.CR3", None, || SHOWN.with(|s| s.borrow().clone()));
         assert_eq!(seen.unwrap().0, "IMG_1.CR3");
         assert!(SHOWN.with(|s| s.borrow().is_none()), "cleared afterwards");
+    }
+
+    #[test]
+    fn an_auto_album_stores_the_type_suggestion_without_applying_it() {
+        use crate::testkit::Lib;
+        use conrod_core::profile::{Lanes, Overrides, ShootPreset};
+
+        struct Typer;
+        impl MomentJudge for Typer {
+            fn name(&self) -> &'static str {
+                "fake"
+            }
+            fn judge(
+                &self,
+                _context: &str,
+                _vocab: &[Moment],
+                _image: &str,
+            ) -> std::result::Result<MomentVerdict, String> {
+                Ok(MomentVerdict::default())
+            }
+            fn choose(
+                &self,
+                _context: &str,
+                options: &[(&str, &str)],
+                _images: &[String],
+            ) -> std::result::Result<Option<(String, f64)>, String> {
+                assert!(options.iter().any(|(name, _)| *name == "sport-rodeo"));
+                Ok(Some(("sport-rodeo".into(), 0.83)))
+            }
+        }
+
+        let lib = Lib::new("auto-type");
+        let shot = preview(&lib, "spread.jpg");
+        for name in ["a.jpg", "b.jpg", "c.jpg", "d.jpg"] {
+            let id = lib.frame(name, Some(1));
+            lib.sql(
+                "UPDATE images SET preview_path=? WHERE id=?",
+                rusqlite::params![shot, id],
+            );
+        }
+        lib.sql(
+            "UPDATE jobs SET settings_json='{\"scan_profile\":\"auto\"}' WHERE id=?",
+            [lib.job],
+        );
+        let lanes = Lanes::resolve(ShootPreset::Auto, false, &Overrides::default());
+        let task = lib.d().hub.start("Judging moments", 0);
+        let stop = AtomicBool::new(false);
+        let judge = Typer;
+        let got = run_type_round(
+            lib.d(),
+            lib.job,
+            &stop,
+            &task,
+            &Settings::default(),
+            &lanes,
+            &judge,
+            None,
+        )
+        .unwrap();
+        assert_eq!(got, Some(("sport-rodeo".into(), 0.83)));
+        let suggested: String = lib.one(
+            "SELECT shoot_type_suggested FROM jobs WHERE id=?",
+            [lib.job],
+        );
+        assert_eq!(suggested, "sport-rodeo");
+        let confidence: f64 = lib.one(
+            "SELECT shoot_type_confidence FROM jobs WHERE id=?",
+            [lib.job],
+        );
+        assert!((confidence - 0.83).abs() < 1e-9);
+        // A suggestion is not an application: the album's own type is untouched.
+        let profile: String = lib.one(
+            "SELECT json_extract(settings_json,'$.scan_profile') FROM jobs WHERE id=?",
+            [lib.job],
+        );
+        assert_eq!(profile, "auto", "the suggestion is shown, never applied");
+        let accepted: Option<String> =
+            lib.one("SELECT shoot_type_accepted FROM jobs WHERE id=?", [lib.job]);
+        assert_eq!(
+            accepted, None,
+            "nothing was accepted on the photographer's behalf"
+        );
+    }
+
+    #[test]
+    fn a_typed_album_asks_a_sample_of_each_burst_and_skips_judged_frames() {
+        use crate::testkit::Lib;
+        use conrod_core::profile::{Lanes, Overrides, ShootPreset};
+
+        struct Counter(AtomicUsize);
+        impl MomentJudge for Counter {
+            fn name(&self) -> &'static str {
+                "fake"
+            }
+            fn judge(
+                &self,
+                _context: &str,
+                _vocab: &[Moment],
+                _image: &str,
+            ) -> std::result::Result<MomentVerdict, String> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(MomentVerdict::default())
+            }
+        }
+
+        let lib = Lib::new("type-round-sample");
+        let shot = preview(&lib, "frame.jpg");
+        // Four frames in one burst; the first already carries a verdict.
+        let ids: Vec<i64> = ["a1.jpg", "a2.jpg", "a3.jpg", "a4.jpg"]
+            .iter()
+            .map(|name| lib.frame(name, Some(7)))
+            .collect();
+        for id in &ids {
+            lib.sql(
+                "UPDATE images SET preview_path=? WHERE id=?",
+                rusqlite::params![shot, id],
+            );
+        }
+        lib.sql(
+            "UPDATE images SET moments='{\"backend\":\"fake\"}' WHERE id=?",
+            [ids[0]],
+        );
+        let lanes = Lanes::resolve(ShootPreset::Motorsport, false, &Overrides::default());
+        let task = lib.d().hub.start("Judging moments", 0);
+        let stop = AtomicBool::new(false);
+        let judge = Counter(AtomicUsize::new(0));
+        run_type_round(
+            lib.d(),
+            lib.job,
+            &stop,
+            &task,
+            &Settings::default(),
+            &lanes,
+            &judge,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            judge.0.load(Ordering::Relaxed),
+            3,
+            "the judged frame is skipped; the other three are asked"
+        );
+        let judged: i64 = lib.one(
+            "SELECT count(*) FROM images WHERE job_id=? AND moments IS NOT NULL",
+            [lib.job],
+        );
+        assert_eq!(judged, 4, "every sampled frame now carries its verdict");
     }
 
     #[test]

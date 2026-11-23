@@ -8,12 +8,20 @@
 
 use conrod_core::progress::{
     Found, LiveFrame, Overall, Pipeline, RateMeter, RecentFrame, ScanProgress, StageNode,
-    WorkerLane, RECENT_LIMIT, STAGES,
+    WorkerLane, IDENTIFY_DECISION, IDENTIFY_OCR, IDENTIFY_VISION, RECENT_LIMIT, STAGES,
 };
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+/// Unix epoch milliseconds, for a worker's `last_report_at`.
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default()
+}
 
 /// One stage node, as the scan lays it out before it starts.
 #[derive(Debug, Clone)]
@@ -23,6 +31,8 @@ pub struct StageSpec {
     pub model: String,
     pub device: String,
     pub workers: u32,
+    /// Switched off for this album: it starts `skipped`, with no counters.
+    pub skipped: bool,
 }
 
 impl StageSpec {
@@ -39,7 +49,15 @@ impl StageSpec {
             model: String::new(),
             device: String::new(),
             workers,
+            skipped: false,
         }
+    }
+
+    /// A sub-stage the album switched off: no workers, no counters.
+    pub fn off(mut self) -> StageSpec {
+        self.skipped = true;
+        self.workers = 0;
+        self
     }
 }
 
@@ -53,6 +71,8 @@ struct StageState {
     done: u64,
     total: u64,
     errors: u64,
+    status: &'static str,
+    error: Option<String>,
     meter: RateMeter,
 }
 
@@ -60,6 +80,7 @@ struct StageState {
 const IDLE: u8 = 0;
 const BUSY: u8 = 1;
 const WAITING: u8 = 2;
+const FAILED: u8 = 3;
 
 #[derive(Debug)]
 struct LaneState {
@@ -73,6 +94,8 @@ struct LaneState {
     file: Option<String>,
     step: Option<&'static str>,
     since: Instant,
+    /// Epoch milliseconds of the last report, for the screen's stalled check.
+    last_report_at: i64,
     /// The frame the lane holds, filled in by the worker as it learns things.
     /// Dropped whenever the lane moves to another file or goes idle.
     current: Option<LiveFrame>,
@@ -131,6 +154,7 @@ impl Progress {
                     file: None,
                     step: None,
                     since: Instant::now(),
+                    last_report_at: now_ms(),
                     current: None,
                 });
             }
@@ -150,6 +174,8 @@ impl Progress {
                         done: 0,
                         total: 0,
                         errors: 0,
+                        status: if s.skipped { "skipped" } else { "pending" },
+                        error: None,
                         meter: RateMeter::new(8.0),
                     })
                     .collect(),
@@ -244,6 +270,54 @@ impl Progress {
         }
     }
 
+    /// This stage finished: its node reads `done`, and its counters agree.
+    pub fn finish_stage(&self, stage: &'static str) {
+        self.with_node(stage, |node| {
+            node.status = "done";
+            node.done = node.total;
+            node.error = None;
+        });
+    }
+
+    /// This stage was skipped (switched off, or skipped by the photographer):
+    /// `skipped`, with no counters pretending there was work.
+    pub fn skip_stage(&self, stage: &'static str) {
+        self.with_node(stage, |node| {
+            node.status = "skipped";
+            node.done = 0;
+            node.total = 0;
+            node.errors = 0;
+            node.workers_total = 0;
+            node.error = None;
+        });
+    }
+
+    /// This stage failed, with the plain reason the screen shows.
+    pub fn fail_stage(&self, stage: &'static str, reason: impl Into<String>) {
+        self.with_node(stage, |node| {
+            node.status = "failed";
+            node.error = Some(reason.into());
+        });
+    }
+
+    /// This stage is paused between items: it says so instead of looking busy.
+    pub fn pause_stage(&self, stage: &'static str) {
+        self.with_node(stage, |node| {
+            if node.status != "skipped" && node.status != "failed" {
+                node.status = "paused";
+            }
+        });
+    }
+
+    /// A stage left `paused` and is working again.
+    pub fn resume_stage(&self, stage: &'static str) {
+        self.with_node(stage, |node| {
+            if node.status == "paused" {
+                node.status = "running";
+            }
+        });
+    }
+
     /// `pool`'s worker `index` is inside `step` of `stage`, on `file`.
     pub fn busy(
         &self,
@@ -283,6 +357,21 @@ impl Progress {
         self.lane(pool, index, pool, IDLE, None, None, None);
     }
 
+    /// `pool`'s worker `index` failed: it stays on the stage and step it was on,
+    /// with the honest `failed` lifecycle, instead of looking busy forever.
+    pub fn worker_failed(&self, pool: &'static str, index: usize) {
+        let mut lanes = crate::lock(&self.lanes);
+        let Some(lane) = lanes
+            .iter_mut()
+            .find(|lane| lane.pool == pool && lane.index as usize == index)
+        else {
+            return;
+        };
+        lane.state = FAILED;
+        lane.waiting_for = None;
+        lane.last_report_at = now_ms();
+    }
+
     /// `pool`'s worker `index` picked up `file` (database id `image_id`): it is
     /// at the first step, with nothing found on it yet.
     pub fn pickup(&self, pool: &'static str, index: usize, image_id: i64, file: &str) {
@@ -310,6 +399,7 @@ impl Progress {
         else {
             return;
         };
+        lane.last_report_at = now_ms();
         if let Some((image_id, file)) = start {
             lane.current = Some(LiveFrame::new(image_id, file));
         }
@@ -349,6 +439,7 @@ impl Progress {
         lane.state = state;
         lane.waiting_for = waiting_for;
         lane.step = step;
+        lane.last_report_at = now_ms();
         if let (Some(current), Some(step)) = (lane.current.as_mut(), step) {
             // `detect:wait` is still the detect step to the step ladder.
             current.step = step.split(':').next().unwrap_or(step).to_string();
@@ -434,6 +525,11 @@ impl Progress {
                 .rev()
                 .find(|stage| stage.total > 0)
                 .map_or(0, |stage| stage.done);
+            let status = match node.status {
+                "pending" if node.total > 0 && node.done >= node.total => "done",
+                "pending" if node.done > 0 || busy > 0 => "running",
+                other => other,
+            };
             nodes.push(StageNode {
                 id: node.id.to_string(),
                 label: node.label.to_string(),
@@ -445,6 +541,8 @@ impl Progress {
                 done: node.done,
                 total: node.total,
                 errors: node.errors,
+                status: status.to_string(),
+                error: node.error.clone(),
                 rate_per_s: rate,
                 eta_s: eta,
             });
@@ -475,12 +573,15 @@ impl Progress {
                 },
                 worker_index: lane.index,
                 state: match lane.state {
-                    BUSY => "busy",
-                    WAITING => "waiting",
-                    _ => "idle",
+                    BUSY => "working",
+                    WAITING if lane.waiting_for == Some("paused") => "paused",
+                    WAITING => "working",
+                    FAILED => "failed",
+                    _ => "done",
                 }
                 .into(),
                 waiting_for: lane.waiting_for.map(str::to_owned),
+                last_report_at: lane.last_report_at,
                 file: lane.file.clone(),
                 step: lane.step.map(str::to_owned),
                 ms_in_step: round1(lane.since.elapsed().as_secs_f64() * 1000.0),
@@ -520,7 +621,11 @@ impl Progress {
             })
             .map_or(FALLBACK_FRAME_SECONDS, |node| 1.0 / node.rate_per_s);
         let cost = |id: &str| match id {
-            "identify" => self.identify_cost_per_item.max(0.001),
+            IDENTIFY_VISION => self.identify_cost_per_item.max(0.001),
+            // The decision stage's asks are cheaper than a vision crop, and
+            // OCR is cheaper again.
+            IDENTIFY_DECISION => (self.identify_cost_per_item / 2.0).max(0.05),
+            IDENTIFY_OCR => frame_cost / 2.0,
             // Grouping and picking are one cheap pass over the album.
             "group" | "pick" => frame_cost / 16.0,
             _ => frame_cost / 4.0,
@@ -589,23 +694,37 @@ pub fn for_scan(
 ) -> Arc<Progress> {
     let cull = settings.cull_workers().clamp(1, 64) as u32;
     let identify = settings.identify_worker_count().clamp(1, 16) as u32;
+    let lanes = settings.lanes();
+    let ocr_on = settings.identify_ocr
+        && (settings.read_plates || settings.read_numbers || settings.read_text);
+    let decision_on = lanes.moments_detect;
+    let vision_on = settings.use_vlm && lanes.asks_model() && settings.has_vision_service();
+    let stage = |id: &'static str, workers: u32, on: bool| {
+        if on {
+            StageSpec::new(id, workers)
+        } else {
+            StageSpec::new(id, workers).off()
+        }
+    };
     let stages = vec![
         StageSpec::new("read", cull),
         StageSpec::new("detect", cull),
         StageSpec::new("sharpness", cull),
         StageSpec::new("faces", if faces { cull } else { 0 }),
-        StageSpec::new("identify", identify),
+        stage(IDENTIFY_OCR, identify, ocr_on),
+        stage(IDENTIFY_DECISION, identify, decision_on),
+        stage(IDENTIFY_VISION, identify, vision_on),
         StageSpec::new("group", 1),
         StageSpec::new("pick", 1),
     ];
-    let lanes: Vec<(&'static str, usize)> =
-        vec![("read", cull as usize), ("identify", identify as usize)];
+    let pools: Vec<(&'static str, usize)> =
+        vec![("read", cull as usize), (IDENTIFY_OCR, identify as usize)];
     // One crop's VLM time spread over the identify workers: a crop waits
     // VLM_SECONDS_PER_CROP / workers before it comes back.
     Progress::with_identify_cost(
         job,
         stages,
-        &lanes,
+        &pools,
         VLM_SECONDS_PER_CROP / identify.max(1) as f64,
     )
 }
@@ -630,11 +749,13 @@ mod tests {
                 StageSpec::new("detect", 2),
                 StageSpec::new("sharpness", 2),
                 StageSpec::new("faces", 2),
-                StageSpec::new("identify", 1),
+                StageSpec::new(IDENTIFY_OCR, 1),
+                StageSpec::new(IDENTIFY_DECISION, 1),
+                StageSpec::new(IDENTIFY_VISION, 1),
                 StageSpec::new("group", 1),
                 StageSpec::new("pick", 1),
             ],
-            &[("read", 2), ("identify", 1)],
+            &[("read", 2), (IDENTIFY_OCR, 1)],
         )
     }
 
@@ -656,13 +777,16 @@ mod tests {
             .unwrap();
         assert_eq!(detect.workers_total, 2);
         assert_eq!(detect.workers_busy, 0, "waiting is not inside the stage");
-        assert_eq!(waiting_snap.pipeline.workers[0].state, "waiting");
+        assert_eq!(waiting_snap.pipeline.workers[0].state, "working");
         assert_eq!(waiting_snap.pipeline.workers[0].stage, "detect");
         assert_eq!(
             waiting_snap.pipeline.workers[0].waiting_for.as_deref(),
             Some("lock")
         );
-        assert_eq!(waiting_snap.pipeline.workers[1].state, "idle");
+        assert_eq!(
+            waiting_snap.pipeline.workers[1].state, "done",
+            "a lane with nothing in hand is not working"
+        );
         assert_eq!(
             waiting_snap.pipeline.workers[1].stage, "read",
             "an idle worker rests at its pool's home stage"
@@ -678,7 +802,7 @@ mod tests {
             busy.pipeline.stages[1].workers_busy, 1,
             "one worker is inside detect"
         );
-        assert_eq!(busy.pipeline.workers[0].state, "busy");
+        assert_eq!(busy.pipeline.workers[0].state, "working");
         assert_eq!(
             busy.pipeline.stages[1].queue_len, 0,
             "nothing upstream yet: read has not finished a frame"
@@ -710,7 +834,7 @@ mod tests {
         let snap = progress.snapshot();
         assert_eq!(snap.stage, "detect");
         assert_eq!(snap.stage_index, 1);
-        assert_eq!(snap.stage_count, 7);
+        assert_eq!(snap.stage_count, 9);
         assert_eq!((snap.done, snap.total), (10, 10));
         assert_eq!(snap.found.subjects, 12);
         assert_eq!(snap.recent[0].image_id, 4);
@@ -733,18 +857,18 @@ mod tests {
                 StageSpec::new("detect", 1),
                 StageSpec::new("sharpness", 1),
                 StageSpec::new("faces", 1),
-                StageSpec::new("identify", 2),
+                StageSpec::new(IDENTIFY_VISION, 2),
                 StageSpec::new("group", 1),
                 StageSpec::new("pick", 1),
             ],
-            &[("read", 1), ("identify", 2)],
+            &[("read", 1), (IDENTIFY_OCR, 2)],
             4.0,
         );
         for stage in ["read", "detect", "sharpness", "faces"] {
             progress.total(stage, 100);
             progress.advance(stage, 10);
         }
-        progress.total("identify", 40);
+        progress.total(IDENTIFY_VISION, 40);
         let first = progress.snapshot();
         assert!(first.overall.total > 0.0);
         assert!(
@@ -764,7 +888,7 @@ mod tests {
         for stage in ["read", "detect", "sharpness", "faces"] {
             progress.advance(stage, 20);
         }
-        progress.advance("identify", 20);
+        progress.advance(IDENTIFY_VISION, 20);
         let warm = progress.snapshot();
         assert!(
             warm.overall.eta_confident,
@@ -773,7 +897,7 @@ mod tests {
         assert!(warm.overall.eta_s.is_some());
         assert_eq!(
             warm.pipeline.stages[4].queue_len, 10,
-            "faces done 30, identify took 20"
+            "faces done 30, vision took 20"
         );
         assert!(
             warm.overall.fraction > first.overall.fraction,
@@ -793,7 +917,7 @@ mod tests {
         assert_eq!(json["state"], "done");
         assert_eq!(json["job_id"], 3);
         assert!(json["eta_s"].is_null());
-        assert_eq!(json["pipeline"]["stages"].as_array().unwrap().len(), 7);
+        assert_eq!(json["pipeline"]["stages"].as_array().unwrap().len(), 9);
         assert_eq!(json["pipeline"]["workers"].as_array().unwrap().len(), 3);
     }
 
@@ -840,7 +964,10 @@ mod tests {
         progress.live("read", 1, |f| f.thumb_url = Some("thumb-42.jpg".into()));
         progress.waiting("read", 1, "detect", "detector", "detect:wait", "IMG_1.CR3");
         let waiting = progress.snapshot().pipeline.workers[1].clone();
-        assert_eq!(waiting.state, "waiting");
+        assert_eq!(
+            waiting.state, "working",
+            "a blocked worker is still working"
+        );
         assert_eq!(waiting.waiting_for.as_deref(), Some("detector"));
         let current = waiting.current.unwrap();
         assert_eq!(current.step, "detect", "the wait is still the detect step");
@@ -962,7 +1089,7 @@ mod tests {
             progress.advance(stage, 50);
         }
         // Vision has not started, but its work is still ahead.
-        progress.plan("identify", 100);
+        progress.plan(IDENTIFY_VISION, 100);
         progress.plan("group", 100);
         progress.plan("pick", 100);
         // A rate needs two samples with work between them: the first snapshot
@@ -1002,6 +1129,105 @@ mod tests {
         assert!(
             snap.overall.eta_confident,
             "an unstarted group pass is not a cold stage"
+        );
+    }
+
+    #[test]
+    fn a_skipped_sub_stage_says_skipped_and_has_no_counters() {
+        let progress = fake(11);
+        progress.plan(IDENTIFY_OCR, 10);
+        progress.advance(IDENTIFY_OCR, 3);
+        progress.skip_stage(IDENTIFY_OCR);
+        let node = progress
+            .snapshot()
+            .pipeline
+            .stages
+            .into_iter()
+            .find(|s| s.id == IDENTIFY_OCR)
+            .unwrap();
+        assert_eq!(node.status, "skipped");
+        assert_eq!((node.done, node.total), (0, 0), "no phantom work");
+        assert_eq!(node.workers_total, 0);
+    }
+
+    #[test]
+    fn a_worker_reports_its_lifecycle_and_when_it_last_reported() {
+        let progress = fake(12);
+        progress.busy(IDENTIFY_OCR, 0, IDENTIFY_OCR, "ocr", "IMG_1.CR3");
+        let working = progress.snapshot();
+        let lane = &working.pipeline.workers[2];
+        assert_eq!(lane.state, "working");
+        assert_eq!(lane.step.as_deref(), Some("ocr"));
+        assert!(lane.last_report_at > 0, "the screen's heartbeat");
+        assert_eq!(lane.stage, IDENTIFY_OCR);
+
+        progress.waiting(
+            IDENTIFY_OCR,
+            0,
+            IDENTIFY_DECISION,
+            "paused",
+            "wait",
+            "IMG_1.CR3",
+        );
+        assert_eq!(
+            progress.snapshot().pipeline.workers[2].state,
+            "paused",
+            "a paused worker never looks busy"
+        );
+
+        progress.worker_failed(IDENTIFY_OCR, 0);
+        assert_eq!(
+            progress.snapshot().pipeline.workers[2].state,
+            "failed",
+            "a dead worker says failed, never busy"
+        );
+
+        progress.idle(IDENTIFY_OCR, 0);
+        assert_eq!(
+            progress.snapshot().pipeline.workers[2].state,
+            "done",
+            "a worker with nothing in hand is not working"
+        );
+
+        progress.fail_stage(IDENTIFY_VISION, "The vision service did not answer");
+        let node = progress
+            .snapshot()
+            .pipeline
+            .stages
+            .into_iter()
+            .find(|s| s.id == IDENTIFY_VISION)
+            .unwrap();
+        assert_eq!(node.status, "failed");
+        assert_eq!(
+            node.error.as_deref(),
+            Some("The vision service did not answer"),
+            "a failure carries a plain reason"
+        );
+    }
+
+    #[test]
+    fn a_disabled_sub_stage_is_laid_out_skipped_by_for_scan() {
+        let settings = conrod_core::settings::Settings {
+            identify_ocr: false,
+            ..conrod_core::settings::Settings::default()
+        };
+        let progress = for_scan(13, &settings, false);
+        let snap = progress.snapshot();
+        let node = |id: &str| {
+            snap.pipeline
+                .stages
+                .iter()
+                .find(|s| s.id == id)
+                .unwrap()
+                .clone()
+        };
+        let ocr = node(IDENTIFY_OCR);
+        assert_eq!(ocr.status, "skipped", "OCR is off for this album");
+        assert_eq!((ocr.workers_total, ocr.total), (0, 0), "no phantom lane");
+        assert_ne!(
+            node(IDENTIFY_VISION).status,
+            "skipped",
+            "vision follows use_vlm"
         );
     }
 }
