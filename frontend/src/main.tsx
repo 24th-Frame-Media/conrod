@@ -5,6 +5,7 @@ import { applyTheme, storedTheme } from './lib/theme.mjs';
 import { ToastProvider } from './state/toast';
 import './styles/base.css';
 import './styles/screens.css';
+import './styles/surface.css';
 
 // The dev mock can open straight into the light theme: `?mock=1&theme=light`.
 const asked = import.meta.env.DEV ? new URLSearchParams(location.search).get('theme') : null;

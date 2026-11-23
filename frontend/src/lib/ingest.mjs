@@ -46,7 +46,9 @@ const two = (i) => String(i + 1).padStart(2, '0');
 /** Is a vision phase part of this run: the identify run reports in, or the scan lists an identify stage that is on. */
 export function visionExpected(stages, identify) {
   if (identify) return true;
-  return (Array.isArray(stages) ? stages : []).some((s) => s.id === 'identify' && stageStatus(s) !== 'off');
+  // B1 split `identify` into three first-class stages; an older snapshot still
+  // carries the single `identify` id. Either means a vision phase is planned.
+  return (Array.isArray(stages) ? stages : []).some((s) => (s.id === 'identify' || String(s.id).startsWith('identify:')) && stageStatus(s) !== 'off');
 }
 
 /** "2 failed" for the frames that came to nothing inside a stage; '' for none (and for engines that do not count them). */
@@ -154,6 +156,9 @@ export function ingestPhase({ mode = 'ingest', scan, identify = null, identifyin
   if (state === 'idle' || state === 'starting' || state === 'error' || state === 'stopped') return state;
   if (state === 'running') {
     if (scan.stage === 'group' || scan.stage === 'pick') return scan.stage;
+    // B1's `identify:ocr|decision|vision` are first-class PIPELINE stages now,
+    // not the standalone vision run: they stay in the scan phase. The old single
+    // `identify` id and a live identify event still mean the vision phase.
     if (scan.stage === 'identify' || identify?.state === 'running') return comparingBursts(identify) ? 'peaks' : 'vision';
     return 'scan';
   }

@@ -3,9 +3,13 @@ import {
   actionLabel, confidencePercent, confidenceTone, displayPath, fileName, prettyReply, sourceLabel,
 } from '../lib/identifyFlow.mjs';
 import { visionLaneWords, type VisionAction, type VisionOffReason } from '../lib/vision.mjs';
+import { SUBJECT_WORDS } from '../lib/subjects.mjs';
 import type { IdentifyItem } from '../lib/types';
 
-/** Why a car got no make, colour or team when vision is off, with the way to change that. */
+/** The album's resolved subject words (subjects.mjs), or the neutral default. */
+type Subject = { one: string; many: string; title: string; rate: string; each: string };
+
+/** Why a subject got no make, colour or team when vision is off, with the way to change that. */
 function VisionWhy({ reason, onAction }: { reason: VisionOffReason; onAction?: (id: VisionAction['id']) => void }) {
   const { why, action } = visionLaneWords(reason);
   return (
@@ -18,7 +22,7 @@ function VisionWhy({ reason, onAction }: { reason: VisionOffReason; onAction?: (
   );
 }
 
-/** The photo the car was read from, by file name; a crop's own file name says nothing. */
+/** The photo the subject was read from, by file name; a crop's own file name says nothing. */
 const caption = (item: IdentifyItem) => item.path?.split(/[\\/]/).pop() || fileName(item);
 
 export const hash = (number: string | null | undefined) => (number ? (number.startsWith('#') ? number : `#${number}`) : '—');
@@ -39,20 +43,22 @@ export function Chips({ item }: { item: IdentifyItem }) {
 }
 
 /**
- * One vision worker's page: its car, what the model was asked, what it said, and the number that came
+ * One vision worker's page: its subject, what the model was asked, what it said, and the number that came
  * out. Several workers run at once, so the screen shows one of these per worker; a finished
- * worker keeps its last car until the next one starts.
+ * worker keeps its last subject until the next one starts.
  */
-export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', visionOff, onVisionAction, onOpen }: {
+export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', visionOff, onVisionAction, onOpen, subject }: {
   worker: number; item: IdentifyItem | null; prompt?: string; live: boolean; name?: string; onOpen: () => void;
+  subject?: Subject;
   /** Why the vision model is not asked, when it is not: the card says so instead of "Make not read". */
   visionOff?: VisionOffReason | null;
   onVisionAction?: (id: VisionAction['id']) => void;
 }) {
+  const w = subject ?? SUBJECT_WORDS.subjects;
   const image = item ? asset(displayPath(item)) : '';
-  const title = [item?.make, item?.model].filter(Boolean).join(' ') || (item ? (visionOff ? visionLaneWords(visionOff).title : 'Make not read') : 'Waiting for a car');
+  const title = [item?.make, item?.model].filter(Boolean).join(' ') || (item ? (visionOff ? visionLaneWords(visionOff).title : 'Make not read') : `Waiting for a ${w.one}`);
   const source = sourceLabel(item?.number_source);
-  // Confidence is about the number: a car with no number read is not a 0% reading.
+  // Confidence is about the number: a subject with no number read is not a 0% reading.
   const conf = item?.number ? confidencePercent(item.number_conf) : null;
   const tone = confidenceTone(item?.number_conf);
   const label = `${name} ${String(worker + 1).padStart(2, '0')}`;
@@ -68,7 +74,7 @@ export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', visi
         {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
         {image
           ? <img src={image} alt="" draggable={false} loading="eager" />
-          : <span className="id-view-empty">{live ? 'Opening the RAW…' : 'This worker has no car yet.'}</span>}
+          : <span className="id-view-empty">{live ? 'Opening the RAW…' : `This worker has no ${w.one} yet.`}</span>}
         <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
         <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
         {live && <span className="id-scanline" aria-hidden="true" />}
@@ -91,7 +97,7 @@ export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', visi
         <h4>ASKING</h4>
         {prompt
           ? <pre className="mono">{prompt}</pre>
-          : <p className="muted id-panel-empty">{item ? (visionOff ? <VisionWhy reason={visionOff} onAction={onVisionAction} /> : 'No prompt for this car.') : 'Waiting…'}</p>}
+          : <p className="muted id-panel-empty">{item ? (visionOff ? <VisionWhy reason={visionOff} onAction={onVisionAction} /> : `No prompt for this ${w.one}.`) : 'Waiting…'}</p>}
       </section>
       <section className="id-panel id-lane-panel">
         <h4>MODEL SAYS</h4>
@@ -123,25 +129,26 @@ export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', visi
   );
 }
 
-/** The full page for one car: the picture with its number, the question, the reply and the trace. */
-export function IdentifyDetail({ detail, prompt, live, visionOff, onVisionAction }: {
-  detail: IdentifyItem | null; prompt?: string; live: boolean;
+/** The full page for one subject: the picture with its number, the question, the reply and the trace. */
+export function IdentifyDetail({ detail, prompt, live, visionOff, onVisionAction, subject }: {
+  detail: IdentifyItem | null; prompt?: string; live: boolean; subject?: Subject;
   visionOff?: VisionOffReason | null; onVisionAction?: (id: VisionAction['id']) => void;
 }) {
+  const w = subject ?? SUBJECT_WORDS.subjects;
   const number = hash(detail?.number);
-  const title = [detail?.make, detail?.model].filter(Boolean).join(' ') || (detail ? (visionOff ? visionLaneWords(visionOff).title : 'Make not read') : 'No car read yet');
+  const title = [detail?.make, detail?.model].filter(Boolean).join(' ') || (detail ? (visionOff ? visionLaneWords(visionOff).title : 'Make not read') : `No ${w.one} read yet`);
   const source = sourceLabel(detail?.number_source);
   const conf = detail?.number ? confidencePercent(detail.number_conf) : null;
   const tone = confidenceTone(detail?.number_conf);
   const image = detail ? asset(displayPath(detail)) : '';
   return (
     <div className="id-main">
-      <section className="id-left" aria-label="Car being read">
+      <section className="id-left" aria-label={`${w.title} being read`}>
         <div className="id-view">
           {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
           {image
             ? <img src={image} alt="" draggable={false} loading="eager" />
-            : <span className="id-view-empty">No picture for this car yet.</span>}
+            : <span className="id-view-empty">No picture for this {w.one} yet.</span>}
           <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
           <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
           {live && <span className="id-scanline" aria-hidden="true" />}
@@ -177,7 +184,7 @@ export function IdentifyDetail({ detail, prompt, live, visionOff, onVisionAction
           <h4>ASKING</h4>
           {prompt
             ? <pre className="mono">{prompt}</pre>
-            : <p className="muted id-panel-empty">{detail ? (visionOff ? <VisionWhy reason={visionOff} onAction={onVisionAction} /> : 'No prompt for this car.') : 'Waiting…'}</p>}
+            : <p className="muted id-panel-empty">{detail ? (visionOff ? <VisionWhy reason={visionOff} onAction={onVisionAction} /> : `No prompt for this ${w.one}.`) : 'Waiting…'}</p>}
         </section>
         <section className="id-panel id-reply">
           <h4>MODEL SAYS</h4>

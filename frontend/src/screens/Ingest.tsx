@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { IdentifyDetail, IdentifyLane, hash } from '../components/IdentifyParts';
 import { FrameDetail, ScanLane } from '../components/IngestLane';
+import { FlowNode } from '../components/FlowNode';
 import { WorkerPanel } from '../components/WorkerPanel';
 import { DeciderLane } from '../components/DeciderLane';
 import { deciderActive } from '../lib/decider.mjs';
@@ -62,6 +63,15 @@ export type IngestProps = {
   /** A stopped or failed identification: continue it where it stopped, asking only
    *  the frames nobody decided and the subjects nobody read. Never fired by itself. */
   onContinueIdentify?: () => void;
+  /** B5: the ONE surface model from the run snapshot (flowchart sub-nodes,
+   *  greyed steps, controls, VRAM warning, type suggestion). */
+  surface?: any;
+  /** B2 per-stage controls, exact wire shape. */
+  onStageControl?: (action: 'stage_pause' | 'stage_skip' | 'stage_rerun', stage: string) => void;
+  /** One-click accept of B1's type suggestion (never silent). */
+  onAcceptTypeSuggestion?: (type: string) => void;
+  /** A greyed node's shortcut: open this album's Manage shoot (§6.3). */
+  onOpenShootSettings?: () => void;
 };
 
 type Pick = { kind: 'car' | 'frame'; id: number };
@@ -107,6 +117,7 @@ export function ScanFailureBanner({ failure, onRetry, onLibrary }: { failure: Sc
 export function IngestScreen({
   mode, job, scan, identify, status, model, decisionService = null, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onCancel,
   onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue, scanError, runSnapshot, onRetryScan, onContinueIdentify,
+  surface, onStageControl, onAcceptTypeSuggestion, onOpenShootSettings,
 }: IngestProps) {
   const [picked, setPicked] = useState<Pick | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
@@ -187,8 +198,13 @@ export function IngestScreen({
   const frac = mode === 'identify' ? progressPercent(idLive?.done, idLive?.total) / 100
     : phase === 'done' ? 1 : ingestFraction({ scanFraction: scanFrac, identify: idLive, vision });
   const pct = Math.round(frac * 100);
-  const nodes = mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive, decisionService, subject)
-    : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService, subject, reads, failed: failedMap });
+  // The ONE surface model (§6.1): when the snapshot is on screen, its nodes —
+  // three identify sub-nodes, greyed steps, controls, status words — are the
+  // flowchart. The legacy builders stay as the fallback for an identify-only
+  // run or an engine that has not reported the grouped run yet.
+  const surfaceNodes = mode === 'ingest' && snap && surface && Array.isArray(surface.nodes) ? surface.nodes : null;
+  const nodes: any[] = surfaceNodes ?? (mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive, decisionService, subject)
+    : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService, subject, reads, failed: failedMap }));
 
   const visionLanes = workerLanes(idLive);
   const scanFilter = filter && filter !== 'vision' && filter !== 'decider' ? filter : null;
@@ -218,7 +234,8 @@ export function IngestScreen({
     ? [leftLabel(etaLabel(identifyEta(idLive), done >= 3))]
     : etaLines({ vision, scanDone: identifying || phase === 'done', scanEta: smoothed ?? (p ? overallEta(stages, p.overall) : null), scanStable: Boolean(scan?.stable), identify: idLive, subject });
   const rate = identifying ? (idLive ? rateLabel(idLive.done, idLive.elapsed_ms, subject) : '') : frameRate(formatRate(p?.rate_per_s));
-  const stageTotal = nodes.filter((node) => node.id !== 'done').length;
+  // Off/greyed steps never count toward progress (§6.3).
+  const stageTotal = surfaceNodes ? surface.stageTotal : nodes.filter((node) => node.id !== 'done').length;
   const stageAt = nodes.findIndex((node) => node.id === (head?.id ?? p?.stage)) + 1;
   const sub = phase === 'starting' ? (mode === 'identify' ? (reads ? `Waiting for the first ${subject.one}…` : 'Starting the judge…') : 'Reading the folder…')
     : phase === 'peaks' ? (phaseLabel(idLive?.phase) || 'Comparing bursts')
@@ -269,7 +286,8 @@ export function IngestScreen({
           {live && mode === 'ingest' && !identifying && (
             <div className="id-actions">
               <button className="ghost" onClick={paused ? onResume : onPause}>{paused ? 'Resume' : 'Pause'}</button>
-              <button className="ghost danger" onClick={onCancel}>Cancel scan</button>
+              {/* Run-level Stop (§4): neutral wording, existing Cancelled semantics. */}
+              <button className="ghost danger" onClick={onCancel} title="Stop this run. Anything already read is kept and can be resumed.">Stop</button>
             </div>
           )}
         </header>
@@ -299,34 +317,43 @@ export function IngestScreen({
         )}
 
         <ol className={`id-flow ing-flow${live ? '' : ' still'}`} aria-label={mode === 'identify' ? 'Identification stages' : 'Pipeline stages'}>
-          {nodes.map((node, i) => {
-            const inner = (
-              <>
-                <span className="id-node-top">
-                  <span className="id-node-num mono">{node.number}</span>
-                  {node.state === 'done' && <Icon name="check" size={12} />}
-                  {node.state === 'failed' && <Icon name="x" size={12} />}
-                  {node.state === 'active' && <i className="id-node-dot" aria-hidden="true" />}
-                </span>
-                <b>{node.label}</b>
-                <small className="ing-sub" title={node.title || node.sub}>{node.sub}</small>
-                {node.meta && <small className="ing-meta" title={node.meta}>{node.meta}</small>}
-              </>
-            );
-            const cls = `id-node ${node.state}${node.off ? ' off' : ''}`;
-            return (
-              <li className="id-flow-cell" key={node.id}>
-                {i > 0 && <span className={`id-link${node.state === 'active' ? ' flow' : node.state === 'done' ? ' done' : ''}`} aria-hidden="true" />}
-                {node.filter ? (
-                  <button type="button" className={`${cls} ing-node${filter === node.filter ? ' sel' : ''}`} aria-pressed={filter === node.filter}
-                    title={filter === node.filter ? `Showing ${node.label} workers. Click to show all.` : `Show only the ${node.label} workers`}
-                    onClick={() => { setFilter((f) => (f === node.filter ? null : node.filter)); setShowAll(false); setPicked(null); }}>
-                    {inner}
-                  </button>
-                ) : <div className={cls}>{inner}</div>}
-              </li>
-            );
-          })}
+          {surfaceNodes ? (
+            nodes.map((node, i) => (
+              <FlowNode key={node.id} node={node} first={i === 0} filter={filter}
+                onFilter={(f) => { setFilter(f); setShowAll(false); setPicked(null); }}
+                onStageControl={onStageControl} onAcceptTypeSuggestion={onAcceptTypeSuggestion}
+                onOpenShootSettings={onOpenShootSettings} />
+            ))
+          ) : (
+            nodes.map((node, i) => {
+              const inner = (
+                <>
+                  <span className="id-node-top">
+                    <span className="id-node-num mono">{node.number}</span>
+                    {node.state === 'done' && <Icon name="check" size={12} />}
+                    {node.state === 'failed' && <Icon name="x" size={12} />}
+                    {node.state === 'active' && <i className="id-node-dot" aria-hidden="true" />}
+                  </span>
+                  <b>{node.label}</b>
+                  <small className="ing-sub" title={node.title || node.sub}>{node.sub}</small>
+                  {node.meta && <small className="ing-meta" title={node.meta}>{node.meta}</small>}
+                </>
+              );
+              const cls = `id-node ${node.state}${node.off ? ' off' : ''}`;
+              return (
+                <li className="id-flow-cell" key={node.id}>
+                  {i > 0 && <span className={`id-link${node.state === 'active' ? ' flow' : node.state === 'done' ? ' done' : ''}`} aria-hidden="true" />}
+                  {node.filter ? (
+                    <button type="button" className={`${cls} ing-node${filter === node.filter ? ' sel' : ''}`} aria-pressed={filter === node.filter}
+                      title={filter === node.filter ? `Showing ${node.label} workers. Click to show all.` : `Show only the ${node.label} workers`}
+                      onClick={() => { setFilter((f) => (f === node.filter ? null : node.filter)); setShowAll(false); setPicked(null); }}>
+                      {inner}
+                    </button>
+                  ) : <div className={cls}>{inner}</div>}
+                </li>
+              );
+            })
+          )}
         </ol>
 
         {/* Every stage failure is visible with a plain reason and a retry on the
@@ -349,7 +376,7 @@ export function IngestScreen({
             <div className="ss-mark"><Icon name={phase === 'done' ? 'check' : 'x'} size={20} /></div>
             <div className="ss-text">
               <b>{phase === 'done'
-                ? summaryLine(total, p.found) + (idLive?.done ? ` · ${idLive.done.toLocaleString()} ${idLive.done === 1 ? 'car' : 'cars'} read` : '') + (job.errors ? ` · ${job.errors.toLocaleString()} could not be read` : '')
+                ? summaryLine(total, p.found) + (idLive?.done ? ` · ${idLive.done.toLocaleString()} ${idLive.done === 1 ? subject.one : subject.many} read` : '') + (job.errors ? ` · ${job.errors.toLocaleString()} could not be read` : '')
                 : `Stopped at ${pct}% · ${p.found.subjects.toLocaleString()} subjects found so far`}</b>
               <span className="muted">{phase !== 'done' ? 'Frames that were read can be reviewed now. Resume the scan from the Library to finish grouping and picking.'
                 : job.errors ? `${job.error_samples?.[0] ?? 'Some files could not be read'}. The rest are ready to review; retry the failed frames from the Library.`
@@ -369,8 +396,8 @@ export function IngestScreen({
             <div className="ss-mark"><Icon name={phase === 'done' ? 'check' : 'x'} size={20} /></div>
             <div className="ss-text">
               <b>{phase === 'done'
-                ? `${done.toLocaleString()} ${done === 1 ? 'car' : 'cars'} read in ${elapsed(idLive?.elapsed_ms) || 'no time at all'}`
-                : phase === 'stopped' ? `Stopped at ${pct}% · ${done.toLocaleString()} cars read` : 'Identification did not finish.'}</b>
+                ? `${done.toLocaleString()} ${done === 1 ? subject.one : subject.many} read in ${elapsed(idLive?.elapsed_ms) || 'no time at all'}`
+                : phase === 'stopped' ? `Stopped at ${pct}% · ${done.toLocaleString()} ${subject.many} read` : 'Identification did not finish.'}</b>
               <span className="muted">{phase === 'error'
                 ? (idLive?.errors?.[0] ?? 'Check the activity log in the top bar.')
                 : 'Identifications are suggestions until you accept them. Nothing is written until you say so.'}</span>
@@ -398,7 +425,7 @@ export function IngestScreen({
                 </div>
               )}
               {detailCar ? (
-                <IdentifyDetail detail={detailCar} prompt={detailCar.prompt ?? prompts.current[detailCar.detection_id]} live={detailCar.stage !== 'done' && identifying} visionOff={visionOff} onVisionAction={onVisionAction} />
+                <IdentifyDetail detail={detailCar} prompt={detailCar.prompt ?? prompts.current[detailCar.detection_id]} live={detailCar.stage !== 'done' && identifying} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject} />
               ) : detailFrame ? (
                 <FrameDetail frame={detailFrame} />
               ) : (showScan && picks.lanes.length) || showVision || showDecider || barrier ? (
@@ -414,7 +441,7 @@ export function IngestScreen({
               {showDecider && deciderLive && <DeciderLane live={deciderLive} serving={decisionService} />}
                     {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} />)}
                     {showVision && visionLanes.map((lane) => (
-                      <IdentifyLane key={`vision:${lane.worker}`} name="VISION" worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction}
+                      <IdentifyLane key={`vision:${lane.worker}`} name="VISION" worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject}
                         prompt={lane.item ? lane.item.prompt ?? prompts.current[lane.item.detection_id] : undefined}
                         onOpen={() => lane.item && pickCar(lane.item.detection_id)} />
                     ))}
@@ -429,14 +456,14 @@ export function IngestScreen({
                 <p className="muted ing-empty-note">
                   {filter ? 'No workers on this stage right now.'
                     : phase === 'starting' ? 'Loading the models and listing the files. The workers appear in a moment.'
-                      : mode === 'identify' ? 'Waiting for the workers to pick up the first cars…' : 'Waiting for the workers to pick up the first frames…'}
+                      : mode === 'identify' ? `Waiting for the workers to pick up the first ${subject.many}…` : 'Waiting for the workers to pick up the first frames…'}
                 </p>
               )}
             </section>
 
-            <section className="id-recent ing-strip" aria-label={mode === 'identify' ? 'Cars already read' : 'Frames and cars as they finish'}>
+            <section className="id-recent ing-strip" aria-label={mode === 'identify' ? `${subject.title} already read` : `Frames and ${subject.many} as they finish`}>
               <div className="ing-strip-head">
-                <span className="section-label">{mode === 'identify' ? 'Recent cars' : 'Just finished'}<span>{strip.length ? 'newest first' : ''}</span></span>
+                <span className="section-label">{mode === 'identify' ? `Recent ${subject.many}` : 'Just finished'}<span>{strip.length ? 'newest first' : ''}</span></span>
                 <button type="button" className={`id-live-return${picked == null ? ' on' : ''}`} disabled={picked == null}
                   title="Back to the workers" onClick={() => setPicked(null)}>
                   <i aria-hidden="true" />WORKERS
@@ -451,8 +478,8 @@ export function IngestScreen({
                       const tone = confidenceTone(car.number_conf);
                       const thumb = asset(car.thumb_path ?? car.preview_path ?? car.path);
                       return (
-                        <button type="button" className={`id-card ing-card car${picked?.kind === 'car' && picked.id === car.detection_id ? ' sel' : ''}`} key={item.key}
-                          title={[car.make, car.model, car.team].filter(Boolean).join(' · ') || 'Car read'} onClick={() => pickCar(car.detection_id)}>
+                        <button type="button" className={`id-card ing-card subject${picked?.kind === 'car' && picked.id === car.detection_id ? ' sel' : ''}`} key={item.key}
+                          title={[car.make, car.model, car.team].filter(Boolean).join(' · ') || 'Subject read'} onClick={() => pickCar(car.detection_id)}>
                           {thumb ? <img src={thumb} alt="" loading="lazy" draggable={false} /> : <span className="id-card-noimg" aria-hidden="true" />}
                           <span className="id-card-num">{hash(car.number)}</span>
                           <span className="id-card-make">{[car.make, car.model].filter(Boolean).join(' ') || car.plate || (visionOff ? 'Vision off' : 'Make not read')}</span>
@@ -472,7 +499,7 @@ export function IngestScreen({
                     );
                   })}
                 </div>
-              ) : <p className="muted id-recent-empty">{mode === 'identify' ? 'Finished cars appear here, with the number the engine read.' : 'Frames and cars appear here as they come through.'}</p>}
+              ) : <p className="muted id-recent-empty">{mode === 'identify' ? `Finished ${subject.many} appear here, with the number the engine read.` : `Frames and ${subject.many} appear here as they come through.`}</p>}
             </section>
           </div>
 

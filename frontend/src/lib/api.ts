@@ -63,6 +63,16 @@ export const engine = {
   /** Run one pipeline stage again on a finished album. `full` and `scope` apply to identify only. */
   rerunStage: (jobId: number, stage: import('./rerun.mjs').RerunStage, opts?: { full?: boolean; scope?: import('./types').Scope }) =>
     call<{ operation: string }>('rerun_stage', { jobId, stage, ...(opts?.full ? { full: true } : {}), ...(opts?.scope ? { scope: opts.scope } : {}) }),
+  /** B2 per-stage controls. The action + `{ jobId, stage }` are the exact wire
+   *  shape; `stage` is a wire id such as `identify:vision`. */
+  stageControl: (action: 'stage_pause' | 'stage_skip' | 'stage_rerun', jobId: number, stage: string) =>
+    call(action, { jobId, stage }),
+  stagePause: (jobId: number, stage: string) => call('stage_pause', { jobId, stage }),
+  stageSkip: (jobId: number, stage: string) => call('stage_skip', { jobId, stage }),
+  stageRerun: (jobId: number, stage: string) => call('stage_rerun', { jobId, stage }),
+  /** Accept B1's type suggestion for an `auto` album. Never silent: only the
+   *  not-yet-run Vision prompts change. */
+  acceptTypeSuggestion: (jobId: number, type: string) => call('accept_type_suggestion', { jobId, type }),
   identified: (jobId: number) => call<import('./types').Identified>('identified', { jobId }),
   acceptIdentifications: (ids: number[]) => call('bulk_edit', { ids, reviewed: true }),
   write: (jobId: number, dryRun = false) => call('write', { jobId, dryRun }),
