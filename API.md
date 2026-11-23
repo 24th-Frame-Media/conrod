@@ -30,9 +30,10 @@ Commands returning `operation` run in the background. Check `status.tasks` and c
 | remove_lightroom_plugin | none | Remove only our plug-in folder from Lightroom's Modules folder. Returns `{installed: false, removed, path}`; a second remove is a no-op |
 | openrouter_check | key | Validate an OpenRouter key without spending a model call. Returns `{ok: true, label, limit, usage}` or `{ok: false, error}`; a blank key says to add one first |
 | decider_status | none | The decision model card: install state, download progress, VRAM, precision/quantization, and what the model will do for this machine |
-| install_decider | none | Download the missing decision-model files in the background (resumable, hash-checked), reporting task progress |
+| install_decider | none | Download the missing decision-model files in the background (resumable, hash-checked, disk-space checked), reporting task progress |
+| models_status | none | Live local-model rows re-read from disk (`rows`, each with `id`, `downloaded`, `available`) plus the install in flight (`install`: real `done`/`total` bytes, or its plain `error`). The AI card polls this; cloud service rows are never in it |
 | cancel_operation | key | Signal background cancellation |
-| install_models | none | Install missing pinned model/tool assets, reporting task progress |
+| install_models | ids? | Install missing pinned model/tool assets in the background (resumable, hash-checked, disk-space checked). Empty/absent `ids` = everything missing (the Setup card); named manifest ids install exactly those assets and nothing else |
 | save_settings | settings fields | Updated settings |
 | delete_job | jobId | Remove album records; original photographs stay intact |
 | mark | imageId, stars?, rejected? | stars 0–5, null restores automatic; omitted fields unchanged |

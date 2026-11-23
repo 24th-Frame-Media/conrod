@@ -435,12 +435,15 @@ impl Service {
     }
 
     /// The Health/Setup row (`desktop.rs models()`), shaped like the others plus `optional`.
+    /// `downloaded` is disk truth (weights + projector + runtime on disk), independent
+    /// of whether the model is switched on or the GPU can hold it; `ready` is serving.
     pub fn model_row(&self) -> Value {
         let plan = self.plan_now();
         let state = self.display_state(&plan);
         let installed = Installed::probe();
+        let downloaded = installed.has(Quant::Int8) || installed.has(Quant::Int4);
         let ready = matches!(state, State::Ready | State::Loading | State::Running);
-        let detail = if ready || installed.has(Quant::Int8) || installed.has(Quant::Int4) {
+        let detail = if ready || downloaded {
             format!(
                 "{} ({})",
                 self.message(state, &plan),
@@ -450,10 +453,13 @@ impl Service {
             self.message(state, &plan)
         };
         json!({
+            "id": "decider",
             "name": "Decision model",
             "file": models::DECIDER_INT8,
             "ready": ready,
+            "downloaded": downloaded,
             "optional": true,
+            "available": true,
             "detail": detail,
         })
     }
@@ -736,13 +742,19 @@ impl Service {
         let _ = enabled;
         let gpu = vram::query();
         let Some(gpu) = gpu else {
-            return Err("No graphics card was found for the decision model.".into());
+            let e = "No graphics card was found for the decision model.".to_string();
+            crate::setup::progress_error("decider", &e);
+            return Err(e);
         };
         let Some(quant) = gating::choose(gpu.free, forced) else {
-            return Err(plan(true, forced, Installed::default(), Some(&gpu), false).message);
+            let e = plan(true, forced, Installed::default(), Some(&gpu), false).message;
+            crate::setup::progress_error("decider", &e);
+            return Err(e);
         };
         if lock(&self.installing).is_some() {
-            return Err("The decision model is already being installed.".into());
+            let e = "The decision model is already being installed.".to_string();
+            crate::setup::progress_error("decider", &e);
+            return Err(e);
         }
         *lock(&self.installing) = Some((0, 1));
         self.bump();
@@ -765,6 +777,7 @@ impl Service {
             .filter(|a| !crate::setup::present(a))
             .collect();
         let total: u64 = todo.iter().map(|a| a.size).sum::<u64>().max(1);
+        crate::setup::progress_begin("decider", total);
         let mut before = 0u64;
         for asset in todo {
             let task = hub.start(format!("Installing decision model: {}", asset.name), 100);
@@ -772,11 +785,13 @@ impl Service {
             let mut report = |done: u64, all: u64| {
                 task.progress(done * 100 / all.max(1), 100);
                 *lock(&self.installing) = Some((before + done.min(size), total));
+                crate::setup::progress_note("decider", before + done.min(size), total);
             };
             match assets::install(asset, &asset.folder(), stop, &mut report) {
                 Ok(_) => task.finish(),
                 Err(e) => {
                     task.fail(e.clone());
+                    crate::setup::progress_error("decider", &e);
                     return Err(e);
                 }
             }
@@ -790,6 +805,20 @@ impl Service {
                 return Err("The decision model files are missing.".into());
             };
             let dir = data_root().join("models");
+            // The 4-bit file is derived locally and needs about half the int8's
+            // room; refuse plainly rather than filling the disk mid-quantize.
+            let need = std::fs::metadata(&int8).map(|m| m.len() / 2).unwrap_or(0);
+            if let Some(free) = assets::free_bytes(&dir) {
+                if free < need.saturating_add(64 << 20) {
+                    let e = format!(
+                        "Not enough disk space to prepare the 4-bit decision model: it needs about {:.1} GB free, but only {:.1} GB is left. Free some space and try again.",
+                        need as f64 / (1u64 << 30) as f64,
+                        free as f64 / (1u64 << 30) as f64,
+                    );
+                    crate::setup::progress_error("decider", &e);
+                    return Err(e);
+                }
+            }
             let part = dir.join(format!("{}.part", models::DECIDER_INT4));
             let task = hub.start("Preparing the 4-bit decision model", 0);
             let result = Decider::quantize_int4(&runtime, &int8, &part)
@@ -803,6 +832,7 @@ impl Service {
                 Err(e) => {
                     let _ = std::fs::remove_file(&part);
                     task.fail(e.clone());
+                    crate::setup::progress_error("decider", &e);
                     return Err(e);
                 }
             }
@@ -825,9 +855,14 @@ pub fn install_in_background(d: &Arc<crate::desktop::Desktop>) -> Result<Value, 
     let desktop = d.clone();
     let operation = key.clone();
     std::thread::spawn(move || {
-        if let Err(e) = service().install(&desktop.hub, &flag) {
-            if e != "stopped" {
-                desktop.hub.note(format!("Decision model: {e}"));
+        match service().install(&desktop.hub, &flag) {
+            Ok(()) => crate::setup::progress_done(),
+            Err(e) => {
+                if e != "stopped" {
+                    desktop.hub.note(format!("Decision model: {e}"));
+                } else {
+                    crate::setup::progress_done();
+                }
             }
         }
         lock(&desktop.operations).remove(&operation);
@@ -930,6 +965,36 @@ mod tests {
             plan(true, Some(Quant::Int4), only4, Some(&gpu(8.0)), false).state,
             State::Ready
         );
+    }
+
+    #[test]
+    fn the_row_says_downloaded_from_disk_even_when_switched_off() {
+        // Moves CONROD_HOME: run in the serial pass, not the parallel suite
+        // (the main gate pass skips this test by name).
+        let _guard = crate::HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("conrod-decider-row-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("models")).unwrap();
+        let runtime = dir.join("tools").join(models::DECIDER_RUNTIME);
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::fs::write(dir.join("models").join(models::DECIDER_INT8), b"x").unwrap();
+        std::fs::write(dir.join("models").join(models::DECIDER_MMPROJ), b"x").unwrap();
+        std::fs::write(runtime.join("llama.dll"), b"x").unwrap();
+        let old = std::env::var_os("CONROD_HOME");
+        std::env::set_var("CONROD_HOME", &dir);
+        service().configure(&Settings::default()); // use_decider off
+        let row = service().model_row();
+        match old {
+            Some(v) => std::env::set_var("CONROD_HOME", v),
+            None => std::env::remove_var("CONROD_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(row["id"], "decider");
+        assert_eq!(row["downloaded"], true, "the files are on disk");
+        assert_eq!(row["ready"], false, "switched off is not serving");
+        // The detail names the state in plain words; the quant it names depends
+        // on the machine's free VRAM, so only its presence is pinned here.
+        assert!(!row["detail"].as_str().unwrap().is_empty());
     }
 
     #[test]
