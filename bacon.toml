@@ -1,0 +1,17 @@
+# bacon — live gate for merges into main.
+# Run in a spare terminal pane:  bacon gate        (tests, release, all crates except conrod-app)
+#                               bacon clippy      (same scope, -D warnings)
+# It watches the tree and reruns on every change (on_save/on_merge).
+
+[jobs.gate]
+command = ["cargo", "test", "--release", "--workspace", "--exclude", "conrod-app", "--lib"]
+need_stdout = true
+on_change_strategy = "kill_then_restart"
+
+[jobs.clippy]
+command = [
+    "cargo", "clippy", "--release", "--workspace", "--exclude", "conrod-app",
+    "--all-targets", "--", "-D", "warnings",
+]
+need_stdout = true
+on_change_strategy = "kill_then_restart"
