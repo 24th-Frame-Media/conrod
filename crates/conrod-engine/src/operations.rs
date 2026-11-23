@@ -971,6 +971,64 @@ pub(crate) fn pick_label_colour(name: &str) -> Option<&'static str> {
     }
 }
 
+/// The photographer's hand-set flags on a frame: the values a metadata write
+/// must never replace. The write paths read these with the frame rows and read
+/// them again just before they touch a file, because the first read can be
+/// minutes old while exiftool works through a big album.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct HandState {
+    stars: Option<i64>,
+    picked: Option<i64>,
+    rejected: Option<i64>,
+}
+
+impl HandState {
+    fn of(row: &Value) -> Self {
+        Self {
+            stars: row["stars"].as_i64(),
+            picked: row["picked"].as_i64(),
+            rejected: row["rejected"].as_i64(),
+        }
+    }
+
+    /// The frame's flags as they are now.
+    fn live(d: &Desktop, image: i64) -> Result<Self> {
+        rows(
+            &lock(&d.reader),
+            "SELECT stars,picked,rejected FROM images WHERE id=?",
+            [image],
+        )?
+        .first()
+        .map(Self::of)
+        .ok_or_else(|| format!("Frame {image} is gone"))
+    }
+}
+
+/// Whether a frame's snapshot row still matches the frame's flags now. `false`
+/// means the photographer picked, starred or rejected it after the snapshot was
+/// taken: writing the snapshot's verdict would overwrite that hand work, so the
+/// frame is skipped and the next write picks up the values it now carries.
+pub(crate) fn snapshot_stands(d: &Desktop, frame: &Value) -> Result<bool> {
+    let image = frame["id"].as_i64().ok_or("Invalid image id")?;
+    Ok(HandState::of(frame) == HandState::live(d, image)?)
+}
+
+/// Whether the engine's suggestion still stands for a frame: a hand pick made
+/// on any frame of its burst after the snapshot outranks the suggestion, just
+/// as it does when the pick was already there when the album finished.
+fn suggestion_stands(d: &Desktop, job: i64, frame: &Value) -> Result<bool> {
+    let Some(burst) = frame["burst_key"].as_i64() else {
+        return Ok(true);
+    };
+    Ok(rows(
+        &lock(&d.reader),
+        "SELECT 1 FROM images WHERE job_id=? AND burst_key=? AND COALESCE(picked,0)=1
+           AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 LIMIT 1",
+        params![job, burst],
+    )?
+    .is_empty())
+}
+
 pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> Result<Value> {
     let mut settings = settings(d, job)?;
     if embed_in_raw {
@@ -1020,13 +1078,18 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
             let rejected = frame["rejected"].as_i64() == Some(1);
             let hand_pick = frame["picked"].as_i64() == Some(1);
             let burst = frame["burst_key"].as_i64();
-            let suggested = !rejected
+            let mut suggested = !rejected
                 && !hand_pick
                 && (frame["burst_pick"].as_i64() == Some(1)
                     || detections
                         .iter()
                         .any(|d| d["burst_pick"].as_i64() == Some(1)))
                 && !burst.is_some_and(|key| picked_bursts.contains(&key));
+            // A hand pick made in Review while this loop runs takes over its
+            // burst, exactly as one that was there when the album finished.
+            if suggested && !suggestion_stands(d, job, frame)? {
+                suggested = false;
+            }
             let auto_rejected = !detections.is_empty()
                 && detections
                     .iter()
@@ -1065,6 +1128,19 @@ pub fn write(d: &Arc<Desktop>, job: i64, dry_run: bool, embed_in_raw: bool) -> R
             let caption = keywords::caption_for(&analyses);
             let path = Path::new(frame["path"].as_str().ok_or("Missing image path")?);
             task.detail(path.display().to_string());
+            // The frames were read once, before the loop; exiftool can spend
+            // minutes on a big album. A hand pick, star or reject made in Review
+            // in the meantime is the photographer's last word, so the frame is
+            // left alone instead of written with the snapshot's verdict, which
+            // the keep rules would then make permanent.
+            if !snapshot_stands(d, frame)? {
+                d.hub.note(format!(
+                    "Left {} alone: it changed in Review during the write",
+                    path.display()
+                ));
+                task.progress((i + 1) as u64, images.len() as u64);
+                continue;
+            }
             if dry_run {
                 d.hub.note(format!(
                     "Dry run: {}: {}",
@@ -1538,6 +1614,55 @@ mod tests {
         assert_eq!(
             metadata_verdict(false, false, Some(4), 0.9, &settings, false),
             (4, Some("Green"), false)
+        );
+    }
+
+    /// The auto-apply write reads the album's rows once and then spends minutes
+    /// in exiftool. A hand pick, star or reject made in that window is the
+    /// photographer's last word: that frame fails the snapshot check, so both
+    /// the XMP write and the Lightroom package leave it alone, while the frames
+    /// nobody touched still pass and are written as before.
+    #[test]
+    fn a_hand_pick_during_the_write_wins_and_its_frame_is_skipped() {
+        use crate::testkit::Lib;
+        let lib = Lib::new("write-race");
+        let picked = lib.frame("a.jpg", None);
+        let starred = lib.frame("b.jpg", None);
+        let suggested = lib.frame("c.jpg", Some(7));
+        let burstmate = lib.frame("d.jpg", Some(7));
+        lib.sql("UPDATE images SET burst_pick=1 WHERE id=?", [suggested]);
+        // The one read the write and the export take, in album order.
+        let frames = rows(
+            &lock(&lib.d().db),
+            "SELECT * FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 ORDER BY id",
+            [lib.job],
+        )
+        .unwrap();
+        assert_eq!(frames.len(), 4);
+        assert!(
+            frames.iter().all(|f| snapshot_stands(lib.d(), f).unwrap()),
+            "nothing has moved when the snapshot is taken"
+        );
+        assert!(suggestion_stands(lib.d(), lib.job, &frames[2]).unwrap());
+        // Review's own commands land while the write is still in exiftool.
+        lib.run("mark", json!({"imageId": picked, "picked": true}))
+            .unwrap();
+        lib.run("mark", json!({"imageId": starred, "stars": 4}))
+            .unwrap();
+        lib.run("mark", json!({"imageId": burstmate, "picked": true}))
+            .unwrap();
+        let stands: Vec<bool> = frames
+            .iter()
+            .map(|f| snapshot_stands(lib.d(), f).unwrap())
+            .collect();
+        assert_eq!(
+            stands,
+            vec![false, false, true, false],
+            "the hand-edited frames are skipped; the quiet one still writes"
+        );
+        assert!(
+            !suggestion_stands(lib.d(), lib.job, &frames[2]).unwrap(),
+            "the hand pick takes over its burst's suggestion too"
         );
     }
 }

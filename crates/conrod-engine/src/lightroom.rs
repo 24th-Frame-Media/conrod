@@ -502,6 +502,12 @@ pub fn export(d: &Desktop, job: i64) -> Result<Value> {
     };
     let mut photos = Vec::with_capacity(frames.len());
     for frame in &frames {
+        // The rows above were read once. A hand pick, star or reject made while
+        // the package is built must not ship the snapshot's verdict: the frame
+        // is left out, and the next export carries the photographer's values.
+        if !crate::operations::snapshot_stands(d, frame)? {
+            continue;
+        }
         let manual_stars = frame["manual_stars"].as_i64();
         let auto_culled = frame["detections"].as_i64().unwrap_or(0) > 0
             && frame["live_detections"].as_i64().unwrap_or(0) == 0;
