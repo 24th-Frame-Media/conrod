@@ -799,9 +799,17 @@ impl Desktop {
 
     pub fn run(self: &Arc<Self>, command: Command) -> Result<Value> {
         match command {
-            Command::Bootstrap {} => Ok(
-                json!({"settings": *lock(&self.settings), "jobs": self.jobs()?, "models": self.models(), "status": self.status()}),
-            ),
+            Command::Bootstrap {} => {
+                // Dev mode tells the UI to show its badge, and whether the Vite
+                // server is actually up: the window falls back to bundled dist.
+                let dev = conrod_core::settings::dev_mode();
+                let dev_url = conrod_core::settings::dev_url();
+                let dev_server = dev && conrod_core::settings::dev_server_reachable(&dev_url);
+                Ok(
+                    json!({"settings": *lock(&self.settings), "jobs": self.jobs()?, "models": self.models(), "status": self.status(),
+                    "dev": dev, "devUrl": dev_url, "devServer": dev_server}),
+                )
+            }
             Command::Health {} => {
                 let settings = lock(&self.settings).clone();
                 let mut models = self.models();

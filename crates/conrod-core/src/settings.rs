@@ -337,8 +337,9 @@ pub fn worker_caps() -> WorkerCaps {
     WorkerCaps::default()
 }
 
-/// `CONROD_HOME`, else `%USERPROFILE%\.conrod` -- deliberately not
-/// LOCALAPPDATA, which sandboxed hosts redirect into a per-app container.
+/// `CONROD_HOME`, else `%USERPROFILE%\.conrod` (or `.conrod-dev` in dev mode)
+/// -- deliberately not LOCALAPPDATA, which sandboxed hosts redirect into a
+/// per-app container.
 pub fn data_root() -> PathBuf {
     if let Some(home) = std::env::var_os("CONROD_HOME").filter(|v| !v.is_empty()) {
         return PathBuf::from(home);
@@ -346,7 +347,88 @@ pub fn data_root() -> PathBuf {
     let profile = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .unwrap_or_default();
-    PathBuf::from(profile).join(".conrod")
+    PathBuf::from(profile).join(if dev_mode() { ".conrod-dev" } else { ".conrod" })
+}
+
+/// `--dev` on the command line, or `CONROD_DEV=1` / `true` / `yes` / `on`: a
+/// development run. Every data path then lives under `~/.conrod-dev`, so a dev
+/// instance and the release app never share a database.
+pub fn dev_mode() -> bool {
+    if let Some(value) = std::env::var_os("CONROD_DEV") {
+        return value.to_str().is_some_and(is_dev_value);
+    }
+    std::env::args_os().skip(1).any(|arg| arg == "--dev")
+}
+
+fn is_dev_value(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+/// The Vite dev server's address in dev mode (its `--port` in package.json).
+pub const DEFAULT_DEV_URL: &str = "http://localhost:1420";
+
+/// Where the Vite dev server serves the UI: `--dev-url <url>` (or
+/// `--dev-url=<url>`), then `CONROD_DEV_URL`, then [`DEFAULT_DEV_URL`].
+pub fn dev_url() -> String {
+    dev_url_from(
+        std::env::args().skip(1),
+        std::env::var("CONROD_DEV_URL").ok(),
+    )
+}
+
+fn dev_url_from(args: impl IntoIterator<Item = String>, env: Option<String>) -> String {
+    let mut args = args.into_iter().peekable();
+    while let Some(arg) = args.next() {
+        let value = if let Some(value) = arg.strip_prefix("--dev-url=") {
+            Some(value.to_string())
+        } else if arg == "--dev-url" {
+            args.next().filter(|value| !value.starts_with("--"))
+        } else {
+            None
+        };
+        if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+            return value;
+        }
+    }
+    env.filter(|url| !url.trim().is_empty())
+        .map(|url| url.trim().to_string())
+        .unwrap_or_else(|| DEFAULT_DEV_URL.into())
+}
+
+/// Whether `url`'s host and port accept a TCP connection right now: the app
+/// loads the bundled UI when the dev server is not running.
+pub fn dev_server_reachable(url: &str) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    let Some((host, port)) = dev_host_port(url) else {
+        return false;
+    };
+    let Ok(addrs) = (host.as_str(), port).to_socket_addrs() else {
+        return false;
+    };
+    addrs.into_iter().any(|addr| {
+        TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(250)).is_ok()
+    })
+}
+
+/// `http://localhost:1420/` -> `("localhost", 1420)`.
+fn dev_host_port(url: &str) -> Option<(String, u16)> {
+    let (scheme, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if authority.is_empty() {
+        return None;
+    }
+    let default_port = if scheme.eq_ignore_ascii_case("https") {
+        443
+    } else {
+        80
+    };
+    match authority.rsplit_once(':') {
+        Some((host, port)) => Some((host.to_string(), port.parse().ok()?)),
+        None => Some((authority.to_string(), default_port)),
+    }
 }
 
 /// A settings file that could not be read, moved aside instead of being
@@ -1778,5 +1860,65 @@ mod tests {
             "a clean file carries no warning"
         );
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dev_mode_is_an_env_flag_or_the_flag_on_the_command_line() {
+        for on in ["1", "true", "TRUE", "yes", "on", " 1 "] {
+            assert!(is_dev_value(on), "{on:?} switches dev mode on");
+        }
+        for off in ["0", "false", "no", "", "dev"] {
+            assert!(!is_dev_value(off), "{off:?} does not");
+        }
+    }
+
+    #[test]
+    fn the_dev_url_prefers_the_flag_then_the_environment_then_vite() {
+        let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
+        assert_eq!(
+            dev_url_from(args(&["--dev-url", "http://localhost:3000"]), None),
+            "http://localhost:3000"
+        );
+        assert_eq!(
+            dev_url_from(args(&["--dev-url=http://127.0.0.1:5000"]), None),
+            "http://127.0.0.1:5000"
+        );
+        assert_eq!(
+            dev_url_from(args(&[]), Some(" http://localhost:4000 ".into())),
+            "http://localhost:4000"
+        );
+        assert_eq!(dev_url_from(args(&["--dev"]), None), DEFAULT_DEV_URL);
+        assert_eq!(
+            dev_url_from(args(&["--dev"]), Some("  ".into())),
+            DEFAULT_DEV_URL
+        );
+    }
+
+    #[test]
+    fn a_dev_url_splits_into_host_and_port() {
+        assert_eq!(
+            dev_host_port("http://localhost:1420"),
+            Some(("localhost".into(), 1420))
+        );
+        assert_eq!(
+            dev_host_port("http://localhost:1420/index.html?x=1"),
+            Some(("localhost".into(), 1420))
+        );
+        assert_eq!(
+            dev_host_port("https://example.com"),
+            Some(("example.com".into(), 443))
+        );
+        assert_eq!(
+            dev_host_port("http://127.0.0.1"),
+            Some(("127.0.0.1".into(), 80))
+        );
+        assert_eq!(dev_host_port("localhost:1420"), None);
+        assert_eq!(dev_host_port("http://localhost:port"), None);
+    }
+
+    #[test]
+    fn a_closed_port_is_not_a_running_dev_server() {
+        assert!(!dev_server_reachable("http://127.0.0.1:1"));
+        assert!(!dev_server_reachable("not a url"));
     }
 }

@@ -21,7 +21,7 @@ fn ocr_models() -> Option<PathBuf> {
     let home = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default());
     [
         std::env::var_os("CONROD_MODELS").map(PathBuf::from),
-        Some(home.join(".conrod/models")),
+        Some(conrod_core::settings::data_root().join("models")),
         Some(
             home.join("Downloads/Conrod-0.2.11-win64/Conrod/_internal/rapidocr_onnxruntime/models"),
         ),

@@ -42,12 +42,7 @@ fn env(name: &str) -> Option<usize> {
 }
 
 fn models_dir() -> PathBuf {
-    PathBuf::from(
-        std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap(),
-    )
-    .join(".conrod/models")
+    conrod_core::settings::data_root().join("models")
 }
 
 /// The largest complete JPEG in a file: walk each SOI's segments (so an EXIF

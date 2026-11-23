@@ -417,8 +417,7 @@ mod tests {
     #[test]
     #[ignore = "needs ~/.conrod/models/taste-head.json and the DINOv2 tower"]
     fn scores_real_previews_in_a_sensible_order() {
-        let root =
-            Path::new(&std::env::var("USERPROFILE").unwrap_or_default()).join(".conrod/models");
+        let root = conrod_core::settings::data_root().join("models");
         let (tower, head) = (
             root.join("dinov2-small-tower.onnx"),
             root.join("taste-head.json"),

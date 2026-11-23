@@ -22,8 +22,7 @@ fn iou(a: &[f64; 4], b: &[f64]) -> f64 {
 }
 
 fn model_path() -> PathBuf {
-    PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
-        .join(".conrod/models/face_detection_yunet_2023mar.onnx")
+    conrod_core::settings::data_root().join("models/face_detection_yunet_2023mar.onnx")
 }
 
 #[test]

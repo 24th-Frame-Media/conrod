@@ -24,8 +24,7 @@ fn fixture() -> Option<Value> {
 }
 
 fn model_path() -> PathBuf {
-    PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
-        .join(".conrod/models/dinov2-small-quantized.onnx")
+    conrod_core::settings::data_root().join("models/dinov2-small-quantized.onnx")
 }
 
 fn parse_hex(s: &str) -> Option<[i32; 3]> {
