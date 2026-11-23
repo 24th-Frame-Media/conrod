@@ -88,7 +88,7 @@ export function GroupingFields({ value, onChange, disabled = false, idPrefix = '
         <label className="import-check">
           <input type="checkbox" checked={value.grouping_keep_pans} disabled={off}
             onChange={(e) => onChange({ grouping_keep_pans: e.target.checked })} />
-          <span><b>Keep pans together</b><small>A pan is one action however far the car travels, so its frames stay one stack.</small></span>
+          <span><b>Keep pans together</b><small>A pan is one action however far the subject travels, so its frames stay one stack.</small></span>
         </label>
         <label className="import-check">
           <input type="checkbox" checked={value.grouping_merge !== false} disabled={off}
@@ -98,7 +98,7 @@ export function GroupingFields({ value, onChange, disabled = false, idPrefix = '
         <label className="import-check">
           <input type="checkbox" checked={value.grouping_focus_anchor} disabled={off}
             onChange={(e) => onChange({ grouping_focus_anchor: e.target.checked })} />
-          <span><b>Anchor on the focus area</b><small>A frame the detector missed attaches to the car the camera focused on.</small></span>
+          <span><b>Anchor on the focus area</b><small>A frame the detector missed attaches to the subject the camera focused on.</small></span>
         </label>
       </div>
     </section>

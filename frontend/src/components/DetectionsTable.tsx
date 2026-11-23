@@ -336,7 +336,7 @@ export function DetectionsTable({
                       {a.number_source === 'ocr' && <span className="det-badge badge-ocr" title="Only OCR read this number; the vision model has not confirmed it.">OCR</span>}
                       {d.burst_pick ? <span className="det-badge badge-keeper"><KeeperMark inline />Best</span> : null}
                       {d.panning ? <span className="det-badge badge-panned">panned</span> : null}
-                      {d.bystander ? <span className="det-badge badge-background" title="Another car in the frame; the camera did not focus on it, so it is never rated, picked or read.">Background car — not checked</span> : null}
+                      {d.bystander ? <span className="det-badge badge-background" title="Another subject in the frame; the camera did not focus on it, so it is never rated, picked or read.">Background subject — not checked</span> : null}
                       {d.cull_reason ? <span className="det-badge badge-culled">{d.cull_reason}</span> : null}
                     </div>
 
@@ -497,7 +497,7 @@ export function DetectionsTable({
                                       {key === 'model' && modelSuggested && (
                                         <span
                                           className="tag suggested"
-                                          title="Judged from the car's shape only — check before relying on it"
+                                          title="Judged from the subject's shape only — check before relying on it"
                                         >
                                           suggested
                                         </span>
@@ -606,7 +606,7 @@ export function DetectionsTable({
                               {modelSuggested && (
                                 <span
                                   className="tag suggested"
-                                  title="Judged from the car's shape only — check before relying on it"
+                                  title="Judged from the subject's shape only — check before relying on it"
                                 >
                                   suggested
                                 </span>

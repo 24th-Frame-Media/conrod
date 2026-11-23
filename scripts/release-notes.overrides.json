@@ -82,6 +82,22 @@
         {
           "section": "New",
           "text": "An album can now be set to decide its own shoot type. The decision model looks at a spread of frames, suggests a type with a confidence, and waits for you to accept it: your chosen type always wins, and accepting only changes the vision reads that have not run yet."
+        },
+        {
+          "section": "New",
+          "text": "Each of the three identify steps can be paused, skipped or run again from its own node, and the whole run has one Stop button. Skipping a step spells out what that means before you confirm, and a paused or skipped step says so instead of looking busy."
+        },
+        {
+          "section": "Improved",
+          "text": "A step you switched off for an album is shown greyed out with a plain reason and a shortcut to turn it back on, instead of quietly disappearing or pretending to work. Only the steps that are actually working take part in the progress count."
+        },
+        {
+          "section": "New",
+          "text": "When the decision and vision models both run on this PC, Settings lets you set how many workers each uses. If the card can only hold one model at a time, Settings says so with the real memory figures and Conrod finishes every frame with the first model before loading the second."
+        },
+        {
+          "section": "Fixed",
+          "text": "The screens now call a shoot by its own subjects, not by hardcoded car words. A rodeo reads animals and riders, a wedding reads people, and a test stops any of those words creeping back into the on-screen wording."
         }
       ]
     }
