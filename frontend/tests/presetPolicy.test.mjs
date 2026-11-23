@@ -9,13 +9,16 @@ import {
 const rust = readFileSync(new URL('../../crates/conrod-core/src/profile.rs', import.meta.url), 'utf8');
 const types = readFileSync(new URL('../src/lib/types.ts', import.meta.url), 'utf8');
 const rustNames = [...rust.matchAll(/^\s+"([a-z-]+)" => ShootPreset::\w+,\r?$/gm)].map((m) => m[1]);
+// `auto` is a meta-type ("let Conrod decide"), not one of the presets
+// `ShootPreset::ALL` iterates: the picker and the generated summary skip it.
+const enginePresets = rustNames.filter((name) => name !== 'auto');
 const group = types.slice(types.indexOf('export const PROFILE_GROUPS'), types.indexOf('export const MIXED_PROFILE'));
 const tsIds = [...group.matchAll(/id: '([a-z-]+)'/g)].map((m) => m[1]);
 
 test('the type picker lists exactly the presets the engine knows, and the engine summary covers each', () => {
   assert.ok(rustNames.length >= 28, 'parsed the Rust preset names');
-  assert.deepEqual([...tsIds].sort(), [...rustNames].sort());
-  assert.deepEqual(Object.keys(policies).sort(), [...rustNames].sort());
+  assert.deepEqual([...tsIds].sort(), [...enginePresets].sort());
+  assert.deepEqual(Object.keys(policies).sort(), [...enginePresets].sort());
 });
 
 test('every summary lists every detector and reader the engine can switch', () => {
