@@ -6,7 +6,7 @@ import type { DeciderAsk, DeciderLive, DeciderResult, DeciderSaid, DeciderState,
 const QUESTIONS: DeciderAsk[] = [
   { id: 'sharp', kind: 'noul', text: 'Is the main subject in sharp focus?', options: 2 },
   { id: 'action', kind: 'noul', text: 'Is something dramatic happening in this frame?', options: 2 },
-  { id: 'overtake', kind: 'noul', text: 'Are two cars side by side or passing?', options: 2 },
+  { id: 'overtake', kind: 'noul', text: 'Are two subjects side by side or passing?', options: 2 },
   { id: 'crowd', kind: 'noul', text: 'Is there a crowd or spectator in view?', options: 2 },
   { id: 'dust', kind: 'noul', text: 'Is dust, spray or smoke thrown up?', options: 2 },
   { id: 'panning', kind: 'noul', text: 'Is the background streaked by a pan?', options: 2 },
