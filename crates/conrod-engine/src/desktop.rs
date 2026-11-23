@@ -805,9 +805,14 @@ impl Desktop {
                 let dev = conrod_core::settings::dev_mode();
                 let dev_url = conrod_core::settings::dev_url();
                 let dev_server = dev && conrod_core::settings::dev_server_reachable(&dev_url);
+                // Resolved data root (forward slashes) so the dev UI can show
+                // `~/.conrod-dev` and open the real folder from the popover/banner.
+                let dev_home = conrod_core::settings::data_root()
+                    .to_string_lossy()
+                    .replace('\\', "/");
                 Ok(
                     json!({"settings": *lock(&self.settings), "jobs": self.jobs()?, "models": self.models(), "status": self.status(),
-                    "dev": dev, "devUrl": dev_url, "devServer": dev_server}),
+                    "dev": dev, "devUrl": dev_url, "devServer": dev_server, "devHome": dev_home}),
                 )
             }
             Command::Health {} => {

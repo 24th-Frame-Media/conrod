@@ -139,6 +139,12 @@ fn taskbar(desktop: &Desktop) -> ProgressBarState {
 /// The notification-area tooltip stays useful while the window is hidden.
 fn tray_tooltip(desktop: &Desktop) -> String {
     use conrod_core::tasks::State;
+    // The dev instance stays unmistakable even while its window is hidden.
+    let name = if conrod_core::settings::dev_mode() {
+        "Conrod [DEV]"
+    } else {
+        "Conrod"
+    };
     let tasks = desktop.hub.snapshot();
     let Some(task) = tasks
         .iter()
@@ -146,9 +152,9 @@ fn tray_tooltip(desktop: &Desktop) -> String {
     else {
         let has_failed = tasks.iter().any(|task| task.state == State::Failed);
         if has_failed {
-            return "Conrod · Error".into();
+            return format!("{name} · Error");
         }
-        return "Conrod · Ready".into();
+        return format!("{name} · Ready");
     };
     let state = if task.state == State::Paused {
         "Paused"
@@ -156,9 +162,9 @@ fn tray_tooltip(desktop: &Desktop) -> String {
         "Running"
     };
     match task.total {
-        0 => format!("Conrod · {state}: {}", task.label),
+        0 => format!("{name} · {state}: {}", task.label),
         total => format!(
-            "Conrod · {state}: {} · {}%",
+            "{name} · {state}: {} · {}%",
             task.label,
             (task.done.saturating_mul(100) / total).min(100)
         ),
@@ -241,13 +247,18 @@ fn main() {
                     restore(&window, bounds);
                 }
                 if dev {
-                    // The dev instance is titled before its first paint (the
-                    // config window starts hidden). The window URL itself is the
-                    // Vite server (see the context setup at the end of `main`),
-                    // so it is the app's own origin and IPC works as usual. The
-                    // dev icon is designed separately and lands with the visual
-                    // pass.
-                    let _ = window.set_title("Conrod — Dev");
+                    // Before the first paint: [DEV] in the title/taskbar, and the
+                    // badged icon on the window. The window URL is the Vite dev
+                    // server (see the context setup at the end of `main`), so it
+                    // stays the app's own origin and IPC works as usual. The
+                    // runtime swap keeps one binary for both modes; the bundled
+                    // installer icon stays the production one.
+                    let _ = window.set_title("Conrod [DEV]");
+                    if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!(
+                        "../icons/conrod-dev-256.png"
+                    )) {
+                        let _ = window.set_icon(icon);
+                    }
                 }
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -316,7 +327,7 @@ fn main() {
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = tauri::menu::Menu::with_items(app, &[&show, &quit])?;
             let mut tray = tauri::tray::TrayIconBuilder::with_id("main")
-                .tooltip(if dev { "Conrod — Dev" } else { "Conrod" })
+                .tooltip(if dev { "Conrod [DEV]" } else { "Conrod" })
                 .menu(&menu)
                 .on_menu_event(|app, event| {
                     if event.id.as_ref() == "quit" {
@@ -339,7 +350,15 @@ fn main() {
                         }
                     }
                 });
-            if let Some(icon) = app.default_window_icon() {
+            if dev {
+                // Badge the tray too, so the dev instance is distinct in the
+                // notification area. Skip cleanly if the embedded PNG is absent.
+                if let Ok(icon) =
+                    tauri::image::Image::from_bytes(include_bytes!("../icons/conrod-dev-256.png"))
+                {
+                    tray = tray.icon(icon);
+                }
+            } else if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
