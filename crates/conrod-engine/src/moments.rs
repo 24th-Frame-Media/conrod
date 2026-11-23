@@ -234,6 +234,7 @@ pub(crate) fn run(
         lanes,
         scope,
         rejudge,
+        cfg.identify_worker_count().max(1) as usize,
         judge.as_ref(),
         None,
     )
@@ -251,6 +252,7 @@ pub(crate) fn run_decision(
     cfg: &Settings,
     lanes: &Lanes,
     scope: &str,
+    seats: usize,
     progress: Option<&crate::progress::Progress>,
 ) -> Result<Option<usize>> {
     if lanes.moments().is_empty() {
@@ -279,6 +281,7 @@ pub(crate) fn run_decision(
         lanes,
         scope,
         false,
+        seats,
         judge.as_ref(),
         progress,
     )?;
@@ -295,10 +298,11 @@ fn run_with(
     job: i64,
     stop: &AtomicBool,
     task: &conrod_core::tasks::Task,
-    cfg: &Settings,
+    _cfg: &Settings,
     lanes: &Lanes,
     scope: &str,
     rejudge: bool,
+    seats: usize,
     judge: &dyn MomentJudge,
     progress: Option<&crate::progress::Progress>,
 ) -> Result<usize> {
@@ -325,9 +329,9 @@ fn run_with(
     }
     let (next, judged) = (AtomicUsize::new(0), AtomicUsize::new(0));
     let control = d.stage_control(job);
-    let workers = (cfg.identify_worker_count().max(1) as usize)
-        .min(4)
-        .min(frames.len().max(1));
+    // The album's decision seats (both models local) or today's identify count;
+    // the decision model answers one request at a time, so these are queues.
+    let workers = seats.clamp(1, 4).min(frames.len().max(1));
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| loop {
@@ -975,6 +979,7 @@ mod tests {
             &lanes,
             "keepers",
             false,
+            1,
             &judge,
             None,
         )
@@ -998,6 +1003,7 @@ mod tests {
             &lanes,
             "keepers",
             false,
+            1,
             &judge,
             None,
         )

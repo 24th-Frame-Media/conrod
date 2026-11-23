@@ -895,8 +895,11 @@ impl Desktop {
                 let dev_home = conrod_core::settings::data_root()
                     .to_string_lossy()
                     .replace('\\', "/");
+                let settings = lock(&self.settings).clone();
+                let identify_vram = crate::vram_fit::snapshot(&settings);
                 Ok(
-                    json!({"settings": *lock(&self.settings), "jobs": self.jobs()?, "models": self.models(), "status": self.status(),
+                    json!({"settings": settings, "jobs": self.jobs()?, "models": self.models(), "status": self.status(),
+                    "identifyVram": identify_vram,
                     "dev": dev, "devUrl": dev_url, "devServer": dev_server, "devHome": dev_home}),
                 )
             }
@@ -1221,7 +1224,14 @@ impl Desktop {
     /// right now, plus the install in flight (real bytes, or its plain failure).
     /// Never a cached snapshot, and never a cloud service row.
     pub fn models_status(&self) -> Value {
-        json!({"rows": self.models(), "install": crate::setup::install_progress()})
+        let identify_vram = crate::vram_fit::snapshot(&lock(&self.settings));
+        json!({
+            "rows": self.models(),
+            "install": crate::setup::install_progress(),
+            // The fit check again with the settings in force: a settings change
+            // re-renders the AI card's concurrency warning without a restart.
+            "identifyVram": identify_vram,
+        })
     }
 
     /// The worker count of every pool, its cap and whether a change applies

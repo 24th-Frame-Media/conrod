@@ -270,7 +270,8 @@ pub fn service() -> &'static Service {
     SERVICE.get_or_init(Service::default)
 }
 
-fn forced_quant(word: &str) -> Option<Quant> {
+/// The user's quantization override, if any.
+pub(crate) fn forced_quant(word: &str) -> Option<Quant> {
     match word {
         "int8" => Some(Quant::Int8),
         "int4" => Some(Quant::Int4),
@@ -281,7 +282,7 @@ fn forced_quant(word: &str) -> Option<Quant> {
 /// Whether the in-process model is wanted. A settings file with moment
 /// services says so through its local card; one from before the list (none at
 /// all) still follows the opt-in switch.
-fn wants_decider(settings: &Settings) -> bool {
+pub(crate) fn wants_decider(settings: &Settings) -> bool {
     let local: Vec<bool> = settings
         .moments_services
         .iter()
