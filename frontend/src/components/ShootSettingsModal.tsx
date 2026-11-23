@@ -31,6 +31,9 @@ type Props = {
     identify_scope: Scope;
     /** How likely a moment must be before it counts (0.5 to 1). */
     moments_threshold: number;
+    /** B5: the three per-album identify-step switches (§6.8). */
+    identify_ocr: boolean;
+    use_decider: boolean;
   } & GroupingValues) => Promise<void>;
 };
 
@@ -47,6 +50,8 @@ export function ShootSettingsModal({
   const [profile, setProfile] = useState(initialProfile || 'motorsport');
   const [overrides, setOverrides] = useState<Overrides>(() => overridesOf(initialSettings.overrides));
   const [vision, setVision] = useState<boolean | null>(initialVision);
+  const [identifyOcr, setIdentifyOcr] = useState(initialSettings.identify_ocr !== false);
+  const [useDecider, setUseDecider] = useState(Boolean(initialSettings.use_decider) || initialSettings.moments_backend === 'decider');
   const [readAction, setReadAction] = useState(initialSettings.read_action !== false);
   const [groupVehicles, setGroupVehicles] = useState(initialSettings.group_vehicles !== false);
   const [identifyScope, setIdentifyScope] = useState<Scope>(() => identifyScopeOf(initialSettings.identify_scope));
@@ -60,6 +65,8 @@ export function ShootSettingsModal({
       setProfile(initialProfile || 'motorsport');
       setOverrides(overridesOf(initialSettings.overrides));
       setVision(initialVision);
+      setIdentifyOcr(initialSettings.identify_ocr !== false);
+      setUseDecider(Boolean(initialSettings.use_decider) || initialSettings.moments_backend === 'decider');
       setReadAction(initialSettings.read_action !== false);
       setGroupVehicles(initialSettings.group_vehicles !== false);
       setIdentifyScope(identifyScopeOf(initialSettings.identify_scope));
@@ -84,6 +91,8 @@ export function ShootSettingsModal({
         group_vehicles: groupVehicles,
         identify_scope: identifyScope,
         moments_threshold: thresholdOf(momentsThreshold),
+        identify_ocr: identifyOcr,
+        use_decider: useDecider,
         ...grouping,
       });
       onClose();
@@ -132,7 +141,22 @@ export function ShootSettingsModal({
           </div>
 
           <div className="field-group toggles-group">
-            <label className="field-label">Vision model</label>
+            <label className="field-label">Identify steps</label>
+            <p className="muted shoot-stage-lede">Choose which of the three identification steps run for this album. A step that is off shows greyed out in the run view.</p>
+            <label className="shoot-toggle-row">
+              <input type="checkbox" checked={identifyOcr} disabled={saving} onChange={(e) => setIdentifyOcr(e.target.checked)} />
+              <div className="toggle-text">
+                <b>Read plates, numbers and text (OCR)</b>
+                <span>A separate first pass. Off: the vision model reads numbers on its own.</span>
+              </div>
+            </label>
+            <label className="shoot-toggle-row">
+              <input type="checkbox" checked={useDecider} disabled={saving} onChange={(e) => setUseDecider(e.target.checked)} />
+              <div className="toggle-text">
+                <b>Judge moments with the decision model</b>
+                <span>What matters in this shoot, a suggested type for mixed albums, and each burst's peak.</span>
+              </div>
+            </label>
             <label className="shoot-toggle-row">
               <input
                 type="checkbox"
@@ -141,7 +165,7 @@ export function ShootSettingsModal({
                 onChange={(e) => setVision(nextAlbumVision(e.target.checked, settingsVision))}
               />
               <div className="toggle-text">
-                <b>Ask the vision model for make, colour and team</b>
+                <b>Read each subject with the vision model</b>
                 <span>{albumVisionHint(vision, globals)}</span>
               </div>
             </label>

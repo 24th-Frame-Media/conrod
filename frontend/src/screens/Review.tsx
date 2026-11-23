@@ -31,7 +31,7 @@ import { vlmModelLabel } from '../lib/vlm';
 import { facetsFor } from '../lib/facets.mjs';
 import { usePresetPolicy } from '../state/usePresetPolicy';
 import { isOn, overridesOf } from '../lib/presetPolicy.mjs';
-import { identifyTitle as identifyBannerTitle } from '../lib/subjects.mjs';
+import { identifyTitle as identifyBannerTitle, subjectWords } from '../lib/subjects.mjs';
 import { thresholdOf } from '../lib/moments.mjs';
 import type { ReviewModel } from '../state/useReview';
 import { Viewer } from './Viewer';
@@ -132,6 +132,9 @@ type Props = {
   onJobsChanged: () => Promise<unknown> | void;
   /** Dev start only (`?mock=1&lightroom=…`): open the sheet or dialog a screenshot needs. */
   lightroomDev?: 'export' | 'sent' | 'import' | 'imported' | 'stats';
+  /** B5: a greyed flowchart node's shortcut opens this album's Manage shoot.
+   *  A changing nonce reopens it even when the modal was already open. */
+  openShootSettings?: number;
 };
 
 /** A burst/duplicate/vehicle group with the words the card shows. */
@@ -189,10 +192,12 @@ function ResetAlbumDialog({ onCancel, onConfirm }: { onCancel: () => void; onCon
 }
 
 /** Toolbar (album, view, search, stars, sort, actions), facets, the card grid and the inspector. */
-export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onSkipAlbumIdentify, onWrite, onJobsChanged, onWatchIdentify, onWatchScan, lightroomDev }: Props) {
+export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, showBoxes, onToggleBoxes, verbs, onPickJob, onIdentify, onCull, onHelp, onOpenViewer, onLibrary, onEdit, onAcceptAll, onSkipIdentify, onSkipAlbumIdentify, onWrite, onJobsChanged, onWatchIdentify, onWatchScan, lightroomDev, openShootSettings = 0 }: Props) {
   const [known, setKnown] = useState<KnownVehicle[]>([]);
   const [confirmReset, setConfirmReset] = useState<'reset_ratings' | 'reset_identifications' | 'reset_detections' | 'reset_album' | 'rescan' | null>(null);
   const [shootSettingsOpen, setShootSettingsOpen] = useState(false);
+  // A greyed node's shortcut (§6.3) opens Manage shoot from any screen.
+  useEffect(() => { if (openShootSettings) setShootSettingsOpen(true); }, [openShootSettings]);
   const [statsOpen, setStatsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [lightroomOpen, setLightroomOpen] = useState(false);
@@ -236,6 +241,9 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   const albumOverrides = overridesOf(albumSetting(currentJob, 'overrides', settings));
   const userDefaults = overridesOf(albumSetting(currentJob, 'user_defaults', settings));
   const policy = usePresetPolicy(currentProfile, albumOverrides, userDefaults);
+  // The album's own subject words, from resolved settings (§6.1). Nothing here
+  // hardcodes a car: a rodeo reads subjects, a motorsport album vehicles.
+  const subject = subjectWords(policy);
   const vehicleBrowse = facetsFor(currentProfile, { ...userDefaults, ...albumOverrides }).some((k) => k === 'number' || k === 'plate' || k === 'make');
   const groupingNow = grouping === 'vehicles' && !vehicleBrowse ? 'bursts' : grouping;
   const identifyTask = jobId == null ? undefined : status.tasks.find((task) => (task.state === 'running' || task.state === 'paused') && /^Identifying\b/.test(task.label) && task.label.includes(`album ${jobId}`));
@@ -511,6 +519,9 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     : 'mixed';
   const albumSettings: Settings = {
     ...settings,
+    // B5: the three identify-step toggles follow this album's own values.
+    identify_ocr: albumSetting(currentJob, 'identify_ocr', settings) as boolean | undefined ?? true,
+    use_decider: albumSetting(currentJob, 'use_decider', settings) as boolean | undefined ?? Boolean(settings.use_decider),
     read_numbers: albumSetting(currentJob, 'read_numbers', settings) as boolean | undefined ?? true,
     read_plates: albumSetting(currentJob, 'read_plates', settings) as boolean | undefined ?? true,
     read_action: albumSetting(currentJob, 'read_action', settings) as boolean | undefined ?? true,
@@ -788,7 +799,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     {
       id: 'reset_identifications',
       label: 'Remove all identifications…',
-      hint: 'Clears plates, numbers, and detected car names',
+      hint: 'Clears plates, numbers, and detected subject names',
       danger: true,
       onClick: () => setConfirmReset('reset_identifications'),
     },
@@ -1088,7 +1099,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
                 <b>This album is identified</b>
                 <span>
                   {[
-                    scopeEligible > 0 ? `${scopeEligible.toLocaleString()} new ${scopeEligible === 1 ? 'car' : 'cars'} to read` : null,
+                    scopeEligible > 0 ? `${scopeEligible.toLocaleString()} new ${scopeEligible === 1 ? subject.one : subject.many} to read` : null,
                     identifyStale ? 'the reader settings changed since it was read' : null,
                   ].filter(Boolean).join(' · ')}
                 </span>
