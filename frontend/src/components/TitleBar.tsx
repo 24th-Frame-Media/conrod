@@ -5,8 +5,9 @@ import { etaText, pct, plural } from '../lib/format';
 import { applyTheme, storedTheme } from '../lib/theme.mjs';
 import { modelGroups, modelWord, workLabel, type HealthStatus } from '../lib/health.mjs';
 import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
-import type { Job, ModelInfo, Page, Status } from '../lib/types';
+import type { DevInfo, Job, ModelInfo, Page, ReloadState, Status } from '../lib/types';
 import { profileLabel } from '../lib/types';
+import { DevCluster } from './DevStatus';
 import { Icon, Mark } from './basics';
 
 /** Engine health rows carry wire-format provider ids as `name` and use
@@ -193,11 +194,11 @@ function StatusPill({ status, jobs, models, health, actions, defaultOpen }: { st
 
 type Props = {
   page: Page; setPage: (page: Page) => void; jobs: Job[]; models: ModelInfo[]; status: Status; profile: string;
-  health: HealthStatus; actions: StatusActions; popoverOpen: boolean;
+  health: HealthStatus; actions: StatusActions; popoverOpen: boolean; dev: DevInfo | null; reloadState: ReloadState;
 };
 
 /** Topbar and title bar in one: brand, tabs, stats, scan type, status pill, window controls. Drag it to move the window. */
-export function TitleBar({ page, setPage, jobs, models, status, profile, health, actions, popoverOpen }: Props) {
+export function TitleBar({ page, setPage, jobs, models, status, profile, health, actions, popoverOpen, dev, reloadState }: Props) {
   const active = status.tasks.find((t) => t.state === 'running' || t.state === 'paused');
   const photos = jobs.reduce((n, j) => n + j.total, 0);
   const [theme, setTheme] = useState(storedTheme);
@@ -211,11 +212,12 @@ export function TitleBar({ page, setPage, jobs, models, status, profile, health,
     ...TABS.slice(1),
   ];
   return (
-    <header className="topbar" data-tauri-drag-region>
+    <header className="topbar" data-dev={dev ? '' : undefined} data-tauri-drag-region>
       <div className="brand" data-tauri-drag-region>
         <div className="brand-mark"><Mark /></div>
         <h1>Conrod</h1>
       </div>
+      {dev && <DevCluster dev={dev} state={reloadState} />}
       <nav className="tabs" aria-label="Screens">
         {tabs.map(([id, label, title]) => (
           <button key={id} className={shown(id) ? 'active' : ''} title={id === 'Review' && scanning ? 'Cull the frames already measured while the scan finishes' : title} aria-current={shown(id) ? 'page' : undefined} onClick={() => setPage(id === 'Scan' && identifying && !scanning ? 'Identify' : id)}>

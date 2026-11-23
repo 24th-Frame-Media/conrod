@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { modelParts, startupCount, startupFraction, startupHeadline, visibleSteps } from '../lib/startup.mjs';
-import type { StartupStatus } from '../lib/types';
+import { SPLASH_VERSION } from '../lib/devInfo.mjs';
+import type { DevInfo, StartupStatus } from '../lib/types';
 
 /**
  * Sheets live on `document.body`, not inside the screen: a transformed or scrolled
@@ -117,19 +118,25 @@ export function Empty({ icon = 'images', title, children }: { icon?: IconName; t
  * that fills as steps finish, and the last few finished steps ticked off. A step that went wrong
  * shows amber and never blocks. Without a status yet it is the logo and an indeterminate bar.
  */
-export function Splash({ gone, status, version }: { gone: boolean; status?: StartupStatus | null; version?: string | null }) {
+export function Splash({ gone, status, version, dev }: { gone: boolean; status?: StartupStatus | null; version?: string | null; dev?: DevInfo | null }) {
   const fraction = startupFraction(status);
   const model = modelParts(status?.model);
   const count = startupCount(status);
   const steps = visibleSteps(status);
   return (
-    <div className={gone ? 'splash gone' : 'splash'} aria-hidden={gone}>
+    <div className={gone ? 'splash gone' : 'splash'} data-dev={dev ? '' : undefined} aria-hidden={gone}>
       <div className="splash-card">
         <div className="splash-mark"><Mark /></div>
         <div>
           <p className="splash-name"><b>con</b>rod</p>
-          {version && <p className="splash-ver">v{version}</p>}
+          {version && <p className="splash-ver">{SPLASH_VERSION(version, Boolean(dev))}</p>}
         </div>
+        {dev && (
+          <div className="splash-dev">
+            <span className="dev-flag">DEV</span>
+            <span>Isolated instance — data stays in <code className="mono">{dev.home}</code></span>
+          </div>
+        )}
         <div className="splash-now" role="status">
           <p className={status?.error ? 'splash-msg warn' : 'splash-msg'}>
             <span>{startupHeadline(status)}</span>

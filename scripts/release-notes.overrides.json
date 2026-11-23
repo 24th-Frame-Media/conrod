@@ -89,6 +89,7 @@
       "The built-in model rows read the real list of models on your PC and the decision-model setting, so a model that is installed and active shows its switch on instead of a Download button.",
       "Choosing None - skip for a model now leaves it out of the pool and its estimated cost, instead of still counting and charging for it."
     ],
+    "755c8c4": "Dev mode is unmistakable: an amber hairline, a solid DEV chip and a live-reload light in the title bar, a badged app and tray icon, and a clear isolated data home on the splash, popover and Settings. A normal launch stays exactly as it was.",
     "1c36879": "Open any album and see what Conrod is doing with it — the work screen is always there: scanning, waiting its turn, stopped, or finished with its summary.",
     "44e0d40": "Open any album and see what Conrod is doing with it — the work screen is always there: scanning, waiting its turn, stopped, or finished with its summary.",
     "2156244": [

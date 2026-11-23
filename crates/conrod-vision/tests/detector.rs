@@ -4,7 +4,7 @@
 use conrod_vision::detect::{DetectOptions, Detector, Device};
 use conrod_vision::imageops::Rgb;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 fn iou(a: &[f64; 4], b: &[f64]) -> f64 {
     let ix = (a[2].min(b[2]) - a[0].max(b[0])).max(0.0);
@@ -16,8 +16,7 @@ fn iou(a: &[f64; 4], b: &[f64]) -> f64 {
 #[test]
 fn boxes_match_ultralytics_when_available() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/detector_local.json");
-    let model = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
-        .join(".conrod/models/yolo11s-960.onnx");
+    let model = conrod_core::settings::data_root().join("models/yolo11s-960.onnx");
     let (Ok(text), true) = (std::fs::read_to_string(&fixture), model.exists()) else {
         eprintln!("no local detector fixture or model; see tools/export_onnx.py");
         return;

@@ -314,19 +314,10 @@ fn now_unix() -> f64 {
 /// Where the database (and everything else churny) lives. Deliberately NOT
 /// %LOCALAPPDATA%: a sandboxed or Store-packaged host redirects that into a
 /// per-app container the venv and models are not in. `CONROD_HOME` overrides
-/// it; otherwise it's `%USERPROFILE%\.conrod`.
+/// it; otherwise it's `%USERPROFILE%\.conrod` (`.conrod-dev` in dev mode).
+/// One resolution for the whole workspace: [`conrod_core::settings::data_root`].
 pub fn data_root() -> PathBuf {
-    if let Ok(over) = std::env::var("CONROD_HOME") {
-        if !over.is_empty() {
-            return PathBuf::from(over);
-        }
-    }
-    let base = std::env::var("USERPROFILE")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("HOME").ok())
-        .unwrap_or_default();
-    PathBuf::from(base).join(".conrod")
+    conrod_core::settings::data_root()
 }
 
 /// Path to the job database, `conrod.db` under [`data_root`].

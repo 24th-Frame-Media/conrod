@@ -746,8 +746,7 @@ mod tests {
 
     /// Models are optional locally; each test skips without them.
     fn installed(name: &str) -> Option<std::path::PathBuf> {
-        let dir =
-            std::path::PathBuf::from(std::env::var("USERPROFILE").ok()?).join(".conrod/models");
+        let dir = conrod_core::settings::data_root().join("models");
         let path = dir.join(name);
         path.is_file().then_some(path)
     }

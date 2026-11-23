@@ -412,12 +412,19 @@ export async function mockCall<T>(action: string, args: unknown): Promise<T> {
     case 'bootstrap':
       if (['scan', 'ingest'].includes(params().get('page') ?? '')) startSim(db, 3);
       if (params().get('page') === 'identify') startIdentifySim(1);
-      return out({ jobs: db.jobs, settings: db.settings, status: status(db), models: [
-        { name: 'Vehicle detector', file: 'yolo.onnx', ready: true },
-        { name: 'Plate reader', file: 'plates.onnx', ready: true },
-        { name: 'Vision model', file: 'qwen', ready: visionInstalled },
-        { name: 'Decision model', file: 'decider-int8.onnx', ready: decisionInstalled, optional: true },
-      ] } satisfies Bootstrap);
+      // `?dev=1` (which also turns the mock on) renders the whole dev chrome.
+      // `&devserver=up|down|reconnecting` forces the live-reload chip's state
+      // (connected / bundled-UI fallback / retrying) for QA screenshots.
+      return out({
+        jobs: db.jobs, settings: db.settings, status: status(db), models: [
+          { name: 'Vehicle detector', file: 'yolo.onnx', ready: true },
+          { name: 'Plate reader', file: 'plates.onnx', ready: true },
+          { name: 'Vision model', file: 'qwen', ready: visionInstalled },
+          { name: 'Decision model', file: 'decider-int8.onnx', ready: decisionInstalled, optional: true },
+        ],
+        dev: params().has('dev'), devUrl: 'http://localhost:1420', devServer: params().has('dev') && params().get('devserver') !== 'down',
+        devHome: '~/.conrod-dev',
+      } satisfies Bootstrap);
     case 'status': return out(status(db));
     case 'scan_status': {
       const id = Number(a.jobId) || 0;

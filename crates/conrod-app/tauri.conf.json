@@ -18,7 +18,7 @@
         "decorations": false,
         "backgroundColor": "#0b0b0d",
         "center": true,
-        "visible": true,
+        "visible": false,
         "focus": true
       }
     ],

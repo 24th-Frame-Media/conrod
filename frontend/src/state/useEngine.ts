@@ -21,6 +21,10 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
   const [settings, setSettings] = useState<Settings>({});
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [status, setStatus] = useState<Status>(emptyStatus);
+  const [dev, setDev] = useState(false);
+  const [devUrl, setDevUrl] = useState('');
+  const [devServer, setDevServer] = useState(false);
+  const [devHome, setDevHome] = useState('');
   const latest = useRef({ jobId, refreshReview, jobs });
   useEffect(() => { latest.current = { jobId, refreshReview, jobs }; });
 
@@ -34,6 +38,7 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
       const b = await engine.bootstrap();
       if (!live) return;
       setJobs(b.jobs); setSettings(b.settings); setModels(b.models); setStatus(b.status);
+      setDev(Boolean(b.dev)); setDevUrl(b.devUrl ?? ''); setDevServer(Boolean(b.devServer)); setDevHome(b.devHome ?? '');
       void refreshModels().catch(() => undefined);
     }).finally(() => { if (live) setReady(true); });
     return () => { live = false; };
@@ -97,6 +102,6 @@ export function useEngine(jobId: number | null, refreshReview: () => Promise<voi
     if (inTauri) void getCurrentWindow().requestUserAttention(last?.state === 'failed' ? UserAttentionType.Critical : UserAttentionType.Informational);
   }, [status, toast]);
 
-  return { ready, jobs, setJobs, settings, setSettings, models, status, setStatus, refreshJobs, refreshModels };
+  return { ready, jobs, setJobs, settings, setSettings, models, status, setStatus, refreshJobs, refreshModels, dev, devUrl, devServer, devHome };
 }
 export type EngineModel = ReturnType<typeof useEngine>;

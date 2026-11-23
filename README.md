@@ -195,6 +195,12 @@ npm --prefix frontend run tauri -- build --ci
 
 Output installer: `target/release/bundle/nsis/`.
 
+### Dev mode
+
+`Conrod.exe --dev` (or `CONROD_DEV=1`) starts an isolated development instance: it uses `~/.conrod-dev` instead of `~/.conrod` (settings, database, models, cache and the Lightroom bridge — an explicit `CONROD_HOME` still wins, so a release session never shares a database with it). Dev mode is unmistakable: the window and taskbar read **Conrod [DEV]**, the app/tray icon is badged, a 2 px amber hairline and a solid DEV chip plus a live-reload light sit in the title bar, and the splash and Settings name the isolated data home. Normal mode stays pixel-identical. The live chip reports whether Vite is connected, reconnecting, or the app fell back to the bundled UI.
+
+Run the Vite server with `npm --prefix frontend run dev`, then the app. The verified invocation is `CONROD_DEV=1 npm --prefix frontend run tauri -- dev` — the environment variable always reaches the process. Plain `--dev` needs the second `--` to reach the binary: `npm --prefix frontend run tauri -- dev -- -- --dev`. Port `1420` is in this host's Windows excluded port range, so use `--dev-url http://localhost:<port>` (or `CONROD_DEV_URL`) when the dev server cannot bind there; when nothing is listening the app loads the bundled UI and says so.
+
 See [`API.md`](API.md) for the internal command API and [`RELEASING.md`](RELEASING.md) for release workflows.
 
 ---
