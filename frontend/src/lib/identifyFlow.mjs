@@ -179,6 +179,19 @@ export function visibleWorkerLanes(lanes, phase = null) {
   return lanes.filter((lane) => (deciderRunning ? Boolean(lane?.live) : Boolean(lane?.live || lane?.item)));
 }
 
+/**
+ * Adaptive worker grid mode:
+ * - explicit `'cards'` or `'tiles'` honours the user's toggle
+ * - `'auto'` gives a solo Decider the side-by-side `'hero'` card, 1–3 workers vertical `'cards'`,
+ *   and 4+ workers horizontal-split `'tiles'` so more workers fit side by side.
+ */
+export function workerGridMode(count, { soloDecider = false, density = 'auto' } = {}) {
+  if (density === 'cards' || density === 'tiles') return density;
+  const n = Math.max(0, Math.round(Number(count) || 0));
+  if (soloDecider && n === 1) return 'hero';
+  return n >= 4 ? 'tiles' : 'cards';
+}
+
 /** Human labels for the vision model's action tags. */
 const ACTION_LABELS = {
   airborne: 'Airborne', dust: 'Dust', tyre_smoke: 'Tyre smoke', spray: 'Spray',

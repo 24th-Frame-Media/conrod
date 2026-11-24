@@ -42,13 +42,31 @@ export function Chips({ item }: { item: IdentifyItem }) {
   );
 }
 
+function FieldCell({ label, value, pending = false, muted = false }: {
+  label: string; value?: string | null; pending?: boolean; muted?: boolean;
+}) {
+  const text = value && String(value).trim();
+  return (
+    <div className="id-field-cell">
+      <span className="id-field-label mono">{label}</span>
+      {text ? (
+        <span className={`id-field-val${muted ? ' muted' : ''}`} title={text}>{text}</span>
+      ) : pending ? (
+        <span className="id-field-pending mono">reading…</span>
+      ) : (
+        <span className="id-field-val empty mono">—</span>
+      )}
+    </div>
+  );
+}
+
 /**
- * One vision worker's page: its subject, what the model was asked, what it said, and the number that came
- * out. Several workers run at once, so the screen shows one of these per worker; a finished
- * worker keeps its last subject until the next one starts.
+ * One identify worker's HUD card: its photo, live stage, number/confidence, and the structured
+ * fields populated from the engine's reading. Clicking the card opens the full detail view
+ * (including raw prompt, model JSON reply, and trace).
  */
-export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', ocrOnly = false, visionOff, onVisionAction, onOpen, subject }: {
-  worker: number; item: IdentifyItem | null; prompt?: string; live: boolean; name?: string; ocrOnly?: boolean; onOpen: () => void;
+export function IdentifyLane({ worker, item, live, name = 'WORKER', ocrOnly = false, layout = 'card', visionOff, onVisionAction, onOpen, subject }: {
+  worker: number; item: IdentifyItem | null; prompt?: string; live: boolean; name?: string; ocrOnly?: boolean; layout?: 'card' | 'tile'; onOpen: () => void;
   subject?: Subject;
   /** Why the vision model is not asked, when it is not: the card says so instead of "Make not read". */
   visionOff?: VisionOffReason | null;
@@ -56,76 +74,109 @@ export function IdentifyLane({ worker, item, prompt, live, name = 'WORKER', ocrO
 }) {
   const w = subject ?? SUBJECT_WORDS.subjects;
   const image = item ? asset(displayPath(item)) : '';
-  const title = [item?.make, item?.model].filter(Boolean).join(' ')
-    || (item ? (ocrOnly ? (live ? 'Reading plates & numbers' : 'OCR complete') : visionOff ? visionLaneWords(visionOff).title : 'Make not read') : `Waiting for a ${w.one}`);
+  const makeModel = [item?.make, item?.model].filter(Boolean).join(' ');
+  const visionPending = Boolean(item && live && !ocrOnly && !visionOff);
+  const title = makeModel
+    || (item
+      ? (ocrOnly ? (live ? 'Reading plates & numbers' : 'OCR complete')
+        : visionOff ? visionLaneWords(visionOff).title
+          : live ? 'Reading…' : 'Make not read')
+      : `Waiting for a ${w.one}`);
   const source = sourceLabel(item?.number_source);
   // Confidence is about the number: a subject with no number read is not a 0% reading.
   const conf = item?.number ? confidencePercent(item.number_conf) : null;
   const tone = confidenceTone(item?.number_conf);
   const label = `${name} ${String(worker + 1).padStart(2, '0')}`;
+  const offAction = visionOff ? visionLaneWords(visionOff).action : null;
+
+  const viewfinder = (
+    <div className="id-view id-view-lane">
+      {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
+      {image
+        ? <img src={image} alt="" draggable={false} loading="eager" />
+        : <span className="id-view-empty">{live ? 'Opening the RAW…' : `This worker has no ${w.one} yet.`}</span>}
+      <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
+      <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
+      {live && <span className="id-scanline" aria-hidden="true" />}
+      <span className={`id-badge${live ? ' live' : ''}`}>{live ? 'LIVE' : item ? 'DONE' : 'IDLE'}</span>
+      {item && <span className="id-file" title={item.path || displayPath(item)}>{caption(item)}</span>}
+    </div>
+  );
+
+  const fields = (
+    <div className="id-fields-wrap">
+      <div className="id-fields-grid">
+        <FieldCell
+          label="Make / Model"
+          value={makeModel || (ocrOnly ? 'Waiting for vision' : visionOff ? 'Vision off' : null)}
+          pending={visionPending && !makeModel}
+          muted={!makeModel && (ocrOnly || Boolean(visionOff))}
+        />
+        <FieldCell label="Plate" value={item?.plate} pending={Boolean(item && live && ocrOnly && !item.plate)} />
+        <FieldCell
+          label="Colour"
+          value={item?.colour || (ocrOnly ? 'Waiting for vision' : null)}
+          pending={visionPending && !item?.colour}
+          muted={!item?.colour && ocrOnly}
+        />
+        <FieldCell label="Team" value={item?.team} pending={visionPending && !item?.team} />
+      </div>
+      {item?.action?.length ? (
+        <div className="id-action-row">
+          <span className="id-field-label mono">Action</span>
+          <div className="id-action-tags">{item.action.map((tag) => <span className="tag" key={tag}>{actionLabel(tag)}</span>)}</div>
+        </div>
+      ) : null}
+      {item?.failures?.length ? <span className="id-failures">{item.failures.join(' · ')}</span> : null}
+      {offAction && onVisionAction && (
+        <button type="button" className="ghost small id-vision-action" onClick={(e) => { e.stopPropagation(); onVisionAction(offAction.id); }}>{offAction.label}</button>
+      )}
+    </div>
+  );
+
   return (
-    <section className={`id-lane${live ? ' live' : item ? ' done' : ' idle'}`} aria-label={`${name === 'WORKER' ? 'Worker' : name === 'OCR' ? 'OCR worker' : 'Vision worker'} ${worker + 1}`}>
+    <section
+      className={`id-lane${layout === 'tile' ? ' tile' : ''}${live ? ' live' : item ? ' done' : ' idle'}${item ? ' clickable' : ''}`}
+      aria-label={`${name === 'WORKER' ? 'Worker' : name === 'OCR' ? 'OCR worker' : 'Vision worker'} ${worker + 1}`}
+      onClick={() => { if (item) onOpen(); }}
+    >
       <header className="id-lane-head">
         <span className="id-lane-name mono">{label}</span>
         <span className={`id-lane-stage ${item?.stage ?? 'idle'}`}>{item ? item.stage : 'idle'}</span>
-        {live && <i className="id-lane-dot" aria-hidden="true" />}
+        {source && <span className="id-src-chip mono">{source}</span>}
+        {layout === 'tile' && (conf != null
+          ? <span className={`id-lane-conf id-lane-head-right mono ${tone}`}>{conf}%</span>
+          : <span className="id-lane-conf id-lane-head-right muted">—</span>)}
+        {live && <i className={`id-lane-dot${layout === 'tile' ? ' compact' : ''}`} aria-hidden="true" />}
       </header>
 
-      <div className="id-view id-view-lane">
-        {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
-        {image
-          ? <img src={image} alt="" draggable={false} loading="eager" />
-          : <span className="id-view-empty">{live ? 'Opening the RAW…' : `This worker has no ${w.one} yet.`}</span>}
-        <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
-        <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
-        {live && <span className="id-scanline" aria-hidden="true" />}
-        <span className={`id-badge${live ? ' live' : ''}`}>{live ? 'LIVE' : item ? 'DONE' : 'IDLE'}</span>
-        {item && <span className="id-file" title={item.path || displayPath(item)}>{caption(item)}</span>}
-      </div>
-
-      <div className="id-lane-result" key={item?.detection_id ?? 'empty'}>
-        <span className="id-lane-number mono">{hash(item?.number)}</span>
-        <div className="id-lane-facts">
-          <b>{title}</b>
-          <span className="muted">{[item?.colour, item?.plate].filter(Boolean).join(' · ') || source || '—'}</span>
+      {layout === 'tile' ? (
+        <div className="id-lane-split">
+          <div className="id-lane-split-left">
+            {viewfinder}
+            <div className="id-lane-result compact" key={item?.detection_id ?? 'empty'}>
+              <span className="id-lane-number mono">{hash(item?.number)}</span>
+              <span className="id-lane-title-inline muted" title={title}>{title}</span>
+            </div>
+          </div>
+          <div className="id-lane-split-right">{fields}</div>
         </div>
-        {conf != null
-          ? <span className={`id-lane-conf mono ${tone}`}>{conf}%</span>
-          : <span className="id-lane-conf muted">—</span>}
-      </div>
-
-      <section className="id-panel id-lane-panel">
-        <h4>ASKING</h4>
-        {prompt
-          ? <pre className="mono">{prompt}</pre>
-          : <p className="muted id-panel-empty">{item ? (ocrOnly ? 'Reading plate and number (vision runs next).' : visionOff ? <VisionWhy reason={visionOff} onAction={onVisionAction} /> : `No prompt for this ${w.one}.`) : 'Waiting…'}</p>}
-      </section>
-      <section className="id-panel id-lane-panel">
-        <h4>MODEL SAYS</h4>
-        {item?.reply
-          ? <pre className="mono">{prettyReply(item.reply)}</pre>
-          : <p className="muted id-panel-empty">{ocrOnly ? 'Vision model waits until OCR finishes.' : visionOff ? 'Vision is off, so there is no reply.' : live ? 'Waiting for the model…' : 'No reply.'}</p>}
-        {item?.action?.length ? (
-          <div className="id-action-tags">{item.action.map((tag) => <span className="tag" key={tag}>{actionLabel(tag)}</span>)}</div>
-        ) : null}
-        {item?.failures?.length ? <span className="id-failures">{item.failures.join(' · ')}</span> : null}
-      </section>
-
-      {item?.trace?.length ? (
-        <details className="id-lane-trace">
-          <summary>Trace <span className="mono">{item.trace.length}</span></summary>
-          <ol className="id-trace-lines">
-            {item.trace.map((line, i) => (
-              <li className="id-trace-line" key={`${i}:${line}`}>
-                <span className="id-trace-n">{String(i + 1).padStart(2, '0')}</span>
-                <span>{line}</span>
-              </li>
-            ))}
-          </ol>
-        </details>
-      ) : null}
-
-      <button type="button" className="ghost small id-lane-open" disabled={!item} onClick={onOpen}>Open detail</button>
+      ) : (
+        <>
+          {viewfinder}
+          <div className="id-lane-result" key={item?.detection_id ?? 'empty'}>
+            <span className="id-lane-number mono">{hash(item?.number)}</span>
+            <div className="id-lane-facts">
+              <b>{title}</b>
+              <span className="muted">{[item?.colour, item?.plate].filter(Boolean).join(' · ') || source || '—'}</span>
+            </div>
+            {conf != null
+              ? <span className={`id-lane-conf mono ${tone}`}>{conf}%</span>
+              : <span className="id-lane-conf muted">—</span>}
+          </div>
+          {fields}
+        </>
+      )}
     </section>
   );
 }

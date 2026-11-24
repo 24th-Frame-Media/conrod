@@ -29,6 +29,10 @@ export function displayItem(live: IdentifyLive | null | undefined, selectedId?: 
 export function workerLanes(live: IdentifyLive | null | undefined): { worker: number; item: IdentifyItem | null; live: boolean }[];
 /** Filter out empty placeholder cards (and non-live lanes during Decision) so blank workers never clutter the grid. */
 export function visibleWorkerLanes(lanes: { worker: number; item: IdentifyItem | null; live: boolean }[], phase?: IdentifyPhase | null): { worker: number; item: IdentifyItem | null; live: boolean }[];
+export type WorkerDensity = 'auto' | 'cards' | 'tiles';
+export type WorkerGridMode = 'hero' | 'cards' | 'tiles';
+/** Choose `'hero'`, `'cards'`, or `'tiles'` for the worker grid from active count and density preference. */
+export function workerGridMode(count: number, opts?: { soloDecider?: boolean; density?: WorkerDensity }): WorkerGridMode;
 export function actionLabel(id: string | null | undefined): string;
 export function confidencePercent(conf: number | null | undefined): number | null;
 export function confidenceTone(conf: number | null | undefined): 'good' | 'warn' | 'bad' | 'none';

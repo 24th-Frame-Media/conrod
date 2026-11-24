@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FLOW_NODES, IDENTIFY_STAGES, actionLabel, activeStage, confidencePercent, confidenceTone, deciderStepNode, displayItem,
-  displayPath, elapsed, flowNodes, phaseLabel, prettyReply, progressPercent, rateLabel, sourceLabel, visibleWorkerLanes, workerLanes,
+  displayPath, elapsed, flowNodes, phaseLabel, prettyReply, progressPercent, rateLabel, sourceLabel, visibleWorkerLanes, workerGridMode, workerLanes,
 } from '../src/lib/identifyFlow.mjs';
 import { SUBJECT_WORDS } from '../src/lib/subjects.mjs';
 const vehicles = SUBJECT_WORDS.vehicles;
@@ -89,6 +89,17 @@ test('visibleWorkerLanes hides empty placeholders and hides non-live cards durin
   assert.deepEqual(visibleWorkerLanes([{ worker: 0, item: null, live: false }], { name: 'peaks', state: 'running' }), []);
   // Once Decision ends, finished lanes are visible again.
   assert.deepEqual(visibleWorkerLanes(lanes, { name: 'peaks', state: 'done' }).map((l) => l.worker), [0, 1]);
+});
+
+test('workerGridMode adapts hero / cards / tiles automatically and honours density overrides', () => {
+  assert.equal(workerGridMode(1, { soloDecider: true }), 'hero');
+  assert.equal(workerGridMode(1, { soloDecider: false }), 'cards');
+  assert.equal(workerGridMode(3, { soloDecider: false }), 'cards');
+  assert.equal(workerGridMode(4, { soloDecider: false }), 'tiles');
+  assert.equal(workerGridMode(9, { soloDecider: false }), 'tiles');
+  assert.equal(workerGridMode(6, { density: 'cards' }), 'cards');
+  assert.equal(workerGridMode(2, { density: 'tiles' }), 'tiles');
+  assert.equal(workerGridMode(1, { soloDecider: true, density: 'tiles' }), 'tiles');
 });
 
 test('an in-flight car can be pinned before it finishes', () => {

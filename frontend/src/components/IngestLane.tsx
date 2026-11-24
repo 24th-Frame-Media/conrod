@@ -71,7 +71,7 @@ function Steps({ step, stage }: { step: string | null; stage: string }) {
  * One scan worker: the frame it holds with the boxes and autofocus area found so far, the step it is in, and the rating once it
  * has one. A paused or waiting lane says so instead of looking busy; an idle one dims. Everything but the file name is optional.
  */
-export function ScanLane({ worker, paused, recent }: { worker: PipelineWorker; paused: boolean; recent: ScanRecentFrame[] }) {
+export function ScanLane({ worker, paused, recent, layout = 'card' }: { worker: PipelineWorker; paused: boolean; recent: ScanRecentFrame[]; layout?: 'card' | 'tile' }) {
   const state = laneState(worker, paused);
   const text = laneText(worker, paused);
   const frame = laneFrame(worker, recent);
@@ -81,30 +81,22 @@ export function ScanLane({ worker, paused, recent }: { worker: PipelineWorker; p
   const verdict = verdictText(frame.verdict, frame.panning);
   const holding = state !== 'idle' && Boolean(frame.file);
   const empty = state === 'idle' ? 'No frame yet.' : state === 'paused' ? 'Paused.' : state === 'waiting' ? text : frame.file ? `Working on ${frame.step ?? 'the frame'}…` : 'Waiting for a frame…';
-  return (
-    <section className={`id-lane ing-lane ${state}${state === 'busy' ? ' live' : ''}`}
-      aria-label={`Worker ${laneNumber(worker)}, ${worker.stage}, ${text}${frame.file ? `, ${frame.file}` : ''}`}>
-      <header className="id-lane-head">
-        <span className="id-lane-name mono">WORKER {number}</span>
-        <span className={`id-lane-stage ing-stage ${state}`}>{worker.stage}</span>
-        <span className={`ing-lane-text ${state}`}>{state === 'busy' ? '' : text}</span>
-        {state === 'busy' && <i className="id-lane-dot" aria-hidden="true" />}
-      </header>
-
-      <div className="id-view id-view-lane">
-        {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
-        {image
-          ? <FrameStage src={image} boxes={frame.boxes} af={frame.af} afKind={frame.af_kind} />
-          : <span className="id-view-empty ing-empty"><i className="ing-ph" aria-hidden="true" />{empty}</span>}
-        <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
-        <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
-        {state === 'busy' && <span className="id-scanline" aria-hidden="true" />}
-        <span className={`id-badge ${state === 'busy' ? 'live' : state}`}>{laneBadge(state)}</span>
-        {holding && <span className="id-file" title={frame.file}>{frame.file}</span>}
-      </div>
-
+  const viewfinder = (
+    <div className="id-view id-view-lane">
+      {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
+      {image
+        ? <FrameStage src={image} boxes={frame.boxes} af={frame.af} afKind={frame.af_kind} />
+        : <span className="id-view-empty ing-empty"><i className="ing-ph" aria-hidden="true" />{empty}</span>}
+      <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
+      <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
+      {state === 'busy' && <span className="id-scanline" aria-hidden="true" />}
+      <span className={`id-badge ${state === 'busy' ? 'live' : state}`}>{laneBadge(state)}</span>
+      {holding && <span className="id-file" title={frame.file}>{frame.file}</span>}
+    </div>
+  );
+  const meta = (
+    <>
       <Steps step={frame.step} stage={worker.stage} />
-
       <div className="id-lane-result ing-result" key={frame.file || 'empty'}>
         <span className={`ing-stars mono${stars ? '' : ' none'}`} aria-label={stars ? `${frame.stars} stars` : 'Not rated yet'}>{stars || '☆☆☆☆☆'}</span>
         <div className="id-lane-facts">
@@ -112,6 +104,28 @@ export function ScanLane({ worker, paused, recent }: { worker: PipelineWorker; p
           <span className="muted">{frame.boxes.length ? `${frame.boxes.length} ${frame.boxes.length === 1 ? 'detection' : 'detections'}` : 'no detections yet'}</span>
         </div>
       </div>
+    </>
+  );
+  return (
+    <section className={`id-lane ing-lane ${state}${layout === 'tile' ? ' tile' : ''}${state === 'busy' ? ' live' : ''}`}
+      aria-label={`Worker ${laneNumber(worker)}, ${worker.stage}, ${text}${frame.file ? `, ${frame.file}` : ''}`}>
+      <header className="id-lane-head">
+        <span className="id-lane-name mono">WORKER {number}</span>
+        <span className={`id-lane-stage ing-stage ${state}`}>{worker.stage}</span>
+        <span className={`ing-lane-text ${state}`}>{state === 'busy' ? '' : text}</span>
+        {state === 'busy' && <i className="id-lane-dot" aria-hidden="true" />}
+      </header>
+      {layout === 'tile' ? (
+        <div className="id-lane-split">
+          <div className="id-lane-split-left">{viewfinder}</div>
+          <div className="id-lane-split-right ing-scan-split-right">{meta}</div>
+        </div>
+      ) : (
+        <>
+          {viewfinder}
+          {meta}
+        </>
+      )}
     </section>
   );
 }

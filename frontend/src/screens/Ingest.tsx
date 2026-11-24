@@ -11,7 +11,10 @@ import { asset } from '../lib/api';
 import { albumSetting } from '../lib/album.mjs';
 import { applyOverrides, defaultSummary, overridesOf } from '../lib/presetPolicy.mjs';
 import { readsSubjects, subjectWords } from '../lib/subjects.mjs';
-import { confidencePercent, confidenceTone, displayItem, elapsed, phaseLabel, progressPercent, rateLabel, visibleWorkerLanes, workerLanes } from '../lib/identifyFlow.mjs';
+import {
+  confidencePercent, confidenceTone, displayItem, elapsed, phaseLabel, progressPercent, rateLabel, visibleWorkerLanes, workerGridMode, workerLanes,
+  type WorkerDensity,
+} from '../lib/identifyFlow.mjs';
 import {
   etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase, laneKey, laneState, leftLabel,
   phaseRunning, phaseTone, phaseWord, stagePlace, starsText, stripItems, verdictText, visionExpected,
@@ -126,6 +129,9 @@ export function IngestScreen({
   const [picked, setPicked] = useState<Pick | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [density, setDensity] = useState<WorkerDensity>('auto');
+  const [overflow, setOverflow] = useState({ hasMore: false, hiddenBelow: 0 });
+  const workersRef = useRef<HTMLElement | null>(null);
   const decider = useDeciderProgress();
   // Prompts only ride on the cars being read and on the snapshot's active list, not on the
   // finished strip; keep the last one per car so a finished car can still show what was asked.
@@ -149,6 +155,38 @@ export function IngestScreen({
     }
     if (idLive?.current?.prompt) prompts.current[idLive.current.detection_id] = idLive.current.prompt;
   }, [idLive]);
+
+  const measureOverflow = () => {
+    const el = workersRef.current;
+    if (!el) return;
+    const remaining = el.scrollHeight - el.clientHeight - el.scrollTop;
+    if (remaining <= 18) {
+      setOverflow((prev) => (prev.hasMore || prev.hiddenBelow ? { hasMore: false, hiddenBelow: 0 } : prev));
+      return;
+    }
+    const bottom = el.getBoundingClientRect().bottom;
+    const cards = Array.from(el.querySelectorAll<HTMLElement>('.ing-lanes > .id-lane'));
+    const hiddenBelow = cards.filter((card) => card.getBoundingClientRect().top > bottom - 36).length;
+    setOverflow((prev) => (prev.hasMore && prev.hiddenBelow === hiddenBelow ? prev : { hasMore: true, hiddenBelow }));
+  };
+
+  useEffect(() => {
+    const el = workersRef.current;
+    if (!el) return undefined;
+    const raf = requestAnimationFrame(measureOverflow);
+    const onScroll = () => measureOverflow();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(measureOverflow);
+      ro.observe(el);
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener('scroll', onScroll);
+      ro?.disconnect();
+    };
+  }, [density, filter, showAll, picked, idLive, deciderLive, p]);
 
   const scanState = !p ? (running ? 'starting' : job?.status === 'error' ? 'error' : job?.status === 'done' || job?.status === 'done_errors' ? 'done' : 'idle')
     : p.state === 'running' && !running && job?.status !== 'scanning' ? 'stopped' : p.state === 'done_errors' ? 'done' : p.state;
@@ -235,6 +273,13 @@ export function IngestScreen({
   // The decision model's page: when picked in the flowchart, or while it has something to show.
   // Identify runs it beside vision, so the page is not limited to the scan screen.
   const showDecider = deciderLive != null && (filter === 'decider' || (filter == null && deciderActive(deciderLive)));
+  const visibleWorkerCount = (showDecider ? 1 : 0) + (showScan ? picks.lanes.length : 0) + (showVision ? shownVisionLanes.length : 0);
+  const liveWorkerCount = (showDecider && deciderLive && (deciderLive.busy > 0 || deciderLive.state === 'loading' || deciderLive.state === 'running') ? 1 : 0)
+    + (showScan ? picks.lanes.filter((w) => laneState(w, paused) === 'busy').length : 0)
+    + (showVision ? shownVisionLanes.filter((l) => l.live).length : 0);
+  const gridMode = workerGridMode(visibleWorkerCount, { soloDecider: showDecider && visibleWorkerCount === 1, density });
+  const laneLayout: 'card' | 'tile' = gridMode === 'tiles' ? 'tile' : 'card';
+  const deciderLayout: 'hero' | 'card' | 'tile' = gridMode === 'hero' ? 'hero' : laneLayout;
 
   const total = stages[0]?.total || p?.total || job.total;
   const smoothed = scan ? etaRemaining(scan.history) : null;
@@ -429,54 +474,92 @@ export function IngestScreen({
 
         <div className={`ing-body${mode === 'ingest' && p ? '' : ' solo'}`}>
           <div className="ing-main">
-            <section aria-label="Workers" className="ing-workers">
-              {!(detailCar || detailFrame) && (
-                <div className="ing-workers-head">
-                  <div className="section-label"><span>Workers</span><span>{live && !filter ? 'live' : ''}</span></div>
-                  {filter && (
-                    <span className="ing-chip">
-                      SHOWING {nodes.find((n) => n.filter === filter)?.label ?? filter.toUpperCase()}
-                      <button type="button" aria-label="Show all workers" onClick={() => { setFilter(null); setShowAll(false); }}>✕ clear</button>
-                    </span>
-                  )}
-                </div>
-              )}
-              {detailCar ? (
-                <IdentifyDetail detail={detailCar} prompt={detailCar.prompt ?? prompts.current[detailCar.detection_id]} live={detailCar.stage !== 'done' && identifying} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject} />
-              ) : detailFrame ? (
-                <FrameDetail frame={detailFrame} />
-              ) : (showScan && picks.lanes.length) || showVision || showDecider || barrier ? (
-                <>
-                  {barrier && (
-                    <div className="ing-barrier" role="status">
-                      <i className="id-node-dot" aria-hidden="true" />
-                      <b>{phase === 'group' ? 'Grouping' : 'Picking'}</b>
-                      <span className="muted">{phase === 'group' ? `Matching ${total.toLocaleString()} frames into bursts. This step has no workers to show.` : 'Ranking each burst for a suggested keeper. This step has no workers to show.'}</span>
+            <div className="ing-workers-shell">
+              <section aria-label="Workers" className="ing-workers" ref={workersRef}>
+                {!(detailCar || detailFrame) && (
+                  <div className="ing-workers-head">
+                    <div className="section-label">
+                      <span>Workers</span>
+                      {visibleWorkerCount > 0 && (
+                        <span className="ing-count-badge mono">
+                          {liveWorkerCount > 0 ? `${liveWorkerCount} live · ` : ''}{visibleWorkerCount} shown
+                        </span>
+                      )}
                     </div>
-                  )}
-                  <div className="id-lanes ing-lanes">
-              {showDecider && deciderLive && <DeciderLane live={deciderLive} serving={decisionService} />}
-                    {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} />)}
-                    {showVision && shownVisionLanes.map((lane) => (
-                      <IdentifyLane key={`vision:${lane.worker}`} name={ocrPhase ? 'OCR' : 'VISION'} ocrOnly={ocrPhase} worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject}
-                        prompt={lane.item ? lane.item.prompt ?? prompts.current[lane.item.detection_id] : undefined}
-                        onOpen={() => lane.item && pickCar(lane.item.detection_id)} />
-                    ))}
+                    {filter && (
+                      <span className="ing-chip">
+                        SHOWING {nodes.find((n) => n.filter === filter)?.label ?? filter.toUpperCase()}
+                        <button type="button" aria-label="Show all workers" onClick={() => { setFilter(null); setShowAll(false); }}>✕ clear</button>
+                      </span>
+                    )}
+                    {visibleWorkerCount > 0 && (
+                      <div className="ing-density" role="group" aria-label="Worker card layout">
+                        {(['auto', 'cards', 'tiles'] as const).map((opt) => (
+                          <button
+                            key={opt}
+                            type="button"
+                            className={`mono${density === opt ? ' on' : ''}`}
+                            aria-pressed={density === opt}
+                            onClick={() => setDensity(opt)}
+                          >
+                            {opt === 'auto' ? 'Auto' : opt === 'cards' ? 'Cards' : 'Tiles'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {showScan && (picks.hidden > 0 || showAll) && (
-                    <button type="button" className="ghost small ing-more" onClick={() => setShowAll((v) => !v)}>
-                      {showAll ? 'Show the busiest only' : `Show all ${picks.lanes.length + picks.hidden} scan workers`}
-                    </button>
-                  )}
+                )}
+                {detailCar ? (
+                  <IdentifyDetail detail={detailCar} prompt={detailCar.prompt ?? prompts.current[detailCar.detection_id]} live={detailCar.stage !== 'done' && identifying} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject} />
+                ) : detailFrame ? (
+                  <FrameDetail frame={detailFrame} />
+                ) : (showScan && picks.lanes.length) || showVision || showDecider || barrier ? (
+                  <>
+                    {barrier && (
+                      <div className="ing-barrier" role="status">
+                        <i className="id-node-dot" aria-hidden="true" />
+                        <b>{phase === 'group' ? 'Grouping' : 'Picking'}</b>
+                        <span className="muted">{phase === 'group' ? `Matching ${total.toLocaleString()} frames into bursts. This step has no workers to show.` : 'Ranking each burst for a suggested keeper. This step has no workers to show.'}</span>
+                      </div>
+                    )}
+                    <div className={`id-lanes ing-lanes ing-lanes-${gridMode}${visibleWorkerCount === 1 && gridMode !== 'hero' ? ' single' : ''}`}>
+                      {showDecider && deciderLive && <DeciderLane live={deciderLive} serving={decisionService} layout={deciderLayout} />}
+                      {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} layout={laneLayout} />)}
+                      {showVision && shownVisionLanes.map((lane) => (
+                        <IdentifyLane key={`vision:${lane.worker}`} name={ocrPhase ? 'OCR' : 'VISION'} ocrOnly={ocrPhase} layout={laneLayout} worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject}
+                          prompt={lane.item ? lane.item.prompt ?? prompts.current[lane.item.detection_id] : undefined}
+                          onOpen={() => lane.item && pickCar(lane.item.detection_id)} />
+                      ))}
+                    </div>
+                    {showScan && (picks.hidden > 0 || showAll) && (
+                      <button type="button" className="ghost small ing-more" onClick={() => setShowAll((v) => !v)}>
+                        {showAll ? 'Show the busiest only' : `Show all ${picks.lanes.length + picks.hidden} scan workers`}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <p className="muted ing-empty-note">
+                    {filter ? 'No workers on this stage right now.'
+                      : phase === 'starting' ? 'Loading the models and listing the files. The workers appear in a moment.'
+                        : mode === 'identify' ? `Waiting for the workers to pick up the first ${subject.many}…` : 'Waiting for the workers to pick up the first frames…'}
+                  </p>
+                )}
+              </section>
+              {!(detailCar || detailFrame) && overflow.hasMore && (
+                <>
+                  <div className="ing-overflow-fade" aria-hidden="true" />
+                  <button
+                    type="button"
+                    className="ing-overflow-pill mono"
+                    onClick={() => workersRef.current?.scrollBy({ top: 240, behavior: 'smooth' })}
+                  >
+                    {overflow.hiddenBelow > 0
+                      ? `+${overflow.hiddenBelow} more ${overflow.hiddenBelow === 1 ? 'worker' : 'workers'} below ↓`
+                      : 'More below ↓'}
+                  </button>
                 </>
-              ) : (
-                <p className="muted ing-empty-note">
-                  {filter ? 'No workers on this stage right now.'
-                    : phase === 'starting' ? 'Loading the models and listing the files. The workers appear in a moment.'
-                      : mode === 'identify' ? `Waiting for the workers to pick up the first ${subject.many}…` : 'Waiting for the workers to pick up the first frames…'}
-                </p>
               )}
-            </section>
+            </div>
 
             <section className="id-recent ing-strip" aria-label={mode === 'identify' ? `${subject.title} already read` : `Frames and ${subject.many} as they finish`}>
               <div className="ing-strip-head">
