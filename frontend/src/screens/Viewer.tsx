@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
-import { Modal } from '../components/basics';
+import { Icon, Modal } from '../components/basics';
 import { StarControl } from '../components/Stars';
 import { asset } from '../lib/api';
 import { compositionLabels } from '../lib/composition.mjs';
@@ -247,7 +247,7 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keep
               title="Keeper (P)"
               onClick={() => void mark(frame.picked ? { picked: false } : { picked: true, rejected: false })}
             >
-              {frame.picked ? 'Keeper ✓' : 'Keeper'}
+              {frame.picked && <Icon name="check" size={12} />}Keeper
             </button>
             <button
               className={`ghost danger cut${frameExcluded(frame, dets) ? ' on' : ''}`}

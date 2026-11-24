@@ -10,7 +10,7 @@ const vehicles = SUBJECT_WORDS.vehicles;
 test('the stages are the engine contract, in flow order', () => {
   assert.deepEqual(IDENTIFY_STAGES, ['read', 'crop', 'vision', 'merge', 'done']);
   assert.equal(FLOW_NODES.length, 6);
-  assert.deepEqual(FLOW_NODES.map((node) => node.label), ['LOAD', 'CROP', 'READ', 'VISION', 'ENTRY LIST', 'RESULT']);
+  assert.deepEqual(FLOW_NODES.map((node) => node.label), ['Load', 'Crop', 'Read', 'Vision', 'Entry list', 'Result']);
   assert.deepEqual(FLOW_NODES.map((node) => node.number), ['01', '02', '03', '04', '05', '06']);
 });
 
@@ -28,8 +28,8 @@ test('a stage maps onto the node that is lit', () => {
 test('flow nodes mark done, active and pending; vision lights both AI nodes', () => {
   const nodes = flowNodes({ stage: 'vision', state: 'running' });
   assert.deepEqual(nodes.map((node) => node.state), ['done', 'done', 'active', 'active', 'pending', 'pending']);
-  assert.equal(nodes[2].label, 'READ');
-  assert.equal(nodes[3].label, 'VISION');
+  assert.equal(nodes[2].label, 'Read');
+  assert.equal(nodes[3].label, 'Vision');
   assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b', null, vehicles)[3].sub, 'Reading vehicles — Qwen2.5-VL', 'the VISION node says what it does and names the model plainly');
   assert.equal(flowNodes({ stage: 'vision' }, 'qwen2.5vl:7b')[2].sub, 'plate + OCR', 'the other sublines stay put');
   // During the OCR phase, only READ lights up while VISION stays pending.
@@ -44,7 +44,7 @@ test('a finished run has nothing left to pulse, and no snapshot starts at LOAD',
   assert.ok(flowNodes({ stage: 'done', state: 'done' }).every((node) => node.state === 'done'));
   assert.ok(flowNodes({ stage: 'done', state: 'stopped' }).every((node) => node.state === 'done'));
   assert.deepEqual(flowNodes(null).map((node) => node.state), ['active', 'pending', 'pending', 'pending', 'pending', 'pending']);
-  assert.equal(flowNodes(undefined)[0].label, 'LOAD');
+  assert.equal(flowNodes(undefined)[0].label, 'Load');
 });
 
 test('the flow follows the car on screen, and a held result completes it', () => {

@@ -5,6 +5,7 @@ import {
   normalizeIdentifyOrder,
   type IdentifyStageKey,
 } from '../lib/settings.mjs';
+import { Icon } from './basics';
 import type { IdentifyVram, SettingValue, Settings as SettingsMap } from '../lib/types';
 import '../styles/workflow.css';
 
@@ -143,7 +144,7 @@ export function WorkflowSettings({ draft, saved, identifyVram = null, onChange }
                     aria-label={`Move ${meta.label} earlier`}
                     onClick={() => onChange('identify_order', moveIdentifyStage(order, key, -1))}
                   >
-                    ↑
+                    <Icon name="arrowUp" size={14} />
                   </button>
                   <button
                     type="button"
@@ -152,7 +153,7 @@ export function WorkflowSettings({ draft, saved, identifyVram = null, onChange }
                     aria-label={`Move ${meta.label} later`}
                     onClick={() => onChange('identify_order', moveIdentifyStage(order, key, 1))}
                   >
-                    ↓
+                    <Icon name="arrowDown" size={14} />
                   </button>
                 </div>
               </li>
@@ -161,7 +162,7 @@ export function WorkflowSettings({ draft, saved, identifyVram = null, onChange }
         </ol>
 
         <div className="wf-preview" aria-label="Pipeline execution preview">
-          <span className="wf-preview-label mono">{parallel ? (serialCard ? 'HYBRID PARALLEL' : 'PARALLEL') : 'SEQUENTIAL'}</span>
+          <span className="wf-preview-label mono">{parallel ? (serialCard ? 'Hybrid parallel' : 'Parallel') : 'Sequential'}</span>
           {parallel ? (
             serialCard ? (
               <div className="wf-preview-parallel">

@@ -478,7 +478,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   if (jobId == null) {
     return (
       <div className="screen">
-        <Empty icon="folder" title="Choose a shoot to get started.">
+        <Empty icon="folder" title="Choose a shoot to get started">
           <p>Open an album from the library to review it here.</p>
           <button className="primary" onClick={onLibrary}>Open library</button>
         </Empty>
@@ -487,7 +487,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   }
   const filtered = filters.search !== '' || filters.facet !== null || filters.view !== 'all' || filters.minStars > 0;
   const emptyState = (
-    <Empty icon="images" title={review.frames.length ? 'Nothing matches these filters.' : rv.loading ? 'Loading this album…' : scanning ? 'Waiting for the first frames…' : 'No photographs to show yet.'}>
+    <Empty icon="images" title={review.frames.length ? 'Nothing matches these filters' : rv.loading ? 'Loading this album…' : scanning ? 'Waiting for the first frames…' : 'No photographs to show yet'}>
       {filtered && <button className="ghost" onClick={() => patchFilters({ ...defaultFilters })}>Clear filters</button>}
     </Empty>
   );

@@ -36,7 +36,9 @@ export function stagePlace(nodes, headId) {
 }
 
 const SCAN_NODE_IDS = ['read', 'detect', 'sharpness', 'faces', 'group', 'pick'];
-const NODE_LABELS = { read: 'READ', detect: 'DETECT', sharpness: 'SHARPNESS', faces: 'FACES', group: 'GROUP', pick: 'PICK' };
+/** Sentence case for an engine label that arrives in capitals; acronyms (OCR) stay as they are. */
+const sentence = (s) => (s.length > 3 && s === s.toUpperCase() ? s[0] + s.slice(1).toLowerCase() : s);
+const NODE_LABELS = { read: 'Read', detect: 'Detect', sharpness: 'Sharpness', faces: 'Faces', group: 'Group', pick: 'Pick' };
 /** What each stage is for, in a photographer's words; the model's own file name lives in the title. */
 const NODE_PURPOSE = {
   read: 'Opens each RAW',
@@ -89,7 +91,7 @@ function scanNode(id, stage, finished, subject, failures = {}) {
   const failed = off ? '' : failedWords(stage?.errors);
   const meta = off ? '' : [count, progress, failed, crew, model].filter(Boolean).join(' · ');
   return {
-    id, number: '', label: stage?.label ? String(stage.label).toUpperCase() : NODE_LABELS[id] ?? String(id).toUpperCase(),
+    id, number: '', label: stage?.label ? sentence(String(stage.label)) : NODE_LABELS[id] ?? sentence(String(id)),
     sub, meta, title: [sub, count, progress, failed, crew, model, stage?.device].filter(Boolean).join(' · '), state, off,
     failed: isFailed, reason,
     filter: off || PHASES.has(id) ? null : id,
@@ -111,7 +113,7 @@ function visionNode(identify, identifyStage, model, finished, subject) {
   const sub = reason ? visionNodeSub(reason) : service ? `Reading ${subject.many} — ${service}` : `Reading ${subject.many}`;
   const count = !reason && total > 0 ? `${n(done)} / ${n(total)} ${subject.many}` : '';
   const meta = [count, !reason && state === 'pending' && total === 0 ? 'waiting' : '', workers > 0 ? `${workers} ${workers === 1 ? 'worker' : 'workers'}` : ''].filter(Boolean).join(' · ');
-  return { id: 'vision', number: '', label: 'VISION', sub, meta, title: [sub, shownModel, meta].filter(Boolean).join(' · '), state, off: Boolean(reason), filter: 'vision' };
+  return { id: 'vision', number: '', label: 'Vision', sub, meta, title: [sub, shownModel, meta].filter(Boolean).join(' · '), state, off: Boolean(reason), filter: 'vision' };
 }
 
 /**
@@ -135,7 +137,7 @@ export function ingestNodes({ stages, identify = null, model = '', finished = fa
     if (stage === 'vision' && reads && visionExpected(ordered, identify)) nodes.push(visionNode(identify, byId.get('identify'), model, finished, subject));
   }
   nodes.push({
-    id: 'done', number: '', label: 'DONE', sub: finished ? 'ready to review' : 'review opens', meta: '', title: '',
+    id: 'done', number: '', label: 'Done', sub: finished ? 'ready to review' : 'review opens', meta: '', title: '',
     state: finished ? 'done' : 'pending', off: false, filter: null,
   });
   return nodes.map((node, i) => ({ ...node, number: two(i) }));
@@ -282,7 +284,7 @@ export function laneText(worker, paused = false) {
 
 /** The badge on the frame. */
 export function laneBadge(state) {
-  return state === 'busy' ? 'LIVE' : state === 'waiting' ? 'WAITING' : state === 'paused' ? 'PAUSED' : state === 'stalled' ? 'STALLED' : 'IDLE';
+  return state === 'busy' ? 'Live' : state === 'waiting' ? 'Waiting' : state === 'paused' ? 'Paused' : state === 'stalled' ? 'Stalled' : 'Idle';
 }
 
 // Stalled lanes stay visible (honest), but never outrank a genuinely working lane.

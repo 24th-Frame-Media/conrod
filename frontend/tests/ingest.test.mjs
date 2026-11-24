@@ -35,7 +35,7 @@ test('steps map onto the flowchart stage they belong to', () => {
 test('the merged flowchart runs read to pick, then vision, then done', () => {
   const stages = [stage('read', 847, 847, 0), stage('detect', 412, 847, 2), stage('sharpness', 380, 847, 1), stage('faces', 0, 847, 0), stage('group', 0, 847, 0, 1), stage('pick', 0, 847, 0, 1), stage('identify', 0, 60, 0, 3)];
   const nodes = ingestNodes({ stages, subject: vehicles });
-  assert.deepEqual(nodes.map((n) => n.label), ['READ', 'DETECT', 'SHARPNESS', 'FACES', 'GROUP', 'PICK', 'VISION', 'DONE']);
+  assert.deepEqual(nodes.map((n) => n.label), ['Read', 'Detect', 'Sharpness', 'Faces', 'Group', 'Pick', 'Vision', 'Done']);
   assert.deepEqual(nodes.map((n) => n.number), ['01', '02', '03', '04', '05', '06', '07', '08']);
   assert.deepEqual(nodes.map((n) => n.state), ['done', 'active', 'active', 'pending', 'pending', 'pending', 'pending', 'pending']);
   assert.equal(nodes[1].sub, 'Vehicles and people detector', 'the box says the job, not the model file');
@@ -84,7 +84,7 @@ test('before the first snapshot every node is drawn pending; a finished run is a
 
 test('the identify-only chart keeps the six identify nodes and none is a filter', () => {
   const nodes = identifyNodes({ stage: 'vision', state: 'running' }, 'qwen', null, null, vehicles);
-  assert.deepEqual(nodes.map((n) => n.label), ['LOAD', 'CROP', 'READ', 'VISION', 'ENTRY LIST', 'RESULT']);
+  assert.deepEqual(nodes.map((n) => n.label), ['Load', 'Crop', 'Read', 'Vision', 'Entry list', 'Result']);
   assert.ok(nodes.every((n) => n.filter === null));
   assert.equal(nodes[3].sub, 'Reading vehicles — Qwen');
 });
@@ -186,8 +186,8 @@ test('lane words say why a lane waits, and what a busy one does', () => {
   assert.equal(laneText(worker('detect', 0, 'idle')), 'idle');
   assert.equal(laneText(worker('detect', 0, 'busy', { step: 'YOLO' })), 'YOLO');
   assert.equal(laneText(worker('detect', 0, 'busy', { step: 'YOLO', current: { step: 'detect' } })), 'detect');
-  assert.equal(laneBadge('busy'), 'LIVE');
-  assert.equal(laneBadge('paused'), 'PAUSED');
+  assert.equal(laneBadge('busy'), 'Live');
+  assert.equal(laneBadge('paused'), 'Paused');
 });
 
 test('a lane is keyed by its stable id when the engine sends one', () => {

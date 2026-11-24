@@ -12,6 +12,7 @@ import {
 import type { IdentifyVram, ModelInfo, ModelsStatus, SettingValue, Settings as SettingsMap, Toaster } from '../lib/types';
 import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
 import { IdentifyConcurrency } from '../components/IdentifyConcurrency';
+import { Icon } from '../components/basics';
 import '../styles/aiSettings.css';
 
 type Props = {
@@ -318,7 +319,7 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
 
   /* ---------- Test buttons: the REAL engine check commands ---------- */
   const testLabel = (key: string) => testing[key] === 'testing' ? 'Testing…'
-    : testing[key] === 'ok' ? 'Ready ✓'
+    : testing[key] === 'ok' ? 'Ready'
       : testing[key] === 'fail' ? 'Retry' : 'Test';
   const finishTest = (key: string, res: unknown, err?: unknown) => {
     if (!aliveRef.current) return;
@@ -606,7 +607,7 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
               onClick={(e) => { e.stopPropagation(); if (!added) doAdd(type); }}>
               <span className="am-name">{SERVICE_TYPES[type].name}</span>
               <span className="am-desc">{ADD_DESC[type]}</span>
-              {added && <span className="am-added">Added ✓</span>}
+              {added && <span className="am-added"><Icon name="check" size={12} /> Added</span>}
             </button>
           );
         })}

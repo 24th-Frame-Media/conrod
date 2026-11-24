@@ -16,11 +16,11 @@ export const IDENTIFY_SUBSTAGES = Object.freeze([
     purpose: 'Reads plates, numbers and visible text',
   },
   {
-    id: 'identify:decision', key: 'decision', label: 'DECISION', name: 'Decision', settingsKey: 'identify_decision',
+    id: 'identify:decision', key: 'decision', label: 'Decision', name: 'Decision', settingsKey: 'identify_decision',
     purpose: 'Judges moments and suggests the shoot type',
   },
   {
-    id: 'identify:vision', key: 'vision', label: 'VISION', name: 'Vision', settingsKey: 'use_vlm',
+    id: 'identify:vision', key: 'vision', label: 'Vision', name: 'Vision', settingsKey: 'use_vlm',
     purpose: 'Reads each subject with the vision model',
   },
 ]);
@@ -40,7 +40,7 @@ export function flowOrder(identifyOrder = null) {
 export const FLOW_ORDER = flowOrder(null);
 
 const PLAIN_LABELS = Object.freeze({
-  read: 'READ', detect: 'DETECT', sharpness: 'SHARPNESS', faces: 'FACES', group: 'GROUP', pick: 'PICK',
+  read: 'Read', detect: 'Detect', sharpness: 'Sharpness', faces: 'Faces', group: 'Group', pick: 'Pick',
 });
 const PLAIN_PURPOSE = Object.freeze({
   read: 'Opens each RAW', faces: 'Finds faces and closed eyes',
@@ -61,6 +61,8 @@ export function controlSpec(action, jobId, stage) {
   return { action: CONTROL_ACTIONS[action], args: { jobId, stage } };
 }
 
+/** Sentence case for an engine label that arrives in capitals; acronyms (OCR) stay as they are. */
+const sentence = (s) => (s.length > 3 && s === s.toUpperCase() ? s[0] + s.slice(1).toLowerCase() : s);
 const clamp01 = (v) => Math.max(0, Math.min(1, Number(v) || 0));
 const n = (v) => Math.max(0, Math.round(Number(v) || 0)).toLocaleString('en-US');
 const two = (i) => String(i + 1).padStart(2, '0');
@@ -353,7 +355,7 @@ function plainNode(id, stage, ctx) {
   const unrerunnable = id === 'read' || id === 'faces';
   const consequence = stage?.skip_consequence || skipConsequence('', { subject });
   return {
-    id, key: null, number: '', label: stage?.label ? String(stage.label).toUpperCase() : PLAIN_LABELS[id] ?? String(id).toUpperCase(),
+    id, key: null, number: '', label: stage?.label ? sentence(String(stage.label)) : PLAIN_LABELS[id] ?? sentence(String(id)),
     sub, meta, title: [sub, count, fails, crew, stage?.model, stage?.device].filter(Boolean).join(' · '),
     word: finalWord, wordLabel: STAGE_WORD_LABEL[finalWord] ?? finalWord, tone: toneFor(finalWord), state: stateForWord(finalWord, off),
     off, offReason: off ? offReasonForPlain(id) : '', offShortcut: off ? { label: 'Enable in Manage shoot', target: 'manage-shoot', settingsTab: 'culling' } : null,
@@ -407,7 +409,7 @@ function identifyNode(def, stage, ctx) {
 
 function doneNode(finished) {
   return {
-    id: 'done', key: null, number: '', label: 'DONE',
+    id: 'done', key: null, number: '', label: 'Done',
     sub: finished ? 'ready to review' : 'review opens', meta: '', title: '',
     word: finished ? 'done' : 'pending', wordLabel: finished ? 'Done' : 'Pending', tone: finished ? 'done' : 'idle',
     state: finished ? 'done' : 'pending', off: false, offReason: '', offShortcut: null,

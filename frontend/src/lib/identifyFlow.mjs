@@ -11,12 +11,12 @@ export const IDENTIFY_STAGES = ['read', 'crop', 'vision', 'merge', 'done'];
  * read, VISION is the model's own answer, so both glow while the model is working.
  */
 export const FLOW_NODES = [
-  { number: '01', label: 'LOAD', sub: 'RAW', stage: 'read' },
-  { number: '02', label: 'CROP', sub: 'subject', stage: 'crop' },
-  { number: '03', label: 'READ', sub: 'plate + OCR', stage: 'vision' },
-  { number: '04', label: 'VISION', sub: 'model', stage: 'vision' },
-  { number: '05', label: 'ENTRY LIST', sub: 'candidates', stage: 'merge' },
-  { number: '06', label: 'RESULT', sub: 'number + fields', stage: 'done' },
+  { number: '01', label: 'Load', sub: 'RAW', stage: 'read' },
+  { number: '02', label: 'Crop', sub: 'subject', stage: 'crop' },
+  { number: '03', label: 'Read', sub: 'plate + OCR', stage: 'vision' },
+  { number: '04', label: 'Vision', sub: 'model', stage: 'vision' },
+  { number: '05', label: 'Entry list', sub: 'candidates', stage: 'merge' },
+  { number: '06', label: 'Result', sub: 'number + fields', stage: 'done' },
 ];
 
 /** The first node index of a stage; before the first car, and for an unknown stage, that is the start. */
@@ -45,12 +45,12 @@ export function flowNodes(live, model, stage, subject = SUBJECT_WORDS.subjects) 
   const reason = visionOffReason(live);
   return FLOW_NODES.map((node, i) => ({
     ...node,
-    sub: node.label !== 'VISION' ? node.sub : reason ? visionNodeSub(reason) : visionModelWords(model) ? `Reading ${subject.many} — ${visionModelWords(model)}` : node.sub,
-    off: node.label === 'VISION' && Boolean(reason),
+    sub: node.label !== 'Vision' ? node.sub : reason ? visionNodeSub(reason) : visionModelWords(model) ? `Reading ${subject.many} — ${visionModelWords(model)}` : node.sub,
+    off: node.label === 'Vision' && Boolean(reason),
     state: deciderRunning
       ? (i < 3 ? 'done' : 'pending')
       : finished || i < active ? 'done'
-        : node.stage === at ? (ocrRunning && node.label === 'VISION' ? 'pending' : 'active')
+        : node.stage === at ? (ocrRunning && node.label === 'Vision' ? 'pending' : 'active')
           : 'pending',
   }));
 }
@@ -118,7 +118,7 @@ export function deciderStepNode(live, serving = null, phase = null) {
     ? [serving, shortAsk(ask), answer].filter(Boolean).join(' · ')
     : [sub, live.message, answer].filter(Boolean).join(' · ');
   return {
-    id: 'decider', number: '', label: 'DECIDER', sub, meta, title,
+    id: 'decider', number: '', label: 'Decider', sub, meta, title,
     state, off, filter: null,
   };
 }

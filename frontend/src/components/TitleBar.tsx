@@ -404,7 +404,7 @@ function StatusPill({
                     </div>
                   ))}
                   {!finishedTasks.length && <p className="muted activity-empty">Nothing finished yet</p>}
-                  <details><summary>Event log</summary><pre className="log mono">{status.log.join('\n') || 'Nothing yet.'}</pre></details>
+                  <details><summary>Event log</summary><pre className="log mono">{status.log.join('\n') || 'Nothing yet'}</pre></details>
                 </div>
               </details>
             </div>

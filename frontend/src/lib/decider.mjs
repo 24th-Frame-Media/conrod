@@ -80,7 +80,7 @@ export function deciderNode(live, serving = null, phase = null) {
   // the node stays pending until the run is continued.
   const tick = run ? (run.state === 'done' ? 'done' : run.state === 'stopped' ? 'pending' : 'active') : busy ? 'active' : answered > 0 ? 'done' : 'pending';
   return {
-    id: 'decider', number: '', label: 'DECIDER', sub, meta, title,
+    id: 'decider', number: '', label: 'Decider', sub, meta, title,
     state: tick, off, filter: 'decider',
   };
 }

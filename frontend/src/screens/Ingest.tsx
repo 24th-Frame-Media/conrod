@@ -224,7 +224,7 @@ export function IngestScreen({
         </Empty>
       </div>
     ) : (
-      <div className="screen"><Empty icon="images" title="No scan is running.">
+      <div className="screen"><Empty icon="images" title="No scan is running">
         <p>Start one from the Library with <b>Import photos</b>, or open an album to review it.</p>
         <button className="primary" onClick={onLibrary}>Back to library</button>
       </Empty></div>
@@ -337,7 +337,7 @@ export function IngestScreen({
       <div className="identify-page ingest-page">
         <header className={`id-head ing-head ${phase}`}>
           <div className="id-head-main">
-            <span className="id-eyebrow mono">{mode === 'identify' ? 'IDENTIFY / LIVE' : 'INGEST / LIVE'}</span>
+            <span className="id-eyebrow mono">{mode === 'identify' ? 'Identify' : 'Ingest'}{live ? ' · live' : ''}</span>
             <h2>{job.label}</h2>
             <span className="ing-statusline">
               <span className={`id-state ${phaseTone(phase, frozen)}`}><i />{phaseWord(phase, frozen)}</span>
@@ -490,7 +490,7 @@ export function IngestScreen({
         {phase === 'error' && mode === 'ingest' && (
           failure
             ? <ScanFailureBanner failure={failure} onRetry={onRetryScan ?? onResume} onLibrary={onLibrary} />
-            : <div className="scan-summary"><div className="ss-text"><b>The scan did not finish.</b>
+            : <div className="scan-summary"><div className="ss-text"><b>The scan did not finish</b>
               <span className="muted">Check the activity log in the top bar, then try again.</span></div><button onClick={onLibrary}>Back to library</button></div>
         )}
         {mode === 'identify' && (phase === 'done' || phase === 'stopped' || phase === 'error') && (
@@ -499,7 +499,7 @@ export function IngestScreen({
             <div className="ss-text">
               <b>{phase === 'done'
                 ? `${done.toLocaleString()} ${done === 1 ? subject.one : subject.many} read in ${elapsed(idLive?.elapsed_ms) || 'no time at all'}`
-                : phase === 'stopped' ? `Stopped at ${pct}% · ${done.toLocaleString()} ${subject.many} read` : 'Identification did not finish.'}</b>
+                : phase === 'stopped' ? `Stopped at ${pct}% · ${done.toLocaleString()} ${subject.many} read` : 'Identification did not finish'}</b>
               <span className="muted">{phase === 'error'
                 ? (idLive?.errors?.[0] ?? 'Check the activity log in the top bar.')
                 : 'Identifications are suggestions until you accept them. Nothing is written until you say so.'}</span>
@@ -528,8 +528,8 @@ export function IngestScreen({
                     </div>
                     {filter && (
                       <span className="ing-chip">
-                        SHOWING {nodes.find((n) => n.filter === filter)?.label ?? filter.toUpperCase()}
-                        <button type="button" aria-label="Show all workers" onClick={() => { setFilter(null); setShowAll(false); }}>✕ clear</button>
+                        Showing {nodes.find((n) => n.filter === filter)?.label ?? filter}
+                        <button type="button" aria-label="Show all workers" onClick={() => { setFilter(null); setShowAll(false); }}><Icon name="x" size={12} /> Clear</button>
                       </span>
                     )}
                     {visibleWorkerCount > 0 && (
@@ -566,7 +566,7 @@ export function IngestScreen({
                       {showDecider && deciderLive && <DeciderLane live={deciderLive} serving={decisionService} layout={deciderLayout} paused={identifyPaused} />}
                       {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} layout={laneLayout} />)}
                       {showVision && shownVisionLanes.map((lane) => (
-                        <IdentifyLane key={`vision:${lane.worker}`} name={ocrPhase ? 'OCR' : 'VISION'} ocrOnly={ocrPhase} layout={laneLayout} worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject}
+                        <IdentifyLane key={`vision:${lane.worker}`} name={ocrPhase ? 'OCR' : 'Vision'} ocrOnly={ocrPhase} layout={laneLayout} worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject}
                           prompt={lane.item ? lane.item.prompt ?? prompts.current[lane.item.detection_id] : undefined}
                           onOpen={() => lane.item && pickCar(lane.item.detection_id)} />
                       ))}
@@ -594,8 +594,9 @@ export function IngestScreen({
                     onClick={() => workersRef.current?.scrollBy({ top: 240, behavior: 'smooth' })}
                   >
                     {overflow.hiddenBelow > 0
-                      ? `+${overflow.hiddenBelow} more ${overflow.hiddenBelow === 1 ? 'worker' : 'workers'} below ↓`
-                      : 'More below ↓'}
+                      ? `+${overflow.hiddenBelow} more ${overflow.hiddenBelow === 1 ? 'worker' : 'workers'} below`
+                      : 'More below'}
+                    <Icon name="arrowDown" size={12} />
                   </button>
                 </>
               )}
@@ -606,7 +607,7 @@ export function IngestScreen({
                 <span className="section-label">{mode === 'identify' ? `Recent ${subject.many}` : 'Just finished'}<span>{strip.length ? 'newest first' : ''}</span></span>
                 <button type="button" className={`id-live-return${picked == null ? ' on' : ''}`} disabled={picked == null}
                   title="Back to the workers" onClick={() => setPicked(null)}>
-                  <i aria-hidden="true" />WORKERS
+                  <i aria-hidden="true" />Workers
                 </button>
               </div>
               {strip.length ? (

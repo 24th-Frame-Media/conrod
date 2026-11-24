@@ -7,8 +7,8 @@
 .id-flow .id-node.flow-node { gap: 4px; align-content: start; }
 /* Six status words share one tone vocabulary. */
 .flow-word {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase;
-  padding: 1px 5px; border-radius: 5px; border: 1px solid var(--line); color: var(--text-mute); white-space: nowrap;
+  font-family: var(--mono); font-size: 11px; letter-spacing: .01em; text-transform: none;
+  padding: 1px 4px; border-radius: 5px; border: 1px solid var(--line); color: var(--text-mute); white-space: nowrap;
 }
 .flow-word.tone-running { color: var(--scan); border-color: color-mix(in srgb, var(--scan) 40%, transparent); }
 .flow-word.tone-paused { color: var(--warn2); border-color: color-mix(in srgb, var(--warn2) 45%, transparent); }
@@ -22,7 +22,7 @@
 /* ── per-stage controls ── */
 .flow-controls { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .flow-ctl {
-  font: inherit; font-size: 10px; padding: 2px 6px; border-radius: 5px;
+  font: inherit; font-size: 11px; padding: 2px 8px; border-radius: 5px;
   border: 1px solid var(--line); background: var(--surface-2); color: var(--text-dim); line-height: 1.4;
 }
 .flow-ctl:hover:not(:disabled) { border-color: var(--line-hover); color: var(--text); background: var(--surface-3); }
@@ -32,35 +32,35 @@
 
 /* Inline confirmation box showing the plain consequence before skipping a stage. */
 .flow-confirm {
-  margin-top: 6px; padding: 7px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--warn2) 45%, transparent);
+  margin-top: 8px; padding: 8px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--warn2) 45%, transparent);
   background: color-mix(in srgb, var(--warn2) 9%, var(--surface)); position: relative; z-index: 3;
 }
-.flow-confirm-line { display: block; font-size: 10.5px; line-height: 1.4; color: var(--text); }
-.flow-confirm-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
+.flow-confirm-line { display: block; font-size: 11px; line-height: 1.4; color: var(--text); }
+.flow-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 
 /* ── disabled steps ── */
 .id-flow .id-node.flow-node.off {
   opacity: .62; background: var(--surface-2); border-style: dashed; border-color: var(--line-hover);
 }
-.flow-off { display: flex; flex-direction: column; gap: 4px; margin-top: 3px; }
-.flow-off-reason { font-size: 10.5px; line-height: 1.3; color: var(--text-dim); }
+.flow-off { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.flow-off-reason { font-size: 11px; line-height: 1.3; color: var(--text-dim); }
 .flow-shortcut {
-  font: inherit; font-size: 10px; align-self: flex-start; padding: 2px 6px; border-radius: 5px;
+  font: inherit; font-size: 11px; align-self: flex-start; padding: 2px 8px; border-radius: 5px;
   border: 1px solid color-mix(in srgb, var(--scan) 40%, transparent); color: var(--scan); background: transparent;
 }
 .flow-shortcut:hover { background: var(--surface-3); }
 
 /* ── shoot-type suggestion on the Decision node ── */
 .flow-suggestion {
-  display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding: 7px;
+  display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 8px;
   border-radius: 6px; border: 1px solid color-mix(in srgb, var(--scan) 40%, transparent);
   background: color-mix(in srgb, var(--scan) 8%, var(--surface));
 }
-.flow-suggestion b { font-size: 10.5px; font-weight: 600; color: var(--text); letter-spacing: 0; }
-.flow-suggestion-conf { font-size: 10px; color: var(--warn2); }
-.flow-suggestion small { font-size: 9.5px; line-height: 1.35; color: var(--text-mute); white-space: normal; }
+.flow-suggestion b { font-size: 11px; font-weight: 500; color: var(--text); letter-spacing: 0; }
+.flow-suggestion-conf { font-size: 11px; color: var(--warn2); }
+.flow-suggestion small { font-size: 11px; line-height: 1.35; color: var(--text-mute); white-space: normal; }
 .flow-suggestion-accept {
-  font: inherit; font-size: 10px; align-self: flex-start; padding: 2px 7px; border-radius: 5px;
+  font: inherit; font-size: 11px; align-self: flex-start; padding: 2px 8px; border-radius: 5px;
   border: 1px solid var(--scan); color: var(--on-good); background: var(--scan); font-weight: 500;
 }
 .flow-suggestion-accept:hover { filter: brightness(1.08); }
@@ -69,29 +69,29 @@
 .identify-concurrency { margin-top: 4px; }
 .identify-concurrency.embedded {
   margin-top: 16px;
-  padding: 14px 16px;
+  padding: 16px 16px;
   border-radius: var(--radius);
   background: var(--surface-2);
   border: 1px solid var(--line);
 }
-.identify-concurrency h3 { display: flex; align-items: center; gap: 7px; }
-.identify-concurrency.embedded h3 { font-size: 13.5px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
-.identify-concurrency .id-concurrency-lede { font-size: 12px; margin: 0 0 10px; }
+.identify-concurrency h3 { display: flex; align-items: center; gap: 8px; }
+.identify-concurrency.embedded h3 { font-size: 13px; font-weight: 500; color: var(--text); margin: 0 0 8px; }
+.identify-concurrency .id-concurrency-lede { font-size: 12px; margin: 0 0 12px; }
 .id-vram-warning {
-  display: flex; flex-direction: column; gap: 5px; padding: 10px 12px; border-radius: var(--radius);
+  display: flex; flex-direction: column; gap: 4px; padding: 12px 12px; border-radius: var(--radius);
   border: 1px solid color-mix(in srgb, var(--warn2) 50%, transparent);
   background: color-mix(in srgb, var(--warn2) 10%, var(--surface)); margin-bottom: 12px;
 }
 .id-vram-warning-head { display: flex; align-items: center; gap: 8px; color: var(--warn2); }
-.id-vram-warning-head b { font-size: 12px; font-weight: 600; color: var(--text); }
-.id-vram-warning .muted { font-size: 11.5px; }
-.identify-concurrency .id-vram-numbers { font-family: var(--mono); font-size: 11px; display: block; margin: 0 0 10px; }
-.id-seats { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 10px; }
+.id-vram-warning-head b { font-size: 12px; font-weight: 500; color: var(--text); }
+.id-vram-warning .muted { font-size: 11px; }
+.identify-concurrency .id-vram-numbers { font-family: var(--mono); font-size: 11px; display: block; margin: 0 0 12px; }
+.id-seats { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
 .id-seat { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .id-seat b { font-weight: 500; }
-.identify-concurrency .id-seat input { width: 84px; padding: 6px 10px; }
-.id-seat small { font-size: 10.5px; color: var(--text-mute); }
-.identify-concurrency .id-concurrency-mode { font-size: 11.5px; margin: 0; }
+.identify-concurrency .id-seat input { width: 84px; padding: 8px 12px; }
+.id-seat small { font-size: 11px; color: var(--text-mute); }
+.identify-concurrency .id-concurrency-mode { font-size: 11px; margin: 0; }
 
 /* ── stages on hold: parked and skipped, each with its way back ── */
 .stage-holds { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -120,7 +120,7 @@
 .ing-parallel-note { margin: 0; font-size: 12px; line-height: 16px; }
 
 /* Manage shoot: the three identify-step toggles. */
-.shoot-stage-lede { font-size: 11.5px; margin: 0 0 8px; }
+.shoot-stage-lede { font-size: 11px; margin: 0 0 8px; }
 
 @media (max-width: 1100px) {
   .ing-flow .id-flow-cell { min-width: 122px; }

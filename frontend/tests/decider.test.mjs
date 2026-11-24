@@ -73,9 +73,9 @@ test('the identify flow puts DECIDER after READ and before VISION, matching engi
   });
   const nodes = identifyNodes({ stage: 'vision', state: 'running' }, 'qwen', asking);
   assert.equal(nodes.length, 7);
-  assert.deepEqual(nodes.map((n) => n.label), ['LOAD', 'CROP', 'READ', 'DECIDER', 'VISION', 'ENTRY LIST', 'RESULT']);
+  assert.deepEqual(nodes.map((n) => n.label), ['Load', 'Crop', 'Read', 'Decider', 'Vision', 'Entry list', 'Result']);
   const node = nodes[3];
-  assert.equal(node.label, 'DECIDER');
+  assert.equal(node.label, 'Decider');
   assert.equal(node.sub, 'Is a wheel off the ground?');
   assert.equal(node.state, 'active');
   assert.match(node.meta, /12 frames/);
@@ -97,7 +97,7 @@ test('the identify flow puts DECIDER after READ and before VISION, matching engi
   assert.equal(identifyNodes({ stage: 'vision' }, 'qwen').length, 6);
   // Custom workflow order reorders READ, DECIDER and VISION in the flowchart.
   const custom = identifyNodes({ stage: 'vision', state: 'running' }, 'qwen', asking, null, undefined, ['vision', 'ocr', 'decision']);
-  assert.deepEqual(custom.map((n) => n.label), ['LOAD', 'CROP', 'VISION', 'READ', 'DECIDER', 'ENTRY LIST', 'RESULT']);
+  assert.deepEqual(custom.map((n) => n.label), ['Load', 'Crop', 'Vision', 'Read', 'Decider', 'Entry list', 'Result']);
 });
 
 test('a re-run shows the DECIDER for its own remaining work, and a stopped run is not finished', () => {

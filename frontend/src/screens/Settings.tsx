@@ -17,6 +17,7 @@ import { WorkflowSettings } from '../components/WorkflowSettings';
 import { AiSettingsCard } from './AiSettingsCard';
 import { Benchmark } from './Benchmark';
 import { Known } from './Known';
+import { Icon } from '../components/basics';
 import type {
   DevInfo,
   IdentifyVram,
@@ -307,13 +308,13 @@ export function Settings({ settings, identifyVram = null, onSaved, run, toast, j
               onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
             />
             {query && (
-              <button type="button" className="ghost small settings-find-clear" aria-label="Clear the search" onClick={() => setQuery('')}>×</button>
+              <button type="button" className="ghost small settings-find-clear" aria-label="Clear the search" onClick={() => setQuery('')}><Icon name="x" size={12} /></button>
             )}
           </div>
         </header>
 
         <div className="settings-scope-note">
-          <span className="settings-scope-icon" aria-hidden="true">◇</span>
+          <span className="settings-scope-icon" aria-hidden="true"><Icon name="diamond" size={14} /></span>
           <p>
             <b>Every album can carry its own shoot type, blur strictness, burst gap, and whether it reads plates, race numbers and people.</b>{' '}
             Where it does, the album's value wins. Saving here changes the defaults new scans start from; an album you have already scanned keeps what it was scanned with.

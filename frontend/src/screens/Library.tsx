@@ -150,7 +150,7 @@ export function Library({ jobs, scanning, live, activeJob, queue, setup, onOpen,
       </div>
 
       {jobs.length === 0 ? (
-        <Empty icon="folder" title="No albums yet.">
+        <Empty icon="folder" title="No albums yet">
           <p>Drop a folder with photos anywhere on this window, or press <b>Import photos</b>. Conrod measures sharpness, groups bursts and suggests keepers.</p>
         </Empty>
       ) : (
@@ -168,7 +168,7 @@ export function Library({ jobs, scanning, live, activeJob, queue, setup, onOpen,
           </div>
 
           {visible.length === 0 ? (
-            <Empty icon="images" title="No albums match these filters.">
+            <Empty icon="images" title="No albums match these filters">
               <button className="ghost" onClick={clearFilters}>Clear filters</button>
             </Empty>
           ) : (

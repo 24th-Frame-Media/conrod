@@ -46,7 +46,7 @@ export function DeciderLane({ live, serving = null, layout = 'card', paused = fa
   const answeredIds = new Set(says.map((s) => s.id));
   const pendingAsks = asking.filter((a) => !answeredIds.has(a.id));
   const isPaused = paused && !unavailable;
-  const badge = isPaused ? 'PAUSED' : busy ? 'LIVE' : waiting ? 'QUEUED' : unavailable ? 'OFF' : last ? 'DONE' : 'IDLE';
+  const badge = isPaused ? 'Paused' : busy ? 'Live' : waiting ? 'Queued' : unavailable ? 'Off' : last ? 'Done' : 'Idle';
   const cls = isPaused ? ' paused' : busy ? ' live' : last ? ' done' : ' idle';
 
   const viewfinder = (
@@ -75,7 +75,7 @@ export function DeciderLane({ live, serving = null, layout = 'card', paused = fa
   const momentsPanel = (
     <section className="id-panel id-lane-panel dec-moments-panel">
       <div className="dec-moments-head">
-        <h4>MOMENTS</h4>
+        <h4>Moments</h4>
         {asking.length > 0 && <span className="mono muted dec-check-count">{asking.length} {asking.length === 1 ? 'check' : 'checks'}</span>}
       </div>
       {says.length > 0 || pendingAsks.length > 0 ? (
@@ -110,7 +110,7 @@ export function DeciderLane({ live, serving = null, layout = 'card', paused = fa
   return (
     <section className={`id-lane decider-lane ${layout}${cls}${unavailable ? ' off' : ''}`} aria-label="Decision model">
       <header className="id-lane-head">
-        <span className="id-lane-name mono">DECIDER</span>
+        <span className="id-lane-name mono">Decider</span>
         <span className={`id-lane-stage ${isPaused ? 'ing-stage paused' : busy ? 'ing-stage busy' : 'ing-stage idle'}`}>{isPaused ? 'paused' : busy ? (live.state === 'loading' ? 'loading' : 'deciding') : serving ? 'ready' : deciderWord(live.state)}</span>
         {busy && !isPaused && <i className="id-lane-dot" aria-hidden="true" />}
       </header>
