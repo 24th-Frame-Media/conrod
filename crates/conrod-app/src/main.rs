@@ -288,7 +288,7 @@ fn main() {
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(250));
                     if worker.quit_requested() {
-                        conrod_engine::builtin_vlm::service().unload();
+                        conrod_engine::builtin_vlm::service().shutdown();
                         handle.exit(0);
                         return;
                     }

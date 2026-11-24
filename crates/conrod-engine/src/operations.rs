@@ -4,6 +4,7 @@ use crate::desktop::{rows, Desktop, Result};
 use crate::err;
 use crate::identify_live::{self, IdentifyLive};
 use crate::lock;
+use crate::ocr_gate::{CloseOnDrop, DoneOnDrop, OcrGate};
 use crate::setup;
 use conrod_core::{
     analysis::VehicleAnalysis,
@@ -344,6 +345,16 @@ struct Run<'a> {
     control: &'a crate::stage_control::StageControl,
     /// The run's stop flag, so a park is released by a Stop.
     stop: &'a AtomicBool,
+    /// A full re-read (`!only_new`): what OCR reads now replaces what an
+    /// earlier run stored, so a wrong plate or number can be cleared.
+    full: bool,
+    /// The Vision stage runs after OCR in this run and consumes OCR's pass.
+    ocr_feeds_vision: bool,
+    /// The Vision stage runs in this run, so it will read the number again.
+    vision_on: bool,
+    /// What Vision waits on when OCR runs beside it: open (never blocks) in a
+    /// sequential run, closed by the OCR stage when it ends.
+    ocr_gate: &'a OcrGate,
 }
 
 impl Run<'_> {
@@ -360,17 +371,17 @@ impl Run<'_> {
         if !self.control.is_paused(stage) {
             return !self.stop.load(Ordering::Relaxed);
         }
-        self.task.paused(true);
+        self.control.enter_park(self.task);
         if let Some(p) = self.progress {
-            p.pause_stage(stage);
+            p.park_stage(stage);
             p.waiting(IDENTIFY_OCR, lane, stage, "paused", "paused", file);
         }
         let go = self.control.park(stage, self.stop);
         if let Some(p) = self.progress {
-            p.resume_stage(stage);
+            p.unpark_stage(stage);
             p.busy(IDENTIFY_OCR, lane, stage, step, file);
         }
-        self.task.paused(false);
+        self.control.leave_park(self.task);
         go && !self.control.is_skipped(stage)
     }
 
@@ -415,8 +426,12 @@ impl Run<'_> {
         let s = self.settings;
         let mut wanted = Vec::new();
         for row in rows {
-            if ml_eligible(self.d, row["id"].as_i64().ok_or("Invalid detection")?)? {
+            let id = row["id"].as_i64().ok_or("Invalid detection")?;
+            if ml_eligible(self.d, id)? {
                 wanted.push(row);
+            } else {
+                // Nothing to read here; Vision must not wait for it.
+                self.ocr_gate.done(id);
             }
         }
         let skipped = rows.len() - wanted.len();
@@ -450,6 +465,12 @@ impl Run<'_> {
                 return Ok(());
             }
             let id = row["id"].as_i64().ok_or("Invalid detection")?;
+            // However this iteration ends, the subject is OCR's no longer: a
+            // Vision worker waiting on it goes on with the stored pass.
+            let _handed_over = DoneOnDrop {
+                gate: self.ocr_gate,
+                id,
+            };
             let image_id = row["image_id"].as_i64().unwrap_or_default();
             if !ml_eligible(self.d, id)? {
                 self.stage_advance(IDENTIFY_OCR, 1);
@@ -539,27 +560,17 @@ impl Run<'_> {
                         |r| r.get(0),
                     )
                     .ok();
-                let mut merged = VehicleAnalysis::from_json(stored.as_deref());
-                merged.kind = pass.analysis.kind.clone();
-                merged.is_bike = pass.analysis.is_bike;
-                if pass.analysis.plate.is_some() || merged.plate.is_none() {
-                    merged.plate = pass.analysis.plate.clone();
-                    merged.plate_state = pass.analysis.plate_state.clone();
-                    merged.plate_conf = pass.analysis.plate_conf;
-                    merged.plate_bbox = pass.analysis.plate_bbox;
-                }
-                let keep_existing_num = merged.race_number.is_some()
-                    && (pass.analysis.race_number.is_none()
-                        || (merged
-                            .number_source
-                            .as_deref()
-                            .is_some_and(|src| src.contains("vlm"))
-                            && merged.number_conf >= pass.analysis.number_conf));
-                if !keep_existing_num {
-                    merged.race_number = pass.analysis.race_number.clone();
-                    merged.number_source = pass.analysis.number_source.clone();
-                    merged.number_conf = pass.analysis.number_conf;
-                }
+                // A full re-read replaces OCR's earlier plate and number; an
+                // incremental run only fills in. `reviewed` rows never get here.
+                let merged = analyze::merge_ocr_pass(
+                    VehicleAnalysis::from_json(stored.as_deref()),
+                    &pass.analysis,
+                    analyze::OcrMerge {
+                        full: self.full,
+                        reads_plates: s.read_plates,
+                        vision_follows: self.vision_on,
+                    },
+                );
                 let read_now = if mark_read {
                     "unixepoch('now')"
                 } else {
@@ -584,7 +595,11 @@ impl Run<'_> {
                 merged
             };
             let ocr_failures = pass.failures.clone();
-            lock(passes).insert(id, pass);
+            // Only a stage that will consume the pass gets it: an entry nobody
+            // removes would sit in the map for the rest of the run.
+            if self.ocr_feeds_vision {
+                lock(passes).insert(id, pass);
+            }
             if let Some(live) = self.live {
                 live.finish_ocr_item(
                     id,
@@ -657,6 +672,15 @@ impl Run<'_> {
                 self.stage_advance(IDENTIFY_VISION, 1);
                 self.task_advance(1);
                 continue;
+            }
+            // With OCR running beside this stage, the number is resolved only
+            // once OCR has finished this subject, so the resolver always sees
+            // OCR's evidence and the stored number never depends on timing.
+            let ocr_settled = self.ocr_gate.wait(id, || {
+                self.stop.load(Ordering::Relaxed) || self.control.is_skipped(IDENTIFY_VISION)
+            });
+            if !ocr_settled {
+                return Ok(());
             }
             let pass = lock(passes).remove(&id).unwrap_or_else(|| {
                 let stored: Option<String> = lock(&self.d.reader)
@@ -757,29 +781,13 @@ impl Run<'_> {
                 .transpose()?;
             let crop_path = self.d.root.join(format!("cache/native/crop-{id}.jpg"));
             crate::desktop::save_jpeg(&crop, &crop_path)?;
-            // Atomic merge under `self.d.db` so if OCR ran concurrently and wrote a
-            // plate or race number while Vision was in flight, Vision keeps it.
+            // The reading is final: it already carries OCR's pass (this run's,
+            // or the stored one when OCR did not run), and the resolver may have
+            // cleared a number on purpose. Nothing is merged back from the
+            // database, so a stale earlier number cannot return. `reviewed=0` is
+            // the guard: a hand-set reading is never overwritten.
             {
                 let db = lock(&self.d.db);
-                let stored: Option<String> = db
-                    .query_row(
-                        "SELECT attributes FROM detections WHERE id=? AND COALESCE(reviewed,0)=0",
-                        [id],
-                        |r| r.get(0),
-                    )
-                    .ok();
-                let existing = VehicleAnalysis::from_json(stored.as_deref());
-                if analysis.plate.is_none() && existing.plate.is_some() {
-                    analysis.plate = existing.plate;
-                    analysis.plate_state = existing.plate_state;
-                    analysis.plate_conf = existing.plate_conf;
-                    analysis.plate_bbox = existing.plate_bbox;
-                }
-                if analysis.race_number.is_none() && existing.race_number.is_some() {
-                    analysis.race_number = existing.race_number;
-                    analysis.number_source = existing.number_source;
-                    analysis.number_conf = existing.number_conf;
-                }
                 db.execute(
                     "UPDATE detections SET attributes=?,plate=?,plate_state=?,plate_conf=?,number=?,number_source=?,number_conf=?,embedding=?,colour_hex=?,crop_path=?,read_at=unixepoch('now') WHERE id=? AND COALESCE(reviewed,0)=0",
                     params![
@@ -990,6 +998,9 @@ pub(crate) fn identify_stage(
         // this run decides, never the previous run's answers as if it were
         // working through them again.
         crate::decider::service().begin_run();
+        // A built-in server that failed to start in an earlier run is tried
+        // again now: the photographer may have fixed the cause.
+        crate::builtin_vlm::service().clear_failure();
         if !wait_for_cull(d, stop, task) {
             return Ok(());
         }
@@ -1222,6 +1233,20 @@ pub(crate) fn identify_stage(
         let vision_workers = seats.vision.min(frames.len().max(1)).max(1);
         live.set_workers(workers);
         let passes: Mutex<HashMap<i64, analyze::OcrPass>> = Mutex::new(HashMap::new());
+        let stage_order = settings.identify_stage_order();
+        let parallel_run = settings.identify_parallel && only_stage.is_none();
+        // OCR hands its pass to Vision only when both run and OCR comes first
+        // (or they run side by side); in a Vision-first order OCR patches the
+        // stored reading afterwards and nothing waits for it.
+        let stage_pos = |name: &str| stage_order.iter().position(|s| s == name);
+        let ocr_feeds_vision =
+            ocr_on && vision_on && (parallel_run || stage_pos("ocr") < stage_pos("vision"));
+        // Vision waits on OCR per subject only when the two run side by side.
+        let ocr_gate = if parallel_run && ocr_on && vision_on {
+            OcrGate::default()
+        } else {
+            OcrGate::closed()
+        };
         let run = Run {
             d,
             settings: &settings,
@@ -1237,12 +1262,15 @@ pub(crate) fn identify_stage(
             burst_numbers: Mutex::new(HashMap::new()),
             control: &control,
             stop,
+            full: !only_new,
+            ocr_feeds_vision,
+            vision_on,
+            ocr_gate: &ocr_gate,
         };
 
-        let stage_order = settings.identify_stage_order();
-        let parallel_run = settings.identify_parallel && only_stage.is_none();
-
         let run_ocr_stage = |lane_offset: usize, track_live_phase: bool| -> Result<()> {
+            // However this stage ends, Vision stops waiting on it.
+            let _gate = CloseOnDrop(&ocr_gate);
             if ocr_on {
                 if let Some(p) = &progress {
                     p.phase(IDENTIFY_OCR);
@@ -1502,13 +1530,24 @@ pub(crate) fn identify_stage(
                     lock(&first_err).get_or_insert(e);
                 }
             };
+            // The first stage to fail stops its siblings at their next unit
+            // boundary: Decision and Vision must not keep spending GPU time or
+            // cloud credit on an album whose run is already over.
+            let abort_on_err = |res: Result<()>| -> Result<()> {
+                if res.is_err() {
+                    stop.store(true, Ordering::Relaxed);
+                    control.wake_all();
+                }
+                res
+            };
             if card.mode == crate::vram_fit::Mode::Concurrent {
                 // Hardware can hold Decision and Vision together (e.g. LAN/cloud Vision or
                 // ample VRAM): run OCR, Decision, and Vision all concurrently.
                 std::thread::scope(|s| {
-                    let h_ocr = s.spawn(|| run_ocr_stage(ocr_lane_offset, !vision_on));
-                    let h_dec = s.spawn(run_decision_stage);
-                    let h_vis = s.spawn(|| run_vision_stage(false, !ocr_on));
+                    let h_ocr =
+                        s.spawn(|| abort_on_err(run_ocr_stage(ocr_lane_offset, !vision_on)));
+                    let h_dec = s.spawn(|| abort_on_err(run_decision_stage()));
+                    let h_vis = s.spawn(|| abort_on_err(run_vision_stage(false, !ocr_on)));
                     record_err(
                         h_ocr
                             .join()
@@ -1534,26 +1573,30 @@ pub(crate) fn identify_stage(
                         .position(|s| s == "decision")
                         .unwrap_or(1);
                 std::thread::scope(|s| {
-                    let h_ocr = s.spawn(|| run_ocr_stage(ocr_lane_offset, !vision_on));
+                    let h_ocr =
+                        s.spawn(|| abort_on_err(run_ocr_stage(ocr_lane_offset, !vision_on)));
                     let h_gpu = s.spawn(|| -> Result<()> {
-                        if vision_first {
-                            crate::vram_fit::try_run_in_order(
-                                card.mode,
-                                stop,
-                                || run_vision_stage(false, !ocr_on),
-                                gpu_handoff,
-                                run_decision_stage,
-                            )?;
-                        } else {
-                            crate::vram_fit::try_run_in_order(
-                                card.mode,
-                                stop,
-                                run_decision_stage,
-                                gpu_handoff,
-                                || run_vision_stage(false, !ocr_on),
-                            )?;
-                        }
-                        Ok(())
+                        let gpu_run = || -> Result<()> {
+                            if vision_first {
+                                crate::vram_fit::try_run_in_order(
+                                    card.mode,
+                                    stop,
+                                    || run_vision_stage(false, !ocr_on),
+                                    gpu_handoff,
+                                    run_decision_stage,
+                                )?;
+                            } else {
+                                crate::vram_fit::try_run_in_order(
+                                    card.mode,
+                                    stop,
+                                    run_decision_stage,
+                                    gpu_handoff,
+                                    || run_vision_stage(false, !ocr_on),
+                                )?;
+                            }
+                            Ok(())
+                        };
+                        abort_on_err(gpu_run())
                     });
                     record_err(
                         h_ocr

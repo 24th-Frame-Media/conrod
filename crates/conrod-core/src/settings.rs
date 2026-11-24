@@ -2109,4 +2109,37 @@ mod tests {
             vec!["ocr", "decision", "vision"]
         );
     }
+
+    #[test]
+    fn a_default_or_migrated_album_identifies_sequentially() {
+        // The approved plan is OCR -> Decision -> Vision, one after the other,
+        // with the number tie-break at the end of Vision. Running them side
+        // by side is an explicit opt-in.
+        let fresh = Settings::default();
+        assert!(!fresh.identify_parallel);
+        assert_eq!(
+            fresh.identify_stage_order(),
+            vec!["ocr", "decision", "vision"]
+        );
+
+        // An album saved before these settings existed (or with an empty
+        // stored object) loads as sequential too.
+        for stored in [
+            serde_json::json!({}),
+            serde_json::json!({"read_numbers": true, "use_vlm": true}),
+            serde_json::json!({"identify_order": []}),
+        ] {
+            let migrated: Settings = serde_json::from_value(stored).unwrap();
+            assert!(!migrated.identify_parallel);
+            assert_eq!(
+                migrated.identify_stage_order(),
+                vec!["ocr", "decision", "vision"]
+            );
+        }
+
+        // Opting in is still possible.
+        let on: Settings =
+            serde_json::from_value(serde_json::json!({"identify_parallel": true})).unwrap();
+        assert!(on.identify_parallel);
+    }
 }

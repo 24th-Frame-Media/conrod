@@ -308,6 +308,14 @@ pub struct StageNode {
     /// `null` for a stage that feeds every stage after it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip_consequence: Option<String>,
+    /// True while at least one worker of this stage is held at the stage's own
+    /// pause point (the per-stage Pause control). It is the stage's state, not
+    /// the scan's: the scan keeps running and other stages keep working, so the
+    /// screen must not read it as a paused run. `status` is `paused` at the same
+    /// time; `parked` says a worker is actually holding, not just that a pause
+    /// was asked for.
+    #[serde(default)]
+    pub parked: bool,
     pub rate_per_s: f64,
     pub eta_s: Option<f64>,
 }
@@ -514,6 +522,7 @@ mod tests {
                     status: "running".into(),
                     error: None,
                     skip_consequence: skip_consequence("detect").map(str::to_owned),
+                    parked: false,
                     rate_per_s: 20.0,
                     eta_s: Some(5.0),
                 }],

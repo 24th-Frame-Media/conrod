@@ -67,7 +67,7 @@ pub enum VlmError {
     Status { status: u16, message: String },
     /// A timeout or connection failure.
     Transport(String),
-    /// The provider answered, but not with something `describe`/`identify_burst`
+    /// The provider answered, but not with something `describe`
     /// can use: malformed JSON, or a reply missing the part that carries it.
     BadReply(String),
     /// `settings.vlm_provider` names a provider this build does not have.
@@ -1004,9 +1004,16 @@ pub fn local_ollama_models(settings: &Settings) -> Vec<(String, String)> {
 type BuiltinEndpointFn = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
 type BuiltinReleaseFn = Arc<dyn Fn() + Send + Sync>;
 
+/// Held while one request is in flight against the built-in server (dropped
+/// to release it), so the engine's idle timer never unloads the server under
+/// a slow answer.
+pub type BuiltinLease = Box<dyn std::any::Any + Send>;
+pub type BuiltinLeaseFn = Arc<dyn Fn() -> BuiltinLease + Send + Sync>;
+
 struct BuiltinBackend {
     endpoint: BuiltinEndpointFn,
     release: BuiltinReleaseFn,
+    lease: Option<BuiltinLeaseFn>,
 }
 
 fn builtin_backend() -> &'static Mutex<Option<BuiltinBackend>> {
@@ -1016,7 +1023,29 @@ fn builtin_backend() -> &'static Mutex<Option<BuiltinBackend>> {
 
 /// Register the built-in local vision backend (endpoint resolver + VRAM release).
 pub fn register_builtin(endpoint: BuiltinEndpointFn, release: BuiltinReleaseFn) {
-    *lock(builtin_backend()) = Some(BuiltinBackend { endpoint, release });
+    let mut backend = lock(builtin_backend());
+    let lease = backend.as_ref().and_then(|b| b.lease.clone());
+    *backend = Some(BuiltinBackend {
+        endpoint,
+        release,
+        lease,
+    });
+}
+
+/// Register the in-flight lease for the built-in backend. Call after
+/// [`register_builtin`]; calling [`register_builtin`] again keeps it.
+pub fn register_builtin_lease(lease: BuiltinLeaseFn) {
+    if let Some(backend) = lock(builtin_backend()).as_mut() {
+        backend.lease = Some(lease);
+    }
+}
+
+/// A lease on the built-in server for the span of one request, if one is wired.
+fn builtin_lease() -> Option<BuiltinLease> {
+    let lease = lock(builtin_backend())
+        .as_ref()
+        .and_then(|b| b.lease.clone());
+    lease.map(|lease| lease())
 }
 
 fn resolve_builtin_endpoint() -> Result<String, VlmError> {
@@ -1028,7 +1057,10 @@ fn resolve_builtin_endpoint() -> Result<String, VlmError> {
                 "Built-in vision runtime is not initialized in this process".into(),
             )
         })?;
-    endpoint().map_err(VlmError::Transport)
+    // A server that cannot start fails every photo the same way: that is the
+    // configuration (or the machine), not one frame, so it ends the run with
+    // the plain reason instead of failing thousands of photos one by one.
+    endpoint().map_err(VlmError::Misconfigured)
 }
 
 /// Unload the built-in vision server if one is registered.
@@ -2142,6 +2174,7 @@ impl VlmClient {
         }
         let resp = if provider == "builtin" {
             let base = resolve_builtin_endpoint()?;
+            let _lease = builtin_lease();
             let url = format!("{}/v1/chat/completions", base.trim_end_matches('/'));
             let model = if settings.vlm_model.is_empty() {
                 "qwen3-vl:8b"
@@ -2280,7 +2313,6 @@ pub const CAR_PROMPT: &str = include_str!("prompts/car.txt");
 pub const BIKE_PROMPT: &str = include_str!("prompts/bike.txt");
 pub const AIRCRAFT_PROMPT: &str = include_str!("prompts/aircraft.txt");
 pub const PLAYER_PROMPT: &str = include_str!("prompts/player.txt");
-pub const BURST_PROMPT: &str = include_str!("prompts/burst.txt");
 
 /// What the caller already knows about the vehicle before asking.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -2335,6 +2367,173 @@ fn candidate_line(hints: &VlmHints) -> String {
     }
 }
 
+// ── prompt budget ────────────────────────────────────────────────────────
+// A local server (Ollama, the built-in llama-server) runs a 4096-token context
+// that must hold the image, the system prompt, the entry-list candidates, the
+// shoot guidance and the reply. The first two are fixed; the last two are user
+// data of any length. Past the window Ollama drops the front of the prompt
+// silently (the instructions go first) and llama-server refuses the request, so
+// the two variable parts are cut to what is left, and the cut is reported.
+
+/// Context tokens a local vision server holds for one single-crop request.
+const LOCAL_CONTEXT_TOKENS: usize = OLLAMA_NUM_CTX as usize;
+/// Tokens reserved for the reply (`num_predict` is 600 for a vehicle read).
+const REPLY_TOKENS: usize = 600;
+/// Spare tokens for the chat template and the short user message.
+const PROMPT_HEADROOM_TOKENS: usize = 128;
+/// Pixels per image-token side for Qwen3-VL (32 px patches after merging).
+const IMAGE_PATCH_PX: usize = 32;
+/// The most tokens shoot guidance may take, however much room is left.
+const GUIDANCE_MAX_TOKENS: usize = 80;
+/// The fixed closing lines every prompt ends with (~170 characters).
+const PROMPT_TAIL_TOKENS: usize = 60;
+/// Characters per token assumed when estimating: English prose is ~4, but
+/// entry-list names, digits and punctuation tokenise at about 2-3.
+const CHARS_PER_TOKEN: usize = 3;
+
+/// A conservative token estimate for prompt text: never fewer than the real
+/// count for ordinary Latin text.
+pub fn estimate_tokens(text: &str) -> usize {
+    text.chars().count().div_ceil(CHARS_PER_TOKEN)
+}
+
+/// Whether any enabled vision service runs with a small local context window.
+/// A cloud model's window is large enough that the entry list is never cut.
+fn context_limited(settings: &Settings) -> bool {
+    let local = |provider: &str| {
+        matches!(
+            provider.to_ascii_lowercase().as_str(),
+            "" | "ollama" | "builtin"
+        )
+    };
+    if settings.vlm_services.is_empty() {
+        local(&settings.vlm_provider)
+    } else {
+        settings
+            .vlm_services
+            .iter()
+            .any(|s| s.enabled && local(&s.provider))
+    }
+}
+
+/// Image tokens a square crop at the model's input edge can cost.
+fn image_tokens(edge: u32) -> usize {
+    let side = (edge.max(1) as usize).div_ceil(IMAGE_PATCH_PX);
+    side * side
+}
+
+/// The first `max_chars` characters of `text`, cut at a word when it can be.
+fn clip_chars(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max_chars).collect();
+    match cut.rfind(char::is_whitespace) {
+        Some(at) if at > max_chars / 2 => cut[..at].trim_end().to_string(),
+        _ => cut.trim_end().to_string(),
+    }
+}
+
+/// The two variable prompt parts after fitting them to the context window.
+struct FittedHints {
+    candidates: Vec<String>,
+    /// Whether the candidate list lost entries (it then stops saying "must").
+    partial: bool,
+    guidance: Option<String>,
+    /// What was cut, in one plain line; `None` when everything fit.
+    trimmed: Option<String>,
+}
+
+fn fit_hints(settings: &Settings, base_tokens: usize, hints: &VlmHints) -> FittedHints {
+    let guidance = hints
+        .context
+        .as_deref()
+        .map(str::trim)
+        .filter(|context| !context.is_empty())
+        .map(str::to_string);
+    let mut fitted = FittedHints {
+        candidates: hints.candidates.clone(),
+        partial: false,
+        guidance,
+        trimmed: None,
+    };
+    if !context_limited(settings) {
+        return fitted;
+    }
+    let budget = LOCAL_CONTEXT_TOKENS
+        .saturating_sub(image_tokens(settings.vlm_input_edge))
+        .saturating_sub(REPLY_TOKENS)
+        .saturating_sub(PROMPT_HEADROOM_TOKENS)
+        .saturating_sub(base_tokens);
+    let mut notes = Vec::new();
+    let mut left = budget;
+    if let Some(guidance) = fitted.guidance.take() {
+        // The line is "Shoot guidance: <text>\n".
+        let overhead = "Shoot guidance: \n".len().div_ceil(CHARS_PER_TOKEN);
+        let room = left.min(GUIDANCE_MAX_TOKENS).saturating_sub(overhead);
+        if estimate_tokens(&guidance) <= room {
+            left = left.saturating_sub(estimate_tokens(&guidance) + overhead);
+            fitted.guidance = Some(guidance);
+        } else if room > 0 {
+            let clipped = clip_chars(&guidance, room * CHARS_PER_TOKEN);
+            left = left.saturating_sub(estimate_tokens(&clipped) + overhead);
+            fitted.guidance = Some(clipped);
+            notes.push("shoot guidance shortened".to_string());
+        } else {
+            notes.push("shoot guidance dropped".to_string());
+        }
+    }
+    if !fitted.candidates.is_empty() {
+        let overhead = "make/model is likely one of: ."
+            .len()
+            .div_ceil(CHARS_PER_TOKEN);
+        let mut chars = left.saturating_sub(overhead) * CHARS_PER_TOKEN;
+        let total = fitted.candidates.len();
+        let mut kept = Vec::new();
+        for candidate in &fitted.candidates {
+            let cost = candidate.chars().count() + 2; // ", "
+            if cost > chars {
+                break;
+            }
+            chars -= cost;
+            kept.push(candidate.clone());
+        }
+        if kept.len() < total {
+            notes.push(format!(
+                "entry list cut to {} of {total} make/models",
+                kept.len()
+            ));
+            fitted.partial = true;
+            fitted.candidates = kept;
+        }
+    }
+    if !notes.is_empty() {
+        fitted.trimmed = Some(format!(
+            "prompt trimmed to fit the {LOCAL_CONTEXT_TOKENS}-token context (images at {} px): {}",
+            settings.vlm_input_edge,
+            notes.join(", ")
+        ));
+    }
+    fitted
+}
+
+/// A built prompt and what, if anything, was cut from it to fit the context.
+pub struct PromptFit {
+    pub prompt: String,
+    /// One plain line naming what was cut; `None` when the prompt fits whole.
+    pub trimmed: Option<String>,
+}
+
+/// Say once per distinct message that a prompt was cut, on stderr.
+fn note_prompt_trimmed(trimmed: &str) {
+    static SEEN: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    if lock(seen).insert(trimmed.to_string()) {
+        eprintln!("conrod: {trimmed}");
+    }
+}
+
 /// Whether the question asks for a registration plate at all.
 fn wants_plate(settings: &Settings, hints: &VlmHints) -> bool {
     settings.read_plates && !hints.racing
@@ -2343,6 +2542,13 @@ fn wants_plate(settings: &Settings, hints: &VlmHints) -> bool {
 /// Add the shoot's known visual context instead of asking a local model to
 /// decide whether incidental digits are a plate or a competition number.
 pub fn vehicle_prompt(settings: &Settings, is_bike: bool, hints: &VlmHints) -> String {
+    vehicle_prompt_fit(settings, is_bike, hints).prompt
+}
+
+/// [`vehicle_prompt`], with the entry-list candidates and the shoot guidance cut
+/// to fit a local server's context window next to the image and the reply, and
+/// a note of what was cut.
+pub fn vehicle_prompt_fit(settings: &Settings, is_bike: bool, hints: &VlmHints) -> PromptFit {
     let swapped;
     let base = match hints.subject {
         SubjectKind::Aircraft => AIRCRAFT_PROMPT,
@@ -2359,8 +2565,25 @@ pub fn vehicle_prompt(settings: &Settings, is_bike: bool, hints: &VlmHints) -> S
         .lines()
         .filter(|line| with_plate || !line.starts_with("- plate:"))
         .collect::<Vec<_>>()
-        .join("\n")
-        .replace("{CANDIDATES}", &candidate_line(hints));
+        .join("\n");
+    let base_tokens = estimate_tokens(&body) + PROMPT_TAIL_TOKENS;
+    let fitted = fit_hints(settings, base_tokens, hints);
+    let body = body.replace(
+        "{CANDIDATES}",
+        &if fitted.candidates.is_empty() {
+            String::new()
+        } else if fitted.partial {
+            format!(
+                "make/model is likely one of: {}.",
+                fitted.candidates.join(", ")
+            )
+        } else {
+            candidate_line(&VlmHints {
+                candidates: fitted.candidates.clone(),
+                ..VlmHints::default()
+            })
+        },
+    );
     let targets = if settings.read_numbers {
         "Read a competition number only from the subject; ignore unrelated digits."
     } else {
@@ -2371,17 +2594,19 @@ pub fn vehicle_prompt(settings: &Settings, is_bike: bool, hints: &VlmHints) -> S
     // spend its answer on livery and drop a windscreen number it had read, and
     // the bench reads the same crops better without it. An `auto` album that
     // accepted a suggested type opts in, once, with that type's guidance.
-    let guidance = hints
-        .context
+    let guidance = fitted
+        .guidance
         .as_deref()
-        .map(str::trim)
-        .filter(|context| !context.is_empty())
         .map(|context| format!("Shoot guidance: {context}\n"))
         .unwrap_or_default();
-    format!(
+    let prompt = format!(
         "{guidance}{}\n\nContext guides attention only; never infer unseen details. {targets}\nReply with one JSON object only.",
         body.trim()
-    )
+    );
+    PromptFit {
+        prompt,
+        trimmed: fitted.trimmed,
+    }
 }
 
 /// The reply's shape. `with_plate` is false for a race car, or when the
@@ -2603,9 +2828,7 @@ fn is_competition(value: Option<&Value>) -> bool {
     value.is_some_and(conrod_core::text::is_truthy)
 }
 
-/// Map a provider's parsed reply onto a [`VehicleDescription`]. Shared by
-/// [`describe`] (which also reads a race number) and [`identify_burst`]
-/// (which does not ask for one).
+/// Map a provider's parsed reply onto a [`VehicleDescription`], for [`describe`].
 fn map_vehicle(
     parsed: &Value,
     settings: &Settings,
@@ -2811,7 +3034,13 @@ pub fn describe_with_reply(
     hints: &VlmHints,
 ) -> Result<(VehicleDescription, Value, u32), VlmError> {
     let payload_image = encode_for_model(image, settings.vlm_input_edge);
-    let system_prompt = vehicle_prompt(settings, is_bike, hints);
+    let PromptFit {
+        prompt: system_prompt,
+        trimmed,
+    } = vehicle_prompt_fit(settings, is_bike, hints);
+    if let Some(trimmed) = trimmed {
+        note_prompt_trimmed(&trimmed);
+    }
     let with_plate = wants_plate(settings, hints);
     let reply_schema = schema(with_plate);
     let ask = |sys: &str, penalty: Option<f64>| {
@@ -2854,32 +3083,6 @@ fn note_unless_fatal(
         return Ok(());
     }
     note_failure(&client.fatal, &display_name(&settings.vlm_provider), err)
-}
-
-/// Ask about several views of one vehicle in a single call. Port of
-/// `vlm.identify_burst`.
-pub fn identify_burst(
-    client: &VlmClient,
-    images: &[Rgb],
-    settings: &Settings,
-) -> Result<VehicleDescription, VlmError> {
-    if images.is_empty() {
-        return Ok(VehicleDescription::default());
-    }
-    let encoded: Vec<String> = images
-        .iter()
-        .map(|img| encode_for_model(img, settings.vlm_input_edge))
-        .collect();
-    let prompt = BURST_PROMPT.replace("{count}", &encoded.len().to_string());
-    match client.call(settings, &prompt, &encoded, &schema(false), 400) {
-        Ok(parsed) => Ok(map_vehicle(&parsed, settings, false, false)),
-        Err(VlmError::Stopped) => Err(VlmError::Stopped),
-        Err(err) => {
-            let who = display_name(&settings.vlm_provider);
-            note_failure(&client.fatal, &who, &err)?;
-            Err(err)
-        }
-    }
 }
 
 #[cfg(test)]
@@ -3295,6 +3498,97 @@ mod tests {
             candidate_line(&some),
             "make/model must be one of: Ford Mustang S650, Toyota GR Supra."
         );
+    }
+
+    fn long_entry_list(n: usize) -> Vec<String> {
+        (0..n)
+            .map(|i| format!("Make{i} Model-{i} GT3 RS"))
+            .collect()
+    }
+
+    #[test]
+    fn a_long_entry_list_is_cut_to_fit_the_local_context() {
+        for provider in ["ollama", "builtin"] {
+            let settings = Settings {
+                vlm_provider: provider.into(),
+                ..Settings::default()
+            };
+            let hints = VlmHints {
+                candidates: long_entry_list(400),
+                context: Some("Wedding photography. ".repeat(60)),
+                ..VlmHints::default()
+            };
+            let fit = vehicle_prompt_fit(&settings, false, &hints);
+            let used =
+                estimate_tokens(&fit.prompt) + image_tokens(settings.vlm_input_edge) + REPLY_TOKENS;
+            assert!(
+                used <= LOCAL_CONTEXT_TOKENS,
+                "{provider}: {used} tokens of {LOCAL_CONTEXT_TOKENS}"
+            );
+            let note = fit.trimmed.expect("a cut is reported");
+            assert!(note.contains("entry list cut to"), "{note}");
+            assert!(note.contains("of 400"), "{note}");
+            assert!(note.contains("shoot guidance shortened"), "{note}");
+            assert!(
+                fit.prompt.contains("make/model is likely one of"),
+                "a partial list no longer says 'must'"
+            );
+            assert!(
+                fit.prompt.contains("Make0 Model-0"),
+                "the list's head stays"
+            );
+            assert!(!fit.prompt.contains("Make399 "), "its tail is cut");
+        }
+    }
+
+    #[test]
+    fn a_short_entry_list_and_a_cloud_model_are_never_cut() {
+        let short = VlmHints {
+            candidates: long_entry_list(5),
+            context: Some("Rally.".into()),
+            ..VlmHints::default()
+        };
+        let local = Settings {
+            vlm_provider: "ollama".into(),
+            ..Settings::default()
+        };
+        let fit = vehicle_prompt_fit(&local, false, &short);
+        assert_eq!(fit.trimmed, None);
+        assert!(fit.prompt.contains("make/model must be one of: Make0"));
+        assert!(fit.prompt.contains("Shoot guidance: Rally."));
+
+        let cloud = Settings {
+            vlm_provider: "anthropic".into(),
+            ..Settings::default()
+        };
+        let long = VlmHints {
+            candidates: long_entry_list(400),
+            ..VlmHints::default()
+        };
+        let fit = vehicle_prompt_fit(&cloud, false, &long);
+        assert_eq!(fit.trimmed, None, "a cloud window holds the whole list");
+        assert!(fit.prompt.contains("Make399 "));
+    }
+
+    #[test]
+    fn a_big_image_edge_leaves_less_room_for_the_entry_list() {
+        let hints = VlmHints {
+            candidates: long_entry_list(60),
+            ..VlmHints::default()
+        };
+        let kept = |edge: u32| {
+            let settings = Settings {
+                vlm_provider: "ollama".into(),
+                vlm_input_edge: edge,
+                ..Settings::default()
+            };
+            vehicle_prompt_fit(&settings, false, &hints)
+                .prompt
+                .matches("GT3 RS")
+                .count()
+        };
+        assert!(kept(1568) < 60, "a 1568 px crop leaves little room");
+        assert!(kept(1024) > kept(1568), "a smaller crop leaves more");
     }
 
     #[test]
