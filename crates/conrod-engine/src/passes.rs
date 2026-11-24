@@ -1413,42 +1413,14 @@ fn find_people(
     Ok(())
 }
 
-/// Every frame's rating again from its stored subjects, and the keepers.
+/// Every frame's rating again from its stored subjects, and the keepers. The
+/// frame is rated by the scan's own function (pan cap, AF rescue, missed
+/// frames), not a private copy of it.
 fn rerate(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
-    let lanes = cfg.lanes();
-    let found = rows(
-        &lock(&d.reader),
-        "SELECT d.image_id, COALESCE(d.region_type,'vehicle') AS region, d.x1, d.y1, d.x2, d.y2, d.rating, i.sharpness AS whole FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.bystander,0)=0 ORDER BY d.image_id",
-        [job],
-    )?;
-    type Rated<'a> = Vec<(&'a str, [f64; 4], f64)>;
-    let mut frames: BTreeMap<i64, (Option<f64>, Rated)> = BTreeMap::new();
-    for r in &found {
-        let c = |k: &str| r[k].as_f64().unwrap_or_default();
-        let frame = frames
-            .entry(r["image_id"].as_i64().unwrap_or_default())
-            .or_insert((r["whole"].as_f64(), Vec::new()));
-        frame.1.push((
-            r["region"].as_str().unwrap_or("vehicle"),
-            [c("x1"), c("y1"), c("x2"), c("y2")],
-            c("rating"),
-        ));
-    }
-    let db = lock(&d.db);
-    let tx = db.unchecked_transaction().map_err(err)?;
-    for (image, (whole, subjects)) in &frames {
-        let rating = crate::frame_rating(&lanes, subjects, *whole);
-        tx.execute(
-            "UPDATE images SET rating=? WHERE id=?",
-            params![rating, image],
-        )
-        .map_err(err)?;
-    }
-    tx.commit().map_err(err)?;
-    pick_of_pass(&db, job, &lanes, cfg.use_quality_score)?;
+    crate::rescore::rate_frames(d, job, cfg)?;
+    pick_of_pass(&lock(&d.db), job, &cfg.lanes(), cfg.use_quality_score)?;
     Ok(())
 }
-
 /// Give every stored vehicle crop an embedding, for albums identified before
 /// there were any. Skips crops that have one, so it is safe to run again.
 fn embed_missing(d: &Desktop, job: i64, stop: &AtomicBool, task: &Task) -> Result<usize> {
