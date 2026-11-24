@@ -33,6 +33,12 @@
     "group_vehicles": true,
     "identify_colour": true,
     "identify_make_model": true,
+    "identify_order": [
+      "ocr",
+      "decision",
+      "vision"
+    ],
+    "identify_parallel": false,
     "identify_team": true,
     "import_existing_ratings": true,
     "include_bikes": true,
@@ -129,6 +135,12 @@
     "group_vehicles": true,
     "identify_colour": true,
     "identify_make_model": true,
+    "identify_order": [
+      "ocr",
+      "decision",
+      "vision"
+    ],
+    "identify_parallel": false,
     "identify_team": true,
     "import_existing_ratings": true,
     "include_bikes": true,
@@ -229,6 +241,12 @@
     "group_vehicles": true,
     "identify_colour": true,
     "identify_make_model": true,
+    "identify_order": [
+      "ocr",
+      "decision",
+      "vision"
+    ],
+    "identify_parallel": false,
     "identify_team": true,
     "import_existing_ratings": true,
     "include_bikes": true,
@@ -328,6 +346,12 @@
     "group_vehicles": true,
     "identify_colour": true,
     "identify_make_model": true,
+    "identify_order": [
+      "ocr",
+      "decision",
+      "vision"
+    ],
+    "identify_parallel": false,
     "identify_team": true,
     "import_existing_ratings": true,
     "include_bikes": true,
@@ -428,6 +452,12 @@
     "group_vehicles": true,
     "identify_colour": true,
     "identify_make_model": true,
+    "identify_order": [
+      "ocr",
+      "decision",
+      "vision"
+    ],
+    "identify_parallel": false,
     "identify_team": true,
     "import_existing_ratings": true,
     "include_bikes": true,
@@ -529,6 +559,12 @@
     "group_vehicles": true,
     "identify_colour": true,
     "identify_make_model": true,
+    "identify_order": [
+      "ocr",
+      "decision",
+      "vision"
+    ],
+    "identify_parallel": false,
     "identify_team": true,
     "import_existing_ratings": true,
     "include_bikes": true,
@@ -632,6 +668,12 @@
     "group_vehicles": true,
     "identify_colour": true,
     "identify_make_model": true,
+    "identify_order": [
+      "ocr",
+      "decision",
+      "vision"
+    ],
+    "identify_parallel": false,
     "identify_team": true,
     "import_existing_ratings": true,
     "include_bikes": true,
@@ -722,6 +764,12 @@
   "group_vehicles": true,
   "identify_colour": true,
   "identify_make_model": true,
+  "identify_order": [
+    "ocr",
+    "decision",
+    "vision"
+  ],
+  "identify_parallel": false,
   "identify_team": true,
   "import_existing_ratings": true,
   "include_bikes": true,
