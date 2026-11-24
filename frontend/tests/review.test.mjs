@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {filterFrames,frameExcluded,frameStars,filename,subjectExcluded} from '../src/review.mjs';
+import {filterFrames,flawWords,frameExcluded,frameFlaw,frameStars,filename,subjectExcluded} from '../src/review.mjs';
 test('manual zero stars wins over an automatic keeper, filtering preserves rejects',()=>{
  const frames=[{id:1,path:'C:\\Photos\\A.CR3',rating:.95,manual_stars:0,rejected:1},{id:2,path:'C:\\Photos\\B.CR3',rating:.85,manual_stars:null,rejected:0}];
  assert.equal(frameStars(frames[0]),0);assert.equal(frameStars(frames[1]),4);
@@ -28,4 +28,17 @@ test('a sharp focus area keeps a frame the detector found only bystanders in',()
  assert.equal(frameExcluded({...frame,af_sharpness:.50},[bystander]),true);
  // A deliberate reject still wins, whatever the focus area says.
  assert.equal(frameExcluded({...frame,rejected:1},[bystander]),true);
+});
+
+test('a frame with its own fault is excluded, unless a hand star or a bracket excuses it', () => {
+  const blurred = { id: 1, rejected: 0, flaw: 'blurred', manual_stars: null, set_id: null };
+  assert.equal(frameFlaw(blurred), 'blurred');
+  assert.equal(frameExcluded(blurred, []), true);
+  assert.equal(flawWords('blurred'), 'Nothing in this frame is in focus.');
+  assert.equal(frameFlaw({ ...blurred, manual_stars: 4 }), null, 'a hand star outranks the fault');
+  const blown = { id: 2, rejected: 0, flaw: 'overexposed', manual_stars: null, set_id: null };
+  assert.equal(frameFlaw(blown), 'overexposed');
+  assert.equal(frameFlaw({ ...blown, set_id: 3 }), null, 'a bracket member is not faulted for exposure');
+  assert.equal(frameFlaw({ ...blurred, set_id: 3 }), 'blurred');
+  assert.equal(frameFlaw({ id: 3, rejected: 0, flaw: null }), null);
 });

@@ -140,6 +140,9 @@ pub struct PresetPolicy {
     /// Dark frames are the subject here (night sky, a stage in blackout): a
     /// low mean luma is neither a cull nor a ranking fault.
     pub dark_ok: bool,
+    /// Bright frames are the look here (white studio, a white room, a wedding
+    /// dress): a large clipped-white area is not an exposure fault.
+    pub high_key_ok: bool,
     /// COCO classes the vehicles lane asks the detector for, when the
     /// subject is not cars, bikes and trucks (4 airplane, 1 bicycle). Empty
     /// keeps the album's own car / bike / truck switches.
@@ -167,6 +170,7 @@ impl PresetPolicy {
             deliver_most: false,
             level: false,
             dark_ok: false,
+            high_key_ok: false,
             vehicle_classes: &[],
             players: false,
         }
@@ -247,6 +251,10 @@ impl PresetPolicy {
         self
     }
 
+    const fn high_key_ok(mut self) -> Self {
+        self.high_key_ok = true;
+        self
+    }
     const fn classes(mut self, classes: &'static [usize]) -> Self {
         self.vehicle_classes = classes;
         self
@@ -645,6 +653,7 @@ impl ShootPreset {
                 .no_faces()
                 .blur("strict")
                 .group(GroupUnit::KeepSet)
+                .high_key_ok()
                 .level(),
             ShootPreset::PropertyReport => PresetPolicy::new(Mix)
                 .no_people()
@@ -652,16 +661,19 @@ impl ShootPreset {
                 .blur("strict")
                 .group(GroupUnit::KeepSet)
                 .deliver_most()
+                .high_key_ok()
                 .level(),
             ShootPreset::AutoDealer => PresetPolicy::new(Motorsport)
                 .vehicles()
                 .no_people()
                 .no_faces()
                 .group(GroupUnit::PerAngle)
+                .high_key_ok()
                 .vlm(VlmTargets::PLATES),
             ShootPreset::Wedding => PresetPolicy::new(Event)
                 .min_box(0.7)
                 .floor(24)
+                .high_key_ok()
                 .vlm(VlmTargets::NAMES),
             ShootPreset::Concert => PresetPolicy::new(Event)
                 .pan()
@@ -1143,6 +1155,7 @@ impl Lanes {
             "blur": policy.default_blur,
             "levelCheck": policy.level,
             "darkOk": policy.dark_ok,
+            "highKeyOk": policy.high_key_ok,
             "deliverMost": policy.deliver_most,
         })
     }

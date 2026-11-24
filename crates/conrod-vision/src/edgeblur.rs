@@ -58,6 +58,9 @@ pub struct EdgeBlur {
     /// units): how strong the edges are, not just how wide. NaN when the
     /// region had no measurable gradients.
     pub contrast: f64,
+    /// The noise floor of the region's gradients (0..255 luma units): what a
+    /// gradient must clear to be an edge rather than grain. NaN when unmeasured.
+    pub noise: f64,
 }
 
 const PRE_SMOOTH: f32 = 0.6;
@@ -106,6 +109,7 @@ impl EdgeBlur {
             dirs: [f64::NAN; 4],
             edges,
             contrast: f64::NAN,
+            noise: f64::NAN,
         }
     }
 
@@ -519,6 +523,113 @@ fn estimate(
         dirs,
         edges: n,
         contrast: f64::from(p98),
+        noise: f64::from(noise),
+    }
+}
+
+/// What the whole frame holds in absolute terms: how many *sharp* edge pixels
+/// it has anywhere.
+///
+/// This is deliberately not relative. Every other measure here asks how sharp
+/// the sharpest edges *are*, against a floor taken from the region itself; on
+/// a frame with nothing in focus that floor sinks to the noise, and the grain
+/// reads as perfectly sharp edges. This one counts only ridge pixels whose
+/// gradient (0..255 luma units, after the re-blur) clears an absolute floor
+/// *and* four noise sigmas, and whose edge is narrower than `max_sigma`
+/// (pixels of `image`): a frame whose every edge is smeared
+/// wider than that, or whose only gradients are grain, counts none.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Detail {
+    /// Sharp ridge pixels, on the analysis plane.
+    pub edges: usize,
+    /// Pixels of the analysis plane the count is out of.
+    pub plane: usize,
+    /// The noise floor of the frame's gradients (luma units).
+    pub noise: f64,
+}
+
+/// Count the frame's sharp, strong edges: gradient at least `grad` and edge
+/// width at most `max_sigma` (a Gaussian sigma in pixels of `image`).
+pub fn detail(image: &Gray, grad: f32, max_sigma: f64) -> Detail {
+    let (iw, ih) = (image.width, image.height);
+    let empty = Detail {
+        edges: 0,
+        plane: 0,
+        noise: f64::NAN,
+    };
+    if iw < 16 || ih < 16 {
+        return empty;
+    }
+    let k = downscale_factor(iw, ih, ANALYSIS_MAX_PIXELS);
+    let (src, w, h) = if k > 1 {
+        average_window(image, 0, 0, iw, ih, k)
+    } else {
+        (image.data.iter().map(|&b| f32::from(b)).collect(), iw, ih)
+    };
+    if w < 8 || h < 8 {
+        return empty;
+    }
+    let mut laps = Vec::new();
+    for y in (2..h - 2).step_by(4) {
+        for x in (2..w - 2).step_by(4) {
+            let i = y * w + x;
+            laps.push((src[i - w] + src[i + w] + src[i - 1] + src[i + 1] - 4.0 * src[i]).abs());
+        }
+    }
+    let noise = NOISE_MULT * GRAD_OVER_LAP * pick(&mut laps, 0.20) / LAP_P20_OVER_SIGMA;
+    let mut pre = vec![0f32; w * h];
+    let mut tmp = vec![0f32; w * h];
+    blur_into(&src, &mut pre, &mut tmp, w, h, &gauss(PRE_SMOOTH));
+    drop(src);
+    let (gx, gy) = gradients(&pre, w, h);
+    let mut reblurred = vec![0f32; w * h];
+    blur_into(&pre, &mut reblurred, &mut tmp, w, h, &gauss(SIGMA0));
+    drop(pre);
+    drop(tmp);
+    let (rx, ry) = gradients(&reblurred, w, h);
+    drop(reblurred);
+    let mut rm = vec![0f32; w * h];
+    let mut bins = vec![0u8; w * h];
+    for i in 0..w * h {
+        rm[i] = (rx[i] * rx[i] + ry[i] * ry[i]).sqrt();
+        bins[i] = dir_bin(rx[i], ry[i]);
+    }
+    drop(rx);
+    drop(ry);
+    // `max_sigma` is in pixels of `image`; the analysis plane is `k` times coarser.
+    let max_st = max_sigma / k as f64;
+    let floor = grad.max(noise);
+    let extra_var = ((k * k - 1) as f32) / 12.0;
+    let mut edges = 0usize;
+    for y in 2..h - 2 {
+        for x in 2..w - 2 {
+            let i = y * w + x;
+            let m = rm[i];
+            if m < floor {
+                continue;
+            }
+            let (dx, dy) = NORMALS[bins[i] as usize];
+            let (ax, ay) = ((x as isize + dx) as usize, (y as isize + dy) as usize);
+            let (bx, by) = ((x as isize - dx) as usize, (y as isize - dy) as usize);
+            if m <= rm[ay * w + ax] || m <= rm[by * w + bx] {
+                continue;
+            }
+            let before = (gx[i] * gx[i] + gy[i] * gy[i]).sqrt();
+            let r = (before / m).clamp(R_MIN, R_MAX);
+            let sp = SIGMA0 / (r * r - 1.0).sqrt();
+            let st = (sp * sp - PRE_SMOOTH * PRE_SMOOTH)
+                .max(MIN_SIGMA * MIN_SIGMA)
+                .sqrt();
+            let st = (st * st - extra_var).max(MIN_SIGMA * MIN_SIGMA).sqrt();
+            if f64::from(st) <= max_st {
+                edges += 1;
+            }
+        }
+    }
+    Detail {
+        edges,
+        plane: w * h,
+        noise: f64::from(noise),
     }
 }
 

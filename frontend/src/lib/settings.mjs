@@ -71,6 +71,10 @@ export const FIELDS = {
     label: 'Cull blurred frames', kind: 'toggle',
     hint: 'A red rating, never a deletion.',
   },
+  cull_exposure: {
+    label: 'Cull blown or crushed frames', kind: 'toggle',
+    hint: 'Frames blown out or crushed to black beyond what a RAW can recover get a red rating, never a deletion. Night, stage and high-key shoots are exempt.',
+  },
   scan_profile: {
     label: 'Default shoot type', kind: 'profile', album: true,
     hint: 'The import sheet starts on this. Each album can choose another.',
@@ -239,7 +243,7 @@ export const SECTIONS = [
   {
     id: 'culling', tab: 'culling', title: 'Culling',
     hint: 'How soft a frame may be before it is rated soft or culled. These are the controls a photographer actually changes.',
-    keys: ['blur_strictness', 'burst_gap', 'sharp_at', 'blurred_below', 'auto_reject_below_stars', 'cull_blurred'],
+    keys: ['blur_strictness', 'burst_gap', 'sharp_at', 'blurred_below', 'auto_reject_below_stars', 'cull_blurred', 'cull_exposure'],
   },
   {
     id: 'new-scans', tab: 'culling', title: 'New scans',

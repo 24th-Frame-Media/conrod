@@ -68,6 +68,7 @@ export function noteList(summary) {
   notes.push(`Blur check: ${BLUR_WORDS[summary.blur] ?? 'moderate'}`);
   if (summary.levelCheck) notes.push('Horizon and verticals checked');
   if (summary.darkOk) notes.push('Dark frames are fine');
+  if (summary.highKeyOk) notes.push('Bright, high-key frames are fine');
   if (summary.deliverMost) notes.push('Keeps nearly everything');
   return notes;
 }

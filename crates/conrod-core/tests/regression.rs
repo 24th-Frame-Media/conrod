@@ -1300,6 +1300,7 @@ fn settings_match_snapshot() {
         // Rust-only: the preset's default strictness applies until an album
         // chooses one.
         m.remove("blur_explicit");
+        m.remove("cull_exposure"); // Rust-only: blown / crushed frames are culled
         m.remove("lightroom_bridge"); // Rust-only: the plug-in installer
         m.remove("auto_apply"); // Rust-only: stars and picks applied at album finish
         m.remove("vlm_reasoning"); // Rust-only: whether the vision model may think

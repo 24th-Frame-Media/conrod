@@ -1,4 +1,4 @@
-import { burstTopRanks, filename, filterFrames, focusSharp, frameStars, frameExcluded, subjectExcluded } from '../review.mjs';
+import { burstTopRanks, filename, filterFrames, flawWords, focusSharp, frameFlaw, frameStars, frameExcluded, subjectExcluded } from '../review.mjs';
 import { decisionOf, groupKeyOf, keeperIds } from './stacks.mjs';
 import { tasteOrder } from './taste.mjs';
 import { sureTags } from './moments.mjs';
@@ -44,6 +44,8 @@ const unique = (items: (string | null | undefined)[]): string[] => [...new Set(i
 /** Readable "why flagged" text for a tooltip: the cull reason plus the scores behind it. */
 function cullDetail(frame: Frame, dets: Detection[]): string | null {
   if (frame.rejected) return 'Manually rejected';
+  const flaw = frameFlaw(frame);
+  if (flaw) return `${flaw}${frame.rating != null ? ` · rating ${frame.rating.toFixed(2)}` : ''}`;
   const culled = dets.find((d) => d.cull_reason);
   if (!culled) return null;
   const bits = [culled.cull_reason as string];
@@ -95,6 +97,8 @@ function cullWords(reason: string, name: string, d: Detection, frame: Frame): st
  */
 function whyNote(frame: Frame, dets: Detection[], burstSize: number): string | null {
   if (frame.rejected) return 'You rejected this frame.';
+  const flaw = frameFlaw(frame);
+  if (flaw) return flawWords(flaw);
   const main = mainDetection(dets);
   const culled = frameExcluded(frame, dets);
   if (culled) {

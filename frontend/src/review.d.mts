@@ -1,6 +1,10 @@
 import type { Frame, Detection } from './lib/types';
 export function subjectExcluded(frame: Frame, detection: Detection): boolean;
 export function frameExcluded(frame: Frame, detections: Detection[]): boolean;
+/** The frame's own fault (blurred, overexposed, underexposed) unless a hand star or a bracket excuses it. */
+export function frameFlaw(frame: Pick<Frame, 'flaw' | 'manual_stars' | 'set_id'>): 'blurred' | 'overexposed' | 'underexposed' | null;
+/** One plain sentence for a frame's own fault. */
+export function flawWords(flaw: string | null | undefined): string | null;
 /** The keeper floor (three stars) and whether the camera's focus area clears it. */
 export const KEEPER_MIN_RATING: number;
 export function focusSharp(frame: Pick<Frame, 'af_sharpness'>): boolean;
