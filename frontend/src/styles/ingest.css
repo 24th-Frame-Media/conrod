@@ -53,15 +53,12 @@
 }
 .ing-density button:hover { color: var(--text); }
 .ing-density button.on { background: var(--surface-3); color: var(--text); }
-.ing-overflow-fade {
-  position: absolute; inset: auto 0 0 0; height: 52px; pointer-events: none; z-index: 3;
-  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 92%, transparent) 72%, var(--bg));
-}
+/* "+N more" sits in its own row under the scrolling worker list, never over a card. */
 .ing-overflow-pill {
-  position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 4;
+  flex: none; align-self: center; margin-top: 8px;
   padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line-hover);
   background: var(--surface-2); color: var(--text); font-size: 11px; letter-spacing: .04em;
-  cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+  cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, .2);
 }
 .ing-overflow-pill:hover { border-color: var(--text-dim); background: var(--surface-3); }
 /* The rail (Found so far, workers) scrolls in its own column instead of stretching the page. */
@@ -73,7 +70,7 @@
 .ing-chip button { padding: 1px 8px; font-size: 11px; border: 0; background: transparent; color: var(--text-mute); }
 .ing-chip button:hover { color: var(--text); }
 .ing-more { justify-self: start; margin-top: 8px; }
-.ing-lanes { padding-bottom: 36px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.ing-lanes { padding-bottom: 4px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .ing-lanes-cards { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
 .ing-lanes-cards.single { grid-template-columns: minmax(0, 520px); }
 .ing-lanes-tiles { grid-template-columns: repeat(auto-fit, minmax(370px, 1fr)); gap: 12px; }
@@ -193,15 +190,18 @@
 /* Below 1400 px wide the rail sits under the lanes, so the workers keep the page's width. */
 @media (max-width: 1399px) {
   .ing-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; overflow-y: auto; }
+  /* Stacked, the page body scrolls and each block keeps its own height: a block never shrinks under the next one. */
+  .ing-main, .scan-rail { min-height: auto; }
   .ing-main { grid-template-rows: none; gap: 12px; }
   .ing-workers-shell { overflow: visible; }
   .ing-workers { overflow: visible; }
   .ing-workers-head { position: static; }
-  .ing-overflow-fade, .ing-overflow-pill { display: none; }
+  .ing-overflow-pill { display: none; }
   .scan-rail { overflow: visible; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; align-items: start; }
 }
 @media (max-width: 1000px) {
   .ing-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; overflow-y: auto; }
+  .ing-main, .scan-rail { min-height: auto; }
   .ing-main { grid-template-rows: none; }
   .ing-workers-shell { overflow: visible; }
   .ing-workers { overflow: visible; }
@@ -273,6 +273,7 @@
 .id-action-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .id-action-row .id-action-tags { margin: 0; }
 
+.id-lane { grid-template-columns: minmax(0, 1fr); }
 /* ── DECIDER: the decision model's lane (components/DeciderLane.tsx) and its Settings card ── */
 .decider-row { display: none; }
 .decider-lane.off { opacity: .6; }

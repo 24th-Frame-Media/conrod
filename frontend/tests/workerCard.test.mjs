@@ -1,4 +1,4 @@
-﻿import test from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -43,4 +43,21 @@ test('the stage strip never prints a truncated word', () => {
   const src = read('components/IngestLane.tsx');
   assert.ok(!/SCAN_STEPS\.map/.test(src), 'the lane does not print each step name in a cramped cell');
   assert.ok(/ing-steps-label/.test(src));
+});
+// Layout regressions: the Decider card once took the review grid's global `.card` (position: absolute) and sat on top of Worker 02.
+test('the decider card does not borrow the review grid\'s global .card class', () => {
+  const src = read('components/DeciderLane.tsx');
+  assert.ok(!/decider-lane \$\{layout\}/.test(src), 'the layout word must not be put on the lane as a bare class');
+  assert.ok(/layout === 'card' \? 'dec-card'/.test(src));
+  const screens = read('styles/screens.css');
+  assert.ok(/^\.card \{ position: absolute/m.test(screens), 'the premise: .card is absolutely positioned');
+});
+
+test('a worker card never grows past its grid cell, and "+N more" never sits over a card', () => {
+  const css = read('styles/ingest.css');
+  assert.ok(/^\.id-lane \{ grid-template-columns: minmax\(0, 1fr\); \}/m.test(css), 'a lane\'s own column is capped at its width');
+  const pill = css.match(/\.ing-overflow-pill \{[^}]*\}/)[0];
+  assert.ok(!/position:\s*absolute/.test(pill), 'the pill sits in its own row under the list');
+  assert.ok(!/ing-overflow-fade/.test(css) && !/ing-overflow-fade/.test(read('screens/Ingest.tsx')), 'no fade veil over the cards');
+  assert.ok(/\.ing-main, \.scan-rail \{ min-height: auto; \}/.test(css), 'stacked blocks keep their height instead of sliding under the next');
 });

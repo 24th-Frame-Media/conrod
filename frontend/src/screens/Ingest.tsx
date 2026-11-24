@@ -587,7 +587,6 @@ export function IngestScreen({
               </section>
               {!(detailCar || detailFrame) && overflow.hasMore && (
                 <>
-                  <div className="ing-overflow-fade" aria-hidden="true" />
                   <button
                     type="button"
                     className="ing-overflow-pill mono"

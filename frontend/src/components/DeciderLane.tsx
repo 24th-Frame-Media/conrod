@@ -106,7 +106,7 @@ export function DeciderLane({ live, serving = null, layout = 'card', paused = fa
   );
 
   return (
-    <section className={`id-lane decider-lane ${layout}${cls}${unavailable ? ' off' : ''}`} aria-label="Decision model">
+    <section className={`id-lane decider-lane ${layout === 'card' ? 'dec-card' : layout}${cls}${unavailable ? ' off' : ''}`} aria-label="Decision model">
       <header className="id-lane-head">
         <span className="id-lane-name mono">Decider</span>
         <span className={`id-lane-stage ${isPaused ? 'ing-stage paused' : busy ? 'ing-stage busy' : 'ing-stage idle'}`}>{isPaused ? 'paused' : busy ? (live.state === 'loading' ? 'loading' : 'deciding') : serving ? 'ready' : deciderWord(live.state)}</span>
