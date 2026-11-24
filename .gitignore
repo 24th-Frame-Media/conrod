@@ -12,6 +12,7 @@ Thumbs.db
 
 # The Python app's leftovers on a machine that used it (its code is on the legacy-python branch)
 .venv/
+.venv-*/
 __pycache__/
 build/
 
