@@ -5,10 +5,40 @@
 export const TABS = [
   { id: 'culling', label: 'Culling', hint: 'What counts as a keeper' },
   { id: 'identification', label: 'Identification', hint: 'Plates, numbers and photo reading' },
+  { id: 'workflow', label: 'Workflow', hint: 'Stage order and parallel execution' },
   { id: 'metadata', label: 'Metadata', hint: 'What is written next to your files' },
   { id: 'lightroom', label: 'Lightroom', hint: 'Stars, picks and labels in your files' },
   { id: 'system', label: 'System', hint: 'Models, cache and library data' },
 ];
+
+/** Default order of the three Identify stages: OCR, then Decision, then Vision. */
+export const DEFAULT_IDENTIFY_ORDER = ['ocr', 'decision', 'vision'];
+
+/** Normalise a configured Identify stage order into a valid 3-stage permutation of ['ocr', 'decision', 'vision']. */
+export function normalizeIdentifyOrder(order) {
+  const out = [];
+  if (Array.isArray(order)) {
+    for (const raw of order) {
+      const key = String(raw ?? '').trim().toLowerCase().replace(/^identify:/, '');
+      if (DEFAULT_IDENTIFY_ORDER.includes(key) && !out.includes(key)) out.push(key);
+    }
+  }
+  for (const def of DEFAULT_IDENTIFY_ORDER) {
+    if (!out.includes(def)) out.push(def);
+  }
+  return out;
+}
+
+/** Move `stage` up (`delta = -1`) or down (`delta = 1`) in the Identify stage order. */
+export function moveIdentifyStage(order, stage, delta) {
+  const list = normalizeIdentifyOrder(order);
+  const from = list.indexOf(stage);
+  const to = from + delta;
+  if (from < 0 || to < 0 || to >= list.length) return list;
+  const next = [...list];
+  [next[from], next[to]] = [next[to], next[from]];
+  return next;
+}
 
 /** Fields in page order. `kind` picks the control; `album` marks a per-album override. */
 export const FIELDS = {
@@ -155,6 +185,16 @@ export const FIELDS = {
     hint: 'Images are resized so their longest edge fits this before upload.',
   },
 
+  // ── workflow ──
+  identify_parallel: {
+    label: 'Run OCR, Decider and Vision at the same time', kind: 'toggle',
+    hint: 'Runs CPU OCR, the decision model and the vision model concurrently when your hardware allows it. On a single GPU that fits only one local model at a time, CPU OCR still runs in parallel while Decider and Vision take turns.',
+  },
+  identify_order: {
+    label: 'Identify stage order', kind: 'workflow',
+    hint: 'Order in which OCR, Decider and Vision run sequentially (and the GPU handoff order when a card runs local models serially).',
+  },
+
   // ── metadata ──
   write_rating: { label: 'Write star rating', kind: 'toggle', hint: 'An XMP rating that Lightroom reads.' },
   write_label: { label: 'Write colour label', kind: 'toggle' },
@@ -230,6 +270,11 @@ export const SECTIONS = [
     id: 'vision-limits', tab: 'identification', title: 'Vision limits', advanced: true,
     hint: 'Only worth changing when a host is slow or rejects large images.',
     keys: ['vlm_timeout', 'vlm_max_retries', 'vlm_input_edge'],
+  },
+  {
+    id: 'identify-workflow', tab: 'workflow', title: 'Identify workflow',
+    hint: 'Choose the order OCR, Decider and Vision run in, or run them at the same time.',
+    keys: ['identify_parallel', 'identify_order'],
   },
   {
     id: 'metadata-write', tab: 'metadata', title: 'Written on export',

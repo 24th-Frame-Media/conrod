@@ -39,6 +39,8 @@ export type IngestProps = {
   /** The cloud decision service actually serving moments (e.g. "jev-1.13 via OpenCode"), or null
    *  for the local path. Names the serving service on the DECIDER node and lane. */
   decisionService?: string | null;
+  /** Configured execution order for Identify stages: permutation of ['ocr', 'decision', 'vision']. */
+  identifyOrder?: readonly string[];
   /** The Vision off card's button: turn vision on for this album, or open Settings to set up a service. */
   onVisionAction?: (id: VisionAction['id']) => void;
   /** The album's scan is running right now (the engine says so; the last snapshot can lag). */
@@ -124,7 +126,7 @@ export function ScanFailureBanner({ failure, onRetry, onLibrary }: { failure: Sc
  * just finished. The same screen shows a standalone identification run with only the vision stages.
  */
 export function IngestScreen({
-  mode, job, scan, identify, status, model, decisionService = null, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onPauseIdentify, onResumeIdentify, onCancel,
+  mode, job, scan, identify, status, model, decisionService = null, identifyOrder, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onPauseIdentify, onResumeIdentify, onCancel,
   onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue, scanError, runSnapshot, onRetryScan, onContinueIdentify,
   surface, onStageControl, onAcceptTypeSuggestion, onOpenShootSettings,
 }: IngestProps) {
@@ -253,8 +255,8 @@ export function IngestScreen({
   // sub-nodes, disabled steps, controls, status words); otherwise fall back to
   // legacy node builders for identify-only runs or older engines.
   const surfaceNodes = mode === 'ingest' && snap && surface && Array.isArray(surface.nodes) ? surface.nodes : null;
-  const nodes: any[] = surfaceNodes ?? (mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive, decisionService, subject)
-    : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService, subject, reads, failed: failedMap }));
+  const nodes: any[] = surfaceNodes ?? (mode === 'identify' ? identifyNodes(idLive, idLive?.model || model, deciderLive, decisionService, subject, identifyOrder)
+    : ingestNodes({ stages, identify: idLive, model, finished: phase === 'done', decider: deciderLive, serving: decisionService, subject, reads, failed: failedMap, identifyOrder }));
 
   const visionLanes = workerLanes(idLive);
   const shownVisionLanes = visibleWorkerLanes(visionLanes, idLive?.phase);

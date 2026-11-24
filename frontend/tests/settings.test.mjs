@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FIELDS, OVERRIDABLE, SECTIONS, TABS,
-  albumOverrideCounts, dirtyKeys, dirtyTabs, fieldsOf, keyTab, searchFields, tabById,
+  DEFAULT_IDENTIFY_ORDER, FIELDS, OVERRIDABLE, SECTIONS, TABS,
+  albumOverrideCounts, dirtyKeys, dirtyTabs, fieldsOf, keyTab, moveIdentifyStage, normalizeIdentifyOrder, searchFields, tabById,
 } from '../src/lib/settings.mjs';
 
 const LEGACY_GROUPS = [
@@ -27,8 +27,8 @@ test('every setting keeps its engine key and appears in exactly one section', ()
     if (key === 'vlm_services') continue; // a whole list, rendered by the providers section
     assert.ok(seen.has(key), `${key} is still on the page`);
   }
-  assert.equal(SECTIONS.length, 11); // one Photo helpers card; moments threshold folded into it
-  assert.deepEqual(TABS.map((t) => t.label), ['Culling', 'Identification', 'Metadata', 'Lightroom', 'System']);
+  assert.equal(SECTIONS.length, 12); // includes dedicated Workflow tab section
+  assert.deepEqual(TABS.map((t) => t.label), ['Culling', 'Identification', 'Workflow', 'Metadata', 'Lightroom', 'System']);
 });
 
 test('blur strictness offers critical as the strictest stop', () => {
@@ -76,10 +76,10 @@ test('dirty state is per key, per tab and compares lists deeply', () => {
   assert.deepEqual(dirtyKeys(saved, saved), []);
   const draft = { ...saved, blur_strictness: 'strict', burst_gap: 2, include_cars: true };
   assert.deepEqual(dirtyKeys(draft, saved).sort(), ['blur_strictness', 'burst_gap']);
-  assert.deepEqual(dirtyTabs(draft, saved), { culling: 2, identification: 0, metadata: 0, lightroom: 0, system: 0 });
+  assert.deepEqual(dirtyTabs(draft, saved), { culling: 2, identification: 0, workflow: 0, metadata: 0, lightroom: 0, system: 0 });
   const services = { ...saved, vlm_services: [{ id: 'a' }, { id: 'b' }] };
-  assert.deepEqual(dirtyTabs(services, saved), { culling: 0, identification: 1, metadata: 0, lightroom: 0, system: 0 });
-  assert.deepEqual(dirtyTabs({ ...draft, close_to_tray: true, odd_key: 1 }, saved), { culling: 2, identification: 0, metadata: 1, lightroom: 0, system: 0 });
+  assert.deepEqual(dirtyTabs(services, saved), { culling: 0, identification: 1, workflow: 0, metadata: 0, lightroom: 0, system: 0 });
+  assert.deepEqual(dirtyTabs({ ...draft, close_to_tray: true, odd_key: 1 }, saved), { culling: 2, identification: 0, workflow: 0, metadata: 1, lightroom: 0, system: 0 });
   assert.deepEqual(dirtyKeys({}, saved).sort(), Object.keys(saved).sort());
 });
 
@@ -107,4 +107,15 @@ test('OpenCode is described as pay-as-you-go credits, never the Go coding subscr
   }
   assert.match(FIELDS.moments_opencode_key.hint, /Go coding-subscription/, 'the key hint warns off Go');
   assert.match(FIELDS.moments_opencode_key.hint, /Do not paste/, 'the warning is direct');
+});
+
+test('workflow stage order normalises and reorders cleanly', () => {
+  assert.deepEqual([...DEFAULT_IDENTIFY_ORDER], ['ocr', 'decision', 'vision']);
+  assert.deepEqual(normalizeIdentifyOrder(['identify:vision', 'OCR', 'bogus', 'vision']), ['vision', 'ocr', 'decision']);
+  assert.deepEqual(normalizeIdentifyOrder(null), ['ocr', 'decision', 'vision']);
+  assert.deepEqual(moveIdentifyStage(['ocr', 'decision', 'vision'], 'vision', -1), ['ocr', 'vision', 'decision']);
+  assert.deepEqual(moveIdentifyStage(['ocr', 'decision', 'vision'], 'ocr', -1), ['ocr', 'decision', 'vision']);
+  assert.deepEqual(moveIdentifyStage(['ocr', 'decision', 'vision'], 'ocr', 1), ['decision', 'ocr', 'vision']);
+  assert.equal(keyTab('identify_parallel'), 'workflow');
+  assert.equal(keyTab('identify_order'), 'workflow');
 });

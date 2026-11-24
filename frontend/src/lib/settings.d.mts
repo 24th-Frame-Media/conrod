@@ -1,5 +1,9 @@
-export type SettingsTabId = 'culling' | 'identification' | 'metadata' | 'lightroom' | 'system';
-export type SettingsFieldKind = 'toggle' | 'number' | 'text' | 'segmented' | 'profile';
+export type SettingsTabId = 'culling' | 'identification' | 'workflow' | 'metadata' | 'lightroom' | 'system';
+export type SettingsFieldKind = 'toggle' | 'number' | 'text' | 'segmented' | 'profile' | 'workflow';
+export type IdentifyStageKey = 'ocr' | 'decision' | 'vision';
+export const DEFAULT_IDENTIFY_ORDER: readonly IdentifyStageKey[];
+export function normalizeIdentifyOrder(order: readonly string[] | null | undefined): IdentifyStageKey[];
+export function moveIdentifyStage(order: readonly string[] | null | undefined, stage: string, delta: -1 | 1): IdentifyStageKey[];
 export type SettingsFieldOption = { id: string; name: string };
 export type SettingsField = {
   key: string;

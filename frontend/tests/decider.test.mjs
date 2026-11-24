@@ -95,6 +95,9 @@ test('the identify flow puts DECIDER after READ and before VISION, matching engi
   assert.equal(off.sub, 'off');
   // No decider in the snapshot: the original six nodes are unchanged.
   assert.equal(identifyNodes({ stage: 'vision' }, 'qwen').length, 6);
+  // Custom workflow order reorders READ, DECIDER and VISION in the flowchart.
+  const custom = identifyNodes({ stage: 'vision', state: 'running' }, 'qwen', asking, null, undefined, ['vision', 'ocr', 'decision']);
+  assert.deepEqual(custom.map((n) => n.label), ['LOAD', 'CROP', 'VISION', 'READ', 'DECIDER', 'ENTRY LIST', 'RESULT']);
 });
 
 test('a re-run shows the DECIDER for its own remaining work, and a stopped run is not finished', () => {

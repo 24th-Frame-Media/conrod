@@ -392,6 +392,7 @@ export function App() {
             queue={queueJobs} onUnqueue={actions.unqueue} runSnapshot={runSnapshot}
             paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={handleSettingsSaved}
             identify={jobId != null ? identifyLive[jobId] : undefined} status={status} identifyPaused={identifyPaused}
+            identifyOrder={Array.isArray(eng.settings.identify_order) ? eng.settings.identify_order : undefined}
             model={vlmModelLabel(eng.settings)} decisionService={decisionService} scanError={scanError}
             onResumeJob={() => { if (jobId != null) void startScan({ jobId }); }}
             onRetryScan={() => { if (scanError?.args) void startScan(scanError.args); else if (jobId != null) void startScan({ jobId }); else actions.resume(); }}
@@ -404,6 +405,7 @@ export function App() {
         {view === 'Identify' && (
           <IdentifyScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? identifyLive[jobId] : undefined}
             status={status} model={vlmModelLabel(eng.settings)} decisionService={decisionService}
+            identifyOrder={Array.isArray(eng.settings.identify_order) ? eng.settings.identify_order : undefined}
             paused={identifyPaused} onPause={() => pauseIdentify(true)} onResume={() => pauseIdentify(false)}
             onStageControl={stageControl} onCancel={actions.cancel} onVisionAction={visionAction} onReview={() => setPage('Review')}
             onContinueIdentify={() => {

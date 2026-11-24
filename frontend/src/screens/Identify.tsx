@@ -8,6 +8,7 @@ type Props = {
   model?: string;
   /** The cloud decision service actually serving moments, for the DECIDER node. */
   decisionService?: string | null;
+  identifyOrder?: readonly string[];
   paused: boolean;
   onPause?: () => void;
   onResume?: () => void;
@@ -25,9 +26,9 @@ type Props = {
 };
 
 /** An album while a standalone identification runs (and after): the ingest screen with only the vision stages. */
-export function IdentifyScreen({ job, live, status, model, decisionService, paused, onPause, onResume, onStageControl, onCancel, onReview, onContinueIdentify, onVisionAction }: Props) {
+export function IdentifyScreen({ job, live, status, model, decisionService, identifyOrder, paused, onPause, onResume, onStageControl, onCancel, onReview, onContinueIdentify, onVisionAction }: Props) {
   return (
-    <IngestScreen mode="identify" job={job} identify={live} status={status} model={model} decisionService={decisionService} paused={false} identifyPaused={paused}
+    <IngestScreen mode="identify" job={job} identify={live} status={status} model={model} decisionService={decisionService} identifyOrder={identifyOrder} paused={false} identifyPaused={paused}
       onPauseIdentify={onPause} onResumeIdentify={onResume} onStageControl={onStageControl}
       onCancelOperation={onCancel} onVisionAction={onVisionAction} onReview={onReview} onLibrary={onReview} onContinueIdentify={onContinueIdentify} />
   );

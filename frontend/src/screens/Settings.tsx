@@ -13,6 +13,7 @@ import {
 import { SettingsSection, SettingRow } from '../components/SettingsFields';
 import { Maintenance } from '../components/Maintenance';
 import { LightroomBridge } from '../components/LightroomBridge';
+import { WorkflowSettings } from '../components/WorkflowSettings';
 import { AiSettingsCard } from './AiSettingsCard';
 import { Benchmark } from './Benchmark';
 import { Known } from './Known';
@@ -411,6 +412,15 @@ export function Settings({ settings, identifyVram = null, onSaved, run, toast, j
                     </div>
                   </details>
                 </>
+              )}
+
+              {activeTab === 'workflow' && (
+                <WorkflowSettings
+                  draft={draft}
+                  saved={settings}
+                  identifyVram={identifyVram}
+                  onChange={setValue}
+                />
               )}
 
               {activeTab === 'metadata' && SECTIONS.filter((section) => section.tab === 'metadata').map((section) => (

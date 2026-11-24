@@ -200,12 +200,16 @@ export type GlobalStats = {
   timed_albums: number;
 };
 
-export type SettingValue = string | number | boolean;
+export type SettingValue = string | number | boolean | string[];
 /** Global defaults; an album's `settings_json` overrides the same keys. */
 export type Settings = Record<string, SettingValue> & {
   /** What identification reads; the album's own value wins over this default. */
   identify_scope?: Scope;
   workflow_mode?: string;
+  /** Configured execution order for Identify stages: permutation of ['ocr', 'decision', 'vision']. */
+  identify_order?: string[];
+  /** Allow OCR, Decision, and Vision to run concurrently in parallel. */
+  identify_parallel?: boolean;
 };
 export type ModelInfo = { id?: string; name: string; file: string; ready: boolean; detail?: string; /** Opt-in (the decision model): not counted against the machine when missing. */ optional?: boolean; /** Disk truth: the files are installed (independent of serving/on state). */ downloaded?: boolean; /** False when no trustworthy pinned source exists yet ("not available yet"). */ available?: boolean };
 

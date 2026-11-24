@@ -3,6 +3,7 @@
 import { deciderNode } from './decider.mjs';
 import { deciderStepNode, flowNodes } from './identifyFlow.mjs';
 import { STAGE_ORDER, etaLabel, orderStages, stageStatus } from './scan.mjs';
+import { normalizeIdentifyOrder } from './settings.mjs';
 import { SUBJECT_WORDS, detectorPurpose } from './subjects.mjs';
 import { visionModelWords, visionNodeSub, visionOffReason } from './vision.mjs';
 
@@ -121,16 +122,18 @@ function visionNode(identify, identifyStage, model, finished, subject) {
  * `subject` is the album's own words; `reads` is false for a shoot whose identify run only judges moments, which draws no
  * VISION node because there is nothing to read.
  */
-export function ingestNodes({ stages, identify = null, model = '', finished = false, decider = null, serving = null, subject = SUBJECT_WORDS.subjects, reads = true, failed = {} } = {}) {
+export function ingestNodes({ stages, identify = null, model = '', finished = false, decider = null, serving = null, subject = SUBJECT_WORDS.subjects, reads = true, failed = {}, identifyOrder = null } = {}) {
   const ordered = orderStages(stages);
   const byId = new Map(ordered.map((s) => [s.id, s]));
   const ids = [...SCAN_NODE_IDS, ...ordered.map((s) => s.id).filter((id) => id !== 'identify' && !SCAN_NODE_IDS.includes(id))];
   const rank = (id) => { const i = STAGE_ORDER.indexOf(id); return i < 0 ? STAGE_ORDER.length : i; };
   ids.sort((a, b) => rank(a) - rank(b));
   const nodes = ids.map((id) => scanNode(id, byId.get(id), finished, subject, failed));
-  // Real engine execution order is OCR → Decision → Vision, so DECIDER sits before VISION.
-  if (decider) nodes.push(deciderNode(decider, serving, identify?.phase));
-  if (reads && visionExpected(ordered, identify)) nodes.push(visionNode(identify, byId.get('identify'), model, finished, subject));
+  const stageOrder = normalizeIdentifyOrder(identifyOrder);
+  for (const stage of stageOrder) {
+    if (stage === 'decision' && decider) nodes.push(deciderNode(decider, serving, identify?.phase));
+    if (stage === 'vision' && reads && visionExpected(ordered, identify)) nodes.push(visionNode(identify, byId.get('identify'), model, finished, subject));
+  }
   nodes.push({
     id: 'done', number: '', label: 'DONE', sub: finished ? 'ready to review' : 'review opens', meta: '', title: '',
     state: finished ? 'done' : 'pending', off: false, filter: null,
@@ -139,17 +142,17 @@ export function ingestNodes({ stages, identify = null, model = '', finished = fa
 }
 
 /**
- * The identify-only flowchart: real engine order is LOAD → CROP → READ (plate + OCR) → DECIDER →
- * VISION → ENTRY LIST → RESULT. When the decision model reports in (`decider`, else `live.decider`),
- * its node sits between READ and VISION.
+ * The identify-only flowchart: places READ (OCR), DECIDER, and VISION in the user's configured
+ * `identifyOrder` (default: OCR → DECIDER → VISION) between LOAD/CROP and ENTRY LIST/RESULT.
  */
-export function identifyNodes(live, model, decider = null, serving = null, subject = SUBJECT_WORDS.subjects) {
-  const nodes = flowNodes(live, model, undefined, subject).map((node) => ({
+export function identifyNodes(live, model, decider = null, serving = null, subject = SUBJECT_WORDS.subjects, identifyOrder = null) {
+  const base = flowNodes(live, model, undefined, subject).map((node) => ({
     id: node.label.toLowerCase(), number: node.number, label: node.label, sub: node.sub, meta: '', title: node.sub, state: node.state, off: node.off === true, filter: null,
   }));
-  // The decision model runs after OCR (READ) and before VISION.
   const step = deciderStepNode(decider ?? live?.decider ?? null, serving, live?.phase ?? null);
-  if (step) nodes.splice(3, 0, step);
+  const stageByKey = { ocr: base[2], decision: step, vision: base[3] };
+  const middle = normalizeIdentifyOrder(identifyOrder).map((key) => stageByKey[key]).filter(Boolean);
+  const nodes = [base[0], base[1], ...middle, base[4], base[5]];
   return nodes.map((node, i) => ({ ...node, number: String(i + 1).padStart(2, '0') }));
 }
 

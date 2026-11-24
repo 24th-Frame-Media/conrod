@@ -1,6 +1,6 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 import type { SettingsField, SettingsFieldOption, SettingsSection } from '../lib/settings.mjs';
-import { fieldsOf } from '../lib/settings.mjs';
+import { fieldsOf, moveIdentifyStage, normalizeIdentifyOrder } from '../lib/settings.mjs';
 import type { SettingValue } from '../lib/types';
 import { ShootTypeSelect } from './ShootTypeSelect';
 
@@ -124,6 +124,25 @@ export function SettingRow({ field, value, changed, onChange }: SettingRowProps)
         value={String(value ?? '')}
         onChange={onChange}
       />
+    );
+  } else if (field.kind === 'workflow') {
+    const order = normalizeIdentifyOrder(Array.isArray(value) ? value : null);
+    const names: Record<string, string> = { ocr: 'OCR', decision: 'Decider', vision: 'Vision' };
+    control = (
+      <div className="wf-inline-order" role="group" aria-labelledby={labelId}>
+        {order.map((stage, i) => (
+          <button
+            key={stage}
+            type="button"
+            className="ghost small mono"
+            title={i > 0 ? `Move ${names[stage]} earlier` : `${names[stage]} runs first`}
+            disabled={i === 0}
+            onClick={() => onChange(moveIdentifyStage(order, stage, -1))}
+          >
+            {i + 1}. {names[stage] ?? stage}{i > 0 ? ' ↑' : ''}
+          </button>
+        ))}
+      </div>
     );
   } else {
     control = (

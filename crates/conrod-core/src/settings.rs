@@ -60,6 +60,30 @@ pub fn identify_scope_word(word: &str) -> &'static str {
     }
 }
 
+/// Default order of the three Identify stages: OCR, then Decision, then Vision.
+pub const DEFAULT_IDENTIFY_ORDER: [&str; 3] = ["ocr", "decision", "vision"];
+
+/// Normalise a configured Identify stage order into a valid 3-stage permutation
+/// of `["ocr", "decision", "vision"]`. Strips optional `identify:` prefixes,
+/// ignores unknown entries, deduplicates, and appends any missing stages in
+/// default order.
+pub fn normalize_identify_order(order: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(3);
+    for raw in order {
+        let trimmed = raw.trim().to_ascii_lowercase();
+        let key = trimmed.strip_prefix("identify:").unwrap_or(&trimmed);
+        if matches!(key, "ocr" | "decision" | "vision") && !out.iter().any(|s| s == key) {
+            out.push(key.to_string());
+        }
+    }
+    for def in DEFAULT_IDENTIFY_ORDER {
+        if !out.iter().any(|s| s == def) {
+            out.push(def.to_string());
+        }
+    }
+    out
+}
+
 /// The one normaliser for `workflow_mode`, shared by the settings loader, the
 /// scan sheet and every reader of the album's choice: surrounding space and
 /// case are ignored, and a word this build does not know reads as
@@ -550,6 +574,13 @@ pub struct Settings {
     /// between OCR and Vision. On by default, which is today's behaviour; a
     /// per-album override turns it off.
     pub identify_decision: bool,
+    /// Order in which Identify runs its three stages (`"ocr"`, `"decision"`,
+    /// `"vision"`). Normalised via [`normalize_identify_order`].
+    pub identify_order: Vec<String>,
+    /// Allow OCR, Decision, and Vision to run concurrently in parallel. When
+    /// both local Decider and local Vision exceed card VRAM, CPU OCR still runs
+    /// in parallel while Decision and Vision take turns in `identify_order`.
+    pub identify_parallel: bool,
     pub sharp_at: f64,
     pub blurred_below: f64,
     pub focus_scale: i64,
@@ -750,6 +781,8 @@ impl Default for Settings {
             identify_scope: IDENTIFY_KEEPERS.into(),
             identify_ocr: true,
             identify_decision: true,
+            identify_order: DEFAULT_IDENTIFY_ORDER.map(String::from).to_vec(),
+            identify_parallel: false,
             identify_vision_workers: 0,
             identify_decision_workers: 0,
             sharp_at: SHARP_AT,
@@ -1281,6 +1314,12 @@ impl Settings {
             caps.identify,
             self.identify_worker_count(),
         )
+    }
+
+    /// Normalised Identify stage execution order (`["ocr", "decision", "vision"]`
+    /// permutation).
+    pub fn identify_stage_order(&self) -> Vec<String> {
+        normalize_identify_order(&self.identify_order)
     }
 
     /// Every configured Ollama host, the main one first, de-duplicated.
@@ -2042,5 +2081,32 @@ mod tests {
     fn a_closed_port_is_not_a_running_dev_server() {
         assert!(!dev_server_reachable("http://127.0.0.1:1"));
         assert!(!dev_server_reachable("not a url"));
+    }
+
+    #[test]
+    fn identify_order_normalises_permutations_prefixes_and_missing_stages() {
+        assert_eq!(
+            Settings::default().identify_stage_order(),
+            vec!["ocr", "decision", "vision"]
+        );
+        assert!(!Settings::default().identify_parallel);
+        assert_eq!(
+            normalize_identify_order(&[
+                "identify:vision".into(),
+                "DECISION".into(),
+                "ocr".into(),
+                "vision".into(),
+                "bogus".into(),
+            ]),
+            vec!["vision", "decision", "ocr"]
+        );
+        assert_eq!(
+            normalize_identify_order(&["vision".into()]),
+            vec!["vision", "ocr", "decision"]
+        );
+        assert_eq!(
+            normalize_identify_order(&[]),
+            vec!["ocr", "decision", "vision"]
+        );
     }
 }
