@@ -765,7 +765,7 @@ impl Desktop {
 
     pub fn request_quit(&self) {
         self.quit.store(true, Ordering::Release);
-        crate::builtin_vlm::service().unload();
+        crate::builtin_vlm::service().shutdown();
     }
     pub fn quit_requested(&self) -> bool {
         self.quit.load(Ordering::Acquire)

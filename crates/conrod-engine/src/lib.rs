@@ -135,6 +135,7 @@ pub mod library;
 pub mod lightroom;
 mod looks;
 pub mod moments;
+mod ocr_gate;
 pub mod operations;
 #[cfg(test)]
 mod pantest;
@@ -1413,7 +1414,6 @@ pub fn scan_files(
 /// worker is on, what it has found on its frame so far, and gets the frame
 /// counts the status area cannot show. `should_scan` says whether a path is
 /// read at all (`None` skips it) and what the lane needs to know about it.
-#[allow(dead_code)]
 pub(crate) fn scan_files_filtered(
     paths: Vec<PathBuf>,
     settings: Settings,

@@ -129,6 +129,59 @@ impl OcrPass {
     }
 }
 
+/// How the OCR stage folds a fresh pass into what an earlier run stored.
+#[derive(Debug, Clone, Copy)]
+pub struct OcrMerge {
+    /// A full re-read: the photographer asked for the subject to be read again,
+    /// so what OCR reads now replaces what OCR read before, including nothing.
+    /// An incremental run only fills in, and never drops an earlier read.
+    pub full: bool,
+    /// The plate reader is on for this run, so this pass is authoritative for
+    /// the plate.
+    pub reads_plates: bool,
+    /// The vision stage runs after this pass in the same run and will read the
+    /// number again, so an earlier model-sourced number is stale, not evidence.
+    pub vision_follows: bool,
+}
+
+/// Fold one OCR pass into the stored analysis of a subject. Pure, so the
+/// re-read rules are testable: a full re-read clears a stale plate or number an
+/// earlier run left, an incremental one keeps it, and a number the model read
+/// stays unless OCR is more sure of its own (or the model is about to read again).
+/// The caller never calls this for a hand-edited subject (`reviewed`).
+pub fn merge_ocr_pass(
+    mut stored: VehicleAnalysis,
+    pass: &VehicleAnalysis,
+    how: OcrMerge,
+) -> VehicleAnalysis {
+    stored.kind = pass.kind.clone();
+    stored.is_bike = pass.is_bike;
+    if pass.plate.is_some() || stored.plate.is_none() || (how.full && how.reads_plates) {
+        stored.plate = pass.plate.clone();
+        stored.plate_state = pass.plate_state.clone();
+        stored.plate_conf = pass.plate_conf;
+        stored.plate_bbox = pass.plate_bbox;
+    }
+    let from_model = stored
+        .number_source
+        .as_deref()
+        .is_some_and(|src| src.contains("vlm"));
+    let keep = stored.race_number.is_some()
+        && if how.full && (!from_model || how.vision_follows) {
+            // OCR owns this number, or the model is about to redo it: it is
+            // stale, not evidence.
+            false
+        } else {
+            pass.race_number.is_none() || (from_model && stored.number_conf >= pass.number_conf)
+        };
+    if !keep {
+        stored.race_number = pass.race_number.clone();
+        stored.number_source = pass.number_source.clone();
+        stored.number_conf = pass.number_conf;
+    }
+    stored
+}
+
 /// The first identify sub-step: read the plate, the number roundels and the
 /// whole-crop text. No model is asked here, and nothing is written: the vision
 /// stage (or, with vision off, the caller) persists the result.
@@ -254,7 +307,10 @@ pub fn read_vision(
                     .unwrap_or_default(),
                 context: ctx.prompt_context.map(str::to_owned),
             };
-            let prompt = vlm::vehicle_prompt(io, is_bike, &hints);
+            let fit = vlm::vehicle_prompt_fit(io, is_bike, &hints);
+            // A cut entry list or guidance is said, never silent.
+            failures.extend(fit.trimmed);
+            let prompt = fit.prompt;
             if let Some(on_prompt) = on_prompt {
                 on_prompt(&prompt);
             }
@@ -1202,5 +1258,87 @@ mod tests {
             out.analysis.make, None,
             "no plate was read, so nothing is filled"
         );
+    }
+
+    fn stored(
+        number: Option<&str>,
+        source: &str,
+        conf: f64,
+        plate: Option<&str>,
+    ) -> VehicleAnalysis {
+        VehicleAnalysis {
+            race_number: number.map(str::to_string),
+            number_source: number.map(|_| source.to_string()),
+            number_conf: conf,
+            plate: plate.map(str::to_string),
+            plate_state: plate.map(|_| "NSW".to_string()),
+            plate_conf: if plate.is_some() { 0.9 } else { 0.0 },
+            ..VehicleAnalysis::default()
+        }
+    }
+
+    const FULL: OcrMerge = OcrMerge {
+        full: true,
+        reads_plates: true,
+        vision_follows: true,
+    };
+    const INCREMENTAL: OcrMerge = OcrMerge {
+        full: false,
+        reads_plates: true,
+        vision_follows: true,
+    };
+
+    #[test]
+    fn a_full_reread_clears_a_stale_number_and_plate_the_new_pass_does_not_read() {
+        // An earlier run read "17" off a bad entry list and a wrong plate.
+        let old = stored(Some("17"), "ocr", 0.8, Some("WRONG1"));
+        let nothing = stored(None, "", 0.0, None);
+        let merged = merge_ocr_pass(old, &nothing, FULL);
+        assert_eq!(merged.race_number, None, "the stale number is cleared");
+        assert_eq!(merged.number_source, None);
+        assert_eq!(merged.plate, None, "the stale plate is cleared");
+        assert_eq!(merged.plate_state, None);
+    }
+
+    #[test]
+    fn a_full_reread_replaces_a_number_the_model_read_when_vision_runs_again() {
+        let old = stored(Some("17"), "vlm", 0.95, None);
+        let new = stored(Some("23"), "ocr", 0.6, None);
+        let merged = merge_ocr_pass(old.clone(), &new, FULL);
+        assert_eq!(merged.race_number.as_deref(), Some("23"));
+        // With no vision stage behind it, the model's surer number stands.
+        let ocr_only = OcrMerge {
+            vision_follows: false,
+            ..FULL
+        };
+        let merged = merge_ocr_pass(old, &new, ocr_only);
+        assert_eq!(merged.race_number.as_deref(), Some("17"));
+    }
+
+    #[test]
+    fn an_incremental_run_keeps_what_an_earlier_run_read() {
+        let old = stored(Some("17"), "ocr", 0.8, Some("ABC123"));
+        let nothing = stored(None, "", 0.0, None);
+        let merged = merge_ocr_pass(old, &nothing, INCREMENTAL);
+        assert_eq!(merged.race_number.as_deref(), Some("17"));
+        assert_eq!(merged.plate.as_deref(), Some("ABC123"));
+        // New evidence still fills in and wins over an OCR-sourced number.
+        let old = stored(Some("17"), "ocr", 0.8, None);
+        let new = stored(Some("23"), "roundel", 0.9, Some("XYZ789"));
+        let merged = merge_ocr_pass(old, &new, INCREMENTAL);
+        assert_eq!(merged.race_number.as_deref(), Some("23"));
+        assert_eq!(merged.plate.as_deref(), Some("XYZ789"));
+    }
+
+    #[test]
+    fn a_full_reread_leaves_the_plate_alone_when_the_plate_reader_is_off() {
+        let old = stored(None, "", 0.0, Some("ABC123"));
+        let nothing = stored(None, "", 0.0, None);
+        let how = OcrMerge {
+            reads_plates: false,
+            ..FULL
+        };
+        let merged = merge_ocr_pass(old, &nothing, how);
+        assert_eq!(merged.plate.as_deref(), Some("ABC123"));
     }
 }

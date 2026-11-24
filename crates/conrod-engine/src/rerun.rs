@@ -21,7 +21,7 @@ use crate::lock;
 use crate::operations::{launch, settings};
 use conrod_core::{models, profile::ScanProfile, settings::Settings};
 use rusqlite::params;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -93,10 +93,34 @@ pub fn rerun_stage_only(
         ),
         RerunStage::Moments => {
             let rejudge = only_stage.is_none() || full;
+            if !rejudge {
+                // An incremental Decision rerun on a judged album would ask
+                // nothing and still report success. Say so plainly instead,
+                // and say how to judge everything again.
+                let lanes = cfg.lanes();
+                let scope = crate::operations::run_scope(&cfg.identify_scope, None);
+                if crate::moments::unjudged_work(d, job, &lanes, scope)? == 0 {
+                    return Ok(nothing_new_to_judge());
+                }
+            }
             rerun_moments(d, job, cfg, rejudge)
         }
         RerunStage::Pick => rerun_pick(d, job, cfg),
     }
+}
+
+/// The answer to an incremental Decision rerun that has nothing to ask: no
+/// operation starts, and the caller can tell this from a finished run.
+/// `{"ok": true, "nothing_new": true, "judged": 0, "message": "..."}`; sending
+/// `stage_rerun` again with `"full": true` judges every frame again.
+pub(crate) fn nothing_new_to_judge() -> Value {
+    json!({
+        "ok": true,
+        "nothing_new": true,
+        "stage": conrod_core::progress::IDENTIFY_DECISION,
+        "judged": 0,
+        "message": "Nothing new to judge: every frame already has a decision. Run the stage with full set to judge them all again.",
+    })
 }
 
 /// `rate`: re-read the pixels and re-derive every rating, verdict and cull, then
@@ -704,6 +728,65 @@ mod tests {
         lib.wait_idle();
     }
 
+    #[test]
+    fn an_incremental_decision_rerun_on_a_judged_album_says_nothing_new_and_full_judges_again() {
+        let lib = Lib::new("rerun-decision-nothing-new");
+        let judged = lib.frame("a.jpg", Some(1));
+        lib.sql(
+            "UPDATE images SET burst_pick=1,moments='{\"backend\":\"x\",\"readings\":[]}' WHERE id=?",
+            [judged],
+        );
+        let args = json!({"jobId": lib.job, "stage": "identify:decision"});
+        let out = lib.run("stage_rerun", args).unwrap();
+        assert_eq!(out["nothing_new"], true, "{out}");
+        assert_eq!(out["judged"], 0);
+        assert!(
+            out["message"].as_str().unwrap().contains("Nothing new"),
+            "{out}"
+        );
+        assert!(
+            out.get("operation").is_none(),
+            "no operation starts when there is nothing to ask: {out}"
+        );
+        assert!(lock(&lib.d().operations).is_empty());
+
+        // `full` is the same command asking for every frame again: a real run.
+        let full = lib
+            .run(
+                "stage_rerun",
+                json!({"jobId": lib.job, "stage": "identify:decision", "full": true}),
+            )
+            .unwrap();
+        assert_eq!(
+            full["operation"],
+            json!(format!("{KIND} moments:{}", lib.job))
+        );
+        assert!(full.get("nothing_new").is_none());
+        lib.run("cancel_operation", json!({"key": full["operation"]}))
+            .unwrap();
+        lib.wait_idle();
+    }
+
+    #[test]
+    fn an_incremental_decision_rerun_with_an_unjudged_frame_still_runs() {
+        let lib = Lib::new("rerun-decision-new-frame");
+        let fresh = lib.frame("b.jpg", Some(1));
+        lib.sql("UPDATE images SET burst_pick=1 WHERE id=?", [fresh]);
+        let out = lib
+            .run(
+                "stage_rerun",
+                json!({"jobId": lib.job, "stage": "identify:decision"}),
+            )
+            .unwrap();
+        assert!(out.get("nothing_new").is_none(), "{out}");
+        assert_eq!(
+            out["operation"],
+            json!(format!("{KIND} moments:{}", lib.job))
+        );
+        lib.run("cancel_operation", json!({"key": out["operation"]}))
+            .unwrap();
+        lib.wait_idle();
+    }
     /// A `FrameResult` with no subjects and the frame's stored size, for the merge
     /// tests: only `subjects`, `size`, `thumb` and `rating` are read by the merge.
     fn blank_frame(lib: &Lib, image: i64) -> crate::FrameResult {

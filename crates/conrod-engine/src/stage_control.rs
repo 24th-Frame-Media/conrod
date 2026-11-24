@@ -48,6 +48,11 @@ pub struct StageControl {
     job: i64,
     inner: Mutex<Control>,
     wake: Condvar,
+    /// Workers parked at a pause point right now, across every stage. The
+    /// parent task says `paused` while this is above zero and goes back to
+    /// running only when the last of them leaves; a flag each worker flipped
+    /// would be cleared by the first one to resume.
+    parked: Mutex<usize>,
 }
 
 impl StageControl {
@@ -56,6 +61,7 @@ impl StageControl {
             job,
             inner: Mutex::new(Control::default()),
             wake: Condvar::new(),
+            parked: Mutex::new(0),
         })
     }
 
@@ -150,6 +156,30 @@ impl StageControl {
         !stop.load(Ordering::Relaxed)
     }
 
+    /// A worker is about to park: the parent task reads `paused` from the first
+    /// parked worker until the last one has left.
+    pub fn enter_park(&self, task: &conrod_core::tasks::Task) {
+        let mut parked = lock(&self.parked);
+        *parked += 1;
+        if *parked == 1 {
+            task.paused(true);
+        }
+    }
+
+    /// A parked worker is going on; pair of [`StageControl::enter_park`].
+    pub fn leave_park(&self, task: &conrod_core::tasks::Task) {
+        let mut parked = lock(&self.parked);
+        *parked = parked.saturating_sub(1);
+        if *parked == 0 {
+            task.paused(false);
+        }
+    }
+
+    /// Workers parked at a pause point right now.
+    pub fn parked_workers(&self) -> usize {
+        *lock(&self.parked)
+    }
+
     /// [`park`] with the progress report the screen needs: the stage says
     /// `paused` while workers are parked, and goes back to its real status on
     /// resume. `None` progress is a manual run without a scan screen.
@@ -163,11 +193,11 @@ impl StageControl {
             return !stop.load(Ordering::Relaxed);
         }
         if let Some(p) = progress {
-            p.pause_stage(stage);
+            p.park_stage(stage);
         }
         let go = self.park(stage, stop);
         if let Some(p) = progress {
-            p.resume_stage(stage);
+            p.unpark_stage(stage);
         }
         go
     }
@@ -185,9 +215,9 @@ impl StageControl {
         if !self.is_paused(stage) {
             return !stop.load(Ordering::Relaxed);
         }
-        task.paused(true);
+        self.enter_park(task);
         let go = self.park_with(stage, stop, progress);
-        task.paused(false);
+        self.leave_park(task);
         go
     }
 }
@@ -576,6 +606,50 @@ mod tests {
         assert!(!control.cull_paused());
     }
 
+    /// Wait (bounded) until at least N workers are parked, so a loaded machine cannot
+    /// make a fixed sleep race the worker threads.
+    fn wait_parked(control: &StageControl, n: usize) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while control.parked_workers() < n && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn the_task_stays_paused_until_the_last_parked_worker_leaves() {
+        let hub = conrod_core::tasks::TaskHub::new();
+        let task = hub.start("Identifying album", 10);
+        let control = StageControl::new(1);
+        let stop = AtomicBool::new(false);
+        control.set_paused(IDENTIFY_DECISION, true);
+        std::thread::scope(|s| {
+            let workers: Vec<_> = (0..3)
+                .map(|_| s.spawn(|| control.park_task(IDENTIFY_DECISION, &stop, None, &task)))
+                .collect();
+            wait_parked(&control, 3);
+            assert_eq!(control.parked_workers(), 3);
+            assert_eq!(hub.snapshot()[0].state, conrod_core::tasks::State::Paused);
+            // One worker leaves by hand while the other two stay parked.
+            control.leave_park(&task);
+            assert_eq!(
+                hub.snapshot()[0].state,
+                conrod_core::tasks::State::Paused,
+                "two workers are still parked: the first to leave must not clear the pause"
+            );
+            control.enter_park(&task);
+            control.set_paused(IDENTIFY_DECISION, false);
+            for worker in workers {
+                assert!(worker.join().unwrap());
+            }
+        });
+        assert_eq!(control.parked_workers(), 0);
+        assert_eq!(
+            hub.snapshot()[0].state,
+            conrod_core::tasks::State::Running,
+            "the last worker out clears it"
+        );
+    }
+
     #[test]
     fn park_task_marks_parent_task_paused_until_resumed() {
         let hub = conrod_core::tasks::TaskHub::new();
@@ -585,7 +659,7 @@ mod tests {
         control.set_paused(IDENTIFY_DECISION, true);
         std::thread::scope(|s| {
             let worker = s.spawn(|| control.park_task(IDENTIFY_DECISION, &stop, None, &task));
-            std::thread::sleep(Duration::from_millis(60));
+            wait_parked(&control, 1);
             assert_eq!(
                 hub.snapshot()[0].state,
                 conrod_core::tasks::State::Paused,

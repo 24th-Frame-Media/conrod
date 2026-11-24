@@ -160,6 +160,22 @@ fn pending(d: &Desktop, job: i64, everything: bool, rejudge: bool) -> Result<Vec
     )
 }
 
+/// What an incremental Decision run would still do: frames nobody has judged,
+/// plus bursts still to compare for a peak. Zero means "nothing new to judge".
+pub(crate) fn unjudged_work(d: &Desktop, job: i64, lanes: &Lanes, scope: &str) -> Result<usize> {
+    if lanes.moments().is_empty() {
+        return Ok(0);
+    }
+    let everything = scope == settings::IDENTIFY_EVERYTHING;
+    let frames = pending(d, job, everything, false)?.len();
+    let bursts = if lanes.moments_rank {
+        remaining_bursts(d, job)?
+    } else {
+        0
+    };
+    Ok(frames + bursts)
+}
+
 /// How many bursts still need comparing for their peak: at least two frames
 /// and no frame carrying a peak from an earlier pass.
 fn remaining_bursts(d: &Desktop, job: i64) -> Result<usize> {

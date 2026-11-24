@@ -79,6 +79,8 @@ struct StageState {
     /// The plain line skipping this stage would show; `None` when it cannot be
     /// skipped.
     skip_consequence: Option<&'static str>,
+    /// Workers of this stage held at its pause point right now.
+    parked: u32,
     meter: RateMeter,
 }
 
@@ -184,6 +186,7 @@ impl Progress {
                         status: if s.skipped { "skipped" } else { "pending" },
                         error: None,
                         skip_consequence: conrod_core::progress::skip_consequence(s.id),
+                        parked: 0,
                         meter: RateMeter::new(8.0),
                     })
                     .collect(),
@@ -328,6 +331,29 @@ impl Progress {
         self.with_node(stage, |node| {
             if matches!(node.status, "pending" | "running") {
                 node.status = "paused";
+            }
+        });
+    }
+
+    /// A worker of `stage` parked at its pause point. The stage says `paused`
+    /// and `parked` from the first parked worker until the last one leaves.
+    pub fn park_stage(&self, stage: &'static str) {
+        self.with_node(stage, |node| {
+            node.parked += 1;
+            if matches!(node.status, "pending" | "running") {
+                node.status = "paused";
+            }
+        });
+    }
+
+    /// A parked worker of `stage` is going on. The stage leaves `paused` only
+    /// when no worker is left parked; one worker leaving never un-pauses its
+    /// siblings.
+    pub fn unpark_stage(&self, stage: &'static str) {
+        self.with_node(stage, |node| {
+            node.parked = node.parked.saturating_sub(1);
+            if node.parked == 0 && node.status == "paused" {
+                node.status = if node.done > 0 { "running" } else { "pending" };
             }
         });
     }
@@ -586,6 +612,7 @@ impl Progress {
                 status: status.to_string(),
                 error: node.error.clone(),
                 skip_consequence: node.skip_consequence.map(str::to_owned),
+                parked: node.parked > 0,
                 rate_per_s: rate,
                 eta_s: eta,
             });
@@ -1286,6 +1313,33 @@ mod tests {
             back.workers_total, 1,
             "the laid-out worker count comes back with the un-skip"
         );
+    }
+
+    #[test]
+    fn a_stage_is_parked_until_its_last_worker_leaves_the_pause_point() {
+        let progress = fake(15);
+        let node = |p: &Progress| {
+            p.snapshot()
+                .pipeline
+                .stages
+                .into_iter()
+                .find(|n| n.id == "detect")
+                .unwrap()
+        };
+        assert!(!node(&progress).parked);
+        progress.park_stage("detect");
+        progress.park_stage("detect");
+        let parked = node(&progress);
+        assert!(parked.parked, "a worker is holding at the stage pause");
+        assert_eq!(parked.status, "paused");
+        progress.unpark_stage("detect");
+        let parked = node(&progress);
+        assert!(parked.parked, "one worker left, one is still held");
+        assert_eq!(parked.status, "paused", "a sibling leaving never un-pauses");
+        progress.unpark_stage("detect");
+        let running = node(&progress);
+        assert!(!running.parked);
+        assert_ne!(running.status, "paused");
     }
 
     #[test]
