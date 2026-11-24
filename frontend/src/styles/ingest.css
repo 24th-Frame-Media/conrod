@@ -53,15 +53,12 @@
 }
 .ing-density button:hover { color: var(--text); }
 .ing-density button.on { background: var(--surface-3); color: var(--text); }
-.ing-overflow-fade {
-  position: absolute; inset: auto 0 0 0; height: 52px; pointer-events: none; z-index: 3;
-  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 92%, transparent) 72%, var(--bg));
-}
+/* "+N more" sits in its own row under the scrolling worker list, never over a card. */
 .ing-overflow-pill {
-  position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 4;
+  flex: none; align-self: center; margin-top: 8px;
   padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line-hover);
   background: var(--surface-2); color: var(--text); font-size: 11px; letter-spacing: .04em;
-  cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+  cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, .2);
 }
 .ing-overflow-pill:hover { border-color: var(--text-dim); background: var(--surface-3); }
 /* The rail (Found so far, workers) scrolls in its own column instead of stretching the page. */
@@ -73,7 +70,7 @@
 .ing-chip button { padding: 1px 8px; font-size: 11px; border: 0; background: transparent; color: var(--text-mute); }
 .ing-chip button:hover { color: var(--text); }
 .ing-more { justify-self: start; margin-top: 8px; }
-.ing-lanes { padding-bottom: 36px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.ing-lanes { padding-bottom: 4px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .ing-lanes-cards { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
 .ing-lanes-cards.single { grid-template-columns: minmax(0, 520px); }
 .ing-lanes-tiles { grid-template-columns: repeat(auto-fit, minmax(370px, 1fr)); gap: 12px; }
@@ -97,9 +94,6 @@
 .id-lane-stage.ing-stage.busy { color: var(--scan); border-color: color-mix(in srgb, var(--scan) 40%, transparent); }
 .ing-lane-text { margin-left: auto; font-size: 11px; color: var(--text-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ing-lane-text.waiting, .ing-lane-text.paused { color: var(--warn2); }
-.id-badge.waiting, .id-badge.paused { color: var(--overlay-warn); border-color: rgba(207, 174, 90, .5); }
-.id-badge.waiting::before, .id-badge.paused::before { content: ""; width: 5px; height: 5px; margin-right: 8px; border-radius: 50%; background: var(--overlay-warn); }
-.id-badge.idle { opacity: .7; }
 .ing-empty { display: grid; gap: 8px; justify-items: center; align-content: center; }
 .ing-ph { width: 54px; height: 36px; border: 1px dashed var(--text-mute); border-radius: 4px; opacity: .6; }
 .ing-result { align-items: center; }
@@ -142,16 +136,29 @@
 .ing-af .at-above { top: auto; bottom: 100%; left: 0; border-radius: 3px 3px 0 0; }
 @keyframes ing-pop { from { opacity: 0; transform: scale(.94); } }
 
-/* the step ladder under the frame */
-.ing-steps { list-style: none; display: flex; gap: 4px; margin: 0; padding: 0; }
-.ing-steps li {
-  flex: 1; min-width: 0; text-align: center; font-family: var(--mono); font-size: 11px; letter-spacing: .04em; padding-top: 4px;
-  color: var(--text-mute); border-top: 2px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.ing-steps li.done { border-top-color: color-mix(in srgb, var(--good) 60%, transparent); color: var(--text-dim); }
-.ing-steps li.cur { border-top-color: var(--scan); color: var(--text); }
-.ing-lane.paused .ing-steps li.cur, .ing-lane.waiting .ing-steps li.cur { border-top-color: var(--warn2); animation: none; }
-.ing-lane.idle .ing-steps li.cur { animation: none; }
+/* the step bar under the frame: segments, the current step named once in full */
+.ing-steps-wrap { display: grid; gap: 4px; min-width: 0; }
+.ing-steps { list-style: none; display: flex; gap: 3px; margin: 0; padding: 0; }
+.ing-steps li { flex: 1; min-width: 0; height: 4px; border-radius: 2px; background: var(--line); }
+.ing-steps li.done { background: color-mix(in srgb, var(--good) 60%, transparent); }
+.ing-steps li.cur { background: var(--scan); }
+.ing-lane.paused .ing-steps li.cur, .ing-lane.waiting .ing-steps li.cur { background: var(--warn2); }
+.ing-steps-label { font-size: 11px; letter-spacing: .02em; color: var(--text-dim); white-space: nowrap; }
+/* the photo's file name: under the picture, never on it */
+.ing-file { display: block; min-width: 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the key to the box outlines, since the picture carries no text */
+.ing-legend { display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.id-lane-facts .ing-legend .ing-legend-item { display: inline-flex; align-items: center; gap: 5px; overflow: visible; font-size: 11px; color: var(--text-mute); }
+.ing-swatch { display: inline-block; width: 12px; height: 8px; box-sizing: border-box; border-radius: 1px; }
+.ing-swatch.main { border: 2px solid var(--accent); }
+.ing-swatch.af { border: 1.5px dashed var(--accent); }
+.ing-swatch.other { border: 1px dashed var(--text-mute); }
+/* a tile's right column is narrow: stars sit above the verdict rather than beside it, so the verdict gets the full width */
+.id-lane.tile .ing-result { flex-direction: column; align-items: flex-start; gap: 4px; }
+.id-lane.tile .ing-result .id-lane-facts { flex: none; width: 100%; }
+/* a verdict is never cut: it wraps instead */
+.ing-result .id-lane-facts b { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+.ing-result .id-lane-facts > span:not(.ing-legend) { white-space: normal; }
 
 /* the strip: culled frames and identified cars together */
 .ing-strip-head { display: flex; align-items: center; gap: 12px; }
@@ -183,15 +190,18 @@
 /* Below 1400 px wide the rail sits under the lanes, so the workers keep the page's width. */
 @media (max-width: 1399px) {
   .ing-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; overflow-y: auto; }
+  /* Stacked, the page body scrolls and each block keeps its own height: a block never shrinks under the next one. */
+  .ing-main, .scan-rail { min-height: auto; }
   .ing-main { grid-template-rows: none; gap: 12px; }
   .ing-workers-shell { overflow: visible; }
   .ing-workers { overflow: visible; }
   .ing-workers-head { position: static; }
-  .ing-overflow-fade, .ing-overflow-pill { display: none; }
+  .ing-overflow-pill { display: none; }
   .scan-rail { overflow: visible; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; align-items: start; }
 }
 @media (max-width: 1000px) {
   .ing-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; overflow-y: auto; }
+  .ing-main, .scan-rail { min-height: auto; }
   .ing-main { grid-template-rows: none; }
   .ing-workers-shell { overflow: visible; }
   .ing-workers { overflow: visible; }
@@ -263,6 +273,7 @@
 .id-action-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .id-action-row .id-action-tags { margin: 0; }
 
+.id-lane { grid-template-columns: minmax(0, 1fr); }
 /* ── DECIDER: the decision model's lane (components/DeciderLane.tsx) and its Settings card ── */
 .decider-row { display: none; }
 .decider-lane.off { opacity: .6; }

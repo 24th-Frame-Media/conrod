@@ -282,9 +282,36 @@ export function laneText(worker, paused = false) {
   return worker.current?.step ?? worker.step ?? 'working';
 }
 
-/** The badge on the frame. */
-export function laneBadge(state) {
-  return state === 'busy' ? 'Live' : state === 'waiting' ? 'Waiting' : state === 'paused' ? 'Paused' : state === 'stalled' ? 'Stalled' : 'Idle';
+/** A step's name in full, for the one stage line under a lane's frame (never an ellipsised fragment). */
+export const STEP_LABELS = { read: 'Read', decode: 'Decode', detect: 'Detect', sharpness: 'Sharpness', faces: 'Faces', persist: 'Saving' };
+
+/**
+ * Where a lane is in its scan steps: `{ at, total, label, steps }` with `label` like "Sharpness · 4 of 6" and `steps` the
+ * segments (each with its full name and done / cur / todo state) for a segmented bar; null when the step is not known.
+ */
+export function stepProgress(step, stage) {
+  let at = stepIndex(step);
+  if (at < 0) at = SCAN_STEPS.findIndex((s) => STEP_STAGE[s] === stage);
+  if (at < 0) return null;
+  const total = SCAN_STEPS.length;
+  return {
+    at, total, label: `${STEP_LABELS[SCAN_STEPS[at]]} · ${at + 1} of ${total}`,
+    steps: SCAN_STEPS.map((s, i) => ({ id: s, name: STEP_LABELS[s], state: i < at ? 'done' : i === at ? 'cur' : 'todo' })),
+  };
+}
+
+/**
+ * The key to a frame's boxes, since the picture carries no text: which kinds are drawn. `main` is the solid amber box (the car
+ * judged), `af` the dashed amber area the camera focused, `other` a thin grey box. Empty when nothing is drawn.
+ */
+export function boxLegend(boxes, af) {
+  const list = Array.isArray(boxes) ? boxes : [];
+  const roles = list.map((b, i) => boxRole(b, i, list, af));
+  const out = [];
+  if (roles.includes('main')) out.push({ kind: 'main', label: 'main' });
+  if (Array.isArray(af) && af.length >= 4) out.push({ kind: 'af', label: 'AF' });
+  if (roles.includes('background') || list.some((b, i) => !roles[i] && b?.box)) out.push({ kind: 'other', label: 'other' });
+  return out;
 }
 
 // Stalled lanes stay visible (honest), but never outrank a genuinely working lane.

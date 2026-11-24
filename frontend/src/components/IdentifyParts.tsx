@@ -98,10 +98,10 @@ export function IdentifyLane({ worker, item, live, name = 'Worker', ocrOnly = fa
       <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
       <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
       {live && <span className="id-scanline" aria-hidden="true" />}
-      <span className={`id-badge${live ? ' live' : ''}`}>{live ? 'Live' : item ? 'Done' : 'Idle'}</span>
-      {item && <span className="id-file" title={item.path || displayPath(item)}>{caption(item)}</span>}
     </div>
   );
+  // The photo's file name lives under the picture, not on it.
+  const file = item ? <span className="ing-file mono muted" title={item.path || displayPath(item)}>{caption(item)}</span> : null;
 
   const fields = (
     <div className="id-fields-wrap">
@@ -154,6 +154,7 @@ export function IdentifyLane({ worker, item, live, name = 'Worker', ocrOnly = fa
         <div className="id-lane-split">
           <div className="id-lane-split-left">
             {viewfinder}
+            {file}
             <div className="id-lane-result compact" key={item?.detection_id ?? 'empty'}>
               <span className="id-lane-number mono">{hash(item?.number)}</span>
               <span className="id-lane-title-inline muted" title={title}>{title}</span>
@@ -164,6 +165,7 @@ export function IdentifyLane({ worker, item, live, name = 'Worker', ocrOnly = fa
       ) : (
         <>
           {viewfinder}
+          {file}
           <div className="id-lane-result" key={item?.detection_id ?? 'empty'}>
             <span className="id-lane-number mono">{hash(item?.number)}</span>
             <div className="id-lane-facts">
@@ -204,7 +206,6 @@ export function IdentifyDetail({ detail, prompt, live, visionOff, onVisionAction
           <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
           <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
           {live && <span className="id-scanline" aria-hidden="true" />}
-          <span className={`id-badge${live ? ' live' : ''}`}>{live ? 'Live' : 'Done'}</span>
           {detail && <span className="id-file" title={detail.path || displayPath(detail)}>{caption(detail)}</span>}
         </div>
 
