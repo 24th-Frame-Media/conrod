@@ -4,7 +4,9 @@ import { FrameDetail, ScanLane } from '../components/IngestLane';
 import { FlowNode } from '../components/FlowNode';
 import { WorkerPanel } from '../components/WorkerPanel';
 import { DeciderLane } from '../components/DeciderLane';
-import { deciderActive } from '../lib/decider.mjs';
+import { SkipStageButton, StageHolds } from '../components/StageHolds';
+import { deciderActive, deciderForJob } from '../lib/decider.mjs';
+import { parkedStageIds, skippedStageIds } from '../lib/stageState.mjs';
 import { useDeciderProgress } from '../state/useDeciderProgress';
 import { Empty, Icon } from '../components/basics';
 import { asset } from '../lib/api';
@@ -148,9 +150,13 @@ export function IngestScreen({
   const stages = snap ? snap.stages : (p ? orderStages(p.pipeline.stages) : []);
   const failedMap: Record<string, string> = Object.fromEntries((snap?.failedStages ?? []).map((f) => [f.id, f.reason]));
   const idLive = mode === 'identify' ? identify : ingestIdentify(identify, { planned: visionExpected(stages, null), identifying: Boolean(operation) });
-  // The decision model's newest feed: the dedicated event, else the copy the identify snapshot
-  // carries so the identify page shows it even before the first `decider-progress` arrives.
-  const deciderLive = decider ?? idLive?.decider ?? null;
+  // The decision model's feed FOR THIS ALBUM. The global event has no job id, so it only counts while
+  // this album is the one running; this album's own identify snapshot copy wins; a finished run is settled.
+  const runEnded = Boolean(idLive && idLive.state !== 'running' && !operation);
+  const deciderLive = deciderForJob({
+    perJob: idLive?.decider ?? null, global: decider, jobId: job?.id ?? null, activeJob: status.activeJob,
+    identifying: Boolean(operation), ended: runEnded,
+  });
   // Vision off is a reason, never a model name: the screen says why and offers the way to change it.
   const visionOff = visionOffReason(idLive);
   useEffect(() => {
@@ -213,6 +219,7 @@ export function IngestScreen({
       <div className="screen">
         <Empty icon="eye" title="No identification is running">
           <p>Start one from an album with <b>Identify</b>, or watch a finished one from Review.</p>
+          <StageHolds parked={[]} skipped={skippedStageIds({ album: job })} onStageControl={onStageControl} />
           <button className="primary" onClick={onReview}>Back to review</button>
         </Empty>
       </div>
@@ -239,6 +246,10 @@ export function IngestScreen({
   const identifying = phase === 'vision' || phase === 'peaks';
   const vision = mode === 'identify' || visionExpected(stages, idLive);
   const frozen = live && phase !== 'starting' && (identifying ? identifyPaused : paused);
+  // Stages the photographer parked (a hold of their own, not a paused scan) and stages skipped for this
+  // album, which later runs keep skipping until undone. Both have their own way back.
+  const parkedStages = parkedStageIds({ stages, album: job, active: live });
+  const skippedStages = skippedStageIds({ album: job });
   const head = stages.find((s) => s.id === p?.stage);
   const done = idLive?.done ?? 0;
   const idTotal = idLive?.total ?? 0;
@@ -300,7 +311,7 @@ export function IngestScreen({
   const stageAt = surfaceNodes ? place.at : nodes.findIndex((node) => node.id === (head?.id ?? p?.stage)) + 1;
   const sub = phase === 'starting' ? (mode === 'identify' ? (reads ? `Waiting for the first ${subject.one}…` : 'Starting the judge…') : 'Reading the folder…')
     : phase === 'peaks' ? (phaseLabel(idLive?.phase) || 'Comparing bursts')
-      : phase === 'vision' ? (activePhase ? (phaseLabel(activePhase) || (ocrPhase ? 'Reading plates and numbers' : 'Judging moments'))
+      : phase === 'vision' ? (activePhase ? (phaseLabel(activePhase) || (ocrPhase ? subject.fields.ocrPhase : 'Judging moments'))
         : !reads ? (phaseLabel(idLive?.phase) || 'Judging moments')
         : visionOff ? visionHeader(visionOff)
         : `Reading ${subject.many} with ${visionModelWords(idLive?.model || model) || 'the vision model'}`)
@@ -360,13 +371,9 @@ export function IngestScreen({
                 </button>
               )}
               {onStageControl && activeIdentifyStage && phase !== 'starting' && (
-                <button
-                  className="ghost"
-                  onClick={() => onStageControl('stage_skip', activeIdentifyStage.id, { skip: true })}
-                  title={`Skip the rest of ${activeIdentifyStage.label} and move on to the next stage.`}
-                >
-                  Skip {activeIdentifyStage.label}
-                </button>
+                <SkipStageButton stage={activeIdentifyStage.id} label={activeIdentifyStage.label} subject={subject}
+                  remaining={Math.max(0, shownTotal - shownDone)}
+                  onSkip={() => onStageControl('stage_skip', activeIdentifyStage.id, { skip: true })} />
               )}
               <button className="ghost danger" onClick={() => onCancelOperation(operation ?? `Identifying:${job.id}`)}>Stop identification</button>
             </div>
@@ -379,6 +386,8 @@ export function IngestScreen({
             </div>
           )}
         </header>
+
+        <StageHolds parked={parkedStages} skipped={skippedStages} onStageControl={onStageControl} />
 
         {mode === 'ingest' && queue.length > 0 && (
           <div className="ing-lock ing-queue" role="status">
@@ -443,6 +452,11 @@ export function IngestScreen({
             })
           )}
         </ol>
+        {surfaceNodes && surface?.parallel && (
+          <p className="muted ing-parallel-note" role="note">
+            Parallel identify is on: OCR, Decision and Vision run at the same time, so the order drawn here is layout only.
+          </p>
+        )}
 
         {/* Surface every failed stage with its plain reason and a retry action,
             regardless of stage id. */}
@@ -608,7 +622,7 @@ export function IngestScreen({
                           title={[car.make, car.model, car.team].filter(Boolean).join(' · ') || 'Subject read'} onClick={() => pickCar(car.detection_id)}>
                           {thumb ? <img src={thumb} alt="" loading="lazy" draggable={false} /> : <span className="id-card-noimg" aria-hidden="true" />}
                           <span className="id-card-num">{hash(car.number)}</span>
-                          <span className="id-card-make">{[car.make, car.model].filter(Boolean).join(' ') || car.plate || (visionOff ? 'Vision off' : 'Make not read')}</span>
+                          <span className="id-card-make">{[car.make, car.model].filter(Boolean).join(' ') || car.plate || (visionOff ? 'Vision off' : subject.fields.notRead)}</span>
                           <span className={`id-card-conf ${car.number ? tone : 'none'}`}>{conf != null ? `${conf}%` : car.number ? 'no confidence' : 'no number'}</span>
                         </button>
                       );

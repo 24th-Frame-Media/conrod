@@ -20,6 +20,34 @@ export function deciderActive(live) {
   return live.state === 'running' || live.state === 'loading' || live.busy > 0 || live.recent.length > 0 || live.current != null;
 }
 
+/** A decision model feed with nothing in flight: a finished run never shows "1 live". */
+export function settleDecider(live) {
+  if (!live) return live ?? null;
+  const awake = live.state === 'running' || live.state === 'loading';
+  return { ...live, busy: 0, queued: 0, current: null, state: awake ? 'ready' : live.state };
+}
+
+/**
+ * The decision model's feed for ONE album. `decider-progress` is a single global
+ * slot with no job id, so it can only describe the run that is happening now:
+ *  - the identify snapshot of this album carries its own copy, which always wins;
+ *  - a global event belongs to this album only when the event names it, or (older
+ *    engines send no job id) when this album is the one running (its scan is the
+ *    active job, or its identify operation is in flight). Album B never shows
+ *    album A's lane;
+ *  - once this album's run has ended nothing in the feed is live any more.
+ */
+export function deciderForJob({ perJob = null, global = null, jobId = null, activeJob = null, identifying = false, ended = false } = {}) {
+  let live = null;
+  if (perJob) live = perJob;
+  else if (global) {
+    const named = global.job_id ?? null;
+    if (named != null) live = named === jobId ? global : null;
+    else if (jobId != null && (identifying || activeJob === jobId)) live = global;
+  }
+  return ended ? settleDecider(live) : live;
+}
+
 /** "420 ms" under a second, "1.3 s" above; '' for nothing. */
 export function msWords(ms) {
   if (ms == null || !Number.isFinite(ms)) return '';

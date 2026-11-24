@@ -4,12 +4,31 @@
 // Pure, so node --test can import it.
 import { isOn } from './presetPolicy.mjs';
 
+/** What a vehicle shoot reads and says about what it read. */
+const VEHICLE_FIELDS = Object.freeze({
+  makeModel: 'Make / Model', plate: 'Plate', colour: 'Colour', team: 'Team',
+  notRead: 'Make not read', ocrLive: 'Reading plates & numbers', ocrPhase: 'Reading plates and numbers',
+  readData: 'plates, numbers, and vehicle data', removed: 'vehicle plates, race numbers, and models',
+  removedDone: 'All vehicle identifications removed.',
+  action: 'Dust, tyre smoke, spray, airborne, flames, sparks, contact and wheel lift, only when clearly visible.',
+  group: 'Group vehicles by visual likeness', link: 'Link identical vehicles across passes and burst stacks.',
+});
+/** Every other shoot: plain words that claim no make, plate or tyre smoke. */
+const GENERIC_FIELDS = Object.freeze({
+  makeModel: 'Details', plate: 'Text', colour: 'Colour', team: 'Team',
+  notRead: 'Not read', ocrLive: 'Reading numbers & text', ocrPhase: 'Reading numbers and text',
+  readData: 'numbers, text, and details', removed: 'numbers, text, and details',
+  removedDone: 'All identifications removed.',
+  action: 'Visible action and atmosphere, such as dust or spray, only when clearly visible.',
+  group: 'Group subjects by visual likeness', link: 'Link the same subject across passes and burst stacks.',
+});
+
 /** The subject kinds the detector lanes can put first, and the words a screen needs for them. */
 export const SUBJECT_WORDS = {
-  vehicles: { one: 'vehicle', many: 'vehicles', title: 'Vehicles', rate: 'vehicles/min', each: 's/vehicle' },
-  animals: { one: 'animal', many: 'animals', title: 'Animals', rate: 'animals/min', each: 's/animal' },
-  people: { one: 'person', many: 'people', title: 'People', rate: 'people/min', each: 's/person' },
-  subjects: { one: 'subject', many: 'subjects', title: 'Subjects', rate: 'subjects/min', each: 's/subject' },
+  vehicles: { one: 'vehicle', many: 'vehicles', title: 'Vehicles', rate: 'vehicles/min', each: 's/vehicle', fields: VEHICLE_FIELDS },
+  animals: { one: 'animal', many: 'animals', title: 'Animals', rate: 'animals/min', each: 's/animal', fields: GENERIC_FIELDS },
+  people: { one: 'person', many: 'people', title: 'People', rate: 'people/min', each: 's/person', fields: GENERIC_FIELDS },
+  subjects: { one: 'subject', many: 'subjects', title: 'Subjects', rate: 'subjects/min', each: 's/subject', fields: GENERIC_FIELDS },
 };
 
 /**

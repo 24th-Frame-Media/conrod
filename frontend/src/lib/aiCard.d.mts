@@ -47,7 +47,8 @@ export type SharingOption = { id: string; name: string };
 export type ServingModel = { id: string; ready: boolean };
 export type ModelLine = { head: string | null; rest: string[]; all: string[]; noModel: boolean };
 export type HelperStatus = { text: string; cls: string; dot: string };
-export type Opt = { id: string; name: string };
+/** `image`: sees photos / does not / unknown, as the engine's decision_models said. */
+export type Opt = { id: string; name: string; image?: boolean | null; unverified?: boolean };
 export type LiveModel = { id?: string; model?: string; name?: string; vision?: boolean };
 export type ManifestModelRow = {
   id?: string;
@@ -125,7 +126,12 @@ export function decisionCandidates(
   type: string,
   live?: readonly LiveModel[],
   decisionLive?: readonly LiveModel[],
+  engine?: { freeText?: boolean },
 ): { models: Opt[]; freeText: boolean };
+/** " (text only)" / " (unverified)" for a decision model option; '' when nothing to flag. */
+export function decisionFlag(model: Opt | undefined): string;
+/** The line under a picked decision model: whether it sees photos. */
+export function decisionMeta(model: Opt | undefined): string;
 export function providerToType(provider: string): string | null;
 export function cardsFromDraft(settings?: Record<string, unknown>): ServiceCard[];
 export function addService(

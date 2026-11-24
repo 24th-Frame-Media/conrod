@@ -154,6 +154,27 @@ test('no hardcoded car/motorsport/vehicle wording in UI strings (data ids whitel
   assert.deepEqual(bad, [], `hardcoded subject literals must derive from subjects.mjs:\n${bad.join('\n')}`);
 });
 
+// Wording that is only true of a vehicle shoot but never says "car" or "vehicle": it belongs in
+// subjects.mjs (`fields`), keyed by the shoot, never in a screen. A rodeo must not read "Make not read".
+const VEHICLE_ONLY = [
+  /\bmake not read\b/i, /\breading plates\b/i, /\bmake \/ model\b/i, /\btyre smoke\b/i, /\bwheel lift\b/i,
+  /\bregistration plates\b/i, /\bvehicle identifications removed\b/i, /\bsettings and vehicles\b/i,
+];
+
+test('no vehicle-only wording is hardcoded in a screen (it comes from subjects.mjs fields)', () => {
+  const bad = [];
+  for (const file of uiFiles()) {
+    const { stripped, out } = uiStrings(readFileSync(file, 'utf8'));
+    for (const c of out) {
+      const text = clean(c.text);
+      const hit = VEHICLE_ONLY.find((re) => re.test(text));
+      // The setup wizard names tyre smoke as one example of a moment, in prose about every shoot type.
+      if (hit && !/SetupWizard/.test(file)) bad.push(`${relative(SRC, file)}:${stripped.slice(0, c.index).split('\n').length} → ${JSON.stringify(text.slice(0, 100))}`);
+    }
+  }
+  assert.deepEqual(bad, [], `vehicle-only wording must come from subjects.mjs:\n${bad.join('\n')}`);
+});
+
 test('the scanner catches a NEW hardcoded subject literal but allows data identifiers', () => {
   const bad = violations([
     "const a = 'Reading cars now';",             // subject wording → must fail

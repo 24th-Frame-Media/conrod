@@ -1,6 +1,11 @@
 import type { PolicySummary } from './presetPolicy.mjs';
 
-export type SubjectWords = { one: string; many: string; title: string; rate: string; each: string };
+/** Wording that depends on what the shoot reads: a vehicle shoot says make and plate, anything else says neither. */
+export type SubjectFields = {
+  makeModel: string; plate: string; colour: string; team: string; notRead: string; ocrLive: string; ocrPhase: string;
+  readData: string; removed: string; removedDone: string; action: string; group: string; link: string;
+};
+export type SubjectWords = { one: string; many: string; title: string; rate: string; each: string; fields: SubjectFields };
 export type SubjectKind = 'vehicles' | 'animals' | 'people' | 'subjects';
 
 export const SUBJECT_WORDS: Record<SubjectKind, SubjectWords>;

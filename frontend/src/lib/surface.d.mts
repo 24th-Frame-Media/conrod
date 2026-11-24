@@ -1,6 +1,7 @@
 // Type shim for surface.mjs (pure logic; the UI consumes its loose shapes).
 export const IDENTIFY_SUBSTAGES: ReadonlyArray<{ id: string; key: string; label: string; name: string; settingsKey: string; purpose: string }>;
 export const FLOW_ORDER: ReadonlyArray<string>;
+export function flowOrder(identifyOrder?: readonly string[] | null): ReadonlyArray<string>;
 export const STAGE_WORDS: ReadonlyArray<string>;
 export const CONTROL_ACTIONS: Readonly<Record<string, string>>;
 export const STAGE_TOGGLES: ReadonlyArray<{ key: string; settingsKey: string; label: string; hint: string }>;

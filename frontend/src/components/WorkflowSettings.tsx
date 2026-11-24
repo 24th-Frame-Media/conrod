@@ -1,5 +1,6 @@
 import {
   DEFAULT_IDENTIFY_ORDER,
+  PARALLEL_NOTE,
   moveIdentifyStage,
   normalizeIdentifyOrder,
   type IdentifyStageKey,
@@ -11,7 +12,7 @@ const STAGE_META: Record<IdentifyStageKey, { label: string; badge: string; hint:
   ocr: {
     label: 'OCR',
     badge: 'CPU',
-    hint: 'Reads registration plates, race numbers, and visible text locally on CPU.',
+    hint: 'Reads numbers, plates, and any visible text locally on CPU.',
   },
   decision: {
     label: 'Decider',
@@ -66,6 +67,7 @@ export function WorkflowSettings({ draft, saved, identifyVram = null, onChange }
           <p className="hint" id="setting-identify_parallel-hint">
             Runs CPU OCR, the decision model, and the vision model concurrently when your hardware allows it.
           </p>
+          <p className="hint wf-parallel-note" id="setting-identify_parallel-note">{PARALLEL_NOTE}</p>
         </div>
         <div className="setting-control">
           <input
@@ -73,7 +75,7 @@ export function WorkflowSettings({ draft, saved, identifyVram = null, onChange }
             type="checkbox"
             role="switch"
             checked={parallel}
-            aria-describedby="setting-identify_parallel-hint"
+            aria-describedby="setting-identify_parallel-hint setting-identify_parallel-note"
             onChange={(e) => onChange('identify_parallel', e.target.checked)}
           />
         </div>

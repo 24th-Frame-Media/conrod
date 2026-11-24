@@ -117,7 +117,10 @@ export type ScanFailureShape = { jobId?: number | null; label?: string; title?: 
  */
 export type RunSnapshot = {
   activeJob: number | null;
+  /** The SCAN is paused (Pause / Resume scan). A parked stage never sets this. */
   paused: boolean;
+  /** Stage ids parked by a stage pause (`identify:decision`, ...); Resume them with the stage control. */
+  parkedStages: string[];
   view: { state: string; source?: string; progress?: ScanProgress | null; errors?: number; errorSamples?: string[]; resumeStage?: string | null; paused?: boolean; terminal?: boolean; queuePosition?: number | null };
   progress: ScanProgress | null;
   stages: PipelineStage[];

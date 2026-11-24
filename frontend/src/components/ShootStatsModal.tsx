@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Icon, Portal, useBackdropClose } from './basics';
+import { Icon } from './basics';
+import { Sheet } from './Sheet';
 import { call } from '../lib/api';
 import { formatAperture, formatShutter, type ShootStats } from '../lib/shot.mjs';
 import {
@@ -39,7 +40,6 @@ export function ShootStatsModal({ visible, jobId, jobLabel, onClose, onStatsLoad
   const [stats, setStats] = useState<ShootStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const backdrop = useBackdropClose(onClose);
   // The parent passes a fresh callback each render; keeping it in a ref means the fetch below runs
   // when the dialog opens (or the album changes), not on every parent render.
   const loaded = useRef(onStatsLoaded);
@@ -90,9 +90,7 @@ export function ShootStatsModal({ visible, jobId, jobLabel, onClose, onStatsLoad
   const hasData = tiles.length > 0 || hasGear || hasExposure || hasQuality;
 
   return (
-    <Portal>
-    <div className="import-overlay" {...backdrop}>
-      <div className="import-dialog shoot-stats-dialog">
+    <Sheet label="Shoot statistics" className="shoot-stats-dialog" onClose={onClose}>
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}>
           <Icon name="x" />
         </button>
@@ -239,8 +237,6 @@ export function ShootStatsModal({ visible, jobId, jobLabel, onClose, onStatsLoad
             Read shot data for {stats.backfilled.toLocaleString()} frames.
           </p>
         )}
-      </div>
-    </div>
-    </Portal>
+      </Sheet>
   );
 }

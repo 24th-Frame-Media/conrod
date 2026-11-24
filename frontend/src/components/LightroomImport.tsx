@@ -4,7 +4,8 @@ import {
   lightroomError, lightroomImportLine, lightroomImportPercent, packageLine, pendingLine, pendingPackages,
 } from '../lib/lightroom.mjs';
 import type { LightroomPendingRow } from '../lib/lightroom.mjs';
-import { Icon, Portal, useBackdropClose } from './basics';
+import { Icon } from './basics';
+import { Sheet } from './Sheet';
 import type { LightroomImport as LightroomImportResult, LightroomPending } from '../lib/types';
 
 type Props = {
@@ -30,7 +31,6 @@ export function LightroomImport({ visible, jobId, albumLabel, autoRun = false, o
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<LightroomImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const backdrop = useBackdropClose(onClose);
   const autoRan = useRef(false);
 
   useEffect(() => {
@@ -83,9 +83,7 @@ export function LightroomImport({ visible, jobId, albumLabel, autoRun = false, o
   const percent = result == null ? null : lightroomImportPercent(result);
 
   return (
-    <Portal>
-    <div className="import-overlay" {...backdrop}>
-      <div className="import-dialog lightroom-dialog" style={{ maxWidth: 560 }}>
+    <Sheet label="Import from Lightroom" className="lightroom-dialog" style={{ maxWidth: 560 }} onClose={onClose}>
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
         <h2>Import from Lightroom</h2>
         <p className="lede">
@@ -151,8 +149,6 @@ export function LightroomImport({ visible, jobId, albumLabel, autoRun = false, o
             {busy ? 'Reading…' : `Import ${waiting.length === 1 ? 'package' : 'packages'}`}
           </button>
         </div>
-      </div>
-    </div>
-    </Portal>
+      </Sheet>
   );
 }

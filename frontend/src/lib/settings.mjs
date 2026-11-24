@@ -14,6 +14,9 @@ export const TABS = [
 /** Default order of the three Identify stages: OCR, then Decision, then Vision. */
 export const DEFAULT_IDENTIFY_ORDER = ['ocr', 'decision', 'vision'];
 
+/** One line shown wherever parallel identify is offered: sequential is the default, and why. */
+export const PARALLEL_NOTE = 'Parallel can change results and is slower to verify. Sequential OCR, Decision, Vision is the default.';
+
 /** Normalise a configured Identify stage order into a valid 3-stage permutation of ['ocr', 'decision', 'vision']. */
 export function normalizeIdentifyOrder(order) {
   const out = [];
@@ -188,7 +191,7 @@ export const FIELDS = {
   // ── workflow ──
   identify_parallel: {
     label: 'Run OCR, Decider and Vision at the same time', kind: 'toggle',
-    hint: 'Runs CPU OCR, the decision model and the vision model concurrently when your hardware allows it. On a single GPU that fits only one local model at a time, CPU OCR still runs in parallel while Decider and Vision take turns.',
+    hint: 'Runs CPU OCR, the decision model and the vision model concurrently when your hardware allows it. On a single GPU that fits only one local model at a time, CPU OCR still runs in parallel while Decider and Vision take turns. Parallel can change results and is slower to verify.',
   },
   identify_order: {
     label: 'Identify stage order', kind: 'workflow',

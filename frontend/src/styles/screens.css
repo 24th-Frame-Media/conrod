@@ -52,6 +52,13 @@
   position: relative;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
 }
+.import-dialog:focus { outline: none; }
+/* A save that did not finish: shown inside the sheet, above the buttons, edits kept. */
+.form-error {
+  margin: 16px 0 0; padding: 8px 12px; border-radius: 8px; font-size: 12px; line-height: 16px;
+  color: var(--text); border: 1px solid color-mix(in srgb, var(--bad) 50%, transparent);
+  background: color-mix(in srgb, var(--bad) 10%, var(--surface));
+}
 .import-dialog h2 { margin: 0 0 4px; }
 .import-dialog .lede { margin: 0 0 20px; color: var(--text-mute); }
 .import-close {

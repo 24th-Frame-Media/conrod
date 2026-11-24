@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { formatDate, type WhatsNewEntry } from '../lib/whatsNew.mjs';
-import { Icon, Portal, useBackdropClose, type IconName } from './basics';
+import { Icon, type IconName } from './basics';
+import { Sheet } from './Sheet';
 
 type Props = {
   visible: boolean;
@@ -33,12 +34,9 @@ function EntryBlock({ entry }: { entry: WhatsNewEntry }) {
 /** Newest release first, since the version last opened: Settings → "What's new" reopens it any time. */
 export function WhatsNewSheet({ visible, fresh, earlier, onClose }: Props) {
   const [showEarlier, setShowEarlier] = useState(false);
-  const backdrop = useBackdropClose(onClose);
   if (!visible) return null;
   return (
-    <Portal>
-      <div className="import-overlay" {...backdrop}>
-        <div className="import-dialog whatsnew-sheet">
+    <Sheet label="What's new" className="whatsnew-sheet" onClose={onClose}>
           <button type="button" className="ghost icon import-close" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
           <h2>What's new</h2>
           <p className="lede">The highlights since you last opened Conrod.</p>
@@ -59,8 +57,6 @@ export function WhatsNewSheet({ visible, fresh, earlier, onClose }: Props) {
           <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
             <button type="button" className="primary" onClick={onClose}>Got it</button>
           </div>
-        </div>
-      </div>
-    </Portal>
+        </Sheet>
   );
 }

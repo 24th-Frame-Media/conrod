@@ -12,6 +12,7 @@ import { scanView } from './scanStatus.mjs';
 import { orderStages, stageStatus } from './scan.mjs';
 import { selectLanes } from './ingest.mjs';
 import { buildSurface, stageFailureReason, toneFor } from './surface.mjs';
+import { parkedStageIds, scanPausedFrom } from './stageState.mjs';
 
 // Re-export ordering and shared surface primitives so consumers need one import.
 export { orderWins, makeClock, applySnapshot, stageFailureReason, toneFor };
@@ -74,6 +75,8 @@ export function activeWorkers(workers, options = {}) {
 export const RUN_WORDS = Object.freeze({
   running: 'Running', queued: 'Queued', paused: 'Paused', stopped: 'Stopped',
   failed: 'Failed', error: 'Failed', done: 'Done', done_errors: 'Done',
+  // A stage the photographer parked while the scan itself keeps running.
+  stage_paused: 'Stage paused',
   // Stored statuses that mean "not actually running any more".
   scanning: 'Stopped', indexed: 'Stopped', incomplete: 'Stopped', idle: 'Idle',
 });
@@ -89,11 +92,12 @@ export function runStateWord(state) {
  * `progress` is 0..1 or null. Changing a pushed status or a live event changes
  * the returned chip on the next render — the dropdown updates without opening.
  */
-export function jobChip(job, { activeJob = null, queue = [], liveByJob = {}, pausedJobIds = [] } = {}) {
+export function jobChip(job, { activeJob = null, queue = [], liveByJob = {}, pausedJobIds = [], stageParkedJobIds = [] } = {}) {
   if (!job) return { word: 'Idle', state: 'idle', tone: 'idle', progress: null };
   let state = String(job.status ?? 'idle').toLowerCase();
   if (activeJob === job.id) {
-    state = pausedJobIds.includes(job.id) ? 'paused' : 'running';
+    // A parked stage is not a paused scan: the chip says which, and Resume differs.
+    state = pausedJobIds.includes(job.id) ? 'paused' : stageParkedJobIds.includes(job.id) ? 'stage_paused' : 'running';
   } else if ((Array.isArray(queue) ? queue : []).includes(job.id)) {
     state = 'queued';
   }
@@ -110,11 +114,11 @@ export function jobChip(job, { activeJob = null, queue = [], liveByJob = {}, pau
 }
 
 /** Recent/active jobs for the TitleBar dropdown, active first, then queued, then newest. */
-export function dropdownRows(jobs, { activeJob = null, queue = [], liveByJob = {}, pausedJobIds = [], limit = 8 } = {}) {
+export function dropdownRows(jobs, { activeJob = null, queue = [], liveByJob = {}, pausedJobIds = [], stageParkedJobIds = [], limit = 8 } = {}) {
   const list = Array.isArray(jobs) ? jobs : [];
   const rank = (j) => (activeJob === j.id ? 0 : (Array.isArray(queue) && queue.includes(j.id)) ? 1 : 2);
   const sorted = [...list].sort((a, b) => rank(a) - rank(b) || (Number(b.created_at) || 0) - (Number(a.created_at) || 0));
-  return sorted.slice(0, limit).map((j) => ({ id: j.id, label: j.label, chip: jobChip(j, { activeJob, queue, liveByJob, pausedJobIds }) }));
+  return sorted.slice(0, limit).map((j) => ({ id: j.id, label: j.label, chip: jobChip(j, { activeJob, queue, liveByJob, pausedJobIds, stageParkedJobIds }) }));
 }
 
 // ---- Error binding and stage failures ----
@@ -172,9 +176,6 @@ export function buildRunSnapshot(options = {}) {
   const activeJob = status?.activeJob ?? null;
   const queue = Array.isArray(status?.queue) ? status.queue : [];
   const tasks = Array.isArray(status?.tasks) ? status.tasks : [];
-  const paused = tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(String(t.label ?? '')));
-  const pausedJobIds = paused && activeJob != null ? [activeJob] : [];
-
   const targetJobId = jobId ?? activeJob;
   const live = targetJobId != null ? liveByJob[targetJobId] : undefined;
   const targetRecord = targetJobId != null ? jobs.find((j) => j.id === targetJobId) ?? null : null;
@@ -184,6 +185,14 @@ export function buildRunSnapshot(options = {}) {
 
   // Whatever stages the snapshot carries, in flow order; nothing is invented.
   const stages = orderStages(progress?.pipeline?.stages ?? []);
+  // A parked stage is not a paused scan. The engine marks the parent task paused when a
+  // stage parks, so the scan-level pause is the paused tasks no parked stage owns.
+  const parkedStages = parkedStageIds({
+    stages: targetJobId === activeJob ? stages : [], album: activeJobRecord, active: activeJob != null,
+  });
+  const paused = scanPausedFrom({ tasks, parked: parkedStages });
+  const pausedJobIds = paused && activeJob != null ? [activeJob] : [];
+  const stageParkedJobIds = !paused && parkedStages.length > 0 && activeJob != null ? [activeJob] : [];
   const workers = Array.isArray(progress?.pipeline?.workers) ? progress.pipeline.workers : [];
   const overall = progress?.overall ?? progress ?? {};
   const counters = {
@@ -195,11 +204,12 @@ export function buildRunSnapshot(options = {}) {
 
   const runActive = view.state === 'running';
   const badge = activeJobRecord
-    ? jobChip(activeJobRecord, { activeJob, queue, liveByJob, pausedJobIds })
+    ? jobChip(activeJobRecord, { activeJob, queue, liveByJob, pausedJobIds, stageParkedJobIds })
     : { word: runStateWord(view.state), state: view.state, tone: toneFor(view.state), progress: counters.fraction };
   const base = {
     activeJob,
-    paused,
+    paused,             // the SCAN is paused (Pause / Resume scan); never a parked stage
+    parkedStages,       // stage ids parked by stage_pause: Resume them with the stage control
     view,               // { state, source, progress, errors, ... } for the Scan screen
     progress,
     stages,             // stage-agnostic, for the flowchart
@@ -207,7 +217,7 @@ export function buildRunSnapshot(options = {}) {
     counters,           // header counters, one source
     runActive,          // run end / stage transition clears stale lanes
     badge,
-    jobs: dropdownRows(jobs, { activeJob, queue, liveByJob, pausedJobIds }),  // TitleBar dropdown
+    jobs: dropdownRows(jobs, { activeJob, queue, liveByJob, pausedJobIds, stageParkedJobIds }),  // TitleBar dropdown
     failedStages: failedStages(stages),  // failed nodes + plain reasons + retry
     error: scanSeedFor(seed, jobId),     // run error banner bound to the correct job
     now,

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { applyDecision } from '../lib/decisions.mjs';
+import { ownsActivationKeys } from '../lib/hotkeyScope.mjs';
 import type { MarkValues, Page } from '../lib/types';
 
 export type Hotkeys = {
@@ -49,8 +50,9 @@ export function useHotkeys(keys: Hotkeys) {
       }
       if (e.ctrlKey || e.metaKey) return;
       const k = e.key.toLowerCase();
-      // Enter and Space still press a focused toolbar or dialog button.
-      const inChrome = Boolean(target?.closest?.('.toolbar, dialog')) && Boolean(target?.closest?.('button, a, summary'));
+      // Enter and Space still press a focused button in the toolbar, a dialog, the Inspector, the
+      // viewer panel or the zoom tools (hotkeyScope.mjs).
+      const inChrome = ownsActivationKeys(target);
       if (k === 'escape') { h.closeOverlays(); return; }
       if (k === '?') { e.preventDefault(); h.toggleHelp(); return; }
       if (h.page !== 'Review') return;
