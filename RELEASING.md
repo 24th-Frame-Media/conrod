@@ -3,7 +3,7 @@
 The native app replaced the Python app on 20 Sept 2026; the Python code (up to v0.8.0) is on the
 `legacy-python` branch. Releases are plain `v*` tags built by `.github/workflows/release.yml`; a tag with a suffix
 (`v1.0.0-beta.1`) is published as a pre-release, which GitHub does not treat as "latest". The in-app updater only
-offers releases that carry an installer, so the old Python zips are never offered.
+reads the `latest.json` / `beta.json` manifests (see below), so the old Python zips are never offered.
 
 ## What a release contains
 
@@ -54,7 +54,8 @@ Licences are recorded per asset in `assets.json`; ExifTool's own licence files s
    folder, **self-tests the shipped `Conrod.exe`** (`Conrod.exe --selftest report.txt`: models found and
    loaded, a frame through detector + sharpness + OCR, ExifTool, database), checksums, and publishes the
    release (a pre-release when the version has a suffix). A failing test or self-test fails the release.
-   A manual `workflow_dispatch` run publishes only from `main`; tags publish as before.
+   A manual `workflow_dispatch` run on `main` runs the same tests and build and uploads the files as a
+   workflow artifact; it never publishes a release or touches the update manifests. Only a `v*` tag publishes.
 4. Check by hand on a clean profile: install, scan a folder, review, identify, write XMP on a copy.
 
 ## Release notes and "What's new"
@@ -113,16 +114,47 @@ the old build as `Conrod-previous` if it fails.
 
 ## Rollback
 
-Delete the pre-release and its tag. Python users were never offered it. A user who installed the beta
+Delete the pre-release and its tag, then put the previous version's manifest back on the `updater` release (re-run
+that version's release workflow, or upload its `latest.json` / `beta.json` by hand), or installs keep being offered
+the deleted build. Python users were never offered it. A user who installed the beta
 keeps their `~/.conrod` untouched apart from additive tables (`native_labels`, `native_label_undo`) that
 the Python app ignores, so switching back is safe.
 
 ## What only the owner can supply
 
-- **No code signing, by decision (20 Sept 2026).** Releases stay unsigned, so SmartScreen asks users to confirm;
-  the release notes say so. Do not add signing steps.
-- Authorising the commit and push that a release needs (nothing is committed yet), and the go-ahead for the first
-  tag.
+- **No Authenticode code signing, by decision (20 Sept 2026).** The installer is not signed for Windows, so
+  SmartScreen asks users to confirm; the release notes say so. Do not add Authenticode steps.
+- **Updater signing is separate and required.** The in-app updater installs only an installer whose minisign
+  signature matches the public key in `crates/conrod-app/tauri.conf.json` (`plugins.updater.pubkey`). The private
+  key and its password are the repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; without them the build produces no `.sig` and the release fails.
+  Losing the key means installed copies can no longer update.
+- The go-ahead for each tag.
+
+## The in-app updater
+
+The app uses `tauri-plugin-updater`. It reads a signed manifest, downloads the installer, checks its signature
+and installs it in place. Two manifests live on one release, tagged `updater`
+(`.../releases/download/updater/<file>`), overwritten by every tagged release:
+
+| file | written by | read by |
+| --- | --- | --- |
+| `latest.json` | stable releases (`v1.0.0`) | stable builds |
+| `beta.json` | every release, stable or pre-release | pre-release builds (`v1.0.0-beta.N`) |
+
+A pre-release build is compiled with the `beta.json` endpoint (`crates/conrod-app/tauri.beta.conf.json`, merged by
+`release.yml`); a stable build keeps the `latest.json` endpoint in `tauri.conf.json`. A beta user therefore moves
+to the stable build when it ships, and a stable install never sees a pre-release.
+
+**Before the first stable release.** Builds up to and including `1.0.0-beta.8` only know `latest.json`. So that
+they keep updating, a pre-release also refreshes `latest.json` while that file is missing or still names a
+pre-release (no stable release exists yet). The first beta built with this setup carries the `beta.json`
+endpoint, and from then on the install follows `beta.json`. Once a stable version is in `latest.json`,
+pre-releases leave it alone, and the older betas receive that stable build as their next update.
+
+If the `updater` release is ever deleted, the next tagged release recreates it. To repair a manifest by hand,
+upload a correct `latest.json` or `beta.json` (`node scripts/latest-json.mjs <version> <installer.sig> <installer-url>
+<out.json> [notes]`) to that release.
 
 ## Local build
 
@@ -132,9 +164,7 @@ by the official Tauri bundler on first use. Output: `target/release/bundle/nsis/
 The release executable is `target/release/Conrod.exe`.
 
 Settings → Maintenance provides setup checks, missing-model installation and update checking.
-Update installation is available only for an installed copy, requires idle work, verifies the
-release checksum and requests app exit after launching the installer helper. Portable builds
-remain manual downloads.
+The updater installs a signed installer in place; portable builds remain manual downloads.
 
 ## QA and Verification
 
@@ -143,12 +173,13 @@ remain manual downloads.
 - The NSIS uninstaller preserves `HKCU\Software\kapsikkum\Conrod` (the remembered install folder) unless the "delete app data" box is ticked. Clear that registry entry if testing temporary installation paths.
 
 ### Testing the In-App Updater Locally
-- To test the updater against a mock release server, run a local HTTP server that responds to `/releases?per_page=15` with a release JSON containing `Conrod-<version>-win64-setup.exe` and `SHA256SUMS.txt`.
-- Copy the release executable to a folder with a mock `uninstall.exe` beside it and start the app with:
-  ```powershell
-  $env:CONROD_UPDATE_API = "http://127.0.0.1:<port>"
-  .\Conrod.exe
-  ```
+- The updater reads the manifest at the endpoint compiled into the build, so test with a build whose endpoint you
+  control: copy `crates/conrod-app/tauri.beta.conf.json`, point its `endpoints` at a local HTTP server
+  (`http://127.0.0.1:<port>/latest.json`) and build with `tauri build --config <that file>`. Serve a `latest.json`
+  with a higher `version`, the installer URL, and the installer's real `.sig` text, made by
+  `node scripts/latest-json.mjs <version> <installer.sig> <installer-url> <out.json>`. Sign the test installer with
+  the same private key; a signature that does not match the compiled public key is refused.
+- Install the older build, open Settings → Maintenance, and run **Check for updates**.
 
 ### Isolated QA and Headless CDP Automation
 - Launch the release executable with isolated temporary directories and an open debugging port:

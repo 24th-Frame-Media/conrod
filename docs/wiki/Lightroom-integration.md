@@ -74,7 +74,7 @@ The import reports matched, unmatched, missing, the percentage of effective keep
 Conrod does not require a folder layout. This example keeps albums and Lightroom collections predictable:
 
 ```
-P:\Photography\02_Projects\2026-11-22_Bathurst-1000\
+<library>\02_Projects\<shoot>\
     TO-IMPORT\        cards copied here first
     01_RAW\           the files Conrod scans
     02_Selects\       exports and picks

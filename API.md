@@ -20,6 +20,7 @@ Commands returning `operation` run in the background. Check `status.tasks` and c
 | pause / resume_scan / stop | none | Control current cull; return status |
 | unqueue | jobId | Take a waiting album out of the line; its status goes back to `stopped` and it can be started by hand |
 | identify | jobId, scope?, onlyNew=false | operation; readers, grouping consensus and registry seeding. `scope` ("keepers" or "everything") overrides the album's `identify_scope` for this run; omitted, the album's setting applies (default "keepers"). "keepers" identifies the effective keeper: a frame picked by hand (which suppresses the suggestion for its burst), or, with no hand pick in the burst, the engine's suggested pick (`d.burst_pick=1 OR i.burst_pick=1`); "everything" identifies every unreviewed non-bystander subject, culled or not. `onlyNew` is the incremental run the review screen offers after a redetect or re-import: subjects already read are left alone; false reads every unaccepted subject again |
+| identified | jobId | The album's identified subjects, for the review list: `rows` (up to 400; unreviewed first, then those with a number or plate), `total`, `unreviewed` and `shown`. A subject counts when it has a number, plate or attributes; hidden copies are left out |
 | skip_identify | jobId | Accept the album's identifications as they stand: every unread vehicle/person subject is marked read without a model call, so Review opens. New subjects found later still count as unread. Returns `{ok, skipped}` |
 | write | jobId, dryRun=false, embedInRaw=false | operation; dry run logs proposed keywords without changing files or written timestamps |
 | lightroom_export | jobId | Write the album's verdicts to `%USERPROFILE%\.conrod\bridge\out\<album>-<unix>.json` for the Conrod Bridge plug-in: one entry per visible, non-copy, done frame with `rating` (conrod's 0–5 stars), `pick` (1 hand-picked, -1 rejected or auto-culled under `respect_culling`, else 0), `label` (green keeper, red rejected, yellow "needs look", else null), keywords (`<prefix> keeper`, `<prefix> cull`, `<prefix> burst <n>`), plus `stars`/`verdict`/`burst`/`keeper`. `collection` names the collection the plug-in creates. Returns `package` (name without `.json`), `photos` and the absolute `path`. The package is written `*.json.tmp` then renamed, so the plug-in never sees a partial file |
@@ -28,7 +29,11 @@ Commands returning `operation` run in the background. Check `status.tasks` and c
 | lightroom_plugin_status | none | Where the Conrod Bridge plug-in stands: `installed`, `version`, `bundled`, `bundledVersion`, `needsUpdate`, `modules` folder, `path`, `running` (is Lightroom Classic open), `enabled` (the bridge setting) |
 | install_lightroom_plugin | none | Copy the bundled Conrod Bridge plug-in into Lightroom's Modules folder, replacing only our own folder and marker; a same-version build is left alone. Returns `installed`, `updated`, `version`, `path`, `running`. Restart Lightroom Classic after an install or update |
 | remove_lightroom_plugin | none | Remove only our plug-in folder from Lightroom's Modules folder. Returns `{installed: false, removed, path}`; a second remove is a no-op |
-| openrouter_check | key | Validate an OpenRouter key without spending a model call. Returns `{ok: true, label, limit, usage}` or `{ok: false, error}`; a blank key says to add one first |
+| openrouter_check | key | Validate an OpenRouter key without spending a model call. Returns `{ok: true, label, limit, usage}` or `{ok: false, error}`; a blank key says to add one first. Alias: `open_router_check` |
+| openCodeCheck | key | Validate an OpenCode key against its model list without spending a model call, and say whether JEV is listed. Returns `{ok: true, ...}` or `{ok: false, error}`. Aliases: `opencode_check`, `open_code_check` |
+| provider_models | provider, host?, apiKey?, model? | Ask a provider which models its key can call. Returns `{models: [...]}`, or `{models: [], error}`. `model` is the model already chosen on the card, for services that verify it |
+| decision_models | provider, host?, apiKey?, model? | The moment lane's model list: only photo-capable models the service itself offers. Returns `{models: [{id, name, image, unverified}], freeText, note}`, or `{models: [], freeText: true, error}` when the list cannot be read (OpenRouter keeps free text) |
+| ollama_models | host? | Ask Ollama's `/api/tags` which models it has, with vision flags. `host` defaults to the saved vision host. Returns `{ok, host, online, models}`; on failure `ok` and `online` are false, with `error` and an empty list. Three-second timeout; a remote plain-http host is refused |
 | decider_status | none | The decision model card: install state, download progress, VRAM, precision/quantization, and what the model will do for this machine |
 | install_decider | none | Download the missing decision-model files in the background (resumable, hash-checked, disk-space checked), reporting task progress |
 | models_status | none | Live local-model rows re-read from disk (`rows`, each with `id`, `downloaded`, `available`) plus the install in flight (`install`: real `done`/`total` bytes, or its plain `error`). The AI card polls this; cloud service rows are never in it |
@@ -36,9 +41,9 @@ Commands returning `operation` run in the background. Check `status.tasks` and c
 | install_models | ids? | Install missing pinned model/tool assets in the background (resumable, hash-checked, disk-space checked). Empty/absent `ids` = everything missing (the Setup card); named manifest ids install exactly those assets and nothing else |
 | save_settings | settings fields | Updated settings |
 | delete_job | jobId | Remove album records; original photographs stay intact |
-| mark | imageId, stars?, rejected? | stars 0–5, null restores automatic; omitted fields unchanged |
+| mark | imageId, stars?, rejected?, picked? | stars 0–5, null restores automatic; omitted fields unchanged |
 | edit_detection | detectionId, fields below | Updated attributes; preserves unsent fields |
-| bulk_edit | ids, number?, rejected?, bystander? | Apply to selected detection IDs |
+| bulk_edit | ids, number?, rejected?, bystander?, reviewed? | Apply to selected detection IDs |
 | preview | imageId | Cached, oriented preview path |
 | filling | jobId | Start missing-thumbnail extraction; also used when opening indexed albums |
 | rescore | jobId | operation; apply learned/current scoring to stored features, preserving hand ratings |
@@ -57,13 +62,18 @@ Commands returning `operation` run in the background. Check `status.tasks` and c
 | stage_rerun | jobId, stage, full=false | Run one stage again by its wire id: `detect`, `sharpness`, `identify:ocr`/`identify:decision`/`identify:vision`, `group` or `pick`. Clears that stage's skip first, then uses the rerun_stage guards: no scan or queued scan, one rerun at a time, incremental identify (read subjects skipped), judged bursts skipped, hand picks and reviewed work untouched |
 | accept_type_suggestion | jobId, type | Accept the Decision stage's type suggestion for an `auto` album. Stores it on the job and resolves the vision prompts from that type for the reads still to come; already-read subjects, judged bursts and hand-set readings are untouched. An unknown type is refused, and an album whose vision stage already finished is a plain no-op (`accepted: false`) |
 | rename_job | jobId, label? | Trim label; blank/null restores folder name |
+| update_job_settings | jobId, patch | Merge `patch` (an object of snake_case album settings; see Grouping settings below) into the album's own settings. `use_vlm` takes a boolean, or null to follow the global switch again. A change to `burst_gap`, `scan_profile` or `overrides` regroups the album in place, and so does a grouping key when no scan is running. A new `scan_profile` also takes the photographer's defaults for that type. Returns `{ok, jobId, settings, regroup}` |
+| set_include_people | jobId, value | Turn people on or off for one album. Turning them on for an album whose scan skipped faces finds faces and eyes in the background (`operation`); turning them off only saves the flag. Returns the `update_job_settings` result plus `operation` |
+| set_feature | jobId, feature, value? | Switch one detector or reader on or off for an album (`feature` is a `profile::Feature` key; an unknown key is refused); `value` null or omitted goes back to the shoot type's default. Turning faces on starts a background `operation`; otherwise frames are re-rated and re-picked at once. Returns the `update_job_settings` result plus `operation`, `needsRescan` (true when vehicles, people or animals were switched on, which the detector never looked for) and `lanes` (the resolved summary) |
+| preset_policy | preset, overrides?, includePeople?, userDefaults? | What Conrod will do for a shoot type, as the type picker shows it: the resolved detector and reader lanes after the given `overrides` (feature key to boolean) and `includePeople`. `userDefaults` is an album's own copy of the photographer's defaults; without it, the saved profile in the global settings applies |
 | summary | jobId | job, counts, images, numbers (with entry-list descriptions), plates, map_size, by_region |
 | shoot_stats | jobId | The shoot's statistics card: frames/copies, size, cameras, lenses, most-used camera/lens/aperture/shutter/ISO/focal length, per-value histograms, pans, bursts, blur verdicts, AF summary, keepers, rejects, stars, capture range. Backfills an old album's lens/ISO/file size first (`backfilled`: rows read) |
 | global_stats | none | The same numbers for the whole library: albums/complete albums, frames/complete frames, copies hidden, size, effective keepers, rejects, pans, bursts, blur verdicts, AF summary, shooting time (sum/average/longest span and timed-album count). Gear and exposure lists (`cameras`, `lenses`, `most_used`, `f_numbers`, `shutters`, `isos`, `focal_lengths`) count **only complete albums** -- those whose every visible frame has a non-empty camera and lens and a non-null ISO, f-number, shutter and focal length. `af.soft` uses the app's global `settings.blurred_below` (per-album strictness is not stored per frame). Nothing is backfilled from the files |
 | cover | jobId | {path, source} or null; existing crop or best thumbnail |
 | known | none | Known-vehicle records |
-| save_known | plate, make?, model?, colour?, team?, race_number? | Save a vehicle |
+| save_known | plate, old_plate?, make?, model?, colour?, team?, race_number?, driver?, country? | Save a vehicle; `old_plate` is the entry's previous plate when it is renamed |
 | delete_known | plate | Delete registry entry |
+| delete_all_known | none | Delete every registry entry. Returns `{removed}` |
 | export_known | none | CSV text |
 | import_known | csv | written, skipped; supplied nonblank fields win |
 | seed_known | jobId? | looked_at, cars, written, known; grouped consensus fills blanks and preserves aliases |
@@ -71,13 +81,16 @@ Commands returning `operation` run in the background. Check `status.tasks` and c
 | cache_info | none | path and file/byte totals for thumbs, previews, crops, orphaned, total |
 | cache_clear | orphaned=false, previews=false, jobId? | Clear only selected native cache files |
 | reset_identifications | jobId? | Remove identification results; preserve detections/manual work |
+| reset_ratings | jobId? | Clear hand stars and reject flags on frames and detections, back to the measured baseline; one album, or all when `jobId` is left out. Refused while work is running. Re-picks the album's keepers. Returns `{ok, frames_cleared, detections_cleared}` |
 | reset_detections | jobId? | Remove detections/crops, return images to pending; keep photographs |
 | reset_album | jobId (required) | Return one album to just after import, in one transaction: delete every detection and clear every measurement, star, pick, reject and identification on its frames, delete its cached crops and thumbnails, and leave the album ready for a first scan ("indexed", 0 done). Keeps its settings, the global registry and training labels, and every photograph and XMP sidecar. Frames keep only id, album and path |
 | reset_all | none | Empty albums and native caches; keep registry, training, settings and originals |
+| worker_limits | none | Worker pools `cull`, `detect`, `preview` and `identify`, each `{current, min, max, default, live}`, plus `cores` and a `note`. `live` is always false: a change applies from the next scan, never to a running pool |
+| bench_pick | none | Frames for the model bench: `[{imageId, path, thumb, sharp}]`, a handful of sharp and blurry ones from the library. Read-only |
+| bench_run | items, models | Run each model over the items and score its answers against the typed truth. `items`: `[{path, sharp, truth?: {make?, model?, colour?, number?}}]`; a blank truth field is not scored. `models`: `[{service_id, model}]` (`service_id` names a vision server in Settings). Only frames in the library are read. Returns one row per model, best first: `{serviceId, provider, model, score, sharpScore, blurryScore, avgSecs, errors, answers}`. Writes nothing |
+| describe_image | path | Run one library frame through the saved vision model and return `{make, model, colour, number}`; the answer is not stored. A path outside the library is refused |
 | watch_status | none | active, folder, jobId, recursive, interval, added, checked, message |
 | set_watch | active, jobId?, path?, recursive?, interval? | Persistent watch; newly settled files resume the album's selected processing stage |
-| check_update | none | ok, current, latest, newer, tag, size, notes, installable (or error) |
-| install_update | none | Verified installer download and restart; installed copies only, requires idle work |
 
 ## Removed commands
 
@@ -90,7 +103,7 @@ from them or writes them any more.
 
 ## Detection edits
 
-Text fields: make, model, colour, team, raceNumber, plate, plateState, bodyType.
+Text fields: make, model, colour, team, driver, country, personName, raceNumber, plate, plateState, bodyType.
 `number` and `race_number` alias raceNumber; plate_state and body_type aliases support
 existing UI records. `sponsors` is an array of strings. Null clears a field; omission
 leaves it alone. rejected/bystander are booleans; reviewed defaults to true.
@@ -158,5 +171,8 @@ the run so the screen can show its summary; the next run replaces it.
 
 Set CONROD_HOME to an isolated directory for tests. Never exercise writing on originals.
 Watch uses the saved native scan stage; older albums default to cull. Index-only watches
-stay index-only. Disabling watch removes its saved configuration. Update installation is
-explicit and requires a matching SHA-256 release checksum; portable builds do not self-install.
+stay index-only. Disabling watch removes its saved configuration.
+
+App updates are not engine commands. The frontend calls `tauri-plugin-updater`, which reads a
+signed `latest.json` (stable builds) or `beta.json` (pre-release builds) from the `updater`
+GitHub release and installs the signed installer in place. See RELEASING.md.

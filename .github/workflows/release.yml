@@ -145,11 +145,11 @@ jobs:
       - name: Fetch the pinned release assets
         run: powershell -NoProfile -File scripts/fetch-release-assets.ps1
 
-      - name: Build the frontend
+      # Only installs: `tauri build` runs the frontend build itself
+      # (beforeBuildCommand in tauri.conf.json), and needs node_modules for the CLI.
+      - name: Install the frontend dependencies
         working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm ci
 
       # Cargo 1.90+ nests a build script's OUT_DIR one level deeper
       # (build/<crate>/<hash>/out). ort-sys still walks up three ancestors when
@@ -165,12 +165,20 @@ jobs:
 
       # The signing key is what makes an update installable: Tauri checks the
       # installer's minisign signature against the public key compiled into the app.
+      # A pre-release build (version with a suffix) is built with the beta update
+      # endpoint (tauri.beta.conf.json), so it follows beta.json; a stable build
+      # keeps the endpoint in tauri.conf.json (latest.json).
       - name: Build the app and the installer
         working-directory: crates/conrod-app
         env:
+          VERSION: ${{ steps.version.outputs.value }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: node ../../frontend/node_modules/@tauri-apps/cli/tauri.js build --ci
+        run: |
+          $extra = @()
+          if ($env:VERSION -like '*-*') { $extra = @('--config', 'tauri.beta.conf.json') }
+          node ../../frontend/node_modules/@tauri-apps/cli/tauri.js build --ci @extra
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Assemble the portable folder
         shell: powershell
@@ -244,20 +252,61 @@ jobs:
           generate_release_notes: true
           body_path: dist/release-body.md
 
-      # A fixed tag the app's endpoint points at:
-      #   /releases/download/updater/latest.json
-      # A pre-1.0 beta is published as a pre-release, which GitHub's /releases/latest
-      # never points at, so the manifest gets its own always-current release.
-      - name: Publish the updater manifest
+      # Two fixed manifests on one always-current `updater` release (a pre-release
+      # is never GitHub's /releases/latest, so the manifests get their own):
+      #   /releases/download/updater/latest.json  stable builds follow this
+      #   /releases/download/updater/beta.json    pre-release builds follow this
+      # beta.json takes every release, so a beta user moves to the stable build
+      # when it ships. latest.json takes only stable releases, so a pre-release
+      # never reaches a stable install. One exception, for installs that predate
+      # beta.json (their endpoint is latest.json): while latest.json is missing or
+      # still names a pre-release, no stable release exists yet and a pre-release
+      # refreshes it too. Once a stable version is in it, pre-releases leave it alone.
+      # Anything unexpected (HTTP status, unreadable manifest) fails the release.
+      - name: Choose the update manifests
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          mkdir -p dist/updater
+          cp dist/latest.json dist/updater/beta.json
+          stable=false
+          if [[ "$VERSION" != *-* ]]; then
+            stable=true
+          else
+            code=$(curl -sSL -o dist/current-latest.json -w '%{http_code}' \
+              "https://github.com/${{ github.repository }}/releases/download/updater/latest.json")
+            if [ "$code" = "404" ]; then
+              stable=true
+            elif [ "$code" = "200" ]; then
+              current=$(node -p "JSON.parse(require('fs').readFileSync('dist/current-latest.json','utf8')).version")
+              echo "latest.json currently names $current"
+              if [[ "$current" == *-* ]]; then stable=true; fi
+            else
+              echo "unexpected HTTP $code reading the current latest.json" >&2
+              exit 1
+            fi
+          fi
+          if [ "$stable" = "true" ]; then
+            cp dist/latest.json dist/updater/latest.json
+            echo "publishing beta.json and latest.json"
+          else
+            echo "publishing beta.json only (latest.json holds a stable release)"
+          fi
+          ls dist/updater
+
+      - name: Publish the updater manifests
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: updater
           name: Update manifest
           body: |
-            Machine-readable update manifest for Conrod's in-app updater.
+            Machine-readable update manifests for Conrod's in-app updater.
+            latest.json: stable releases. beta.json: every release.
             Overwritten on every release; do not edit by hand.
           make_latest: false
           prerelease: false
           overwrite_files: true
-          files: dist/latest.json
+          files: dist/updater/*
