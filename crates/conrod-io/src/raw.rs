@@ -263,6 +263,53 @@ pub fn exposure_meta(path: &Path) -> Result<Exposure> {
     Ok(exposure)
 }
 
+/// The star rating (1 to 5) a file already carries: its sidecar XMP's
+/// `xmp:Rating` first (what Lightroom and Bridge write beside a RAW), then the
+/// EXIF `Rating` of its own header. Zero is "unrated" in both and a reject
+/// (-1) is not a star, so each reads as `None`. A file that cannot be read has
+/// no rating either: this never fails a scan.
+pub fn file_rating(path: &Path) -> Option<i64> {
+    for ext in ["xmp", "XMP"] {
+        if let Ok(text) = std::fs::read_to_string(path.with_extension(ext)) {
+            return xmp_rating(&text);
+        }
+    }
+    embedded_rating(path)
+}
+
+/// `xmp:Rating` from an XMP packet, as an attribute or as an element.
+fn xmp_rating(text: &str) -> Option<i64> {
+    text.match_indices("xmp:Rating").find_map(|(at, name)| {
+        let rest = text[at + name.len()..].trim_start();
+        let rest = rest
+            .strip_prefix('=')
+            .or_else(|| rest.strip_prefix('>'))?
+            .trim_start_matches(['"', '\'', ' ']);
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok().filter(|r| (1..=5).contains(r))
+    })
+}
+
+/// The EXIF `Rating` tag of the file's own header.
+fn embedded_rating(path: &Path) -> Option<i64> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    let mut file = File::open(path).ok()?;
+    let header = match ext.as_str() {
+        "cr3" => cr3_header(&mut file).ok()?,
+        "cr2" => header_prefix(&mut file).ok()?,
+        "jpg" | "jpeg" => header_prefix(&mut file)
+            .ok()
+            .map(|head| jpeg_exif(&head).map(<[u8]>::to_vec).unwrap_or_default())?,
+        _ => return None,
+    };
+    let t = Tiff::new(&header)?;
+    let ifd0 = t.first_ifd().map(|o| t.ifd(o))?;
+    ifd0.get(&tiff::RATING)
+        .and_then(tiff::Value::first)
+        .map(|r| r as i64)
+        .filter(|r| (1..=5).contains(r))
+}
+
 /// The first 64 KB of the file: IFD0 and the strings it points at sit inside.
 fn header_prefix(file: &mut File) -> Result<Vec<u8>> {
     let len = file.metadata().map_err(|e| e.to_string())?.len();
@@ -713,6 +760,34 @@ mod exposure_tests {
         let got = exposure_from_tiff(&bytes);
         assert_eq!(got.f_number, None);
         assert!(got.exposure_time.is_some());
+    }
+
+    #[test]
+    fn a_rating_is_read_from_a_sidecar_as_attribute_or_element_and_zero_is_unrated() {
+        assert_eq!(
+            xmp_rating(r#"<rdf:Description xmp:Rating="4" xmp:Label="Red"/>"#),
+            Some(4)
+        );
+        assert_eq!(xmp_rating("<xmp:Rating>5</xmp:Rating>"), Some(5));
+        assert_eq!(xmp_rating(r#"xmp:Rating="0""#), None, "0 is unrated");
+        assert_eq!(
+            xmp_rating(r#"xmp:Rating="-1""#),
+            None,
+            "a reject is not a star"
+        );
+        assert_eq!(
+            xmp_rating("<xmp:RatingPercent>50</xmp:RatingPercent>"),
+            None
+        );
+        assert_eq!(xmp_rating("<x:xmpmeta/>"), None);
+        let dir = std::env::temp_dir().join(format!("conrod-rating-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let raw = dir.join("IMG_1.CR3");
+        std::fs::write(&raw, b"not a raw").unwrap();
+        assert_eq!(file_rating(&raw), None);
+        std::fs::write(dir.join("IMG_1.xmp"), r#"<x xmp:Rating="3"/>"#).unwrap();
+        assert_eq!(file_rating(&raw), Some(3));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

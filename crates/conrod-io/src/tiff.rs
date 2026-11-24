@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 pub const MODEL: u16 = 0x0110;
 pub const ORIENTATION: u16 = 0x0112;
+pub const RATING: u16 = 0x4746;
 pub const STRIP_OFFSETS: u16 = 0x0111;
 pub const STRIP_BYTE_COUNTS: u16 = 0x0117;
 pub const EXIF_IFD: u16 = 0x8769;

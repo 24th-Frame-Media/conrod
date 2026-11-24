@@ -2051,9 +2051,11 @@ mod tests {
 
     #[test]
     fn a_condition_report_culls_only_clearly_blurred_subjects() {
-        let mut cfg = Settings::default();
-        cfg.cull_blurred = true;
-        cfg.auto_reject_below_stars = 3;
+        let mut cfg = Settings {
+            cull_blurred: true,
+            auto_reject_below_stars: 3,
+            ..Settings::default()
+        };
         let reason = |cfg: &Settings, verdict: &str, panning: bool| {
             subject_cull_reason(cfg, true, 1, verdict, panning, None)
         };
