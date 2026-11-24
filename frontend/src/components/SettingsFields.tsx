@@ -3,6 +3,7 @@ import type { SettingsField, SettingsFieldOption, SettingsSection } from '../lib
 import { fieldsOf, moveIdentifyStage, normalizeIdentifyOrder } from '../lib/settings.mjs';
 import type { SettingValue } from '../lib/types';
 import { ShootTypeSelect } from './ShootTypeSelect';
+import { Icon } from './basics';
 
 type SegmentedProps = {
   options: readonly SettingsFieldOption[];
@@ -139,7 +140,7 @@ export function SettingRow({ field, value, changed, onChange }: SettingRowProps)
             disabled={i === 0}
             onClick={() => onChange(moveIdentifyStage(order, stage, -1))}
           >
-            {i + 1}. {names[stage] ?? stage}{i > 0 ? ' ↑' : ''}
+            {i + 1}. {names[stage] ?? stage}{i > 0 && <> <Icon name="arrowUp" size={12} /></>}
           </button>
         ))}
       </div>

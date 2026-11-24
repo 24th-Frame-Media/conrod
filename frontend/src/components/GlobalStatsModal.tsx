@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Icon, Portal, useBackdropClose } from './basics';
+import { Icon } from './basics';
+import { Sheet } from './Sheet';
 import { Distribution } from './ShootStatsModal';
 import { call } from '../lib/api';
 import { formatAperture, formatShutter } from '../lib/shot.mjs';
@@ -24,7 +25,6 @@ export function GlobalStatsModal({ visible, onClose }: Props) {
   const [stats, setStats] = useState<GlobalStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const backdrop = useBackdropClose(onClose);
 
   // Read only while the dialog is open; a closed or reopened dialog drops the stale response
   // instead of painting it over the next read's numbers.
@@ -71,9 +71,7 @@ export function GlobalStatsModal({ visible, onClose }: Props) {
   const hasData = tiles.length > 0 || hasGear || hasExposure || hasQuality;
 
   return (
-    <Portal>
-    <div className="import-overlay" {...backdrop}>
-      <div className="import-dialog shoot-stats-dialog">
+    <Sheet label="Library statistics" className="shoot-stats-dialog" onClose={onClose}>
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}>
           <Icon name="x" />
         </button>
@@ -222,8 +220,6 @@ export function GlobalStatsModal({ visible, onClose }: Props) {
         {empty && !loading && (
           <p className="muted shoot-stats-note">No library statistics yet.</p>
         )}
-      </div>
-    </div>
-    </Portal>
+      </Sheet>
   );
 }

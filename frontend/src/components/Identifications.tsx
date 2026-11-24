@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { asset, engine } from '../lib/api';
 import { countsOf, readOf, summaryOf } from '../lib/identified.mjs';
 import type { Identified } from '../lib/types';
-import { Icon, Portal, useBackdropClose } from './basics';
+import { Icon } from './basics';
+import { Sheet } from './Sheet';
 
 type Props = {
   visible: boolean;
@@ -26,7 +27,6 @@ export function Identifications({ visible, jobId, albumLabel, identifying, onClo
   const [onlyNew, setOnlyNew] = useState(true);
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<Set<number>>(new Set());
-  const backdrop = useBackdropClose(onClose);
 
   const load = useCallback(async () => {
     if (jobId == null) return;
@@ -71,9 +71,7 @@ export function Identifications({ visible, jobId, albumLabel, identifying, onClo
   });
 
   return (
-    <Portal>
-    <div className="import-overlay" {...backdrop}>
-      <div className="import-dialog identified-sheet">
+    <Sheet label="Identifications" className="identified-sheet" onClose={onClose}>
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
         <h2>Identifications</h2>
         <p className="lede">
@@ -119,8 +117,6 @@ export function Identifications({ visible, jobId, albumLabel, identifying, onClo
             );
           })}
         </div>
-      </div>
-    </div>
-    </Portal>
+      </Sheet>
   );
 }

@@ -12,6 +12,7 @@ import { openJobPage } from './lib/navigation.mjs';
 import { classifyScanError, type ScanFailure } from './lib/scanError.mjs';
 import { buildRunSnapshot } from './lib/runSnapshot.mjs';
 import { subjectWords } from './lib/subjects.mjs';
+import { skippedStageIds, stageName } from './lib/stageState.mjs';
 import { applyOverrides, defaultSummary, isOn, overridesOf } from './lib/presetPolicy.mjs';
 import { albumSetting } from './lib/album.mjs';
 import { windowTitle } from './lib/devMode.mjs';
@@ -105,8 +106,12 @@ export function App() {
       read_numbers: resolvedSummary ? isOn(resolvedSummary, 'numbers') : Boolean(albumSetting(currentAlbum, 'read_numbers', eng.settings)),
       read_text: Boolean(albumSetting(currentAlbum, 'read_text', eng.settings)),
       moments_detect: resolvedSummary ? isOn(resolvedSummary, 'moments_detect') : eng.settings.moments_detect !== false,
+      // The order the engine will run for this album: its own, else the global default.
+      identify_order: albumSetting(currentAlbum, 'identify_order', eng.settings) as string[] | undefined,
+      identify_parallel: Boolean(albumSetting(currentAlbum, 'identify_parallel', eng.settings)),
     };
   }, [eng.settings, currentAlbum, resolvedSummary]);
+  const albumIdentifyOrder = Array.isArray(albumResolvedSettings.identify_order) ? albumResolvedSettings.identify_order : undefined;
   const identifyVram: IdentifyVram | null = eng.identifyVram
     ?? (eng.settings as unknown as { identifyVram?: IdentifyVram | null }).identifyVram
     ?? null;
@@ -184,6 +189,21 @@ export function App() {
     await engine.stageControl(action, jobId, stage, extra);
     eng.setStatus(await engine.status());
     await eng.refreshJobs();
+    // A skip is stored on the album and read by every later run: say so, and say how to undo it.
+    if (action === 'stage_skip') {
+      toast(extra?.skip === false
+        ? `${stageName(stage)} will run again on later runs of this album.`
+        : `${stageName(stage)} skipped. It stays skipped on later runs of this album until you undo it.`, { tone: 'ok' });
+    }
+  });
+  /** Resume one parked stage (not the scan): the stage control, never `resume_scan`. */
+  const resumeStage = (stage: string) => void run(async () => {
+    const id = status.activeJob ?? jobId;
+    if (id == null) return;
+    await engine.stageControl('stage_pause', id, stage, { paused: false });
+    eng.setStatus(await engine.status());
+    await eng.refreshJobs();
+    toast(`${stageName(stage)} resumed.`);
   });
   /** Pause or resume all Identify sub-stages (OCR, Decision, Vision) cleanly at their next ask boundary. */
   const pauseIdentify = (paused: boolean) => void run(async () => {
@@ -316,7 +336,11 @@ export function App() {
     }
     await engine.identify(id, scope, onlyNew);
     await eng.refreshJobs();
-    toast('Identification started. The live trace is open.');
+    // A skip from an earlier run still applies: say so now, with the way back on the page that opens.
+    const kept = skippedStageIds({ album: eng.jobs.find((j) => j.id === id) ?? null }).filter((s) => s.startsWith('identify:'));
+    toast(kept.length
+      ? `Identification started. ${kept.map(stageName).join(' and ')} stays skipped from an earlier run; undo it on this page.`
+      : 'Identification started. The live trace is open.');
   });
   const write = (id: number, dryRun: boolean) => void run(async () => {
     await engine.write(id, dryRun);
@@ -334,6 +358,7 @@ export function App() {
   const actions: StatusActions = {
     pause: () => void run(async () => { await engine.pause(); toast('Paused. Anything mid-analysis will still finish.'); }),
     resume: () => void run(async () => { await engine.resumeScan(); toast('Resuming'); }),
+    resumeStage,
     stop: () => void run(async () => {
       const s = await engine.stop();
       eng.setStatus(s as Status);
@@ -390,9 +415,9 @@ export function App() {
         {view === 'Scan' && (
           <ScanScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? scanLive[jobId] : undefined} scanStatus={scanStatus} running={running}
             queue={queueJobs} onUnqueue={actions.unqueue} runSnapshot={runSnapshot}
-            paused={status.tasks.some((t) => t.state === 'paused' && !/^Identifying\b/.test(t.label))} run={run} onSettingsSaved={handleSettingsSaved}
+            paused={runSnapshot.paused} run={run} onSettingsSaved={handleSettingsSaved}
             identify={jobId != null ? identifyLive[jobId] : undefined} status={status} identifyPaused={identifyPaused}
-            identifyOrder={Array.isArray(eng.settings.identify_order) ? eng.settings.identify_order : undefined}
+            identifyOrder={albumIdentifyOrder}
             model={vlmModelLabel(eng.settings)} decisionService={decisionService} scanError={scanError}
             onResumeJob={() => { if (jobId != null) void startScan({ jobId }); }}
             onRetryScan={() => { if (scanError?.args) void startScan(scanError.args); else if (jobId != null) void startScan({ jobId }); else actions.resume(); }}
@@ -405,7 +430,7 @@ export function App() {
         {view === 'Identify' && (
           <IdentifyScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? identifyLive[jobId] : undefined}
             status={status} model={vlmModelLabel(eng.settings)} decisionService={decisionService}
-            identifyOrder={Array.isArray(eng.settings.identify_order) ? eng.settings.identify_order : undefined}
+            identifyOrder={albumIdentifyOrder}
             paused={identifyPaused} onPause={() => pauseIdentify(true)} onResume={() => pauseIdentify(false)}
             onStageControl={stageControl} onCancel={actions.cancel} onVisionAction={visionAction} onReview={() => setPage('Review')}
             onContinueIdentify={() => {

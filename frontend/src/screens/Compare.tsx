@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, type Ref } from 'react';
 import { Modal } from '../components/basics';
 import { StarControl } from '../components/Stars';
 import { asset } from '../lib/api';
+import { zoomKeyIgnored } from '../lib/hotkeyScope.mjs';
 import { filename, frameStars, frameExcluded } from '../lib/review';
 import type { Stack } from '../lib/stacks.mjs';
 import type { ReviewModel } from '../state/useReview';
@@ -65,8 +66,8 @@ export function Compare({ rv, run, showBoxes, onToggleBoxes, right, activePane, 
   // route through Review's `verbs.step`/`verbs.mark`, which already know this is the compare view.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      // A field, a select or a focused button keeps its own keys (Space presses the button).
+      if (zoomKeyIgnored(e.target, e.key)) return;
       const k = e.key.toLowerCase();
       if (k === 'z' || k === ' ') { e.preventDefault(); leftZoom.current?.toggleZoom(); rightZoom.current?.toggleZoom(); }
       else if (k === '+' || k === '=') { e.preventDefault(); leftZoom.current?.zoomIn(); rightZoom.current?.zoomIn(); }

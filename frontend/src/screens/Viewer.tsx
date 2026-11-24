@@ -1,8 +1,9 @@
 import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
-import { Modal } from '../components/basics';
+import { Icon, Modal } from '../components/basics';
 import { StarControl } from '../components/Stars';
 import { asset } from '../lib/api';
 import { compositionLabels } from '../lib/composition.mjs';
+import { zoomKeyIgnored } from '../lib/hotkeyScope.mjs';
 import { actionLabel } from '../lib/identifyFlow.mjs';
 import { filename, frameStars, frameExcluded, parseAttributes } from '../lib/review';
 import { shotRows } from '../lib/shot.mjs';
@@ -39,8 +40,8 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keep
   // Keyboard shortcuts: L toggles box labels, Space/Z toggles 1:1 zoom, +/- steps zoom, F zooms to the detected box.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      // A field, a select or a focused button keeps its own keys (Space presses the button).
+      if (zoomKeyIgnored(e.target, e.key)) return;
       if (e.key === 'l' || e.key === 'L') {
         e.preventDefault();
         zoomImgRef.current?.toggleLabels();
@@ -246,7 +247,7 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keep
               title="Keeper (P)"
               onClick={() => void mark(frame.picked ? { picked: false } : { picked: true, rejected: false })}
             >
-              {frame.picked ? 'Keeper ✓' : 'Keeper'}
+              {frame.picked && <Icon name="check" size={12} />}Keeper
             </button>
             <button
               className={`ghost danger cut${frameExcluded(frame, dets) ? ' on' : ''}`}

@@ -48,7 +48,7 @@ export function mockDeciderStatus(): DeciderStatus {
     download_bytes: state === 'not_installed' ? 5_868_000_000 : 0,
     gpu: state === 'no_gpu' ? null : { name: 'NVIDIA GeForce RTX 3070 Ti Laptop GPU', total: 8 * GB, free: lowVram ? 3 * GB : 7.1 * GB },
     needs: { int8: 6.5 * GB, int4: 4.5 * GB },
-    message: lowVram ? 'Not enough video memory: 3.0 GB free, needs 4.5 GB.' : state === 'no_gpu' ? 'No graphics card was found for the decision model.' : state === 'off' ? 'Turned off in Settings.' : state === 'not_installed' ? 'Not installed yet.' : 'Ready.',
+    message: lowVram ? 'Not enough video memory: 3.0 GB free, needs 4.5 GB.' : state === 'no_gpu' ? 'No graphics card was found for the decision model.' : state === 'off' ? 'Turned off in Settings' : state === 'not_installed' ? 'Not installed yet' : 'Ready',
     install: null,
   };
 }
@@ -65,7 +65,7 @@ export function startDeciderSim(emit: (p: DeciderLive) => void, thumb: (k: numbe
     emit({ ...base(status.state, status.message), device: null, quant: status.quant });
     return () => undefined;
   }
-  if (v === 'none') { emit(base('ready', 'Ready.')); return () => undefined; }
+  if (v === 'none') { emit(base('ready', 'Ready')); return () => undefined; }
   const recent: DeciderResult[] = [];
   let k = 0, done = 0, total = 0;
   const started = Date.now();
@@ -74,7 +74,7 @@ export function startDeciderSim(emit: (p: DeciderLive) => void, thumb: (k: numbe
     const frame = Math.floor((Date.now() - started) / 2600);
     if (frame !== k) { k = frame; }
     const label = 'D:\\Photos\\2026\\10\\Challenge Bathurst\\IMG_' + (4200 + k) + '.CR3';
-    const live = base('running', 'Answering questions.');
+    const live = base('running', 'Answering questions');
     if (t < 1300) {
       emit({ ...live, busy: 1, done, avg_ms: done ? Math.round(total / done) : null, recent: [...recent],
         current: { label, thumb: thumb(k), queued: false, elapsed_ms: t, asking: QUESTIONS } });
@@ -86,7 +86,7 @@ export function startDeciderSim(emit: (p: DeciderLive) => void, thumb: (k: numbe
       recent.length = Math.min(recent.length, 8);
       done += 1; total += ms;
     }
-    emit({ ...base('ready', 'Ready.'), done, avg_ms: Math.round(total / done), recent: [...recent] });
+    emit({ ...base('ready', 'Ready'), done, avg_ms: Math.round(total / done), recent: [...recent] });
   }, 250);
   return () => window.clearInterval(timer);
 }

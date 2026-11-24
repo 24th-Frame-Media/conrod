@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Icon, Portal, useBackdropClose } from './basics';
+import { Icon } from './basics';
+import { Sheet } from './Sheet';
 import { type Scope, type Settings } from '../lib/types';
 import { ShootTypeSelect } from './ShootTypeSelect';
 import { PresetPolicy } from './PresetPolicy';
 import { defaultSummary, isOn, overridesOf, type Overrides, type PolicySummary } from '../lib/presetPolicy.mjs';
 import { thresholdOf } from '../lib/moments.mjs';
+import { subjectWords } from '../lib/subjects.mjs';
 import { GroupingFields, groupingOf, type GroupingValues } from './GroupingFields';
 import { IDENTIFY_SCOPE_OPTIONS, identifyScopeOf } from '../lib/identify.mjs';
 import { albumVisionHint, nextAlbumVision } from '../lib/vision.mjs';
@@ -76,7 +78,8 @@ export function ShootSettingsModal({
   const [momentsThreshold, setMomentsThreshold] = useState(() => String(thresholdOf(initialSettings.moments_threshold)));
   const [grouping, setGrouping] = useState<GroupingValues>(() => groupingOf(initialSettings));
   const [saving, setSaving] = useState(false);
-  const backdrop = useBackdropClose(onClose);
+  /** Why the last save did not finish; the photographer's edits stay in the form beneath it. */
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visible) return;
@@ -91,6 +94,7 @@ export function ShootSettingsModal({
     setMomentsThreshold(String(thresholdOf(initialSettings.moments_threshold)));
     setGrouping(groupingOf(initialSettings));
     setSaving(false);
+    setSaveError(null);
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps -- seed from saved album settings when opened
 
   if (!visible) return null;
@@ -98,9 +102,12 @@ export function ShootSettingsModal({
   const settingsVision = globals.use_vlm !== false;
   const userDefaults = overridesOf(initialUserDefaults ?? initialSettings.user_defaults);
   const hasMomentsPolicy = (policy?.moments.vocabulary.length ?? 0) > 0;
+  // The shoot's own words: a rodeo or a portrait shoot is never told about motorsport effects.
+  const subject = subjectWords(policy ?? defaultSummary(profile));
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       const identifyDecision = hasMomentsPolicy && policy
         ? isOn(policy, 'moments_detect')
@@ -118,15 +125,16 @@ export function ShootSettingsModal({
         ...grouping,
       });
       onClose();
+    } catch (e) {
+      // Stay open with every edit intact, and say what happened and which parts did save.
+      setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Portal>
-    <div className="import-overlay" {...backdrop}>
-      <div className="import-dialog shoot-settings-modal" style={{ maxWidth: 540 }}>
+    <Sheet label="Shoot settings" className="shoot-settings-modal" style={{ maxWidth: 540 }} onClose={onClose}>
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}>
           <Icon name="x" />
         </button>
@@ -202,7 +210,7 @@ export function ShootSettingsModal({
               />
               <div className="toggle-text">
                 <b>Read action and atmosphere</b>
-                <span>Dust, tyre smoke, spray, airborne, flames, sparks, contact and wheel lift, only when clearly visible.</span>
+                <span>{subject.fields.action}</span>
               </div>
             </label>
 
@@ -213,8 +221,8 @@ export function ShootSettingsModal({
                 onChange={(e) => setGroupVehicles(e.target.checked)}
               />
               <div className="toggle-text">
-                <b>Group vehicles by visual likeness</b>
-                <span>Link identical vehicles across passes and burst stacks.</span>
+                <b>{subject.fields.group}</b>
+                <span>{subject.fields.link}</span>
               </div>
             </label>
           </div>
@@ -224,6 +232,7 @@ export function ShootSettingsModal({
           </div>
         </div>
 
+        {saveError && <p className="form-error" role="alert">{saveError}</p>}
         <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
           <button type="button" className="ghost" onClick={onClose} disabled={saving}>
             Cancel
@@ -232,8 +241,6 @@ export function ShootSettingsModal({
             {saving ? 'Saving…' : 'Save Shoot Settings'}
           </button>
         </div>
-      </div>
-    </div>
-    </Portal>
+      </Sheet>
   );
 }

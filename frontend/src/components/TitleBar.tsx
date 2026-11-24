@@ -7,6 +7,7 @@ import { modelGroups, modelWord, workLabel, type HealthStatus } from '../lib/hea
 import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
 import type { DevInfo, DropdownJob, Job, ModelInfo, Page, ReloadState, RunSnapshot, Status, Task } from '../lib/types';
 import { DevCluster } from './DevStatus';
+import { stageName } from '../lib/stageState.mjs';
 import { Icon, Mark } from './basics';
 
 /** Engine health rows carry wire-format provider ids as `name` and use
@@ -33,13 +34,13 @@ const healthState = (m: ModelInfo) => {
 const TABS: [Page, string, string][] = [
   ['Library', 'Library', 'Your albums'],
   ['Review', 'Review', 'Cull, identify and export'],
-  ['Settings', 'Settings', 'Settings and vehicles'],
+  ['Settings', 'Settings', 'Settings, models and known entries'],
 ];
 
 /** One tab for a whole ingest: the scan and the identification that follows it (or a standalone identify run) share it. The Identify page key stays for callers. */
 const INGEST_TAB: [Page, string, string] = ['Scan', 'Ingest', 'Watch the scan and the identification'];
 
-export type StatusActions = { pause: () => void; resume: () => void; stop: () => void; cancel: (key: string) => void; unqueue: (job: Job) => void };
+export type StatusActions = { pause: () => void; resume: () => void; /** Resume one parked stage: the stage control, not the scan's. */ resumeStage: (stage: string) => void; stop: () => void; cancel: (key: string) => void; unqueue: (job: Job) => void };
 
 /** Minimise / maximise / close. Only drawn when the window has no OS frame of its own. */
 function WindowControls() {
@@ -73,10 +74,14 @@ const cleanOpLabel = (key: string) => key.replace(/:\d+$/, '');
 
 /** Compact two-tab activity popover: Activity (running ops, live scans, history) and Models (readiness). */
 function StatusPill({
-  status, jobs, models, health, actions, defaultOpen, scanRows, activeJobId, onOpenJob,
+  status, jobs, models, health, actions, defaultOpen, scanRows, activeJobId, onOpenJob, scanPaused, parkedStages = [],
 }: {
   status: Status; jobs: Job[]; models: ModelInfo[]; health: HealthStatus; actions: StatusActions; defaultOpen: boolean;
   scanRows?: DropdownJob[]; activeJobId?: number | null; onOpenJob?: (id: number) => void;
+  /** The scan itself is paused (Pause / Resume scan). A parked stage never sets this. */
+  scanPaused?: boolean;
+  /** Stages parked by a stage pause, resumed with the stage control. */
+  parkedStages?: string[];
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [tab, setTab] = useState<'activity' | 'models'>('activity');
@@ -241,9 +246,12 @@ function StatusPill({
                   })}
                   {(!activeInScans && status.activeJob != null) && (
                     <div className="act-op-actions">
-                      <button type="button" className="ghost small" onClick={summaryTask?.state === 'paused' ? actions.resume : actions.pause}>
-                        {summaryTask?.state === 'paused' ? 'Resume' : 'Pause'}
+                      <button type="button" className="ghost small" onClick={scanPaused ? actions.resume : actions.pause}>
+                        {scanPaused ? 'Resume' : 'Pause'}
                       </button>
+                      {parkedStages.map((id) => (
+                        <button type="button" key={id} className="ghost small" onClick={() => actions.resumeStage(id)}>Resume {stageName(id)}</button>
+                      ))}
                       <button type="button" className="ghost small danger" disabled={stopping} onClick={() => { setStopping(true); actions.stop(); }}>
                         {stopping ? 'Stopping…' : 'Stop scan'}
                       </button>
@@ -286,7 +294,8 @@ function StatusPill({
                         const isActive = row.id === activeJobId;
                         const progressPct = row.chip.progress != null ? Math.max(0, Math.min(100, Math.round(row.chip.progress * 100))) : null;
                         if (isActive) {
-                          const isPaused = activeScanTask?.state === 'paused' || row.chip.state === 'paused';
+                          // The scan's own pause only: a parked stage marks its task paused too, and has its own Resume below.
+                          const isPaused = row.chip.state === 'paused';
                           return (
                             <div key={row.id} role="listitem" className="jobs-row jobs-row-card active">
                               <button
@@ -312,6 +321,11 @@ function StatusPill({
                                   <button type="button" className="act-inline-btn" onClick={isPaused ? actions.resume : actions.pause}>
                                     {isPaused ? 'Resume' : 'Pause'}
                                   </button>
+                                  {parkedStages.map((id) => (
+                                    <button key={id} type="button" className="act-inline-btn" onClick={() => actions.resumeStage(id)}>
+                                      Resume {stageName(id)}
+                                    </button>
+                                  ))}
                                   <button
                                     type="button"
                                     className="act-inline-btn danger"
@@ -390,7 +404,7 @@ function StatusPill({
                     </div>
                   ))}
                   {!finishedTasks.length && <p className="muted activity-empty">Nothing finished yet</p>}
-                  <details><summary>Event log</summary><pre className="log mono">{status.log.join('\n') || 'Nothing yet.'}</pre></details>
+                  <details><summary>Event log</summary><pre className="log mono">{status.log.join('\n') || 'Nothing yet'}</pre></details>
                 </div>
               </details>
             </div>
@@ -488,6 +502,8 @@ export function TitleBar({ page, setPage, jobs, models, status, health, actions,
         scanRows={runSnapshot?.jobs}
         activeJobId={runSnapshot?.activeJob ?? status.activeJob}
         onOpenJob={onOpenJob}
+        scanPaused={runSnapshot?.paused}
+        parkedStages={runSnapshot?.parkedStages}
       />
       <WindowControls />
       {active && active.total > 0 && <i className="topbar-progress" style={{ width: `${pct(active.done, active.total)}%` }} />}

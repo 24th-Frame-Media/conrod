@@ -6,6 +6,7 @@
 import { stageStatus } from './scan.mjs';
 import { SUBJECT_WORDS } from './subjects.mjs';
 import policies from './presetPolicies.mjs';
+import { normalizeIdentifyOrder } from './settings.mjs';
 
 /** Identify substage wire ids in flow order. `key` is the short name; `settingsKey`
  *  is the resolved setting that determines whether the step is on for this album. */
@@ -15,24 +16,31 @@ export const IDENTIFY_SUBSTAGES = Object.freeze([
     purpose: 'Reads plates, numbers and visible text',
   },
   {
-    id: 'identify:decision', key: 'decision', label: 'DECISION', name: 'Decision', settingsKey: 'identify_decision',
+    id: 'identify:decision', key: 'decision', label: 'Decision', name: 'Decision', settingsKey: 'identify_decision',
     purpose: 'Judges moments and suggests the shoot type',
   },
   {
-    id: 'identify:vision', key: 'vision', label: 'VISION', name: 'Vision', settingsKey: 'use_vlm',
+    id: 'identify:vision', key: 'vision', label: 'Vision', name: 'Vision', settingsKey: 'use_vlm',
     purpose: 'Reads each subject with the vision model',
   },
 ]);
 
-/** The nine grouped-run stages in flow order, followed by the finish node. */
-export const FLOW_ORDER = Object.freeze([
-  'read', 'detect', 'sharpness', 'faces',
-  'identify:ocr', 'identify:decision', 'identify:vision',
-  'group', 'pick', 'done',
-]);
+/** The grouped-run stages in flow order, followed by the finish node. The three
+ *  identify stages sit in the album's `identify_order` (default OCR, Decision,
+ *  Vision, one after another); everything around them is fixed. */
+export function flowOrder(identifyOrder = null) {
+  return Object.freeze([
+    'read', 'detect', 'sharpness', 'faces',
+    ...normalizeIdentifyOrder(identifyOrder).map((key) => `identify:${key}`),
+    'group', 'pick', 'done',
+  ]);
+}
+
+/** The default flow: sequential OCR, Decision, Vision. */
+export const FLOW_ORDER = flowOrder(null);
 
 const PLAIN_LABELS = Object.freeze({
-  read: 'READ', detect: 'DETECT', sharpness: 'SHARPNESS', faces: 'FACES', group: 'GROUP', pick: 'PICK',
+  read: 'Read', detect: 'Detect', sharpness: 'Sharpness', faces: 'Faces', group: 'Group', pick: 'Pick',
 });
 const PLAIN_PURPOSE = Object.freeze({
   read: 'Opens each RAW', faces: 'Finds faces and closed eyes',
@@ -53,6 +61,8 @@ export function controlSpec(action, jobId, stage) {
   return { action: CONTROL_ACTIONS[action], args: { jobId, stage } };
 }
 
+/** Sentence case for an engine label that arrives in capitals; acronyms (OCR) stay as they are. */
+const sentence = (s) => (s.length > 3 && s === s.toUpperCase() ? s[0] + s.slice(1).toLowerCase() : s);
 const clamp01 = (v) => Math.max(0, Math.min(1, Number(v) || 0));
 const n = (v) => Math.max(0, Math.round(Number(v) || 0)).toLocaleString('en-US');
 const two = (i) => String(i + 1).padStart(2, '0');
@@ -76,6 +86,8 @@ export function stageFailureReason(stage) {
 export function stageWord(stage, { paused = false } = {}) {
   if (!stage) return 'pending';
   const raw = String(stage.status ?? stage.state ?? '').toLowerCase();
+  // A stage the engine says is parked reads paused until it is resumed.
+  if (stage.parked === true && raw !== 'done' && raw !== 'skipped' && raw !== 'failed') return 'paused';
   if (STAGE_WORDS.includes(raw)) return raw;
   if (stageFailureReason(stage)) return 'failed';
   if (stage.skipped === true || raw === 'off') return 'skipped';
@@ -91,7 +103,7 @@ export function stageWord(stage, { paused = false } = {}) {
 export function toneFor(state) {
   switch (String(state ?? '').toLowerCase()) {
     case 'running': return 'running';
-    case 'paused': return 'paused';
+    case 'paused': case 'stage_paused': return 'paused';
     case 'queued': return 'queued';
     case 'failed': case 'error': return 'error';
     case 'done': case 'done_errors': return 'done';
@@ -343,7 +355,7 @@ function plainNode(id, stage, ctx) {
   const unrerunnable = id === 'read' || id === 'faces';
   const consequence = stage?.skip_consequence || skipConsequence('', { subject });
   return {
-    id, key: null, number: '', label: stage?.label ? String(stage.label).toUpperCase() : PLAIN_LABELS[id] ?? String(id).toUpperCase(),
+    id, key: null, number: '', label: stage?.label ? sentence(String(stage.label)) : PLAIN_LABELS[id] ?? sentence(String(id)),
     sub, meta, title: [sub, count, fails, crew, stage?.model, stage?.device].filter(Boolean).join(' · '),
     word: finalWord, wordLabel: STAGE_WORD_LABEL[finalWord] ?? finalWord, tone: toneFor(finalWord), state: stateForWord(finalWord, off),
     off, offReason: off ? offReasonForPlain(id) : '', offShortcut: off ? { label: 'Enable in Manage shoot', target: 'manage-shoot', settingsTab: 'culling' } : null,
@@ -397,7 +409,7 @@ function identifyNode(def, stage, ctx) {
 
 function doneNode(finished) {
   return {
-    id: 'done', key: null, number: '', label: 'DONE',
+    id: 'done', key: null, number: '', label: 'Done',
     sub: finished ? 'ready to review' : 'review opens', meta: '', title: '',
     word: finished ? 'done' : 'pending', wordLabel: finished ? 'Done' : 'Pending', tone: finished ? 'done' : 'idle',
     state: finished ? 'done' : 'pending', off: false, offReason: '', offShortcut: null,
@@ -432,15 +444,19 @@ export function buildSurface(snapshot = {}, context = {}) {
   const concurrency = concurrencyView(identifyVram, settings);
   const suggestion = typeSuggestionView(album, settings);
 
+  // The chart follows the order the engine will run: the album's own `identify_order`.
+  const order = flowOrder(settings?.identify_order);
+  const parallel = Boolean(settings?.identify_parallel);
+
   const nodes = [];
-  for (const id of FLOW_ORDER) {
+  for (const id of order) {
     if (id === 'done') { nodes.push(doneNode(finished)); continue; }
     const def = IDENTIFY_SUBSTAGES.find((d) => d.id === id);
     nodes.push(def ? identifyNode(def, byId.get(id), { ...ctx, suggestion }) : plainNode(id, byId.get(id), ctx));
   }
   // Unknown stages from a newer engine still render (stage-agnostic), after the
   // known flow, in the order the snapshot carries them.
-  const known = new Set(FLOW_ORDER);
+  const known = new Set(order);
   for (const stage of stages) {
     if (known.has(stage.id) || !stage || typeof stage.id !== 'string') continue;
     nodes.push(plainNode(stage.id, stage, ctx));
@@ -455,6 +471,7 @@ export function buildSurface(snapshot = {}, context = {}) {
 
   return {
     nodes: numbered, identify, vram, concurrency, suggestion, toggles,
+    order: order.filter((id) => id !== 'done'), parallel,
     jobId, stageTotal: activeNodes.length, stageWords: STAGE_WORDS,
     hasFailedStage: numbered.some((node) => node.word === 'failed'),
   };

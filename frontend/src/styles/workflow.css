@@ -1,14 +1,14 @@
 /* ── Configurable Identify workflow settings (components/WorkflowSettings.tsx) ── */
 
 .wf-hw-note {
-  display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; margin: 4px 0 14px;
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 12px; margin: 4px 0 16px;
   border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface);
-  font-size: 12.5px; line-height: 1.45; color: var(--text-dim);
+  font-size: 12px; line-height: 1.45; color: var(--text-dim);
 }
 .wf-hw-note.ok { border-color: color-mix(in srgb, var(--good) 35%, transparent); }
 .wf-hw-note.warn { border-color: color-mix(in srgb, var(--warn2) 40%, transparent); }
 .wf-hw-dot {
-  flex: none; width: 7px; height: 7px; margin-top: 5px; border-radius: 50%;
+  flex: none; width: 7px; height: 7px; margin-top: 4px; border-radius: 50%;
   background: var(--good);
 }
 .wf-hw-note.warn .wf-hw-dot { background: var(--warn2); }
@@ -16,14 +16,14 @@
 .wf-order-block { display: grid; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .wf-order-block.is-dirty { border-top-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 .wf-order-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.wf-order-head .label { font-weight: 500; font-size: 13.5px; }
-.wf-order-head .hint { margin: 3px 0 0; font-size: 12px; color: var(--text-mute); }
-.wf-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.wf-order-head .label { font-weight: 500; font-size: 13px; }
+.wf-order-head .hint { margin: 4px 0 0; font-size: 12px; color: var(--text-mute); }
+.wf-presets { display: flex; flex-wrap: wrap; gap: 8px; }
 .wf-preset-btn.on { border-color: var(--text-dim); background: var(--surface-3); color: var(--text); }
 
 .wf-stage-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .wf-stage-row {
-  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  display: flex; align-items: center; gap: 12px; padding: 12px 12px;
   border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface);
 }
 .wf-stage-num {
@@ -35,23 +35,23 @@
 .wf-stage-title { display: flex; align-items: center; gap: 8px; }
 .wf-stage-title b { font-size: 13px; font-weight: 500; }
 .wf-stage-badge {
-  font-size: 9.5px; letter-spacing: .06em; padding: 1px 6px; border-radius: 4px;
+  font-size: 11px; letter-spacing: .04em; padding: 1px 8px; border-radius: 4px;
   border: 1px solid var(--line); background: var(--surface-2); color: var(--text-mute);
 }
 .wf-stage-hint { font-size: 12px; }
 .wf-stage-move { display: inline-flex; gap: 4px; }
-.wf-stage-move button { min-width: 28px; padding: 3px 8px; }
+.wf-stage-move button { min-width: 28px; padding: 4px 8px; }
 
 .wf-preview {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 12px;
   border-radius: var(--radius); border: 1px dashed var(--line-hover); background: var(--surface-2);
 }
-.wf-preview-label { font-size: 10px; letter-spacing: .12em; color: var(--text-mute); }
-.wf-preview-seq, .wf-preview-parallel { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.wf-preview-seg { display: inline-flex; align-items: center; gap: 6px; }
+.wf-preview-label { font-size: 11px; letter-spacing: .04em; color: var(--text-mute); }
+.wf-preview-seq, .wf-preview-parallel { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wf-preview-seg { display: inline-flex; align-items: center; gap: 8px; }
 .wf-pill {
-  font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  font-size: 11px; padding: 4px 8px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--surface); color: var(--text);
 }
 .wf-arrow, .wf-parallel-plus { font-size: 11px; color: var(--text-mute); }
-.wf-inline-order { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wf-inline-order { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }

@@ -51,13 +51,13 @@ export function IdentifyConcurrency({ draft, identifyVram = null, onChange, embe
             <b>Decision workers</b>
             <input type="number" min={1} max={16} step={1} value={view.seats.decision}
               onChange={(e) => onChange(view.seats.decisionKey, Math.max(1, Math.round(Number(e.target.value) || 1)))} />
-            <small>Seats for the decision stage.</small>
+            <small>Seats for the decision stage</small>
           </label>
           <label className="id-seat">
             <b>Vision workers</b>
             <input type="number" min={1} max={16} step={1} value={view.seats.vision}
               onChange={(e) => onChange(view.seats.visionKey, Math.max(1, Math.round(Number(e.target.value) || 1)))} />
-            <small>Seats for the vision stage.</small>
+            <small>Seats for the vision stage</small>
           </label>
         </div>
       ) : (

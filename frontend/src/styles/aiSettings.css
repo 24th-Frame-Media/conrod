@@ -7,7 +7,7 @@
 .ai-settings {
   font-size: 13px;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
-  padding: 16px 18px 22px; margin-bottom: 14px;
+  padding: 16px 20px 24px; margin-bottom: 16px;
   transition: background-color .2s var(--ease), border-color .2s var(--ease);
 }
 .ai-settings * { box-sizing: border-box; }
@@ -21,9 +21,9 @@
 
 /* ---- one-line summary strip (always visible) ---- */
 .ai-settings .strip {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 12px;
   background: var(--surface-2); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: 12px 14px;
+  border-radius: var(--radius); padding: 12px 16px;
 }
 .ai-settings .strip-text { color: var(--text); }
 .ai-settings .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-mute); flex: none; display: inline-block; }
@@ -33,31 +33,31 @@
 .ai-settings .spacer { flex: 1; }
 .ai-settings .link {
   background: transparent; border: 0; padding: 0; cursor: pointer;
-  color: var(--text-mute); font-size: 12.5px; border-radius: 4px;
+  color: var(--text-mute); font-size: 12px; border-radius: 4px;
   transition: color .14s var(--ease);
 }
 .ai-settings .link:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 .ai-settings .link.danger:hover { color: var(--bad); }
 
-.ai-settings .divider { height: 1px; background: var(--line-soft); border: 0; margin: 16px 0 18px; }
+.ai-settings .divider { height: 1px; background: var(--line-soft); border: 0; margin: 16px 0 20px; }
 .ai-settings .svc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.ai-settings .svc-head h2, .ai-settings .section-title { font-size: 16px; font-weight: 600; letter-spacing: .01em; }
-.ai-settings .sub { color: var(--text-mute); font-size: 13px; margin: 6px 0 14px; }
+.ai-settings .svc-head h2, .ai-settings .section-title { font-size: 16px; font-weight: 500; letter-spacing: .01em; }
+.ai-settings .sub { color: var(--text-mute); font-size: 13px; margin: 8px 0 16px; }
 
 /* ---- global sharing bar ---- */
 .ai-settings .share-bar {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 9px 12px; margin-bottom: 14px;
+  padding: 8px 12px; margin-bottom: 16px;
 }
-.ai-settings .share-bar h3 { font-size: 12.5px; font-weight: 600; color: var(--text-dim); }
-.ai-settings .share-bar .share-hint { font-size: 11.5px; color: var(--text-mute); }
+.ai-settings .share-bar h3 { font-size: 12px; font-weight: 500; color: var(--text-dim); }
+.ai-settings .share-bar .share-hint { font-size: 11px; color: var(--text-mute); }
 .ai-settings .pool { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.ai-settings .pool b { color: var(--text); font-weight: 600; }
+.ai-settings .pool b { color: var(--text); font-weight: 500; }
 .ai-settings .seg { display: inline-flex; gap: 2px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
 .ai-settings .seg button {
-  background: transparent; border: 0; border-radius: 6px; padding: 4px 10px;
-  font-size: 11.5px; color: var(--text-mute); cursor: pointer;
+  background: transparent; border: 0; border-radius: 6px; padding: 4px 12px;
+  font-size: 11px; color: var(--text-mute); cursor: pointer;
   transition: background-color .14s var(--ease), color .14s var(--ease);
 }
 .ai-settings .seg button:hover { color: var(--text); }
@@ -69,49 +69,49 @@
    thinking/variant rows added when Thinking is on) was clipped and looked empty.
    Cards now size to their content; the grid stretches siblings in a row to the
    tallest so the layout stays even. */
-.ai-settings .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; align-items: stretch; }
+.ai-settings .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; align-items: stretch; }
 .ai-settings .service {
   display: flex; flex-direction: column; min-width: 0; min-height: 430px; height: auto;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px;
-  padding: 14px 14px 12px;
+  padding: 16px 16px 12px;
   transition: border-color .14s var(--ease), background-color .2s var(--ease);
 }
 .ai-settings .service:hover { border-color: var(--line-hover); }
 .ai-settings .c-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex: none; }
-.ai-settings .c-head h4 { font-size: 14px; font-weight: 600; letter-spacing: .01em; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-settings .c-head h4 { font-size: 14px; font-weight: 500; letter-spacing: .01em; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-settings .tag {
   display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 11px; line-height: 1.4; white-space: nowrap;
-  padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line); color: var(--text-mute);
+  padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--text-mute);
   background: var(--fill-1);
 }
 .ai-settings .tag.own {
   color: var(--good); border-color: color-mix(in srgb, var(--good) 34%, transparent);
   background: color-mix(in srgb, var(--good) 12%, transparent);
 }
-.ai-settings .note { color: var(--text-dim); font-size: 12px; line-height: 1.45; margin-bottom: 10px; flex: none; }
-.ai-settings .cost-line { color: var(--text-mute); font-size: 11.5px; line-height: 1.45; margin: -4px 0 10px; flex: none; font-variant-numeric: tabular-nums; }
+.ai-settings .note { color: var(--text-dim); font-size: 12px; line-height: 1.45; margin-bottom: 12px; flex: none; }
+.ai-settings .cost-line { color: var(--text-mute); font-size: 11px; line-height: 1.45; margin: -4px 0 12px; flex: none; font-variant-numeric: tabular-nums; }
 /* A failed Test button names the engine's plain reason inline, not only in a
    toast that disappears. */
-.ai-settings .test-reason { color: var(--bad); font-size: 11px; line-height: 1.4; margin: -2px 0 9px; flex: none; }
+.ai-settings .test-reason { color: var(--bad); font-size: 11px; line-height: 1.4; margin: -2px 0 8px; flex: none; }
 
 /* ---- fields / buttons ---- */
 .ai-settings input {
   width: 100%; min-width: 0;
-  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
   color: var(--text); transition: border-color .14s var(--ease), background-color .2s var(--ease);
 }
 .ai-settings input::placeholder { color: var(--text-mute); }
 .ai-settings input:focus { outline: none; border-color: var(--text-dim); }
-.ai-settings input[type="password"] { letter-spacing: .06em; }
-.ai-settings .key { margin-bottom: 10px; flex: none; }
+.ai-settings input[type="password"] { letter-spacing: .04em; }
+.ai-settings .key { margin-bottom: 12px; flex: none; }
 .ai-settings .btn {
   cursor: pointer; background: transparent; color: var(--text);
-  border: 1px solid var(--line); border-radius: 8px; padding: 7px 13px; font-size: 12px;
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 12px;
   transition: background-color .14s var(--ease), border-color .14s var(--ease), color .14s var(--ease), transform .14s var(--ease);
 }
 .ai-settings .btn:hover { border-color: var(--line-hover); background: var(--surface-3); }
 .ai-settings .btn:active { transform: scale(.98); }
-.ai-settings .btn.small { padding: 5px 11px; font-size: 11.5px; }
+.ai-settings .btn.small { padding: 4px 12px; font-size: 11px; }
 .ai-settings .btn.primary {
   background: var(--primary); border-color: var(--primary); color: var(--on-primary);
   font-weight: 500; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5);
@@ -122,7 +122,7 @@
 
 /* ---- pick list: every option row stays visible (no inner clipping) ---- */
 .ai-settings .mo-scroll {
-  flex: 1; min-height: 0; overflow: visible; margin: 2px -6px 0; padding: 0 6px 4px;
+  flex: 1; min-height: 0; overflow: visible; margin: 2px -8px 0; padding: 0 8px 4px;
 }
 .ai-settings .mo-scroll::-webkit-scrollbar { width: 8px; }
 .ai-settings .mo-scroll::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 4px; }
@@ -130,55 +130,55 @@
 .ai-settings .mo-group {
   position: sticky; top: 0; z-index: 2; background: var(--surface-2);
   font-size: 11px; letter-spacing: .02em; color: var(--text-mute); font-weight: 500;
-  padding: 6px 2px 5px; margin: 0;
+  padding: 8px 2px 4px; margin: 0;
 }
 /* When a cloud service judges moments, the local "Makes decisions" row is still
    local-only: this note keeps it from reading as "the decision model isn't installed". */
-.ai-settings .mo-served { color: var(--good); font-size: 10.5px; line-height: 1.4; margin: 0 2px 7px; }
+.ai-settings .mo-served { color: var(--good); font-size: 11px; line-height: 1.4; margin: 0 2px 8px; }
 .ai-settings .pick {
   background: var(--fill-1); border: 1px solid var(--line-soft); border-radius: 8px;
-  padding: 8px 10px; margin-bottom: 6px;
+  padding: 8px 12px; margin-bottom: 8px;
   transition: border-color .14s var(--ease);
 }
 .ai-settings .pick:hover { border-color: var(--line-hover); }
-.ai-settings .pick-line { display: flex; align-items: center; gap: 9px; }
-.ai-settings .pick-line > label { flex: none; width: 62px; font-size: 11.5px; color: var(--text-dim); }
+.ai-settings .pick-line { display: flex; align-items: center; gap: 8px; }
+.ai-settings .pick-line > label { flex: none; width: 62px; font-size: 11px; color: var(--text-dim); }
 .ai-settings .pick-line select {
   flex: 1; min-width: 0;
   background: var(--bg); border: 1px solid var(--line); border-radius: 7px;
-  padding: 6px 8px; font-size: 12px; font-family: var(--mono); color: var(--text); cursor: pointer;
+  padding: 8px 8px; font-size: 12px; font-family: var(--mono); color: var(--text); cursor: pointer;
 }
 .ai-settings .pick-line select:hover { border-color: var(--line-hover); }
 .ai-settings .pick-line select:disabled { color: var(--text-mute); cursor: default; font-family: inherit; }
 .ai-settings .pick-line input.free-text {
-  flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; padding: 6px 8px;
+  flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; padding: 8px 8px;
 }
-.ai-settings .pick-meta { color: var(--text-mute); font-size: 10.5px; padding: 4px 0 0 71px; }
-.ai-settings .mo-opts { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 6px 0 1px 71px; }
-.ai-settings .mo-opts label { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-mute); }
+.ai-settings .pick-meta { color: var(--text-mute); font-size: 11px; padding: 4px 0 0 72px; }
+.ai-settings .mo-opts { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0 1px 72px; }
+.ai-settings .mo-opts label { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-mute); }
 .ai-settings .mo-opts select {
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
-  padding: 2px 6px; font-size: 11.5px; color: var(--text-dim); cursor: pointer; max-width: 150px;
+  padding: 2px 8px; font-size: 11px; color: var(--text-dim); cursor: pointer; max-width: 150px;
 }
 .ai-settings .mo-opts select:hover { border-color: var(--line-hover); color: var(--text); }
 
 /* ---- built-in card: per-model switch rows ---- */
 .ai-settings .mo {
   background: var(--fill-1); border: 1px solid var(--line-soft); border-radius: 8px;
-  padding: 7px 10px 6px; margin-bottom: 6px;
+  padding: 8px 12px 8px; margin-bottom: 8px;
   transition: border-color .14s var(--ease), opacity .16s var(--ease);
 }
 .ai-settings .mo:hover { border-color: var(--line-hover); }
 .ai-settings .mo.off { opacity: .62; }
 .ai-settings .mo.off:hover { opacity: .85; }
-.ai-settings .mo-line { display: flex; align-items: center; gap: 9px; min-height: 26px; }
-.ai-settings .mo-name { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.ai-settings .mo-line { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.ai-settings .mo-name { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .ai-settings .mo-name .mono { color: var(--text); word-break: break-word; }
-.ai-settings .mo-meta { color: var(--text-mute); font-size: 10.5px; white-space: nowrap; }
-.ai-settings .mo .mo-opts { padding-left: 47px; }
+.ai-settings .mo-meta { color: var(--text-mute); font-size: 11px; white-space: nowrap; }
+.ai-settings .mo .mo-opts { padding-left: 48px; }
 .ai-settings .mo-dl { flex: none; }
 /* A real, indeterminate running state while the installer works. */
-.ai-settings .mo-dl.running { display: inline-flex; align-items: center; gap: 6px; }
+.ai-settings .mo-dl.running { display: inline-flex; align-items: center; gap: 8px; }
 .ai-settings .mo-spin {
   width: 11px; height: 11px; flex: none; border-radius: 50%;
   border: 2px solid color-mix(in srgb, var(--on-primary) 45%, transparent);
@@ -188,7 +188,7 @@
 @keyframes mo-spin { to { transform: rotate(360deg); } }
 /* Real byte progress while a download runs (indeterminate only when unknown). */
 .ai-settings .mo-progress {
-  margin: 6px 0 0 47px; height: 4px; border-radius: 999px;
+  margin: 8px 0 0 48px; height: 4px; border-radius: 999px;
   background: var(--surface-3); overflow: hidden;
 }
 .ai-settings .mo-progress > span {
@@ -196,11 +196,11 @@
   background: var(--good); transition: width .4s var(--ease);
 }
 /* A plain-language install failure stays on the row, with Retry. */
-.ai-settings .mo-fail { color: var(--bad); font-size: 11px; line-height: 1.4; margin: 5px 0 0 47px; }
+.ai-settings .mo-fail { color: var(--bad); font-size: 11px; line-height: 1.4; margin: 4px 0 0 48px; }
 /* No pinned source: an honest dead end, not a Download button. */
 .ai-settings .mo-na {
-  flex: none; font-size: 10.5px; color: var(--text-mute);
-  border: 1px dashed var(--line); border-radius: 6px; padding: 3px 8px;
+  flex: none; font-size: 11px; color: var(--text-mute);
+  border: 1px dashed var(--line); border-radius: 6px; padding: 4px 8px;
 }
 
 /* ---- toggle switch ---- */
@@ -223,17 +223,17 @@
 
 /* ---- per-card Thinking setting ---- */
 .ai-settings .think-row {
-  flex: none; display: flex; align-items: flex-start; gap: 9px;
-  margin-top: 8px; padding-top: 9px; border-top: 1px solid var(--line-soft);
+  flex: none; display: flex; align-items: flex-start; gap: 8px;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-soft);
 }
 .ai-settings .think-row .switch { margin-top: 1px; }
 .ai-settings .think-label { font-size: 12px; color: var(--text-dim); }
-.ai-settings .think-hint { font-size: 10.5px; line-height: 1.35; color: var(--text-mute); margin-top: 1px; }
+.ai-settings .think-hint { font-size: 11px; line-height: 1.35; color: var(--text-mute); margin-top: 1px; }
 
 /* ---- card footer ---- */
 .ai-settings .svc-foot {
-  display: flex; align-items: center; gap: 9px; flex: none;
-  margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line-soft);
+  display: flex; align-items: center; gap: 8px; flex: none;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-soft);
 }
 .ai-settings .svc-foot .foot-label { color: var(--text-dim); font-size: 12px; }
 .ai-settings .service.svc-off .mo-scroll, .ai-settings .service.svc-off .key, .ai-settings .service.svc-off .think-row { opacity: .45; pointer-events: none; }
@@ -242,13 +242,13 @@
 .ai-settings .add-tile {
   position: relative; height: 100%; min-height: 170px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
   border: 1.5px dashed var(--line-hover); border-radius: 12px; background: transparent;
-  color: var(--text-mute); cursor: pointer; padding: 18px;
+  color: var(--text-mute); cursor: pointer; padding: 20px;
   transition: border-color .14s var(--ease), color .14s var(--ease), background-color .14s var(--ease);
 }
 .ai-settings .add-tile:hover { border-color: var(--text-mute); color: var(--text); background: var(--fill-1); }
-.ai-settings .add-tile .plus { font-size: 26px; line-height: 1; font-weight: 300; }
-.ai-settings .add-tile .add-label { font-size: 13.5px; font-weight: 600; }
-.ai-settings .add-tile .add-hint { font-size: 11.5px; color: var(--text-mute); text-align: center; max-width: 250px; }
+.ai-settings .add-tile .plus { font-size: 28px; line-height: 1; font-weight: 400; }
+.ai-settings .add-tile .add-label { font-size: 13px; font-weight: 500; }
+.ai-settings .add-tile .add-hint { font-size: 11px; color: var(--text-mute); text-align: center; max-width: 250px; }
 /* Anchored menus are placed in viewport coordinates by placeAnchoredMenu() so
    they can flip above/left of their anchor instead of running off the window
    edge. Fixed positioning keeps them put while the Settings pane scrolls. */
@@ -256,38 +256,38 @@
   position: fixed; top: 0; left: 0; visibility: hidden; z-index: 40;
   width: 330px; max-width: calc(100vw - 16px); text-align: left; cursor: default;
   background: var(--surface-3); border: 1px solid var(--line); border-radius: var(--radius);
-  box-shadow: var(--shadow); padding: 6px; display: grid; gap: 2px;
+  box-shadow: var(--shadow); padding: 8px; display: grid; gap: 2px;
 }
 .ai-settings .add-menu button {
   display: flex; align-items: baseline; gap: 8px; width: 100%;
   text-align: left; background: transparent; border: 0; border-radius: 7px;
-  padding: 8px 10px; cursor: pointer; color: var(--text);
+  padding: 8px 12px; cursor: pointer; color: var(--text);
 }
 .ai-settings .add-menu button:hover:not(:disabled) { background: var(--surface-2); }
 .ai-settings .add-menu button:disabled { opacity: .45; cursor: default; }
-.ai-settings .add-menu .am-name { font-size: 13px; font-weight: 600; flex: none; }
+.ai-settings .add-menu .am-name { font-size: 13px; font-weight: 500; flex: none; }
 .ai-settings .add-menu .am-desc { font-size: 11px; color: var(--text-mute); flex: 1; min-width: 0; }
-.ai-settings .add-menu .am-added { font-size: 10.5px; color: var(--good); flex: none; }
+.ai-settings .add-menu .am-added { font-size: 11px; color: var(--good); flex: none; }
 
 /* ---- helpers: compact rows, name + switch + status + model line ---- */
 .ai-settings .helpers { margin-top: 24px; }
 .ai-settings .helpers .sub { margin-bottom: 4px; }
-.ai-settings .helper-list { display: grid; grid-template-columns: 1fr 1fr; column-gap: 26px; }
+.ai-settings .helper-list { display: grid; grid-template-columns: 1fr 1fr; column-gap: 28px; }
 .ai-settings .helper {
-  display: flex; align-items: flex-start; gap: 10px; min-width: 0;
+  display: flex; align-items: flex-start; gap: 12px; min-width: 0;
   padding: 8px 2px; border-top: 1px solid var(--line-soft);
 }
 .ai-settings .helper .switch { margin-top: 2px; }
 .ai-settings .helper-main { flex: 1; min-width: 0; }
-.ai-settings .helper-title { font-size: 13px; font-weight: 600; letter-spacing: .01em; }
-.ai-settings .hm-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 1px; min-height: 15px; }
-.ai-settings .hm-model { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
-.ai-settings .hm-none { font-size: 10.5px; color: var(--text-mute); }
+.ai-settings .helper-title { font-size: 13px; font-weight: 500; letter-spacing: .01em; }
+.ai-settings .hm-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 1px; min-height: 15px; }
+.ai-settings .hm-model { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.ai-settings .hm-none { font-size: 11px; color: var(--text-mute); }
 .ai-settings .hm-more-wrap { position: relative; display: inline-flex; }
 .ai-settings .hm-more {
-  display: inline-flex; align-items: center; gap: 3px;
+  display: inline-flex; align-items: center; gap: 4px;
   background: transparent; border: 0; padding: 0; cursor: pointer;
-  font-size: 10.5px; color: var(--text-mute); border-radius: 4px;
+  font-size: 11px; color: var(--text-mute); border-radius: 4px;
   transition: color .14s var(--ease);
 }
 .ai-settings .hm-more:hover { color: var(--text); }
@@ -298,11 +298,11 @@
   position: fixed; top: 0; left: 0; visibility: hidden; z-index: 35;
   min-width: 170px; max-width: calc(100vw - 16px);
   background: var(--surface-3); border: 1px solid var(--line); border-radius: 8px;
-  box-shadow: var(--shadow); padding: 6px 9px; display: grid; gap: 3px;
+  box-shadow: var(--shadow); padding: 8px 8px; display: grid; gap: 4px;
 }
-.ai-settings .hm-pop span { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); white-space: nowrap; }
-.ai-settings .hm-pop .hm-pop-title { font-family: inherit; font-size: 10px; color: var(--text-mute); }
-.ai-settings .helper-status { flex: none; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+.ai-settings .hm-pop span { font-family: var(--mono); font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.ai-settings .hm-pop .hm-pop-title { font-family: inherit; font-size: 11px; color: var(--text-mute); }
+.ai-settings .helper-status { flex: none; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 .ai-settings .ph-status.locked { color: var(--warn2); }
 .ai-settings .ph-status.off { color: var(--text-mute); }
 

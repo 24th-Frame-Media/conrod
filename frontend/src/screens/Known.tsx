@@ -473,7 +473,7 @@ export function Known({ run, toast }: { run: Runner; toast: Toaster }) {
             </div>
           </div>
         ) : (
-          <Empty icon="folder" title="No known vehicles yet.">
+          <Empty icon="folder" title="No known vehicles yet">
             <p>Add a plate above and it will be remembered on every shoot.</p>
           </Empty>
         )}

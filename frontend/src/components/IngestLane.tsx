@@ -80,7 +80,7 @@ export function ScanLane({ worker, paused, recent, layout = 'card' }: { worker: 
   const stars = starsText(frame.stars);
   const verdict = verdictText(frame.verdict, frame.panning);
   const holding = state !== 'idle' && Boolean(frame.file);
-  const empty = state === 'idle' ? 'No frame yet.' : state === 'paused' ? 'Paused.' : state === 'waiting' ? text : frame.file ? `Working on ${frame.step ?? 'the frame'}…` : 'Waiting for a frame…';
+  const empty = state === 'idle' ? 'No frame yet' : state === 'paused' ? 'Paused' : state === 'waiting' ? text : frame.file ? `Working on ${frame.step ?? 'the frame'}…` : 'Waiting for a frame…';
   const viewfinder = (
     <div className="id-view id-view-lane">
       {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
@@ -110,7 +110,7 @@ export function ScanLane({ worker, paused, recent, layout = 'card' }: { worker: 
     <section className={`id-lane ing-lane ${state}${layout === 'tile' ? ' tile' : ''}${state === 'busy' ? ' live' : ''}`}
       aria-label={`Worker ${laneNumber(worker)}, ${worker.stage}, ${text}${frame.file ? `, ${frame.file}` : ''}`}>
       <header className="id-lane-head">
-        <span className="id-lane-name mono">WORKER {number}</span>
+        <span className="id-lane-name mono">Worker {number}</span>
         <span className={`id-lane-stage ing-stage ${state}`}>{worker.stage}</span>
         <span className={`ing-lane-text ${state}`}>{state === 'busy' ? '' : text}</span>
         {state === 'busy' && <i className="id-lane-dot" aria-hidden="true" />}
@@ -146,10 +146,10 @@ export function FrameDetail({ frame }: { frame: ScanRecentFrame }) {
       <section className="id-left" aria-label="Frame">
         <div className="id-view">
           {image && <span className="id-view-fill" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />}
-          {image ? <FrameStage src={image} boxes={boxes} af={frame.af} afKind={frame.af_kind} /> : <span className="id-view-empty">No picture for this frame.</span>}
+          {image ? <FrameStage src={image} boxes={boxes} af={frame.af} afKind={frame.af_kind} /> : <span className="id-view-empty">No picture for this frame</span>}
           <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
           <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
-          <span className="id-badge">DONE</span>
+          <span className="id-badge">Done</span>
           {frame.file && <span className="id-file" title={frame.file}>{frame.file}</span>}
         </div>
         <div className="id-result ing-frame-result" key={frame.image_id}>
@@ -163,13 +163,13 @@ export function FrameDetail({ frame }: { frame: ScanRecentFrame }) {
       </section>
       <aside className="id-right" aria-label="What the scan found">
         <section className="id-panel">
-          <h4>FACTS</h4>
+          <h4>Facts</h4>
           <dl className="ing-facts">
             {facts.map(([k, v]) => <div key={k}><dt>{k}</dt><dd className="mono">{v}</dd></div>)}
           </dl>
         </section>
         <section className="id-panel">
-          <h4>DETECTIONS</h4>
+          <h4>Detections</h4>
           {boxes.length ? (
             <ul className="ing-det-list">
               {boxes.map((b, i) => {
@@ -185,7 +185,7 @@ export function FrameDetail({ frame }: { frame: ScanRecentFrame }) {
           ) : <p className="muted id-panel-empty">No boxes were kept for this frame.</p>}
         </section>
         <section className="id-panel">
-          <h4>AUTOFOCUS</h4>
+          <h4>Autofocus</h4>
           <p className="muted id-panel-empty">{frame.af ? (frame.af_kind === 'grid' ? 'The dashed amber box is the union of the focus cells the camera reported in focus.' : 'The dashed amber box on the picture is where the camera focused.') : 'No autofocus area was read for this frame.'}</p>
         </section>
       </aside>

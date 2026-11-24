@@ -4,7 +4,7 @@ import {
   ADD_DESC, ADD_ORDER, BUILTIN, BUILTIN_ROW_ID, DECIDER_QUANTS, DECISION_HELPER,
   HELPERS, SERVICE_TYPES, SHARING, SHARING_HINT, SIMPLE_CONTROLS, THINK_HINT,
   addService, builtinRowStates, builtinVisionEnabled, cardsFromDraft, checkOutcome, costLine,
-  decisionCandidates, downloadProgress, helperStatus, isPicked, modelLine,
+  decisionCandidates, decisionFlag, decisionMeta, downloadProgress, helperStatus, isPicked, modelLine,
   momentsStatus, patchService, poolCount, removeService, servingFor, setBuiltinVision, setSharing,
   sharingValue, summaryText, visionCandidates,
   type AiHelper, type BuiltinModel, type Opt, type ServiceCard,
@@ -12,6 +12,7 @@ import {
 import type { IdentifyVram, ModelInfo, ModelsStatus, SettingValue, Settings as SettingsMap, Toaster } from '../lib/types';
 import { placeAnchoredMenu } from '../lib/anchoredMenu.mjs';
 import { IdentifyConcurrency } from '../components/IdentifyConcurrency';
+import { Icon } from '../components/basics';
 import '../styles/aiSettings.css';
 
 type Props = {
@@ -179,13 +180,16 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
       // OpenCode's); both render through this same path. Until it lands,
       // decisionCandidates falls back to the live model list / free text.
       let decisionLive: Opt[] = [];
+      let engineFreeText = false;
       if (def.decisions && (c.type === 'opencode' || c.type === 'openrouter')) {
         try {
           const res = await engine.decisionModels(c.type, '', key, '');
-          decisionLive = (res.models || []).map((m) => ({ id: m.id || m.name, name: m.name || m.id }));
+          // Keep what the engine said about each model (sees photos, unverified) and its free-text answer.
+          decisionLive = (res.models || []).map((m) => ({ id: m.id || m.name, name: m.name || m.id, image: m.image, unverified: m.unverified }));
+          engineFreeText = Boolean(res.freeText);
         } catch { /* enumeration command not landed yet -> fallback below */ }
       }
-      const dc = decisionCandidates(c.type, live, decisionLive);
+      const dc = decisionCandidates(c.type, live, decisionLive, { freeText: engineFreeText });
       return [c.key, { vision: visionCandidates(c.type, live), decision: dc.models, decisionFreeText: dc.freeText, liveOllama: [] }];
     });
     Promise.all(tasks).then((entries) => { if (!cancelled) setModelLists(Object.fromEntries(entries)); });
@@ -315,7 +319,7 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
 
   /* ---------- Test buttons: the REAL engine check commands ---------- */
   const testLabel = (key: string) => testing[key] === 'testing' ? 'Testing…'
-    : testing[key] === 'ok' ? 'Ready ✓'
+    : testing[key] === 'ok' ? 'Ready'
       : testing[key] === 'fail' ? 'Retry' : 'Test';
   const finishTest = (key: string, res: unknown, err?: unknown) => {
     if (!aliveRef.current) return;
@@ -438,9 +442,11 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
       control = <select disabled aria-label={`${label} model`}><option>{o.placeholder}</option></select>;
     } else {
       control = (
-        <select aria-label={`${label} model`} value={o.options.some((x) => x.id === sel) ? sel : 'none'} onChange={(e) => setSel(e.target.value)}>
+        <select aria-label={`${label} model`} value={isPicked(sel) ? sel : 'none'} onChange={(e) => setSel(e.target.value)}>
           <option value="none">None — skip</option>
-          {o.options.map((x) => <option key={x.id} value={x.id}>{x.id}</option>)}
+          {/* A saved model the list does not carry stays visible and in use, never shown as None. */}
+          {isPicked(sel) && !o.options.some((x) => x.id === sel) && <option value={sel}>{sel} (not in the list)</option>}
+          {o.options.map((x) => <option key={x.id} value={x.id}>{x.id}{role === 'decisions' ? decisionFlag(x) : ''}</option>)}
         </select>
       );
     }
@@ -448,7 +454,7 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
     return (
       <div className="pick">
         <div className="pick-line"><label>{label}</label>{control}</div>
-        {role === 'decisions' && cur ? <div className="pick-meta">sees photos</div> : null}
+        {role === 'decisions' && cur ? <div className="pick-meta">{decisionMeta(o.options.find((x) => x.id === cur))}</div> : null}
       </div>
     );
   };
@@ -601,7 +607,7 @@ export function AiSettingsCard({ draft, models, identifyVram, onChange, toast, o
               onClick={(e) => { e.stopPropagation(); if (!added) doAdd(type); }}>
               <span className="am-name">{SERVICE_TYPES[type].name}</span>
               <span className="am-desc">{ADD_DESC[type]}</span>
-              {added && <span className="am-added">Added ✓</span>}
+              {added && <span className="am-added"><Icon name="check" size={12} /> Added</span>}
             </button>
           );
         })}

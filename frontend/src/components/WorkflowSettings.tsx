@@ -1,9 +1,11 @@
 import {
   DEFAULT_IDENTIFY_ORDER,
+  PARALLEL_NOTE,
   moveIdentifyStage,
   normalizeIdentifyOrder,
   type IdentifyStageKey,
 } from '../lib/settings.mjs';
+import { Icon } from './basics';
 import type { IdentifyVram, SettingValue, Settings as SettingsMap } from '../lib/types';
 import '../styles/workflow.css';
 
@@ -11,7 +13,7 @@ const STAGE_META: Record<IdentifyStageKey, { label: string; badge: string; hint:
   ocr: {
     label: 'OCR',
     badge: 'CPU',
-    hint: 'Reads registration plates, race numbers, and visible text locally on CPU.',
+    hint: 'Reads numbers, plates, and any visible text locally on CPU.',
   },
   decision: {
     label: 'Decider',
@@ -66,6 +68,7 @@ export function WorkflowSettings({ draft, saved, identifyVram = null, onChange }
           <p className="hint" id="setting-identify_parallel-hint">
             Runs CPU OCR, the decision model, and the vision model concurrently when your hardware allows it.
           </p>
+          <p className="hint wf-parallel-note" id="setting-identify_parallel-note">{PARALLEL_NOTE}</p>
         </div>
         <div className="setting-control">
           <input
@@ -73,7 +76,7 @@ export function WorkflowSettings({ draft, saved, identifyVram = null, onChange }
             type="checkbox"
             role="switch"
             checked={parallel}
-            aria-describedby="setting-identify_parallel-hint"
+            aria-describedby="setting-identify_parallel-hint setting-identify_parallel-note"
             onChange={(e) => onChange('identify_parallel', e.target.checked)}
           />
         </div>
@@ -141,7 +144,7 @@ export function WorkflowSettings({ draft, saved, identifyVram = null, onChange }
                     aria-label={`Move ${meta.label} earlier`}
                     onClick={() => onChange('identify_order', moveIdentifyStage(order, key, -1))}
                   >
-                    ↑
+                    <Icon name="arrowUp" size={14} />
                   </button>
                   <button
                     type="button"
@@ -150,7 +153,7 @@ export function WorkflowSettings({ draft, saved, identifyVram = null, onChange }
                     aria-label={`Move ${meta.label} later`}
                     onClick={() => onChange('identify_order', moveIdentifyStage(order, key, 1))}
                   >
-                    ↓
+                    <Icon name="arrowDown" size={14} />
                   </button>
                 </div>
               </li>
@@ -159,7 +162,7 @@ export function WorkflowSettings({ draft, saved, identifyVram = null, onChange }
         </ol>
 
         <div className="wf-preview" aria-label="Pipeline execution preview">
-          <span className="wf-preview-label mono">{parallel ? (serialCard ? 'HYBRID PARALLEL' : 'PARALLEL') : 'SEQUENTIAL'}</span>
+          <span className="wf-preview-label mono">{parallel ? (serialCard ? 'Hybrid parallel' : 'Parallel') : 'Sequential'}</span>
           {parallel ? (
             serialCard ? (
               <div className="wf-preview-parallel">

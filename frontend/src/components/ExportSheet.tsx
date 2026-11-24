@@ -3,7 +3,8 @@ import { call } from '../lib/api';
 import { exportLine, exportRule, exportSummary } from '../lib/export.mjs';
 import { lightroomError, lightroomExportLine } from '../lib/lightroom.mjs';
 import type { Frame, LightroomExport } from '../lib/types';
-import { Icon, Portal, useBackdropClose } from './basics';
+import { Icon } from './basics';
+import { Sheet } from './Sheet';
 
 type Props = {
   visible: boolean;
@@ -29,7 +30,6 @@ export function ExportSheet({ visible, jobId, albumLabel, frames, keepers, dryRu
   const [sent, setSent] = useState<LightroomExport | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const summary = useMemo(() => exportSummary(frames, keepers), [frames, keepers]);
-  const backdrop = useBackdropClose(onClose);
   const autoRan = useRef(false);
 
   useEffect(() => {
@@ -66,9 +66,7 @@ export function ExportSheet({ visible, jobId, albumLabel, frames, keepers, dryRu
 
   if (!visible) return null;
   return (
-    <Portal>
-    <div className="import-overlay" {...backdrop}>
-      <div className="import-dialog export-sheet" style={{ maxWidth: 560 }}>
+    <Sheet label="Export" className="export-sheet" style={{ maxWidth: 560 }} onClose={onClose}>
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
         <h2>Export</h2>
         <p className="lede">Write what you decided about “{albumLabel}” next to the files, so Lightroom reads it.</p>
@@ -130,8 +128,6 @@ export function ExportSheet({ visible, jobId, albumLabel, frames, keepers, dryRu
             {dryRun ? 'Check what would be written' : 'Export'}
           </button>
         </div>
-      </div>
-    </div>
-    </Portal>
+      </Sheet>
   );
 }

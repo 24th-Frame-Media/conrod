@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useRun } from '../state/hooks';
-import { FilePick, Icon, Portal, useBackdropClose } from '../components/basics';
+import { FilePick, Icon } from '../components/basics';
+import { Sheet } from '../components/Sheet';
 import { ShootTypeSelect } from '../components/ShootTypeSelect';
 import { PresetPolicy } from '../components/PresetPolicy';
 import { isOn, type Overrides, type PolicySummary } from '../lib/presetPolicy.mjs';
@@ -36,7 +37,6 @@ const DEFAULT_GAP = 1.5;
 /** Import sheet: folder, label, shoot type, strictness, and one Scan button. */
 export function ImportDialog({ draft, setDraft, profile, setProfile, settings, status, busy, onStart, visible, onClose }: Props) {
   const run = useRun();
-  const backdrop = useBackdropClose(onClose);
   const [recursive, setRecursive] = useState(true);
   const [strictness, setStrictness] = useState('moderate');
   const [strictnessTouched, setStrictnessTouched] = useState(false);
@@ -83,9 +83,7 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
   };
   if (!visible) return null;
   return (
-    <Portal>
-    <div className="import-overlay" {...backdrop}>
-      <div className="import-dialog import-sheet" role="dialog" aria-label="Import photos">
+    <Sheet label="Import photos" className="import-sheet" onClose={onClose}>
         <button className="ghost icon import-close" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
         <h2>Import photos</h2>
         <p className="lede">Choose a folder and what you shot. Conrod reads, sorts and picks keepers in one go.</p>
@@ -145,8 +143,6 @@ export function ImportDialog({ draft, setDraft, profile, setProfile, settings, s
           <button className="primary" disabled={!draft.root.trim() || busy || !gapOk} onClick={start}>{busy ? 'Starting…' : scanning ? 'Add to queue' : 'Scan'}</button>
           {scanning && <span className="muted busy-note">A scan is running. This album joins the queue{(status.queue ?? []).length ? ` (${(status.queue ?? []).length} already waiting)` : ''} and starts by itself when that scan finishes.</span>}
         </div>
-      </div>
-    </div>
-    </Portal>
+      </Sheet>
   );
 }

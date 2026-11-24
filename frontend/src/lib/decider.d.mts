@@ -15,3 +15,5 @@ export function barTone(p: number): 'good' | 'warn' | 'none';
 export function sizeWords(bytes: number): string;
 export function statusLine(status: DeciderStatus | null | undefined): StatusLine;
 export function canInstall(status: DeciderStatus | null | undefined): boolean;
+export function settleDecider(live: DeciderLive | null | undefined): DeciderLive | null;
+export function deciderForJob(input?: { perJob?: DeciderLive | null; global?: (DeciderLive & { job_id?: number | null }) | null; jobId?: number | null; activeJob?: number | null; identifying?: boolean; ended?: boolean }): DeciderLive | null;

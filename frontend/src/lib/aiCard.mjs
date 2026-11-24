@@ -253,10 +253,20 @@ export function visionCandidates(type, live = []) {
   if (!out.length && SERVICE_TYPES[type]) return visionModels(type).map((m) => ({ id: m.id, name: m.id }));
   return out;
 }
-export function decisionCandidates(type, live = [], decisionLive = []) {
+/**
+ * `decisionLive` is the engine's own `decision_models` list: each model keeps what the engine said
+ * about it (`image`: sees photos / does not / unknown, `unverified`), and `freeText` is the engine's
+ * own "type the id yourself" answer, so none of it is dropped on the way to the dropdown.
+ */
+export function decisionCandidates(type, live = [], decisionLive = [], { freeText: engineFreeText = false } = {}) {
   const def = SERVICE_TYPES[type];
   if (!def || !def.decisions) return { models: [], freeText: false };
-  const named = (m) => ({ id: m.id || m.model || m.name, name: m.name || m.id || m.model });
+  const named = (m) => {
+    const out = { id: m.id || m.model || m.name, name: m.name || m.id || m.model };
+    if (m.image !== undefined) out.image = m.image;
+    if (m.unverified !== undefined) out.unverified = m.unverified;
+    return out;
+  };
   // TODO(engine, backend-owned): OpenRouter's decision enumeration is a
   // decision_models command returning the same shape as OpenCode
   // ({ id/model, sees_photos, note? }); both render through this same path.
@@ -264,18 +274,33 @@ export function decisionCandidates(type, live = [], decisionLive = []) {
   // from the live model list, then to an honest free-text row when none match.
   if (type === 'opencode' || type === 'openrouter') {
     const ms = decisionLive.map(named);
-    if (ms.length) return { models: ms, freeText: false };
+    if (ms.length) return { models: ms, freeText: Boolean(engineFreeText) };
     if (type === 'openrouter') {
       const matches = live
         .filter((m) => /decision|decider|jev/i.test((m.id || '') + ' ' + (m.name || '')))
         .map(named);
-      return { models: matches, freeText: matches.length === 0 };
+      return { models: matches, freeText: matches.length === 0 || Boolean(engineFreeText) };
     }
     return { models: decisionModels('opencode').map((m) => ({ id: m.id, name: m.id })), freeText: false };
   }
   // gemini / anthropic / openai: every offered model both sees and decides.
   const out = live.map(named);
   return { models: out.length ? out : decisionModels(type).map((m) => ({ id: m.id, name: m.id })), freeText: false };
+}
+
+/** What a decision-model option says about itself beyond its id. */
+export function decisionFlag(model) {
+  if (!model) return '';
+  const flags = [];
+  if (model.image === false) flags.push('text only');
+  if (model.unverified) flags.push('unverified');
+  return flags.length ? ` (${flags.join(', ')})` : '';
+}
+/** The line under a picked decision model: it only says "sees photos" when the engine did. */
+export function decisionMeta(model) {
+  if (!model || model.image == null) return model?.unverified ? 'unverified' : '';
+  const sees = model.image ? 'sees photos' : 'text only: cannot see photos';
+  return model.unverified ? `${sees}, unverified` : sees;
 }
 
 /* ---- settings wire helpers (vlm_services / moments_services) ----

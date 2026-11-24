@@ -21,6 +21,7 @@ import { useLocalFlag, useRun } from '../state/hooks';
 import { useToast } from '../state/toast';
 import { MenuDropdown, type MenuItem } from '../components/MenuDropdown';
 import { ShootSettingsModal } from '../components/ShootSettingsModal';
+import { featureLabel, runSaveSteps, saveFailureMessage, type SaveStep } from '../lib/shootSave.mjs';
 import { ShootStatsModal } from '../components/ShootStatsModal';
 import { ExportSheet } from '../components/ExportSheet';
 import { LightroomImport } from '../components/LightroomImport';
@@ -477,7 +478,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   if (jobId == null) {
     return (
       <div className="screen">
-        <Empty icon="folder" title="Choose a shoot to get started.">
+        <Empty icon="folder" title="Choose a shoot to get started">
           <p>Open an album from the library to review it here.</p>
           <button className="primary" onClick={onLibrary}>Open library</button>
         </Empty>
@@ -486,7 +487,7 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
   }
   const filtered = filters.search !== '' || filters.facet !== null || filters.view !== 'all' || filters.minStars > 0;
   const emptyState = (
-    <Empty icon="images" title={review.frames.length ? 'Nothing matches these filters.' : rv.loading ? 'Loading this album…' : scanning ? 'Waiting for the first frames…' : 'No photographs to show yet.'}>
+    <Empty icon="images" title={review.frames.length ? 'Nothing matches these filters' : rv.loading ? 'Loading this album…' : scanning ? 'Waiting for the first frames…' : 'No photographs to show yet'}>
       {filtered && <button className="ghost" onClick={() => patchFilters({ ...defaultFilters })}>Clear filters</button>}
     </Empty>
   );
@@ -604,8 +605,8 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
     everything: identifyActionLabel('everything', everythingEligible),
   };
   const identifyTitle = identifyScope === 'everything'
-    ? 'Read plates, numbers, and vehicle data on every subject, culled frames included'
-    : 'Read plates, numbers, and vehicle data on the keeper you picked, or the suggested one';
+    ? `Read ${subject.fields.readData} on every subject, culled frames included`
+    : `Read ${subject.fields.readData} on the keeper you picked, or the suggested one`;
 
   const primaryStep = !busy && pending > 0 && workflowIncludesCull(workflow)
     ? {
@@ -881,19 +882,23 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
         onClose={() => setShootSettingsOpen(false)}
         onSave={async (patch) => {
           const { overrides: wanted, ...rest } = patch;
-      await engine.updateJobSettings(jobId, rest);
-      // Each changed detector or reader goes through `set_feature`: it re-rates, and finds faces for a shoot that had none.
-      let rescan = false;
-      for (const key of new Set([...Object.keys(wanted), ...Object.keys(albumOverrides)])) {
-        if (wanted[key] === albumOverrides[key]) continue;
-        const result = await engine.setFeature(jobId, key, wanted[key] ?? null);
-        rescan = rescan || result.needsRescan;
-      }
-      if (rescan) toast('Rescan this album to look for the newly switched-on subjects.');
+          // There is no single engine call for the whole patch, so run the parts in order, stop at the first
+          // failure and report exactly what was saved: never half-applied in silence.
+          let rescan = false;
+          const steps: SaveStep[] = [{ label: 'Shoot settings', run: () => engine.updateJobSettings(jobId, rest) }];
+          // Each changed detector or reader goes through `set_feature`: it re-rates, and finds faces for a shoot that had none.
+          for (const key of new Set([...Object.keys(wanted), ...Object.keys(albumOverrides)])) {
+            if (wanted[key] === albumOverrides[key]) continue;
+            steps.push({ label: featureLabel(key), run: async () => { const result = await engine.setFeature(jobId, key, wanted[key] ?? null); rescan = rescan || result.needsRescan; } });
+          }
           // A grouping choice only shows once the album is regrouped; a preset or detection change is safe to regroup too.
-          await call('regroup', { jobId });
-          await onJobsChanged();
-          await rv.refresh();
+          steps.push({ label: 'Regroup stacks', run: () => call('regroup', { jobId }) });
+          const outcome = await runSaveSteps(steps);
+          // Whatever did save is real: refresh so the screen shows it, then tell the modal why it stays open.
+          await Promise.resolve(onJobsChanged()).catch(() => undefined);
+          await rv.refresh().catch(() => undefined);
+          if (outcome.failed) throw new Error(saveFailureMessage(outcome));
+          if (rescan) toast('Rescan this album to look for the newly switched-on subjects.');
           toast('Shoot settings updated for this album and its stacks regrouped.');
         }}
       />
@@ -959,12 +964,12 @@ export function ReviewScreen({ rv, jobs, jobId, scanning, status, settings, show
             void run(async () => {
               await call('reset_identifications', { jobId });
               await rv.refresh();
-              toast('All vehicle identifications removed.');
+              toast(subject.fields.removedDone);
             });
             setConfirmReset(null);
           }}
         >
-          <p>This removes all vehicle plates, race numbers, and models detected or assigned in this album. Original photograph files and photo ratings remain untouched.</p>
+          <p>This removes all {subject.fields.removed} detected or assigned in this album. Original photograph files and photo ratings remain untouched.</p>
         </Confirm>
       )}
       {confirmReset === 'reset_detections' && (

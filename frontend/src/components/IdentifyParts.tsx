@@ -7,7 +7,7 @@ import { SUBJECT_WORDS } from '../lib/subjects.mjs';
 import type { IdentifyItem } from '../lib/types';
 
 /** The album's resolved subject words (subjects.mjs), or the neutral default. */
-type Subject = { one: string; many: string; title: string; rate: string; each: string };
+type Subject = import('../lib/subjects.mjs').SubjectWords;
 
 /** Why a subject got no make, colour or team when vision is off, with the way to change that. */
 function VisionWhy({ reason, onAction }: { reason: VisionOffReason; onAction?: (id: VisionAction['id']) => void }) {
@@ -65,10 +65,10 @@ function FieldCell({ label, value, pending = false, muted = false }: {
  * fields populated from the engine's reading. Clicking the card opens the full detail view
  * (including raw prompt, model JSON reply, and trace).
  */
-export function IdentifyLane({ worker, item, live, name = 'WORKER', ocrOnly = false, layout = 'card', visionOff, onVisionAction, onOpen, subject }: {
+export function IdentifyLane({ worker, item, live, name = 'Worker', ocrOnly = false, layout = 'card', visionOff, onVisionAction, onOpen, subject }: {
   worker: number; item: IdentifyItem | null; prompt?: string; live: boolean; name?: string; ocrOnly?: boolean; layout?: 'card' | 'tile'; onOpen: () => void;
   subject?: Subject;
-  /** Why the vision model is not asked, when it is not: the card says so instead of "Make not read". */
+  /** Why the vision model is not asked, when it is not: the card says so instead of the not-read line. */
   visionOff?: VisionOffReason | null;
   onVisionAction?: (id: VisionAction['id']) => void;
 }) {
@@ -78,9 +78,9 @@ export function IdentifyLane({ worker, item, live, name = 'WORKER', ocrOnly = fa
   const visionPending = Boolean(item && live && !ocrOnly && !visionOff);
   const title = makeModel
     || (item
-      ? (ocrOnly ? (live ? 'Reading plates & numbers' : 'OCR complete')
+      ? (ocrOnly ? (live ? w.fields.ocrLive : 'OCR complete')
         : visionOff ? visionLaneWords(visionOff).title
-          : live ? 'Reading…' : 'Make not read')
+          : live ? 'Reading…' : w.fields.notRead)
       : `Waiting for a ${w.one}`);
   const source = sourceLabel(item?.number_source);
   // Confidence is about the number: a subject with no number read is not a 0% reading.
@@ -98,7 +98,7 @@ export function IdentifyLane({ worker, item, live, name = 'WORKER', ocrOnly = fa
       <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
       <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
       {live && <span className="id-scanline" aria-hidden="true" />}
-      <span className={`id-badge${live ? ' live' : ''}`}>{live ? 'LIVE' : item ? 'DONE' : 'IDLE'}</span>
+      <span className={`id-badge${live ? ' live' : ''}`}>{live ? 'Live' : item ? 'Done' : 'Idle'}</span>
       {item && <span className="id-file" title={item.path || displayPath(item)}>{caption(item)}</span>}
     </div>
   );
@@ -107,19 +107,19 @@ export function IdentifyLane({ worker, item, live, name = 'WORKER', ocrOnly = fa
     <div className="id-fields-wrap">
       <div className="id-fields-grid">
         <FieldCell
-          label="Make / Model"
+          label={w.fields.makeModel}
           value={makeModel || (ocrOnly ? 'Waiting for vision' : visionOff ? 'Vision off' : null)}
           pending={visionPending && !makeModel}
           muted={!makeModel && (ocrOnly || Boolean(visionOff))}
         />
-        <FieldCell label="Plate" value={item?.plate} pending={Boolean(item && live && ocrOnly && !item.plate)} />
+        <FieldCell label={w.fields.plate} value={item?.plate} pending={Boolean(item && live && ocrOnly && !item.plate)} />
         <FieldCell
-          label="Colour"
+          label={w.fields.colour}
           value={item?.colour || (ocrOnly ? 'Waiting for vision' : null)}
           pending={visionPending && !item?.colour}
           muted={!item?.colour && ocrOnly}
         />
-        <FieldCell label="Team" value={item?.team} pending={visionPending && !item?.team} />
+        <FieldCell label={w.fields.team} value={item?.team} pending={visionPending && !item?.team} />
       </div>
       {item?.action?.length ? (
         <div className="id-action-row">
@@ -137,7 +137,7 @@ export function IdentifyLane({ worker, item, live, name = 'WORKER', ocrOnly = fa
   return (
     <section
       className={`id-lane${layout === 'tile' ? ' tile' : ''}${live ? ' live' : item ? ' done' : ' idle'}${item ? ' clickable' : ''}`}
-      aria-label={`${name === 'WORKER' ? 'Worker' : name === 'OCR' ? 'OCR worker' : 'Vision worker'} ${worker + 1}`}
+      aria-label={`${name === 'Worker' ? 'Worker' : name === 'OCR' ? 'OCR worker' : 'Vision worker'} ${worker + 1}`}
       onClick={() => { if (item) onOpen(); }}
     >
       <header className="id-lane-head">
@@ -188,7 +188,7 @@ export function IdentifyDetail({ detail, prompt, live, visionOff, onVisionAction
 }) {
   const w = subject ?? SUBJECT_WORDS.subjects;
   const number = hash(detail?.number);
-  const title = [detail?.make, detail?.model].filter(Boolean).join(' ') || (detail ? (visionOff ? visionLaneWords(visionOff).title : 'Make not read') : `No ${w.one} read yet`);
+  const title = [detail?.make, detail?.model].filter(Boolean).join(' ') || (detail ? (visionOff ? visionLaneWords(visionOff).title : w.fields.notRead) : `No ${w.one} read yet`);
   const source = sourceLabel(detail?.number_source);
   const conf = detail?.number ? confidencePercent(detail.number_conf) : null;
   const tone = confidenceTone(detail?.number_conf);
@@ -204,7 +204,7 @@ export function IdentifyDetail({ detail, prompt, live, visionOff, onVisionAction
           <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
           <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
           {live && <span className="id-scanline" aria-hidden="true" />}
-          <span className={`id-badge${live ? ' live' : ''}`}>{live ? 'LIVE' : 'DONE'}</span>
+          <span className={`id-badge${live ? ' live' : ''}`}>{live ? 'Live' : 'Done'}</span>
           {detail && <span className="id-file" title={detail.path || displayPath(detail)}>{caption(detail)}</span>}
         </div>
 
@@ -233,23 +233,23 @@ export function IdentifyDetail({ detail, prompt, live, visionOff, onVisionAction
 
       <aside className="id-right" aria-label="What the model was asked and said">
         <section className="id-panel id-ask">
-          <h4>ASKING</h4>
+          <h4>Asking</h4>
           {prompt
             ? <pre className="mono">{prompt}</pre>
             : <p className="muted id-panel-empty">{detail ? (visionOff ? <VisionWhy reason={visionOff} onAction={onVisionAction} /> : `No prompt for this ${w.one}.`) : 'Waiting…'}</p>}
         </section>
         <section className="id-panel id-reply">
-          <h4>MODEL SAYS</h4>
+          <h4>Model says</h4>
           {detail?.reply
             ? <pre className="mono">{prettyReply(detail.reply)}</pre>
-            : <p className="muted id-panel-empty">{detail ? 'OCR/entry list only.' : 'Waiting…'}</p>}
+            : <p className="muted id-panel-empty">{detail ? 'OCR and entry list only' : 'Waiting…'}</p>}
           {detail?.action?.length ? (
             <div className="id-action-tags">{detail.action.map((tag) => <span className="tag" key={tag}>{actionLabel(tag)}</span>)}</div>
           ) : null}
           {detail && <Chips item={detail} />}
         </section>
         <section className="id-panel id-trace">
-          <h4>TRACE</h4>
+          <h4>Trace</h4>
           {detail?.trace?.length ? (
             <ol className="id-trace-lines">
               {detail.trace.map((line, i) => (
@@ -259,7 +259,7 @@ export function IdentifyDetail({ detail, prompt, live, visionOff, onVisionAction
                 </li>
               ))}
             </ol>
-          ) : <p className="muted id-panel-empty">No trace yet.</p>}
+          ) : <p className="muted id-panel-empty">No trace yet</p>}
         </section>
       </aside>
     </div>
