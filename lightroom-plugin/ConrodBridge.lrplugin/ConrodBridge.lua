@@ -151,15 +151,35 @@ local function writeTextAtomic(directory, name, text)
     pcall(function() LrFileUtils.delete(temporaryPath) end)
     return nil, string.format('write failed (%s)', tostring(writeError or closeError))
   end
-  if exists(finalPath) then
-    pcall(function() LrFileUtils.delete(finalPath) end)
+  -- Keep any existing file until the new one is in place: set it aside under
+  -- <name>.old, move the new file in, then drop the old one. If the move fails,
+  -- the old file is put back.
+  local backupPath = finalPath .. '.old'
+  local hadOld = exists(finalPath)
+  if hadOld then
+    if exists(backupPath) then
+      pcall(function() LrFileUtils.delete(backupPath) end)
+    end
+    local aside, asideResult = pcall(function()
+      return LrFileUtils.move(finalPath, backupPath)
+    end)
+    if not aside or asideResult == false or exists(finalPath) then
+      pcall(function() LrFileUtils.delete(temporaryPath) end)
+      return nil, string.format('cannot replace %s', finalPath)
+    end
   end
   local moved, moveResult, moveError = pcall(function()
     return LrFileUtils.move(temporaryPath, finalPath)
   end)
   if not moved or moveResult == false or not exists(finalPath) then
     pcall(function() LrFileUtils.delete(temporaryPath) end)
+    if hadOld then
+      pcall(function() LrFileUtils.move(backupPath, finalPath) end)
+    end
     return nil, string.format('rename failed (%s)', tostring(moveError or moveResult))
+  end
+  if hadOld then
+    pcall(function() LrFileUtils.delete(backupPath) end)
   end
   return finalPath
 end

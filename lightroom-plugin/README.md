@@ -109,11 +109,11 @@ the folder in Explorer.
   "format": "conrod.lightroom.bridge",
   "version": 1,
   "direction": "to-conrod",
-  "album": { "label": "Bathurst 1000 - Race Week", "root": "D:\\…\\01_RAW" },
+  "album": { "label": "Race Week", "root": "D:\\…\\01_RAW" },
   "created_at": "2026-11-19T16:00:00Z",
   "producer": { "app": "conrod-bridge", "version": "1.0.0" },
   "photos": [
-    { "path": "D:\\…\\20261006_B1000_0202.CR3",
+    { "path": "D:\\…\\20261006_0202.CR3",
       "rating": 5, "pick": 1, "label": "green" }
   ]
 }

@@ -12,6 +12,7 @@ $res = Join-Path $root 'crates\conrod-app\resources'
 $manifest = Get-Content (Join-Path $PSScriptRoot 'assets.json') -Raw | ConvertFrom-Json
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "conrod-assets-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
+try {
 foreach ($a in $manifest.assets | Where-Object { $_.dest -ne 'models' -and -not $_.optional }) {
   if (-not $a.sha256) { throw "$($a.name): no pinned sha256 in assets.json" }
   $dest = Join-Path $res $a.dest
@@ -23,4 +24,6 @@ foreach ($a in $manifest.assets | Where-Object { $_.dest -ne 'models' -and -not 
   if ($a.extract) { Expand-Archive $file -DestinationPath $dest -Force } else { Copy-Item $file $dest -Force }
   "ok  $($a.name)"
 }
-Remove-Item $tmp -Recurse -Force
+} finally {
+  Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+}
