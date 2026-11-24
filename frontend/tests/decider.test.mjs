@@ -55,26 +55,26 @@ test('the ingest DECIDER node waits for the bursts phase before it ticks', () =>
   assert.equal(deciderNode(live({ done: 40 }), cloud, phase('done')).state, 'done');
 });
 
-test('the DECIDER node sits after VISION and before DONE, and only when the engine reports the model', () => {
+test('the DECIDER node sits before VISION and DONE, and only when the engine reports the model', () => {
   const stages = [{ id: 'read', label: 'Read', done: 5, total: 10, workers_total: 2, workers_busy: 1 }, { id: 'identify', label: 'Identify', done: 0, total: 3 }];
   const without = ingestNodes({ stages }).map((n) => n.id);
   assert.equal(without.includes('decider'), false);
   const nodes = ingestNodes({ stages, decider: live({ state: 'off' }) });
   const ids = nodes.map((n) => n.id);
-  assert.deepEqual(ids.slice(-3), ['vision', 'decider', 'done']);
+  assert.deepEqual(ids.slice(-3), ['decider', 'vision', 'done']);
   assert.equal(nodes.find((n) => n.id === 'decider').filter, 'decider');
   assert.deepEqual(nodes.map((n) => n.number), nodes.map((_, i) => String(i + 1).padStart(2, '0')));
 });
 
-test('the identify flow shows the decision model beside vision, with its question and answer', () => {
+test('the identify flow puts DECIDER after READ and before VISION, matching engine order', () => {
   const asking = live({
     state: 'running', busy: 1, done: 12, avg_ms: 340,
     current: { label: 'a.CR3', thumb: null, queued: false, elapsed_ms: 10, asking: [{ id: 'm_wheel_lift', kind: 'noul', text: 'Is a wheel off the ground?', options: 2 }] },
   });
   const nodes = identifyNodes({ stage: 'vision', state: 'running' }, 'qwen', asking);
   assert.equal(nodes.length, 7);
-  assert.equal(nodes[3].label, 'VISION');
-  const node = nodes[4];
+  assert.deepEqual(nodes.map((n) => n.label), ['LOAD', 'CROP', 'READ', 'DECIDER', 'VISION', 'ENTRY LIST', 'RESULT']);
+  const node = nodes[3];
   assert.equal(node.label, 'DECIDER');
   assert.equal(node.sub, 'Is a wheel off the ground?');
   assert.equal(node.state, 'active');
@@ -85,12 +85,12 @@ test('the identify flow shows the decision model beside vision, with its questio
   const answered = identifyNodes({ stage: 'vision' }, 'qwen', live({
     done: 30, avg_ms: 900,
     recent: [{ label: 'a.CR3', thumb: null, ms: 900, tokens: 900, ok: true, says: [{ id: 'm_wheel_lift', kind: 'noul', text: 'Is a wheel off the ground?', label: 'yes', p: 0.91, bars: [] }] }],
-  }))[4];
+  }))[3];
   assert.equal(answered.state, 'done');
   assert.match(answered.meta, /30 frames/);
   assert.match(answered.meta, /yes 91%/);
   // Off: the node is dimmed and says why, never empty.
-  const off = identifyNodes({ stage: 'vision' }, 'qwen', live({ state: 'off' }))[4];
+  const off = identifyNodes({ stage: 'vision' }, 'qwen', live({ state: 'off' }))[3];
   assert.equal(off.off, true);
   assert.equal(off.sub, 'off');
   // No decider in the snapshot: the original six nodes are unchanged.
@@ -99,7 +99,7 @@ test('the identify flow shows the decision model beside vision, with its questio
 
 test('a re-run shows the DECIDER for its own remaining work, and a stopped run is not finished', () => {
   const snapshot = { stage: 'vision', state: 'stopped', phase: { name: 'moments', done: 0, total: 3, state: 'stopped' } };
-  const node = identifyNodes(snapshot, 'qwen', live({ done: 12 }))[4];
+  const node = identifyNodes(snapshot, 'qwen', live({ done: 12 }))[3];
   assert.equal(node.state, 'pending', 'work left undone is not a finished run');
   assert.equal(node.sub, 'Judging moments 0/3', 'the count is the frames this run has left');
 });
@@ -122,7 +122,7 @@ test('DECIDER node names the serving cloud service, never the local "not install
   assert.doesNotMatch(step.title, /not installed/i);
 
   // Both flowcharts thread the serving service to their DECIDER node too.
-  assert.equal(identifyNodes({ stage: 'vision' }, 'qwen', live({ state: 'not_installed' }), serving)[4].sub, serving);
+  assert.equal(identifyNodes({ stage: 'vision' }, 'qwen', live({ state: 'not_installed' }), serving)[3].sub, serving);
   assert.equal(ingestNodes({ decider: live({ state: 'not_installed' }), serving }).find((n) => n.id === 'decider').sub, serving);
 });
 
@@ -131,7 +131,7 @@ test('without a cloud service the DECIDER node keeps the local install state', (
   assert.equal(deciderNode(live({ state: 'not_installed' })).sub, 'Decision model · not installed');
   assert.equal(deciderStepNode(live({ state: 'not_installed' })).off, true);
   assert.equal(deciderStepNode(live({ state: 'not_installed' })).sub, 'off');
-  assert.equal(identifyNodes({ stage: 'vision' }, 'qwen', live({ state: 'off' }), null)[4].off, true);
+  assert.equal(identifyNodes({ stage: 'vision' }, 'qwen', live({ state: 'off' }), null)[3].off, true);
 });
 
 test('the lane shows once the model is awake or has answered something', () => {

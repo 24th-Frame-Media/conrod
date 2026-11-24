@@ -35,19 +35,23 @@ export function activeStage(stage) {
 export function flowNodes(live, model, stage, subject = SUBJECT_WORDS.subjects) {
   const at = stage ?? live?.current?.stage ?? live?.stage ?? 'read';
   const active = activeStage(at);
+  const ocrRunning = live?.phase?.name === 'ocr' && live?.phase?.state === 'running';
+  const deciderRunning = (live?.phase?.name === 'moments' || live?.phase?.name === 'peaks') && live?.phase?.state === 'running';
   // `done` only ever comes from a finished car (the engine clears `current` when the run
-  // ends), so the whole row checks off while that result is held.
-  const finished = at === 'done';
+  // ends), so the whole row checks off while that result is held. During Decision, OCR's
+  // last item may have set `stage = done`, so never check off VISION/ENTRY LIST/RESULT early.
+  const finished = at === 'done' && !deciderRunning && !ocrRunning;
   // Vision off is a reason, not a model: the VISION node says so instead of naming one.
   const reason = visionOffReason(live);
-  const ocrRunning = live?.phase?.name === 'ocr' && live?.phase?.state === 'running';
   return FLOW_NODES.map((node, i) => ({
     ...node,
     sub: node.label !== 'VISION' ? node.sub : reason ? visionNodeSub(reason) : visionModelWords(model) ? `Reading ${subject.many} — ${visionModelWords(model)}` : node.sub,
     off: node.label === 'VISION' && Boolean(reason),
-    state: finished || i < active ? 'done'
-      : node.stage === at ? (ocrRunning && node.label === 'VISION' ? 'pending' : 'active')
-        : 'pending',
+    state: deciderRunning
+      ? (i < 3 ? 'done' : 'pending')
+      : finished || i < active ? 'done'
+        : node.stage === at ? (ocrRunning && node.label === 'VISION' ? 'pending' : 'active')
+          : 'pending',
   }));
 }
 

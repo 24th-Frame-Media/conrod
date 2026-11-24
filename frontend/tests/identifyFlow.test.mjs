@@ -35,6 +35,9 @@ test('flow nodes mark done, active and pending; vision lights both AI nodes', ()
   // During the OCR phase, only READ lights up while VISION stays pending.
   const ocrNodes = flowNodes({ stage: 'vision', state: 'running', phase: { name: 'ocr', done: 10, total: 50, state: 'running' } }, 'qwen3-vl:8b-instruct-q4_K_M', null, vehicles);
   assert.deepEqual(ocrNodes.map((node) => node.state), ['done', 'done', 'active', 'pending', 'pending', 'pending']);
+  // During Decision (moments/peaks), LOAD/CROP/READ are done and VISION/ENTRY LIST/RESULT stay pending (no stale CROP pulse).
+  const deciderNodes = flowNodes({ stage: 'crop', state: 'running', phase: { name: 'moments', done: 1221, total: 1572, state: 'running' } }, 'qwen3-vl:8b-instruct-q4_K_M', null, vehicles);
+  assert.deepEqual(deciderNodes.map((node) => node.state), ['done', 'done', 'done', 'pending', 'pending', 'pending']);
 });
 
 test('a finished run has nothing left to pulse, and no snapshot starts at LOAD', () => {
