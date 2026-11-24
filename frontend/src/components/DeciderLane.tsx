@@ -35,7 +35,6 @@ export function DeciderLane({ live, serving = null, layout = 'card', paused = fa
   const current = live.current;
   const last = live.recent[0] ?? null;
   const busy = live.busy > 0 || live.state === 'loading' || (current != null && !current.queued);
-  const waiting = current?.queued === true;
   // A cloud decision service (e.g. JEV via OpenCode) serves with a key: the local model's
   // "not installed" state is irrelevant, so the lane never reads as off or names the local model.
   const unavailable = !serving && ['off', 'not_installed', 'installing', 'no_gpu', 'no_vram'].includes(live.state) && !busy && !last;
@@ -46,7 +45,6 @@ export function DeciderLane({ live, serving = null, layout = 'card', paused = fa
   const answeredIds = new Set(says.map((s) => s.id));
   const pendingAsks = asking.filter((a) => !answeredIds.has(a.id));
   const isPaused = paused && !unavailable;
-  const badge = isPaused ? 'Paused' : busy ? 'Live' : waiting ? 'Queued' : unavailable ? 'Off' : last ? 'Done' : 'Idle';
   const cls = isPaused ? ' paused' : busy ? ' live' : last ? ' done' : ' idle';
 
   const viewfinder = (
@@ -58,10 +56,10 @@ export function DeciderLane({ live, serving = null, layout = 'card', paused = fa
       <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
       <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
       {busy && !isPaused && <span className="id-scanline" aria-hidden="true" />}
-      <span className={`id-badge${isPaused ? ' paused' : busy ? ' live' : ''}${!isPaused && waiting ? ' waiting' : ''}`}>{badge}</span>
-      {shown && <span className="id-file" title={shown.label}>{fileOf(shown.label)}</span>}
     </div>
   );
+  // The file name lives under the picture, not on it.
+  const file = shown ? <span className="ing-file mono muted" title={shown.label}>{fileOf(shown.label)}</span> : null;
 
   const counters = (
     <dl className={`dec-counters${layout === 'tile' ? ' compact' : ''}`}>
@@ -125,7 +123,7 @@ export function DeciderLane({ live, serving = null, layout = 'card', paused = fa
       {layout === 'hero' ? (
         <div className="dec-hero-grid">
           <div className="dec-hero-left">
-            {viewfinder}
+            {viewfinder}{file}
             {counters}
           </div>
           <div className="dec-hero-right">
@@ -136,7 +134,7 @@ export function DeciderLane({ live, serving = null, layout = 'card', paused = fa
       ) : layout === 'tile' ? (
         <div className="id-lane-split">
           <div className="id-lane-split-left">
-            {viewfinder}
+            {viewfinder}{file}
             {counters}
           </div>
           <div className="id-lane-split-right">
@@ -145,7 +143,7 @@ export function DeciderLane({ live, serving = null, layout = 'card', paused = fa
         </div>
       ) : (
         <>
-          {viewfinder}
+          {viewfinder}{file}
           {counters}
           {momentsPanel}
           {foot}

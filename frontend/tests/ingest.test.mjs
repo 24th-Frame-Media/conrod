@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   boxLabel, boxRole, boxStyle, comparingBursts, etaLines, frameRate, identifyEta, identifyNodes, ingestFraction, ingestIdentify, ingestNodes, ingestPhase,
-  laneBadge, laneFrame, laneKey, laneNumber, laneState, laneText, leftLabel, mainVehicle, phaseRunning, phaseTone, phaseWord, roleLabel,
-  selectLanes, stageOfStep, stagePlace, starsText, stepIndex, stripItems, verdictText, visionExpected, tagFits, tagWidth, afLabel, afTagSpot, failedWords,
+  boxLegend, laneFrame, laneKey, laneNumber, laneState, laneText, leftLabel, mainVehicle, phaseRunning, phaseTone, phaseWord, roleLabel,
+  selectLanes, stageOfStep, stagePlace, starsText, stepIndex, stepProgress, stripItems, verdictText, visionExpected, tagFits, tagWidth, afLabel, afTagSpot, failedWords,
   TAG_HEIGHT,
 } from '../src/lib/ingest.mjs';
 import { SUBJECT_WORDS } from '../src/lib/subjects.mjs';
@@ -186,8 +186,25 @@ test('lane words say why a lane waits, and what a busy one does', () => {
   assert.equal(laneText(worker('detect', 0, 'idle')), 'idle');
   assert.equal(laneText(worker('detect', 0, 'busy', { step: 'YOLO' })), 'YOLO');
   assert.equal(laneText(worker('detect', 0, 'busy', { step: 'YOLO', current: { step: 'detect' } })), 'detect');
-  assert.equal(laneBadge('busy'), 'Live');
-  assert.equal(laneBadge('paused'), 'Paused');
+});
+
+test('the stage bar names the current step once, in full, never a fragment', () => {
+  const p = stepProgress('sharpness', 'sharpness');
+  assert.equal(p.label, 'Sharpness · 4 of 6');
+  assert.equal(p.total, 6);
+  assert.deepEqual(p.steps.map((s) => s.state), ['done', 'done', 'done', 'cur', 'todo', 'todo']);
+  assert.deepEqual(p.steps.map((s) => s.name), ['Read', 'Decode', 'Detect', 'Sharpness', 'Faces', 'Saving'], 'each segment carries its full name for the tooltip');
+  assert.equal(stepProgress('decode', 'read').label, 'Decode · 2 of 6');
+  assert.equal(stepProgress(null, 'faces').label, 'Faces · 5 of 6', 'no step falls back to the stage');
+  assert.equal(stepProgress(null, 'identify'), null, 'an unknown place draws no bar');
+});
+
+test('the box key says which outline is which, since the picture carries no text', () => {
+  const boxes = [{ cls: 'car', conf: 0.9, box: [0.1, 0.1, 0.3, 0.3] }, { cls: 'car', conf: 0.8, box: [0.4, 0.3, 0.9, 0.8] }, { cls: 'person', conf: 0.5, box: [0.1, 0.5, 0.2, 0.6] }];
+  assert.deepEqual(boxLegend(boxes, [0.5, 0.5, 0.55, 0.6]).map((i) => i.kind), ['main', 'af', 'other']);
+  assert.deepEqual(boxLegend([boxes[1]], null).map((i) => i.kind), ['main']);
+  assert.deepEqual(boxLegend([], null), []);
+  assert.equal(boxLegend(boxes, [0.5, 0.5, 0.55, 0.6]).some((i) => /live/i.test(i.label)), false);
 });
 
 test('a lane is keyed by its stable id when the engine sends one', () => {

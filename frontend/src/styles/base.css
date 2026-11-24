@@ -513,7 +513,6 @@ dialog[open] { animation: dialog-in .18s var(--ease); }
 /* ---- Stalled worker lane states ----------------------------------------------- */
 .id-lane.stalled { border-color: color-mix(in srgb, var(--warn2) 35%, transparent); }
 .id-lane-stage.ing-stage.stalled, .ing-lane-text.stalled { color: var(--warn2); border-color: color-mix(in srgb, var(--warn2) 40%, transparent); }
-.id-badge.stalled { color: var(--warn2); border-color: color-mix(in srgb, var(--warn2) 45%, transparent); background: var(--surface); }
 
 /* ---- Failed stage node and retry banner --------------------------------------- */
 .id-node.failed { border-color: color-mix(in srgb, var(--bad) 50%, transparent); color: var(--bad); }

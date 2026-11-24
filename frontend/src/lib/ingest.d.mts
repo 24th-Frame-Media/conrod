@@ -65,7 +65,13 @@ export function laneKey(worker: PipelineWorker): string;
 export function laneNumber(worker: PipelineWorker): number;
 export function laneState(worker: PipelineWorker | null | undefined, paused?: boolean): LaneUiState;
 export function laneText(worker: PipelineWorker, paused?: boolean): string;
-export function laneBadge(state: LaneUiState): string;
+export const STEP_LABELS: Readonly<Record<string, string>>;
+export type StepProgress = { at: number; total: number; label: string; steps: { id: string; name: string; state: 'done' | 'cur' | 'todo' }[] };
+/** The lane's place in its scan steps, with the current step named in full ("Sharpness · 4 of 6"); null when unknown. */
+export function stepProgress(step: string | null | undefined, stage: string): StepProgress | null;
+export type BoxLegendItem = { kind: 'main' | 'af' | 'other'; label: string };
+/** The key to the boxes drawn on a frame (the picture carries no text). */
+export function boxLegend(boxes: readonly LaneBox[] | null | undefined, af?: readonly number[] | null): BoxLegendItem[];
 export function selectLanes(
   workers: PipelineWorker[] | null | undefined,
   options?: { filter?: string | null; cap?: number; all?: boolean; paused?: boolean; identify?: boolean },
