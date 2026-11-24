@@ -16,13 +16,9 @@ use crate::err;
 use crate::library::require_job;
 use crate::lock;
 use crate::operations::{launch, settings};
-use crate::passes::{pick_of_pass, region_name};
+use crate::passes::pick_of_pass;
 use conrod_core::{
-    framing,
-    profile::{ShootPreset, Subject},
-    ridge::SharpModel,
-    settings::Settings,
-    tasks::Task,
+    framing, profile::ShootPreset, ridge::SharpModel, settings::Settings, tasks::Task,
 };
 use conrod_vision::sharpness;
 use rayon::prelude::*;
@@ -42,6 +38,9 @@ pub struct Stored<'a> {
     /// The hand-built focus score.
     pub heuristic: f64,
     pub panning: bool,
+    /// The scan's synthetic rider-on-animal subject (`RIDER_CLASS`): culled on
+    /// the star floor alone, never as a person.
+    pub rider: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +64,7 @@ pub fn remeasure(s: &Stored, model: Option<&SharpModel>, cfg: &Settings) -> Outc
     } else {
         framing::Framing::default()
     };
+    let deliver_most = ShootPreset::parse(&cfg.scan_profile).policy().deliver_most;
     // Composition orders sharp frames, it never marks one down: a sharp car
     // that touches the frame edge keeps its focus rating (0944: 0.763 sharp,
     // one edge cut, read 2 stars and was culled). The cut sides stay in the
@@ -72,23 +72,21 @@ pub fn remeasure(s: &Stored, model: Option<&SharpModel>, cfg: &Settings) -> Outc
     let rating = score;
     let verdict = sharpness::rating_for(rating, cfg.sharp_at, cfg.blurred_below);
     let stars = sharpness::stars_for(rating);
-    let floor = cfg.auto_reject_below_stars as u8;
-    let cull_reason = if small {
-        if stars < floor || (cfg.cull_blurred && score < cfg.blurred_below) {
-            format!("{} soft", s.region)
-        } else {
-            String::new()
-        }
-    } else if floor > stars {
-        format!("{stars} star{}", if stars == 1 { "" } else { "s" })
-    } else if cfg.cull_blurred && verdict == "poor" && !s.panning {
-        if edges.cut_off() {
-            framing::describe(&edges)
-        } else {
-            "too blurred".into()
-        }
+    // The scan's own decisions, one function each (`lib.rs`): a re-score must
+    // cull what a scan culls.
+    let cull_reason = if s.rider {
+        crate::rider_cull_reason(stars, cfg)
+    } else if small {
+        crate::small_cull_reason(s.region, score, cfg)
     } else {
-        String::new()
+        crate::subject_cull_reason(
+            cfg,
+            deliver_most,
+            stars,
+            verdict,
+            s.panning,
+            edges.cut_off().then(|| framing::describe(&edges)),
+        )
     };
     Outcome {
         sharpness: score,
@@ -178,7 +176,7 @@ pub(crate) fn remeasure_pixels(
     )?;
     let subjects = rows(
         &lock(&d.reader),
-        "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
+        "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.cls FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
         [job],
     )?;
     let mut by_image: HashMap<i64, Vec<&Value>> = HashMap::new();
@@ -238,11 +236,30 @@ pub(crate) fn remeasure_pixels(
                             // Written even when empty: a frame that is no longer a
                             // pan must not keep its old share, nor a frame that
                             // gained a subject its old whole-frame score.
+                            // A subject nothing could judge is neither rated nor
+                            // culled (the scan leaves it out): its measures go, and
+                            // a shut-eye verdict, which is not a focus one, stays.
+                            for det in &m.unmeasured {
+                                tx.execute(
+                                    "UPDATE detections SET heuristic=NULL,rating=NULL,sharpness=NULL,rating_verdict=NULL,sharpness_verdict=NULL,cull_reason=CASE WHEN cull_reason=? THEN cull_reason ELSE NULL END WHERE id=?",
+                                    params![crate::EYES_CLOSED, det],
+                                )
+                                .map_err(err)?;
+                            }
                             tx.execute(
                                 "UPDATE images SET sharpness=COALESCE(?,sharpness),sharpness_whole=?,pan_share=? WHERE id=?",
                                 params![m.sharpness, m.whole_raw, m.pan_share, id],
                             )
                             .map_err(err)?;
+                            // A frame whose every stored subject was unmeasurable
+                            // reads as the subject-less frame it is.
+                            if m.subjects.is_empty() && !m.unmeasured.is_empty() {
+                                tx.execute(
+                                    "UPDATE images SET rating=COALESCE(?,rating) WHERE id=?",
+                                    params![m.sharpness, id],
+                                )
+                                .map_err(err)?;
+                            }
                             if m.af_present {
                                 write_af_call(&tx, id, m.af_sharpness)?;
                             }
@@ -452,6 +469,9 @@ fn af_rating(path: &std::path::Path, area: [f64; 4], strictness: &str) -> Result
 struct Measures {
     /// Each stored subject and its fresh measure.
     subjects: Vec<(i64, sharpness::Sharpness)>,
+    /// Stored subjects nothing could measure: they are neither rated nor
+    /// culled, exactly as the scan leaves such a subject out.
+    unmeasured: Vec<i64>,
     /// The score `images.sharpness` takes: a bare frame's rescued score, else
     /// the measured whole frame.
     sharpness: Option<f64>,
@@ -553,95 +573,88 @@ fn measure_frame(
     // The same area may rescue the frame, but only a big enough one may be a
     // detected subject's second opinion.
     let af_opinion = af.and_then(|af| afsubject::opinion(af, (fw, fh), &boxes));
+    let strictness = cfg.effective_blur();
     let mut out = Vec::new();
+    let mut unmeasured = Vec::new();
     let mut panning = false;
     for s in subjects {
         let c = |k: &str| s[k].as_f64().unwrap_or_default();
+        let id = s["id"].as_i64().unwrap_or_default();
         let bbox = [c("x1"), c("y1"), c("x2"), c("y2")];
-        let focus = if matches!(s["region"].as_str(), Some("face" | "eye")) {
+        let region = s["region"].as_str().unwrap_or("vehicle");
+        // Each kind of stored subject is rated by the function the scan rates
+        // it by (`lib.rs`), so a re-score cannot disagree with the scan.
+        let focus = if matches!(region, "face" | "eye") {
             let [a, b, x, y] = bbox.map(|v| v.max(0.0) as usize);
+            let (x, y) = (x.min(fw), y.min(fh));
             if x <= a || y <= b {
                 continue;
             }
-            let mut focus = sharpness::measure(
-                &image
-                    .crop(a, b, x.min(image.width), y.min(image.height))
-                    .to_gray(),
-                None,
-                None,
-            );
             // A held pan is a vehicle or person over a streaked background; a
             // face crop has no background of its own to judge.
-            focus.panning = false;
-            focus
+            crate::rate_patch(&grey, [a, b, x, y], None, &strictness).map(|mut focus| {
+                focus.panning = false;
+                focus
+            })
+        } else if s["cls"].as_str() == Some(crate::RIDER_CLASS) {
+            // The rider-on-animal union box: whole-box edge blur, no pan, no
+            // AF opinion, exactly as the scan rates it.
+            crate::rider_rating(&grey, bbox, &strictness).map(|score| sharpness::Sharpness {
+                measured: true,
+                score,
+                heuristic: score,
+                sharp_end: "subject",
+                ..Default::default()
+            })
         } else {
             let crop_box =
                 conrod_vision::detect::expand_box(bbox, image.width, image.height, &opts);
-            let crop = crate::cut(&image, crop_box, cfg);
-            let scale = crop.width as f64 / (crop_box[2] - crop_box[0]);
+            // As the scan cuts it: a learned model is not loaded here, so the
+            // crop is only upscaled below the minimum edge.
+            let crop_grey = crate::cut_gray(&grey, crop_box, cfg, false);
+            let scale = crop_grey.width as f64 / (crop_box[2] - crop_box[0]);
             let inner = [
                 (bbox[0] - crop_box[0]) * scale,
                 (bbox[1] - crop_box[1]) * scale,
                 (bbox[2] - crop_box[0]) * scale,
                 (bbox[3] - crop_box[1]) * scale,
             ];
-            let mut focus = sharpness::measure(&crop.to_gray(), Some(inner), None);
-            // As `cull_frame` scores a subject: the edge-blur estimate on native
-            // pixels, the worse of the whole box and the box's centre 60%, so a
-            // sharp background in the margins cannot vouch for a blurred body.
-            // The tile score stays the fallback and still supplies the pan flag
-            // and the features. As in `cull_frame`, the crop's tile score only
-            // decides whether the centre was consulted; it never overrules the
-            // edge census.
-            let tile = focus.score;
-            let blur = crate::subject_blur(&grey, bbox, fw.max(fh));
-            let worst = if tile < 0.80 { blur.worst } else { blur.whole };
-            let strictness = sharpness::BlurStrictness::parse(&cfg.effective_blur());
-            let detection = sharpness::rating_from_blur(worst, strictness);
-            // The camera's focus area is the better subject box when it sits on
-            // this subject: its whole-box edge blur needs no centre-60% gate
-            // (the AF box is already the subject, and the detection box's
-            // margins are exactly what let a sharp background vouch for a
-            // smeared car). It is a second opinion only, and only when it is
-            // big enough to measure a subject with: on a heavily blurred car it
-            // reads worse and lowers the score, but it can also read sharper
-            // than the detection box, and must not vouch for a frame the
-            // detection box found soft (B1000_4218 read 0.984 that way).
-            let af = af_opinion
-                .filter(|af| afsubject::holds_middle(bbox, *af))
-                .and_then(|af| afsubject::rate_box(&grey, af, &cfg.effective_blur()));
-            if let Some(score) = second_opinion(detection, af) {
-                focus.score = score;
+            let mut focus = sharpness::measure(&crop_grey, Some(inner), None);
+            // The edge-blur estimate on native pixels (worse of the whole box
+            // and its centre 60%), with the camera's focus area as a second
+            // opinion: `rate_detected` is the scan's own function. The tile
+            // score is only the fallback and the pan flag's and features' source.
+            if crate::rate_detected(&mut focus, &grey, bbox, af_opinion, &strictness) {
+                // As `cull_frame` decides it: the subject not a blur miss, a
+                // streaked background, and a preset that expects pans.
+                focus.panning = pan_ok
+                    && sharpness::verdict_for(focus.score, cfg.sharp_at, cfg.blurred_below)
+                        != "blurred"
+                    && conrod_vision::streaks::background_streaks(&grey, bbox)
+                        .is_some_and(|s| s >= conrod_vision::streaks::PAN_COHERENCE);
+                Some(focus)
+            } else {
+                None
             }
-            // As `cull_frame` decides it: the subject not a blur miss, a
-            // streaked background, and a preset that expects pans.
-            focus.panning = pan_ok
-                && sharpness::verdict_for(focus.score, cfg.sharp_at, cfg.blurred_below)
-                    != "blurred"
-                && conrod_vision::streaks::background_streaks(&grey, bbox)
-                    .is_some_and(|s| s >= conrod_vision::streaks::PAN_COHERENCE);
-            focus
         };
-        if focus.measured {
-            // As the scan stores it: without a model the hand-built score is the score.
-            let mut focus = focus;
-            focus.heuristic = focus.score;
-            if focus.panning
-                && matches!(
-                    s["region"].as_str().unwrap_or("vehicle"),
-                    "vehicle" | "person"
-                )
-            {
-                panning = true;
-            }
-            out.push((s["id"].as_i64().unwrap_or_default(), focus));
+        let Some(mut focus) = focus else {
+            // Nothing could judge it: it is neither rated nor culled.
+            unmeasured.push(id);
+            continue;
+        };
+        // As the scan stores it: without a model the hand-built score is the score.
+        focus.heuristic = focus.score;
+        if focus.panning && matches!(region, "vehicle" | "person") {
+            panning = true;
         }
+        out.push((id, focus));
     }
-    // A frame with no subject is rated by the same function the scan uses, so
-    // the two cannot disagree; one with subjects keeps the plain measured
-    // whole-frame score it always had.
-    let (sharpness, whole_raw) = if subjects.is_empty() {
-        let bare = crate::bare_frame(&grey, &cfg.effective_blur());
+    // A frame with no subject the scan could keep is rated by the same function
+    // the scan uses, so the two cannot disagree; one with subjects keeps the
+    // plain measured whole-frame score it always had.
+    let no_subject = out.is_empty();
+    let (sharpness, whole_raw) = if no_subject {
+        let bare = crate::bare_frame(&grey, &strictness);
         (bare.score, bare.whole)
     } else {
         let whole = sharpness::measure(&grey, None, None);
@@ -650,13 +663,14 @@ fn measure_frame(
     // Where the camera focused outside every detection, the focus area is the
     // subject (the scan's rule, `afsubject::decide`): no pan, and the frame is
     // rated on it.
-    let af_sharpness = afsubject::decide(&grey, af, &boxes, &cfg.effective_blur()).subject();
+    let af_sharpness = afsubject::decide(&grey, af, &boxes, &strictness).subject();
     let panning = panning && af_sharpness.is_none();
     let pan_share = panning
         .then(|| sharpness::frame_sharp_share(&grey))
         .flatten();
     Ok(Measures {
         subjects: out,
+        unmeasured,
         sharpness,
         whole_raw,
         pan_share,
@@ -664,22 +678,6 @@ fn measure_frame(
         af_sharpness,
     })
 }
-
-/// A frame's subjects' ratings, for the rating of the frame itself.
-#[derive(Default)]
-struct Frame {
-    whole: Option<f64>,
-    best: HashMap<String, f64>,
-    /// Person and vehicle box areas, for the main subject.
-    boxes: Vec<(Subject, f64)>,
-    /// The stored sharp share of a panning frame, for the frame rating's cap.
-    pan_share: Option<f64>,
-    /// Whether any vehicle or person of the frame is a held pan.
-    panning: bool,
-    /// The stored AF rating, when the camera's focus area was the subject.
-    af_sharpness: Option<f64>,
-}
-
 fn write(d: &Desktop, batch: &[(i64, Outcome)]) -> Result<()> {
     let db = lock(&d.db);
     let tx = db.unchecked_transaction().map_err(err)?;
@@ -694,20 +692,6 @@ fn write(d: &Desktop, batch: &[(i64, Outcome)]) -> Result<()> {
     tx.commit().map_err(err)
 }
 
-/// The frame's best score per region: the sharpest subject, except the eyes,
-/// where a portrait is as sharp as its softer eye (as `frame_rating` reads it).
-fn keep(best: &mut HashMap<String, f64>, region: &str, rating: f64) {
-    best.entry(region.into())
-        .and_modify(|b| {
-            *b = if region == "eye" {
-                b.min(rating)
-            } else {
-                b.max(rating)
-            }
-        })
-        .or_insert(rating);
-}
-
 pub(crate) fn run(
     d: &Desktop,
     job: i64,
@@ -718,14 +702,13 @@ pub(crate) fn run(
     let models = load_models(d);
     let found = rows(
         &lock(&d.reader),
-        "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.features, d.heuristic, d.panning, d.rating, COALESCE(d.bystander,0) AS bystander, i.width, i.height, i.sharpness AS whole, i.pan_share, i.af_sharpness FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.id",
+        "SELECT d.id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.cls, d.features, d.heuristic, d.panning, d.rating, COALESCE(d.bystander,0) AS bystander, i.width, i.height FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? ORDER BY d.id",
         [job],
     )?;
     let total = found.len() as u64;
     task.progress(0, total);
     task.detail(format!("Re-measuring {total} subjects"));
     let (mut changed, mut skipped) = (0, 0);
-    let mut frames: HashMap<i64, Frame> = HashMap::new();
     let mut batch = Vec::new();
     for (n, row) in found.iter().enumerate() {
         if stop.load(Ordering::Relaxed) {
@@ -736,41 +719,12 @@ pub(crate) fn run(
         // measured like any subject but drives neither the frame's rating nor
         // the cull: a frame with only bystanders is rated by `rate_missed_frames`.
         let bystander = row["bystander"].as_i64() == Some(1);
-        let mut scratch = Frame::default();
-        let frame = if bystander {
-            &mut scratch
-        } else {
-            frames
-                .entry(row["image_id"].as_i64().unwrap_or_default())
-                .or_default()
-        };
-        frame.whole = row["whole"].as_f64();
-        frame.pan_share = row["pan_share"].as_f64();
-        frame.af_sharpness = row["af_sharpness"].as_f64();
-        if matches!(region, "vehicle" | "person") && row["panning"].as_i64() == Some(1) {
-            frame.panning = true;
-        }
-        let kind = match region {
-            "person" => Some(Subject::Person),
-            "vehicle" => Some(Subject::Vehicle),
-            _ => None,
-        };
-        if let Some(kind) = kind {
-            let corner = |k: &str| row[k].as_f64().unwrap_or_default();
-            let area = (corner("x2") - corner("x1")) * (corner("y2") - corner("y1"));
-            frame.boxes.push((kind, area));
-        }
         let old = row["rating"].as_f64();
         // A detection stored without its hand-built score (a legacy scan,
         // from before that score was recorded) cannot be re-measured without
         // its crop: kept as it was.
         match row["heuristic"].as_f64().filter(|h| *h >= 0.0) {
-            None => {
-                skipped += 1;
-                if let Some(rating) = old {
-                    keep(&mut frame.best, region, rating);
-                }
-            }
+            None => skipped += 1,
             Some(heuristic) => {
                 let features: Vec<f64> = row["features"]
                     .as_str()
@@ -788,6 +742,7 @@ pub(crate) fn run(
                         features: &features,
                         heuristic,
                         panning: row["panning"].as_i64() == Some(1),
+                        rider: row["cls"].as_str() == Some(crate::RIDER_CLASS),
                     },
                     models.get(region),
                     cfg,
@@ -798,7 +753,6 @@ pub(crate) fn run(
                 if old.is_none_or(|o| (o - outcome.rating).abs() > 1e-9) {
                     changed += 1;
                 }
-                keep(&mut frame.best, region, outcome.rating);
                 batch.push((row["id"].as_i64().unwrap_or_default(), outcome));
             }
         }
@@ -811,43 +765,7 @@ pub(crate) fn run(
     write(d, &batch)?;
 
     // The frame's own rating, from the subject the profile rates it by.
-    {
-        let db = lock(&d.db);
-        let tx = db.unchecked_transaction().map_err(err)?;
-        for (image, frame) in &frames {
-            let main = conrod_core::profile::main_subject(frame.boxes.iter().copied());
-            let rating = cfg
-                .lanes()
-                .frame_priority(main)
-                .iter()
-                .find_map(|kind| match kind {
-                    Subject::WholeFrame => frame.whole,
-                    kind => frame.best.get(region_name(*kind)).copied(),
-                })
-                .unwrap_or(0.0);
-            // The frame's rating says how the picture reads; a pan's is capped
-            // by how much of the frame is sharp. The subjects keep their own
-            // ratings, which is what picks the keeper. The camera's focus area
-            // rescues the frame (`afsubject::rescue`): it can lift a frame the
-            // detector only found background in, never lower this number.
-            let rating = crate::afsubject::rescue(
-                crate::pan_capped(rating, frame.panning, frame.pan_share),
-                frame.af_sharpness,
-            );
-            tx.execute(
-                "UPDATE images SET rating=? WHERE id=?",
-                params![rating, image],
-            )
-            .map_err(err)?;
-        }
-        tx.commit().map_err(err)?;
-        // A frame the detector found nothing in has no subject to rate it: in a
-        // burst where the other frames have one it is a shot the detector
-        // missed, and takes its whole-frame score rather than the almost
-        // always-perfect score of its sharpest patch; alone, its in-focus area
-        // is the rating, which `remeasure_pixels` has just refreshed.
-        crate::passes::rate_missed_frames(&db, job)?;
-    }
+    rate_frames(d, job, cfg)?;
     // The stars have moved, so the keeper of a pass may have moved with them.
     let picked = pick_of_pass(&lock(&d.db), job, &cfg.lanes(), cfg.use_quality_score)?;
     task.detail(format!(
@@ -862,6 +780,79 @@ pub(crate) fn run(
     ))
 }
 
+/// Every frame's own rating again, from its stored subjects: the one place a
+/// re-score, a re-scan and a feature toggle (`passes::rerate`) all rate a
+/// frame, by the function the scan rates it with (`final_frame_rating`): the
+/// subject the profile rates it by, a pan capped by how much of the frame is
+/// sharp, the camera's focus area rescuing it. Then the frames the detector
+/// missed (`rate_missed_frames`).
+pub(crate) fn rate_frames(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
+    /// One frame's non-bystander subjects and what its rating also reads.
+    #[derive(Default)]
+    struct Frame {
+        whole: Option<f64>,
+        pan_share: Option<f64>,
+        af_sharpness: Option<f64>,
+        /// Whether any vehicle or person of the frame is a held pan.
+        panning: bool,
+        subjects: Vec<(String, [f64; 4], f64)>,
+    }
+    let found = rows(
+        &lock(&d.reader),
+        "SELECT d.image_id, COALESCE(d.region_type,'vehicle') AS region, d.x1, d.y1, d.x2, d.y2, d.rating, d.panning, i.sharpness AS whole, i.pan_share, i.af_sharpness FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.bystander,0)=0 AND d.rating IS NOT NULL ORDER BY d.image_id, d.id",
+        [job],
+    )?;
+    let mut frames: std::collections::BTreeMap<i64, Frame> = std::collections::BTreeMap::new();
+    for r in &found {
+        let c = |k: &str| r[k].as_f64().unwrap_or_default();
+        let region = r["region"].as_str().unwrap_or("vehicle");
+        let frame = frames
+            .entry(r["image_id"].as_i64().unwrap_or_default())
+            .or_default();
+        frame.whole = r["whole"].as_f64();
+        frame.pan_share = r["pan_share"].as_f64();
+        frame.af_sharpness = r["af_sharpness"].as_f64();
+        if matches!(region, "vehicle" | "person") && r["panning"].as_i64() == Some(1) {
+            frame.panning = true;
+        }
+        frame.subjects.push((
+            region.into(),
+            [c("x1"), c("y1"), c("x2"), c("y2")],
+            c("rating"),
+        ));
+    }
+    let lanes = cfg.lanes();
+    let db = lock(&d.db);
+    let tx = db.unchecked_transaction().map_err(err)?;
+    for (image, frame) in &frames {
+        let subjects: Vec<(&str, [f64; 4], f64)> = frame
+            .subjects
+            .iter()
+            .map(|(region, bbox, rating)| (region.as_str(), *bbox, *rating))
+            .collect();
+        let rating = crate::final_frame_rating(
+            &lanes,
+            &subjects,
+            frame.whole,
+            frame.panning,
+            frame.pan_share,
+            frame.af_sharpness,
+        );
+        tx.execute(
+            "UPDATE images SET rating=? WHERE id=?",
+            params![rating, image],
+        )
+        .map_err(err)?;
+    }
+    tx.commit().map_err(err)?;
+    // A frame the detector found nothing in has no subject to rate it: in a
+    // burst where the other frames have one it is a shot the detector
+    // missed, and takes its whole-frame score rather than the almost
+    // always-perfect score of its sharpest patch; alone, its in-focus area
+    // is the rating, which `remeasure_pixels` has just refreshed.
+    crate::passes::rate_missed_frames(&db, job)?;
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -943,6 +934,7 @@ mod tests {
             features,
             heuristic,
             panning: false,
+            rider: false,
         }
     }
 
@@ -1076,6 +1068,7 @@ mod tests {
                     features: &scanned.features,
                     heuristic: scanned.heuristic,
                     panning: scanned.panning,
+                    rider: false,
                 },
                 Some(&m),
                 &cfg(),
@@ -1737,5 +1730,428 @@ mod tests {
         lib.wait_idle();
         let again: f64 = lib.one("SELECT rating FROM detections WHERE id=?", [car]);
         assert_eq!(again, rating);
+    }
+
+    // ---- one rating everywhere ------------------------------------------------
+    //
+    // A frame is rated by the scan, by a re-score and by a feature toggle's
+    // re-rate. These tests scan synthetic frames with the scan's own functions,
+    // store what the scan stores, run `rescore`, and demand the same numbers.
+
+    use conrod_vision::imageops::Rgb;
+
+    const W: usize = 3000;
+    const H: usize = 2000;
+
+    fn hash(x: usize, y: usize) -> u32 {
+        let mut h = (x as u32).wrapping_mul(0x9E37_79B1) ^ (y as u32).wrapping_mul(0x85EB_CA6B);
+        h ^= h >> 15;
+        h = h.wrapping_mul(0x2C1B_3C6D);
+        h ^ (h >> 12)
+    }
+
+    /// A box blur of `len` px along x (`along_x`) or y, twice: a smear.
+    fn smear(src: &[u8], len: usize, along_x: bool) -> Vec<u8> {
+        let mut cur = src.to_vec();
+        for _ in 0..2 {
+            let mut out = vec![0u8; cur.len()];
+            for y in 0..H {
+                for x in 0..W {
+                    let mut acc = 0u32;
+                    for i in 0..len {
+                        let o = i as isize - len as isize / 2;
+                        let (sx, sy) = if along_x {
+                            ((x as isize + o).clamp(0, W as isize - 1) as usize, y)
+                        } else {
+                            (x, (y as isize + o).clamp(0, H as isize - 1) as usize)
+                        };
+                        acc += u32::from(cur[sy * W + sx]);
+                    }
+                    out[y * W + x] = (acc / len as u32) as u8;
+                }
+            }
+            cur = out;
+        }
+        cur
+    }
+
+    /// The three planes every fixture is cut from: 32 px blocks of two luma
+    /// levels (real step edges the edge census can judge), the same blocks
+    /// smeared in both axes (nothing in it is sharp), and smeared along x only
+    /// (the streaked background of a held pan).
+    fn planes() -> &'static (Vec<u8>, Vec<u8>, Vec<u8>) {
+        static PLANES: std::sync::OnceLock<(Vec<u8>, Vec<u8>, Vec<u8>)> =
+            std::sync::OnceLock::new();
+        PLANES.get_or_init(|| {
+            let mut sharp = vec![0u8; W * H];
+            for y in 0..H {
+                for x in 0..W {
+                    let level = if hash(x / 32, y / 32) & 1 == 0 {
+                        70
+                    } else {
+                        190
+                    };
+                    sharp[y * W + x] = level + (hash(x, y) % 7) as u8;
+                }
+            }
+            let soft = smear(&smear(&sharp, 41, true), 41, false);
+            let streak = smear(&sharp, 121, true);
+            (sharp, soft, streak)
+        })
+    }
+
+    fn crisp(x: usize, y: usize) -> u8 {
+        planes().0[y * W + x]
+    }
+
+    fn smeared(x: usize, y: usize) -> u8 {
+        planes().1[y * W + x]
+    }
+
+    fn streaked(x: usize, y: usize) -> u8 {
+        planes().2[y * W + x]
+    }
+    fn scene(pixel: impl Fn(usize, usize) -> u8) -> Rgb {
+        let (w, h) = (W, H);
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let v = pixel(x, y);
+                data.extend_from_slice(&[v, v, v]);
+            }
+        }
+        Rgb::new(w, h, data)
+    }
+
+    fn inside(bbox: [f64; 4], x: usize, y: usize) -> bool {
+        (bbox[0]..bbox[2]).contains(&(x as f64)) && (bbox[1]..bbox[3]).contains(&(y as f64))
+    }
+
+    /// One frame of the parity test: what is in it, and the album's preset.
+    struct Fixture {
+        name: &'static str,
+        preset: &'static str,
+        image: Rgb,
+        /// The detector's boxes: (COCO class, box).
+        found: Vec<(usize, [f64; 4])>,
+        /// Face and eye patches, as `face_subjects` would find them.
+        patches: Vec<(&'static str, [usize; 4])>,
+    }
+
+    fn fixtures() -> Vec<Fixture> {
+        let car = [800.0, 600.0, 1800.0, 1300.0];
+        let person = [800.0, 300.0, 1600.0, 1700.0];
+        let rider = (conrod_core::sport::PERSON, [1240.0, 500.0, 1440.0, 1100.0]);
+        let bull = (conrod_core::sport::COW, [1000.0, 800.0, 1800.0, 1800.0]);
+        vec![
+            Fixture {
+                name: "vehicle-sharp",
+                preset: "motorsport",
+                image: scene(crisp),
+                found: vec![(2, car)],
+                patches: vec![],
+            },
+            Fixture {
+                name: "vehicle-smeared-over-a-sharp-banner",
+                preset: "motorsport",
+                image: scene(|x, y| {
+                    if inside(car, x, y) {
+                        smeared(x, y)
+                    } else {
+                        crisp(x, y)
+                    }
+                }),
+                found: vec![(2, car)],
+                patches: vec![],
+            },
+            Fixture {
+                name: "pan",
+                preset: "motorsport",
+                image: scene(|x, y| {
+                    if inside(car, x, y) {
+                        crisp(x, y)
+                    } else {
+                        streaked(x, y)
+                    }
+                }),
+                found: vec![(2, car)],
+                patches: vec![],
+            },
+            Fixture {
+                name: "rider-on-a-bull",
+                preset: "sport-rodeo",
+                image: scene(crisp),
+                found: vec![rider, bull],
+                patches: vec![],
+            },
+            Fixture {
+                name: "portrait",
+                preset: "portrait",
+                image: scene(|x, y| {
+                    if inside([1050.0, 600.0, 1150.0, 700.0], x, y) {
+                        smeared(x, y)
+                    } else {
+                        crisp(x, y)
+                    }
+                }),
+                found: vec![(conrod_core::sport::PERSON, person)],
+                patches: vec![
+                    ("face", [1000, 500, 1400, 900]),
+                    ("eye", [1050, 600, 1150, 700]),
+                    ("eye", [1250, 600, 1350, 700]),
+                ],
+            },
+        ]
+    }
+
+    /// What a scan of `fixture` stores: the same functions `cull_frame` calls,
+    /// in the same order, on the pixels the scan would decode from the file.
+    fn scanned(
+        fixture: &Fixture,
+        path: &std::path::Path,
+        cfg: &Settings,
+    ) -> (Vec<crate::Subject>, f64, Option<f64>, Option<f64>) {
+        let frame = conrod_io::raw::read(path).unwrap();
+        let image = Rgb::decode_jpeg(&frame.preview, 1)
+            .unwrap()
+            .orient(frame.orientation);
+        let grey = image.to_gray();
+        let strictness = cfg.effective_blur();
+        let preset = ShootPreset::parse(&cfg.scan_profile);
+        let opts = crate::detect_options(cfg);
+        let found: Vec<conrod_vision::detect::Detection> = fixture
+            .found
+            .iter()
+            .map(|(class_id, bbox)| conrod_vision::detect::Detection {
+                class_id: *class_id,
+                conf: 0.9,
+                bbox: *bbox,
+                crop_box: conrod_vision::detect::expand_box(
+                    *bbox,
+                    image.width,
+                    image.height,
+                    &opts,
+                ),
+            })
+            .collect();
+        let boxes: Vec<[f64; 4]> = found.iter().map(|d| d.bbox).collect();
+        let models = HashMap::new();
+        let framing_policy = crate::framing_policy(preset);
+        let ctx = crate::DetectCtx {
+            image: &image,
+            grey: &grey,
+            settings: cfg,
+            preset,
+            strictness: &strictness,
+            models: &models,
+            boxes: &boxes,
+            af_opinion_area: None,
+            framing_policy: framing_policy.as_ref(),
+            tilt: None,
+            quality: None,
+        };
+        let mut subjects: Vec<crate::Subject> = found
+            .iter()
+            .filter_map(|det| crate::rate_detection(det, &ctx))
+            .collect();
+        for &(kind, region) in &fixture.patches {
+            let focus = crate::rate_patch(&grey, region, None, &strictness).unwrap();
+            let [a, b, c, d] = region.map(|v| v as f64);
+            subjects.push(crate::Subject {
+                class: kind,
+                conf: 0.9,
+                bbox: [a, b, c, d],
+                sharpness: focus.score,
+                panning: false,
+                sharp_end: focus.sharp_end,
+                rating: focus.score,
+                stars: sharpness::stars_for(focus.score),
+                cull_reason: crate::small_cull_reason(kind, focus.score, cfg),
+                features: focus.features,
+                heuristic: focus.score,
+                region_type: kind,
+                quality: None,
+                eyes_open: [None, None],
+                cut_sides: 0,
+                subject_frac: 0.0,
+                lead_room: None,
+                framing_score: None,
+                bystander: false,
+                af_bystander: false,
+            });
+        }
+        if matches!(
+            preset,
+            ShootPreset::SportRodeo | ShootPreset::SportEquestrian
+        ) {
+            subjects.extend(crate::rodeo_read(&grey, &found, cfg, &strictness).1);
+        }
+        let whole = sharpness::measure(&grey, None, None);
+        let whole = whole.measured.then_some(whole.score);
+        let panning = subjects
+            .iter()
+            .any(|s| matches!(s.region_type, "vehicle" | "person") && s.panning);
+        let share = panning
+            .then(|| sharpness::frame_sharp_share(&grey))
+            .flatten();
+        let rated: Vec<_> = subjects
+            .iter()
+            .map(|s| (s.region_type, s.bbox, s.rating))
+            .collect();
+        let rating = crate::final_frame_rating(&cfg.lanes(), &rated, whole, panning, share, None);
+        (subjects, rating, whole, share)
+    }
+
+    #[test]
+    fn a_scan_and_a_rescore_rate_the_same_frame_the_same() {
+        for fixture in fixtures() {
+            let lib = Lib::new("rate-parity");
+            lib.run(
+                "update_job_settings",
+                json!({"jobId": lib.job, "patch": {"scan_profile": fixture.preset}}),
+            )
+            .unwrap();
+            let cfg = settings_of(&lib);
+            let name = format!("{}.jpg", fixture.name);
+            let path = lib.root.join(&name);
+            crate::desktop::save_jpeg(&fixture.image, &path).unwrap();
+            let image = lib.frame(&name, Some(1));
+            let (subjects, rating, whole, share) = scanned(&fixture, &path, &cfg);
+            assert!(!subjects.is_empty(), "{}: nothing scanned", fixture.name);
+            for s in &subjects {
+                crate::desktop::insert_subject(&lib.db(), image, s).unwrap();
+            }
+            lib.sql(
+                "UPDATE images SET width=3000,height=2000,sharpness=?,rating=?,pan_share=? WHERE id=?",
+                params![whole, rating, share, image],
+            );
+            let stored = |lib: &Lib| -> Vec<(f64, String, i64)> {
+                let db = lib.db();
+                let mut q = db
+                    .prepare(
+                        "SELECT rating, COALESCE(cull_reason,''), COALESCE(panning,0) FROM detections WHERE image_id=? ORDER BY id",
+                    )
+                    .unwrap();
+                q.query_map([image], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                    .unwrap()
+                    .map(|row| row.unwrap())
+                    .collect()
+            };
+            let before = stored(&lib);
+            let frame_before: f64 = lib.one("SELECT rating FROM images WHERE id=?", [image]);
+
+            lib.run("rescore", json!({"jobId": lib.job})).unwrap();
+            lib.wait_idle();
+
+            let after = stored(&lib);
+            assert_eq!(before.len(), after.len(), "{}", fixture.name);
+            for (n, (b, a)) in before.iter().zip(&after).enumerate() {
+                assert!(
+                    (b.0 - a.0).abs() < 1e-9,
+                    "{} subject {n}: scan rated {}, rescore {}",
+                    fixture.name,
+                    b.0,
+                    a.0
+                );
+                assert_eq!(b.1, a.1, "{} subject {n}: cull reason", fixture.name);
+                assert_eq!(b.2, a.2, "{} subject {n}: pan flag", fixture.name);
+            }
+            let frame_after: f64 = lib.one("SELECT rating FROM images WHERE id=?", [image]);
+            assert!(
+                (frame_before - frame_after).abs() < 1e-9,
+                "{}: scan rated the frame {frame_before}, rescore {frame_after}",
+                fixture.name
+            );
+            // The fixtures must mean what they say.
+            match fixture.name {
+                "pan" => {
+                    assert!(
+                        before.iter().any(|s| s.2 == 1),
+                        "the pan fixture is a held pan: {before:?}"
+                    );
+                    assert!(share.is_some(), "a pan carries its sharp share");
+                }
+                "rider-on-a-bull" => {
+                    let riders: i64 = lib.one(
+                        "SELECT count(*) FROM detections WHERE image_id=? AND cls=?",
+                        params![image, crate::RIDER_CLASS],
+                    );
+                    assert_eq!(riders, 1, "one synthetic rider row");
+                    assert_eq!(subjects.len(), 3, "person, bull and the rider pair");
+                }
+                "portrait" => assert_eq!(subjects.len(), 4, "person, face and two eyes"),
+                "vehicle-sharp" => assert!(before[0].0 > 0.7, "{before:?}"),
+                "vehicle-smeared-over-a-sharp-banner" => {
+                    assert!(before[0].0 < 0.5, "a smeared car is soft: {before:?}")
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn settings_of(lib: &Lib) -> Settings {
+        crate::operations::settings(lib.d(), lib.job).unwrap()
+    }
+
+    #[test]
+    fn a_subject_nothing_can_measure_is_left_out_and_never_culled() {
+        let mut cfg = cfg();
+        cfg.auto_reject_below_stars = 3;
+        let flat = scene(|_, _| 90);
+        let grey = flat.to_gray();
+        let opts = crate::detect_options(&cfg);
+        let bbox = [800.0, 600.0, 1800.0, 1300.0];
+        let det = conrod_vision::detect::Detection {
+            class_id: 2,
+            conf: 0.9,
+            bbox,
+            crop_box: conrod_vision::detect::expand_box(bbox, 3000, 2000, &opts),
+        };
+        let models = HashMap::new();
+        let strictness = cfg.effective_blur();
+        let ctx = crate::DetectCtx {
+            image: &flat,
+            grey: &grey,
+            settings: &cfg,
+            preset: ShootPreset::Motorsport,
+            strictness: &strictness,
+            models: &models,
+            boxes: &[bbox],
+            af_opinion_area: None,
+            framing_policy: None,
+            tilt: None,
+            quality: None,
+        };
+        assert!(
+            crate::rate_detection(&det, &ctx).is_none(),
+            "an unmeasurable car is not a subject scored 0.0 and culled as '1 star'"
+        );
+        assert!(crate::rate_patch(&grey, [800, 600, 1000, 800], None, &strictness).is_none());
+        assert!(crate::rider_rating(&grey, bbox, &strictness).is_none());
+    }
+
+    #[test]
+    fn a_condition_report_re_score_does_not_cull_on_the_star_floor() {
+        let mut report = cfg();
+        report.scan_profile = "property-report".into();
+        report.auto_reject_below_stars = 3;
+        report.cull_blurred = true;
+        // Two stars, soft but not blurred: the scan keeps it on a condition
+        // report, and so must the re-score.
+        let soft = remeasure(&stored("vehicle", 0.66, &[]), None, &report);
+        assert_eq!(sharpness::stars_for(soft.rating), 2);
+        assert_eq!(soft.cull_reason, "");
+        // The same album as a motorsport shoot culls it.
+        let mut shoot = report.clone();
+        shoot.scan_profile = "motorsport".into();
+        assert_eq!(
+            remeasure(&stored("vehicle", 0.66, &[]), None, &shoot).cull_reason,
+            "2 stars"
+        );
+        // Clearly blurred goes either way.
+        assert_eq!(
+            remeasure(&stored("vehicle", 0.2, &[]), None, &report).cull_reason,
+            "too blurred"
+        );
     }
 }

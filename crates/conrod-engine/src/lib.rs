@@ -605,28 +605,13 @@ pub(crate) fn face_subjects(
                 if c <= a + 24 || d <= b + 24 {
                     continue;
                 }
-                let patch = crop_gray(grey, [a as f64, b as f64, c as f64, d as f64]);
-                let mut focus = sharpness::measure(&patch, None, models.get(kind));
-                if !focus.measured {
+                // The one function a re-score rates a face or an eye by.
+                let Some(focus) = rate_patch(grey, [a, b, c, d], models.get(kind), strictness)
+                else {
                     continue;
-                }
-                if !focus.learned {
-                    let edges = conrod_vision::edgeblur::measure(grey, Some([a, b, c, d]));
-                    if let Some(score) = sharpness::rating_from_blur(
-                        edges.sigma_worst_at_reference(fw.max(fh)),
-                        sharpness::BlurStrictness::parse(strictness),
-                    ) {
-                        focus.score = score;
-                    }
-                }
-                let stars = sharpness::stars_for(focus.score);
-                let reason = if stars < (settings.auto_reject_below_stars as u8)
-                    || (settings.cull_blurred && focus.score < settings.blurred_below)
-                {
-                    format!("{kind} soft")
-                } else {
-                    String::new()
                 };
+                let stars = sharpness::stars_for(focus.score);
+                let reason = small_cull_reason(kind, focus.score, settings);
                 let reason = if kind == "face" && closed {
                     EYES_CLOSED.to_string()
                 } else {
@@ -827,6 +812,223 @@ pub fn subject_blur(grey: &Gray, bbox: [f64; 4], long_edge: usize) -> SubjectBlu
     }
 }
 
+/// The edge-blur rating of a pixel box of the native luma, at the album's
+/// strictness. `None` when the box cannot be judged: no edges, or only the
+/// noise floor (`EdgeBlur::flat`), where the relative edge floor pins sigma at
+/// the minimum and a completely blurred patch would read as perfectly sharp.
+pub(crate) fn box_rating(grey: &Gray, region: [usize; 4], strictness: &str) -> Option<f64> {
+    let edges = conrod_vision::edgeblur::measure(grey, Some(region));
+    if edges.flat() {
+        return None;
+    }
+    sharpness::rating_from_blur(
+        edges.sigma_worst_at_reference(grey.width.max(grey.height)),
+        sharpness::BlurStrictness::parse(strictness),
+    )
+}
+
+/// A face or an eye patch, rated. The scan and every re-score rate these here:
+/// the tile measure first, then (with no learned model for the region) the
+/// edge-blur rating of the same patch replaces its score, because the tile
+/// ratio is not trusted on a small patch. `None` when the patch is unmeasured.
+pub(crate) fn rate_patch(
+    grey: &Gray,
+    region: [usize; 4],
+    model: Option<&conrod_core::ridge::SharpModel>,
+    strictness: &str,
+) -> Option<sharpness::Sharpness> {
+    let patch = crop_gray(grey, region.map(|v| v as f64));
+    let mut focus = sharpness::measure(&patch, None, model);
+    if !focus.measured {
+        return None;
+    }
+    if !focus.learned {
+        if let Some(score) = box_rating(grey, region, strictness) {
+            focus.score = score;
+        }
+    }
+    Some(focus)
+}
+
+/// Replace a detected subject's tile score with its edge-blur rating, exactly
+/// as the scan does and a re-score must: the worse of the detector box and its
+/// centre 60% (the centre only when the tiles already suspect softness), then
+/// the camera's focus area as a second opinion that can only lower it. Returns
+/// whether the subject could be measured at all; one that cannot is neither
+/// rated nor culled (the callers leave it out).
+///
+/// `af_opinion_area` is `afsubject::opinion`'s answer: usable and big enough.
+pub(crate) fn rate_detected(
+    focus: &mut sharpness::Sharpness,
+    grey: &Gray,
+    bbox: [f64; 4],
+    af_opinion_area: Option<[f64; 4]>,
+    strictness: &str,
+) -> bool {
+    let mut measured = focus.measured;
+    let tile = focus.score;
+    let blur = subject_blur(grey, bbox, grey.width.max(grey.height));
+    // The centre is consulted only when the tiles already suspect softness: a
+    // texture-poor but sharp body reads soft at the centre (its edge floor is
+    // region-relative), and asking it unasked demoted a crisp frame from 1.000
+    // to 0.797.
+    let worst = if tile < 0.80 { blur.worst } else { blur.whole };
+    let detection =
+        sharpness::rating_from_blur(worst, sharpness::BlurStrictness::parse(strictness));
+    // The camera's focus area, when it sits on this subject and is big enough
+    // to measure one with, is a second opinion that can only lower the score
+    // (see `afsubject`).
+    let af_opinion = af_opinion_area
+        .filter(|af| afsubject::holds_middle(bbox, *af))
+        .and_then(|af| afsubject::rate_box(grey, af, strictness));
+    if let Some(score) = rescore::second_opinion(detection, af_opinion) {
+        // The tile score is not used to overrule this one: it is measured on
+        // the downscaled crop, so it is not comparable with the native edge
+        // census. It only decides whether the centre was consulted.
+        focus.score = score;
+        measured = true;
+    }
+    measured
+}
+
+/// The rodeo / equestrian rider-on-animal union box, rated on its whole-box
+/// edge blur. `None` when the box is too small or cannot be judged.
+pub(crate) fn rider_rating(grey: &Gray, bbox: [f64; 4], strictness: &str) -> Option<f64> {
+    let (fw, fh) = (grey.width, grey.height);
+    let region = [
+        (bbox[0].max(0.0) as usize).min(fw),
+        (bbox[1].max(0.0) as usize).min(fh),
+        (bbox[2].max(0.0) as usize).min(fw),
+        (bbox[3].max(0.0) as usize).min(fh),
+    ];
+    if region[2] > region[0] + 8 && region[3] > region[1] + 8 {
+        box_rating(grey, region, strictness)
+    } else {
+        None
+    }
+}
+
+/// The class a scan stores for the synthetic rider-on-animal subject, so a
+/// re-score knows the row and rates it by [`rider_rating`], not as a person.
+pub(crate) const RIDER_CLASS: &str = "rider";
+
+/// What a scan reads of a rodeo or equestrian frame beyond its detections: how
+/// much the animal is rearing, and the rider-on-animal subject (the pair's
+/// union box, so a rating sees the animal's head and the rider's hat).
+pub(crate) fn rodeo_read(
+    grey: &Gray,
+    found: &[detect::Detection],
+    settings: &Settings,
+    strictness: &str,
+) -> (Option<f64>, Option<Subject>) {
+    let people: Vec<conrod_core::sport::Det> = found
+        .iter()
+        .filter(|d| d.class_id == detect::PERSON)
+        .map(|d| (d.class_id, d.conf, d.bbox))
+        .collect();
+    let animals: Vec<conrod_core::sport::Det> = found
+        .iter()
+        .filter(|d| conrod_core::sport::ANIMALS.contains(&d.class_id))
+        .map(|d| (d.class_id, d.conf, d.bbox))
+        .collect();
+    let Some(rider) = conrod_core::sport::rider_on_animal(&people, &animals) else {
+        return (None, None);
+    };
+    let buck =
+        conrod_core::sport::buck_score(&rider, animals[rider.animal].2, people[rider.person].2);
+    // Only the pair is synthetic. A lone animal or person is already a
+    // detection, rated by the detection pipeline like any other.
+    let Some(conrod_core::sport::RodeoSubject::Rider { bbox, .. }) =
+        conrod_core::sport::rodeo_subject(&people, &animals)
+    else {
+        return (Some(buck), None);
+    };
+    // A rider that cannot be measured is left out (never a "1 star" cull).
+    let Some(score) = rider_rating(grey, bbox, strictness) else {
+        return (Some(buck), None);
+    };
+    let stars = sharpness::stars_for(score);
+    (
+        Some(buck),
+        Some(Subject {
+            class: RIDER_CLASS,
+            conf: 1.0,
+            bbox,
+            sharpness: score,
+            panning: false,
+            sharp_end: "subject",
+            rating: score,
+            stars,
+            cull_reason: rider_cull_reason(stars, settings),
+            features: Vec::new(),
+            heuristic: score,
+            region_type: "person",
+            quality: None,
+            eyes_open: [None, None],
+            cut_sides: 0,
+            subject_frac: 0.0,
+            lead_room: None,
+            framing_score: None,
+            bystander: false,
+            af_bystander: false,
+        }),
+    )
+}
+
+/// "2 stars", "1 star": the cull reason of a subject under the star floor.
+pub(crate) fn star_reason(stars: u8) -> String {
+    format!("{stars} star{}", if stars == 1 { "" } else { "s" })
+}
+
+/// Whether a face or an eye is culled: under the floor, or blurred.
+pub(crate) fn small_cull_reason(kind: &str, score: f64, settings: &Settings) -> String {
+    if sharpness::stars_for(score) < (settings.auto_reject_below_stars as u8)
+        || (settings.cull_blurred && score < settings.blurred_below)
+    {
+        format!("{kind} soft")
+    } else {
+        String::new()
+    }
+}
+
+/// The rider-on-animal subject is culled on the star floor alone.
+pub(crate) fn rider_cull_reason(stars: u8, settings: &Settings) -> String {
+    if (settings.auto_reject_below_stars as u8) > stars {
+        star_reason(stars)
+    } else {
+        String::new()
+    }
+}
+
+/// Whether a detected vehicle or person is culled. `verdict` is `rating_for`'s
+/// ("poor" is blurred), `cut` the frame-edge description of a vehicle the
+/// frame edge cuts off. A condition report (`deliver_most`) keeps nearly
+/// everything: only a subject that is clearly out of focus goes, never one
+/// that is merely soft or a held pan.
+pub(crate) fn subject_cull_reason(
+    settings: &Settings,
+    deliver_most: bool,
+    stars: u8,
+    verdict: &str,
+    panning: bool,
+    cut: Option<String>,
+) -> String {
+    let blurred = settings.cull_blurred && verdict == "poor" && !panning;
+    if deliver_most {
+        if blurred {
+            "too blurred".into()
+        } else {
+            String::new()
+        }
+    } else if (settings.auto_reject_below_stars as u8) > stars {
+        star_reason(stars)
+    } else if blurred {
+        cut.unwrap_or_else(|| "too blurred".into())
+    } else {
+        String::new()
+    }
+}
+
 /// A pan's frame rating says how the picture reads: capped by how much of the
 /// frame is sharp. The subjects keep their own ratings, which is what picks the
 /// keeper of a burst.
@@ -837,19 +1039,157 @@ pub(crate) fn pan_capped(rating: f64, panning: bool, share: Option<f64>) -> f64 
     }
 }
 
-/// A condition report keeps nearly everything: only a subject that is clearly
-/// out of focus goes, and never one that is merely soft or a held pan.
-/// `rating_word` is `rating_for`'s ("poor" is blurred), as `cullable` reads it.
-fn deliver_most_reason(
-    cull_blurred: bool,
-    focus: &sharpness::Sharpness,
-    rating_word: &str,
-) -> String {
-    if cull_blurred && sharpness::cullable(focus, rating_word) {
-        "too blurred".into()
+/// The frame's rating as a scan stores it, and a re-score or a re-rate must
+/// store it again: the best subject of the first kind its priority finds, a
+/// pan's rating capped by how much of the frame is sharp, then the camera's
+/// focus area rescuing it (never lowering it). `subjects` are the frame's
+/// non-bystander `(region_type, bbox, rating)`.
+pub(crate) fn final_frame_rating(
+    lanes: &conrod_core::profile::Lanes,
+    subjects: &[(&str, [f64; 4], f64)],
+    whole: Option<f64>,
+    panning: bool,
+    pan_share: Option<f64>,
+    af_sharpness: Option<f64>,
+) -> f64 {
+    afsubject::rescue(
+        pan_capped(frame_rating(lanes, subjects, whole), panning, pan_share),
+        af_sharpness,
+    )
+}
+
+/// What rating one detection needs to know about its frame.
+pub(crate) struct DetectCtx<'a> {
+    pub image: &'a Rgb,
+    pub grey: &'a Gray,
+    pub settings: &'a Settings,
+    pub preset: ShootPreset,
+    pub strictness: &'a str,
+    pub models: &'a std::collections::HashMap<String, conrod_core::ridge::SharpModel>,
+    /// Every detection's box, for each subject's "others" in framing.
+    pub boxes: &'a [[f64; 4]],
+    /// `afsubject::opinion`'s area: usable and big enough to be a second opinion.
+    pub af_opinion_area: Option<[f64; 4]>,
+    pub framing_policy: Option<&'a vis_framing::FramingPolicy>,
+    pub tilt: Option<f32>,
+    pub quality: Option<&'a Mutex<conrod_vision::quality::QualityModel>>,
+}
+
+/// One detected vehicle or person, rated: the scan's measure of a subject.
+/// `None` when it cannot be measured at all (no tile, no edges): it is left
+/// out, so a subject nothing could judge is never culled as "1 star" and never
+/// written as a reject.
+pub(crate) fn rate_detection(det: &detect::Detection, c: &DetectCtx) -> Option<Subject> {
+    let (settings, grey, strictness) = (c.settings, c.grey, c.strictness);
+    let (fw, fh) = (c.image.width, c.image.height);
+    let policy = c.preset.policy();
+    let kind = if det.class_id == detect::PERSON || detect::ANIMALS.contains(&det.class_id) {
+        "person"
     } else {
-        String::new()
+        "vehicle"
+    };
+    let others: Vec<[f64; 4]> = c.boxes.iter().copied().filter(|b| *b != det.bbox).collect();
+    let crop_grey = cut_gray(grey, det.crop_box, settings, c.models.contains_key(kind));
+    let scale = crop_grey.width as f64 / (det.crop_box[2] - det.crop_box[0]);
+    let [cx, cy] = [det.crop_box[0], det.crop_box[1]];
+    let inner = [
+        (det.bbox[0] - cx) * scale,
+        (det.bbox[1] - cy) * scale,
+        (det.bbox[2] - cx) * scale,
+        (det.bbox[3] - cy) * scale,
+    ];
+    let mut focus = sharpness::measure(&crop_grey, Some(inner), c.models.get(kind));
+    // The subject's score is the edge-blur estimate on native pixels, taken
+    // as the worse of its whole box and the box's centre 60%: a sharp wall
+    // or banner behind the subject sits in the margins and must not vouch
+    // for a blurred body. The tile measure above still supplies background,
+    // bands, features and the held-pan flag. A loaded learned model keeps
+    // priority, and an unmeasurable box keeps the tile score.
+    let measured = if focus.learned {
+        focus.measured
+    } else {
+        rate_detected(&mut focus, grey, det.bbox, c.af_opinion_area, strictness)
+    };
+    if !measured {
+        return None;
     }
+    let edges = framing::assess(Some(det.bbox), fw as i64, fh as i64);
+    // Composition only orders sharp frames, it never culls one: a sharp car
+    // that runs off the frame edge keeps its focus rating. How much of it
+    // the edge took rides `cut_sides` and the framing score, which rank
+    // frames of a burst without pulling one below the keeper bar.
+    let rating = focus.score;
+    // A held pan is a *sharp subject over a streaked background*, not a
+    // blurred subject: the camera moved with the subject, so the subject
+    // stays sharp while everything else is one set of parallel streaks.
+    // `conrod_vision::streaks` measures that on the ring around the box
+    // (pan p10 0.826, static p90 0.787 on hand-labelled frames), and the
+    // preset still says whether pans are expected for this shoot.
+    //
+    // "Sharp subject" is the album's own not-blurred verdict: a held pan
+    // routinely scores 0.65-0.82 on the subject's blur alone (the wheels
+    // and the far side still move), so requiring `sharp_at` would refuse
+    // 8 of 48 labelled pans before the background is even looked at.
+    // What the flag must never do is excuse a subject that is a blur miss,
+    // and that is `blurred_below`.
+    let subject_not_blurred =
+        sharpness::verdict_for(focus.score, settings.sharp_at, settings.blurred_below) != "blurred";
+    // One measurement answers both questions: the coherence the pan flag
+    // reads, and the axis (the line the background is smeared along) that
+    // lead room is measured on. A panning frame is the one place the frame
+    // itself says where the subject is going, so framing gets that line
+    // instead of `None` for it (an axis, not an arrow: see `pan_motion`).
+    let pan = conrod_vision::streaks::background_pan(grey, det.bbox);
+    focus.panning = c.preset.pan_compatible()
+        && subject_not_blurred
+        && pan.is_some_and(|p| p.coherence >= conrod_vision::streaks::PAN_COHERENCE);
+    let motion = pan_motion(focus.panning, pan);
+    let placed = vis_framing::framing([fw as f64, fh as f64], det.bbox, &others, motion, c.tilt);
+    let framing_score = c
+        .framing_policy
+        .map(|policy| vis_framing::framing_score(&placed, policy));
+    let verdict = sharpness::rating_for(rating, settings.sharp_at, settings.blurred_below);
+    let stars = sharpness::stars_for(rating);
+    let cut_off = (kind == "vehicle" && edges.cut_off()).then(|| framing::describe(&edges));
+    let cull_reason = subject_cull_reason(
+        settings,
+        policy.deliver_most,
+        stars,
+        verdict,
+        focus.panning,
+        cut_off,
+    );
+    // A failed read costs only the tiebreak, never the cull.
+    let quality_score = c.quality.and_then(|q| {
+        let crop = cut(c.image, det.crop_box, settings);
+        lock(q).score(&crop).ok()
+    });
+    Some(Subject {
+        class: detect::class_name(det.class_id),
+        conf: det.conf,
+        bbox: det.bbox,
+        sharpness: focus.score,
+        panning: focus.panning,
+        sharp_end: focus.sharp_end,
+        rating,
+        stars,
+        cull_reason,
+        features: focus.features,
+        region_type: kind,
+        heuristic: if focus.learned {
+            focus.heuristic
+        } else {
+            focus.score
+        },
+        quality: quality_score,
+        eyes_open: [None, None],
+        cut_sides: placed.cut_sides,
+        subject_frac: placed.subject_frac,
+        lead_room: placed.lead_room,
+        framing_score,
+        bystander: false,
+        af_bystander: false,
+    })
 }
 
 /// The file's own details, as opposed to what is in it: the lens the file
@@ -983,136 +1323,23 @@ pub fn cull_frame_live(
     // same area still rescues the frame below.
     let af_opinion_area = af.and_then(|af| afsubject::opinion(af, (fw, fh), &boxes));
 
-    let mut subjects = Vec::new();
-    for det in &found {
-        let kind = if det.class_id == detect::PERSON || detect::ANIMALS.contains(&det.class_id) {
-            "person"
-        } else {
-            "vehicle"
-        };
-        let others: Vec<[f64; 4]> = boxes.iter().copied().filter(|b| *b != det.bbox).collect();
-        let crop_grey = cut_gray(&grey, det.crop_box, settings, models.contains_key(kind));
-        let scale = crop_grey.width as f64 / (det.crop_box[2] - det.crop_box[0]);
-        let [cx, cy] = [det.crop_box[0], det.crop_box[1]];
-        let inner = [
-            (det.bbox[0] - cx) * scale,
-            (det.bbox[1] - cy) * scale,
-            (det.bbox[2] - cx) * scale,
-            (det.bbox[3] - cy) * scale,
-        ];
-        let mut focus = sharpness::measure(&crop_grey, Some(inner), models.get(kind));
-        // The subject's score is the edge-blur estimate on native pixels, taken
-        // as the worse of its whole box and the box's centre 60%: a sharp wall
-        // or banner behind the subject sits in the margins and must not vouch
-        // for a blurred body. The tile measure above still supplies background,
-        // bands, features and the held-pan flag. A loaded learned model keeps
-        // priority, and an unmeasurable box keeps the tile score.
-        if !focus.learned {
-            let tile = focus.score;
-            let blur = subject_blur(&grey, det.bbox, fw.max(fh));
-            // The centre is consulted only when the tiles already suspect
-            // softness: a texture-poor but sharp body reads soft at the centre
-            // (its edge floor is region-relative), and asking it unasked demoted
-            // a crisp frame from 1.000 to 0.797.
-            let worst = if tile < 0.80 { blur.worst } else { blur.whole };
-            let detection =
-                sharpness::rating_from_blur(worst, sharpness::BlurStrictness::parse(&strictness));
-            // The camera's focus area, when it sits on this subject and is big
-            // enough to measure one with, is a second opinion that can only
-            // lower the score (see `afsubject`).
-            let af_opinion = af_opinion_area
-                .filter(|af| afsubject::holds_middle(det.bbox, *af))
-                .and_then(|af| afsubject::rate_box(&grey, af, &strictness));
-            if let Some(score) = rescore::second_opinion(detection, af_opinion) {
-                // The tile score is not used to overrule this one: it is measured
-                // on the downscaled crop, so it is not comparable with the native
-                // edge census. It only decides whether the centre was consulted.
-                focus.score = score;
-            }
-        }
-        let edges = framing::assess(Some(det.bbox), fw as i64, fh as i64);
-        // Composition only orders sharp frames, it never culls one: a sharp car
-        // that runs off the frame edge keeps its focus rating. How much of it
-        // the edge took rides `cut_sides` and the framing score, which rank
-        // frames of a burst without pulling one below the keeper bar.
-        let rating = focus.score;
-        // A held pan is a *sharp subject over a streaked background*, not a
-        // blurred subject: the camera moved with the subject, so the subject
-        // stays sharp while everything else is one set of parallel streaks.
-        // `conrod_vision::streaks` measures that on the ring around the box
-        // (pan p10 0.826, static p90 0.787 on hand-labelled frames), and the
-        // preset still says whether pans are expected for this shoot.
-        //
-        // "Sharp subject" is the album's own not-blurred verdict: a held pan
-        // routinely scores 0.65-0.82 on the subject's blur alone (the wheels
-        // and the far side still move), so requiring `sharp_at` would refuse
-        // 8 of 48 labelled pans before the background is even looked at.
-        // What the flag must never do is excuse a subject that is a blur miss,
-        // and that is `blurred_below`.
-        let subject_not_blurred =
-            sharpness::verdict_for(focus.score, settings.sharp_at, settings.blurred_below)
-                != "blurred";
-        // One measurement answers both questions: the coherence the pan flag
-        // reads, and the axis (the line the background is smeared along) that
-        // lead room is measured on. A panning frame is the one place the frame
-        // itself says where the subject is going, so framing gets that line
-        // instead of `None` for it (an axis, not an arrow: see `pan_motion`).
-        let pan = conrod_vision::streaks::background_pan(&grey, det.bbox);
-        focus.panning = preset.pan_compatible()
-            && subject_not_blurred
-            && pan.is_some_and(|p| p.coherence >= conrod_vision::streaks::PAN_COHERENCE);
-        let motion = pan_motion(focus.panning, pan);
-        let measured =
-            vis_framing::framing([fw as f64, fh as f64], det.bbox, &others, motion, tilt);
-        let framing_score =
-            framing_policy.map(|policy| vis_framing::framing_score(&measured, &policy));
-        let verdict = sharpness::rating_for(rating, settings.sharp_at, settings.blurred_below);
-        let stars = sharpness::stars_for(rating);
-        let cull_reason = if policy.deliver_most {
-            deliver_most_reason(settings.cull_blurred, &focus, verdict)
-        } else if (settings.auto_reject_below_stars as u8) > stars {
-            format!("{stars} star{}", if stars == 1 { "" } else { "s" })
-        } else if settings.cull_blurred && sharpness::cullable(&focus, verdict) {
-            if kind == "vehicle" && edges.cut_off() {
-                framing::describe(&edges)
-            } else {
-                "too blurred".into()
-            }
-        } else {
-            String::new()
-        };
-        // A failed read costs only the tiebreak, never the cull.
-        let quality_score = quality.and_then(|q| {
-            let crop = cut(&image, det.crop_box, settings);
-            lock(q).score(&crop).ok()
-        });
-        subjects.push(Subject {
-            class: detect::class_name(det.class_id),
-            conf: det.conf,
-            bbox: det.bbox,
-            sharpness: focus.score,
-            panning: focus.panning,
-            sharp_end: focus.sharp_end,
-            rating,
-            stars,
-            cull_reason,
-            features: focus.features,
-            region_type: kind,
-            heuristic: if focus.learned {
-                focus.heuristic
-            } else {
-                focus.score
-            },
-            quality: quality_score,
-            eyes_open: [None, None],
-            cut_sides: measured.cut_sides,
-            subject_frac: measured.subject_frac,
-            lead_room: measured.lead_room,
-            framing_score,
-            bystander: false,
-            af_bystander: false,
-        });
-    }
+    let ctx = DetectCtx {
+        image: &image,
+        grey: &grey,
+        settings,
+        preset,
+        strictness: &strictness,
+        models,
+        boxes: &boxes,
+        af_opinion_area,
+        framing_policy: framing_policy.as_ref(),
+        tilt,
+        quality,
+    };
+    let mut subjects: Vec<Subject> = found
+        .iter()
+        .filter_map(|det| rate_detection(det, &ctx))
+        .collect();
     live(Live::Stage("sharpness"));
     let mut eye_open_min = None;
     let mut smile_max = None;
@@ -1146,72 +1373,9 @@ pub fn cull_frame_live(
         ShootPreset::SportRodeo | ShootPreset::SportEquestrian
     ) {
         step("sharpness");
-        let people: Vec<conrod_core::sport::Det> = found
-            .iter()
-            .filter(|d| d.class_id == detect::PERSON)
-            .map(|d| (d.class_id, d.conf, d.bbox))
-            .collect();
-        let animals: Vec<conrod_core::sport::Det> = found
-            .iter()
-            .filter(|d| conrod_core::sport::ANIMALS.contains(&d.class_id))
-            .map(|d| (d.class_id, d.conf, d.bbox))
-            .collect();
-        if let Some(rider) = conrod_core::sport::rider_on_animal(&people, &animals) {
-            buck = Some(conrod_core::sport::buck_score(
-                &rider,
-                animals[rider.animal].2,
-                people[rider.person].2,
-            ));
-        }
-        if let Some(subject) = conrod_core::sport::rodeo_subject(&people, &animals) {
-            let bbox = subject.bbox();
-            let region = [
-                (bbox[0].max(0.0) as usize).min(fw),
-                (bbox[1].max(0.0) as usize).min(fh),
-                (bbox[2].max(0.0) as usize).min(fw),
-                (bbox[3].max(0.0) as usize).min(fh),
-            ];
-            if region[2] > region[0] + 8 && region[3] > region[1] + 8 {
-                let blur = conrod_vision::edgeblur::measure(&grey, Some(region));
-                let score = sharpness::rating_from_blur(
-                    blur.sigma_worst_at_reference(fw.max(fh)),
-                    sharpness::BlurStrictness::parse(&strictness),
-                )
-                .unwrap_or(0.0);
-                let stars = sharpness::stars_for(score);
-                let reason = if (settings.auto_reject_below_stars as u8) > stars {
-                    format!("{stars} stars")
-                } else {
-                    String::new()
-                };
-                subjects.push(Subject {
-                    class: match subject {
-                        conrod_core::sport::RodeoSubject::Rider { .. } => "rider",
-                        conrod_core::sport::RodeoSubject::Animal { .. } => "animal",
-                        conrod_core::sport::RodeoSubject::Person { .. } => "person",
-                    },
-                    conf: 1.0,
-                    bbox,
-                    sharpness: score,
-                    panning: false,
-                    sharp_end: "subject",
-                    rating: score,
-                    stars,
-                    cull_reason: reason,
-                    features: Vec::new(),
-                    heuristic: score,
-                    region_type: "person",
-                    quality: None,
-                    eyes_open: [None, None],
-                    cut_sides: 0,
-                    subject_frac: 0.0,
-                    lead_room: None,
-                    framing_score: None,
-                    bystander: false,
-                    af_bystander: false,
-                });
-            }
-        }
+        let (rearing, rider) = rodeo_read(&grey, &found, settings, &strictness);
+        buck = rearing;
+        subjects.extend(rider);
     }
     step("sharpness");
     // A frame with no subject is rated by the same function a re-score rates it
@@ -1245,12 +1409,14 @@ pub fn cull_frame_live(
         .filter(|s| !s.bystander)
         .map(|s| (s.region_type, s.bbox, s.rating))
         .collect();
-    let detected = pan_capped(
-        frame_rating(&settings.lanes(), &rated, whole),
+    let rating = final_frame_rating(
+        &settings.lanes(),
+        &rated,
+        whole,
         detected_panning,
         share_measured,
+        af_sharpness,
     );
-    let rating = afsubject::rescue(detected, af_sharpness);
     // A pan's frame rating reads the picture, not the car; the subjects keep
     // their own ratings, which is what picks the keeper of a burst. A frame the
     // camera focused elsewhere is not a pan, and the share is the same
@@ -1885,28 +2051,21 @@ mod tests {
 
     #[test]
     fn a_condition_report_culls_only_clearly_blurred_subjects() {
-        let focus = sharpness::Sharpness::default();
-        assert_eq!(deliver_most_reason(true, &focus, "poor"), "too blurred");
-        assert_eq!(
-            deliver_most_reason(true, &focus, "fair"),
-            "",
-            "soft is kept"
-        );
-        assert_eq!(deliver_most_reason(true, &focus, "good"), "");
-        assert_eq!(
-            deliver_most_reason(false, &focus, "poor"),
-            "",
-            "culling off"
-        );
-        let held = sharpness::Sharpness {
-            panning: true,
-            ..focus
+        let mut cfg = Settings {
+            cull_blurred: true,
+            auto_reject_below_stars: 3,
+            ..Settings::default()
         };
-        assert_eq!(
-            deliver_most_reason(true, &held, "poor"),
-            "",
-            "a held pan stays"
-        );
+        let reason = |cfg: &Settings, verdict: &str, panning: bool| {
+            subject_cull_reason(cfg, true, 1, verdict, panning, None)
+        };
+        assert_eq!(reason(&cfg, "poor", false), "too blurred");
+        assert_eq!(reason(&cfg, "fair", false), "", "soft is kept");
+        assert_eq!(reason(&cfg, "good", false), "");
+        cfg.cull_blurred = false;
+        assert_eq!(reason(&cfg, "poor", false), "", "culling off");
+        cfg.cull_blurred = true;
+        assert_eq!(reason(&cfg, "poor", true), "", "a held pan stays");
     }
 
     #[test]

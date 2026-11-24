@@ -3148,7 +3148,7 @@ impl Desktop {
         let db = lock(&self.reader);
         let images = rows(
             &db,
-            "SELECT id,path,camera,taken_at,rating,width,height,exposure_time,exposure_bias,f_number,focal_length,focus_distance FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 ORDER BY path",
+            "SELECT id,path,camera,taken_at,rating,width,height,exposure_time,exposure_bias,f_number,focal_length,focus_distance,burst_key FROM images WHERE job_id=? AND status='done' AND COALESCE(copy_of,0)=0 ORDER BY path",
             [job],
         )?;
         // Keep-together sets from the EXIF: a bracket is meant to hold a dark
@@ -3341,6 +3341,14 @@ impl Desktop {
             .collect::<std::collections::BTreeSet<_>>()
             .len();
         let moments = key.iter().collect::<std::collections::BTreeSet<_>>().len();
+        // The frames whose moment this regroup changed: a car group cut for the
+        // old moment says nothing about the new one.
+        let changed: Vec<i64> = images
+            .iter()
+            .enumerate()
+            .filter(|(i, v)| v["burst_key"].as_i64() != Some(key[*i]))
+            .filter_map(|(_, v)| v["id"].as_i64())
+            .collect();
         let db = lock(&self.db);
         let tx = db.unchecked_transaction().map_err(err)?;
         for (i, frame) in frames.iter().enumerate() {
@@ -3373,25 +3381,27 @@ impl Desktop {
         // shot the detector missed: rate it on the whole frame before the
         // keepers below are picked on the ratings.
         crate::passes::rate_missed_frames(&db, job)?;
-        let keepers = if cfg.grouping_stacks {
-            // The same rule the identify stage uses, so the keeper regroup
-            // leaves is the one a later pick would choose anyway.
-            let picks = crate::passes::pick_of_pass(&db, job, &cfg.lanes(), cfg.use_quality_score)?;
-            picks["picks"].as_u64().unwrap_or_default()
+        // Car groups were cut per old moment (`Group` numbers them per burst):
+        // where a frame changed moment, its group is stale -- a merged moment
+        // would keep two cars' groups and so two keepers, a split one a group
+        // across two moments. Take them back and cut them afresh from the
+        // stored looks; with none to cut from, the moment is one unit.
+        let cleared = clear_stale_groups(&db, job, &changed)?;
+        let db = if cleared > 0 && cfg.grouping_stacks {
+            drop(db);
+            let _ = crate::passes::consolidate(self, job, &task);
+            lock(&self.db)
         } else {
-            // Stacking is off: every frame is its own stack, so "best of the
-            // stack" would mark every frame as a keeper, which tells the
-            // photographer nothing. Suggest none, and take back the picks a
-            // regroup made while stacking was still on.
-            db.execute(
-                "UPDATE detections SET burst_pick=0 WHERE image_id IN (SELECT id FROM images WHERE job_id=?)",
-                [job],
-            )
-            .map_err(err)?;
-            db.execute("UPDATE images SET burst_pick=0 WHERE job_id=?", [job])
-                .map_err(err)?;
-            0
+            db
         };
+        // The same rule the identify stage uses, so the keeper regroup leaves
+        // is the one a later pick would choose anyway. With stacking off it
+        // suggests none (every frame is its own stack, so "best of the stack"
+        // would mark every frame and tell the photographer nothing).
+        let keepers = crate::passes::pick_of_pass(&db, job, &cfg.lanes(), cfg.use_quality_score)?
+            ["picks"]
+            .as_u64()
+            .unwrap_or_default();
         task.detail(format!(
             "{bursts} bursts · {moments} moments · {keepers} keepers"
         ));
@@ -3447,6 +3457,38 @@ pub(crate) fn write_frame_measurements(
 ) -> Result<()> {
     tx.execute("UPDATE images SET status='done',error=NULL,width=?,height=?,camera=?,taken_at=?,sharpness=?,rating=?,sharpness_whole=?,pan_share=?,thumb_path=?,exposure_verdict=?,highlight_clip=?,shadow_clip=?,dark_frame=?,tilt_deg=?,converge_deg=?,level_verdict=?,eye_open_min=?,smile_max=?,buck_score=?,exposure_time=?,exposure_bias=?,f_number=?,focal_length=?,focus_distance=?,lens=?,iso=?,file_size=?,af_x1=COALESCE(?,af_x1),af_y1=COALESCE(?,af_y1),af_x2=COALESCE(?,af_x2),af_y2=COALESCE(?,af_y2),af_mode=CASE WHEN ? THEN ? ELSE af_mode END,af_sharpness=CASE WHEN ? THEN ? ELSE af_sharpness END WHERE id=?",params![f.size.0 as i64,f.size.1 as i64,f.camera,f.taken,f.whole,f.rating,f.whole_raw,f.pan_share,thumb.to_string_lossy(),f.exposure.as_ref().map(|e| e.verdict),f.exposure.as_ref().map(|e| e.highlight_clip),f.exposure.as_ref().map(|e| e.shadow_clip),f.exposure.as_ref().map(|e| e.dark_frame),f.level.as_ref().and_then(|l| l.tilt_deg),f.level.as_ref().and_then(|l| l.verticals_converge_deg),f.level.as_ref().map(|l| l.verdict),f.eye_open_min,f.smile_max,f.buck,f.exif.exposure_time,f.exif.exposure_bias,f.exif.f_number,f.exif.focal_length,f.exif.focus_distance,f.lens,f.exif.iso,f.file_size,f.af.map(|a| a.x1),f.af.map(|a| a.y1),f.af.map(|a| a.x2),f.af.map(|a| a.y2),f.af.is_some(),f.af.and_then(|a| a.mode).map(i64::from),f.af.is_some(),f.af_sharpness,image]).map_err(err)?;
     Ok(())
+}
+
+/// Take back the car groups of every detection whose group touches a frame
+/// that changed moment (`changed` image ids): the group, its size, agreement and
+/// colour. Faces keep theirs -- a face's `group_key` names a person, which no
+/// moment cut changes. Returns how many detections lost a group.
+fn clear_stale_groups(db: &rusqlite::Connection, job: i64, changed: &[i64]) -> Result<usize> {
+    if changed.is_empty() {
+        return Ok(0);
+    }
+    db.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS regroup_changed(id INTEGER PRIMARY KEY); DELETE FROM regroup_changed;",
+    )
+    .map_err(err)?;
+    let tx = db.unchecked_transaction().map_err(err)?;
+    for id in changed {
+        tx.execute("INSERT OR IGNORE INTO regroup_changed(id) VALUES(?)", [id])
+            .map_err(err)?;
+    }
+    let cleared = tx
+        .execute(
+            "UPDATE detections SET group_key=NULL,group_size=NULL,group_agreement=NULL,group_colour_hex=NULL \
+             WHERE group_key IS NOT NULL AND COALESCE(region_type,'vehicle') NOT IN ('face','eye') \
+             AND image_id IN (SELECT id FROM images WHERE job_id=?1) \
+             AND group_key IN (SELECT d.group_key FROM detections d WHERE d.group_key IS NOT NULL \
+                 AND COALESCE(d.region_type,'vehicle') NOT IN ('face','eye') \
+                 AND d.image_id IN (SELECT id FROM regroup_changed))",
+            [job],
+        )
+        .map_err(err)?;
+    tx.commit().map_err(err)?;
+    Ok(cleared)
 }
 
 pub(crate) fn insert_subject(
