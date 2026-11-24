@@ -590,11 +590,29 @@ pub struct ProviderRequest {
     pub json: Value,
 }
 
-/// Ollama's context window per request. One 1568 px image is about 2000
-/// tokens, the prompt and schema a few hundred, the reply at most 600: 8192
-/// fits all of it. Without this Ollama uses the model's 128k default, whose
-/// KV cache alone is several GB and spills qwen2.5vl:7b off the GPU.
-pub const OLLAMA_NUM_CTX: i64 = 8192;
+/// Ollama's context window for a single-crop request. One 1568 px image is
+/// about 2000 tokens (768 px on Qwen3-VL is ~1080 tokens), the system prompt
+/// and schema ~500, and the reply at most 600: 4096 fits all of it while
+/// halving KV-cache VRAM compared to 8192. Without this Ollama uses the
+/// model's 128k default, whose KV cache alone is several GB and spills
+/// qwen2.5vl:7b / qwen3-vl:8b off the GPU.
+pub const OLLAMA_NUM_CTX: i64 = 4096;
+
+/// Ollama's context window when a request sends multiple images (e.g. a burst).
+pub const OLLAMA_MULTI_IMAGE_NUM_CTX: i64 = 8192;
+
+/// Ollama's prompt/image evaluation batch size. Ollama injects
+/// `--image-min-tokens 1024` for Qwen-VL models, so non-square crops round up
+/// to ~1040–1078 image tokens; with the default 1024 batch size the trailing
+/// 16–56 tokens spill into a second batch that stalls ROCm/CUDA prefill by
+/// ~1 s per crop. 2048 keeps every single-crop image in one batch.
+pub const OLLAMA_NUM_BATCH: i64 = 2048;
+
+/// Short per-photo user prompt paired with [`vehicle_prompt`] as the system
+/// message. Placing the ~450-token static instructions in `system` puts them
+/// before the per-photo image tokens so Ollama and `llama-server` reuse the
+/// KV cache across every crop in a shoot.
+pub const VEHICLE_USER_PROMPT: &str = "Describe the subject in this photo.";
 
 /// Add a provider's own switch for model thinking. `on` is the vision service
 /// entry's `reasoning` flag (`vlm_reasoning` before the per-service field
@@ -679,26 +697,49 @@ pub fn ollama_request(
     schema: &Value,
     num_predict: i64,
 ) -> Result<ProviderRequest, VlmError> {
+    ollama_request_with_system(host, model, None, prompt, images, schema, num_predict)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn ollama_request_with_system(
+    host: &str,
+    model: &str,
+    system: Option<&str>,
+    prompt: &str,
+    images: &[String],
+    schema: &Value,
+    num_predict: i64,
+) -> Result<ProviderRequest, VlmError> {
     let host = host.trim_end_matches('/');
     let url = format!("{host}/api/generate");
     guard_remote(&url, "vlm_host")?;
+    let num_ctx = if images.len() > 1 {
+        OLLAMA_MULTI_IMAGE_NUM_CTX
+    } else {
+        OLLAMA_NUM_CTX
+    };
+    let mut body = json!({
+        "model": model,
+        "prompt": prompt,
+        "images": images,
+        "stream": false,
+        "format": schema,
+        "keep_alive": "2m",
+        "options": {
+            "temperature": 0.0,
+            "num_predict": num_predict,
+            "num_ctx": num_ctx,
+            "num_batch": OLLAMA_NUM_BATCH,
+        },
+    });
+    if let Some(sys) = system.map(str::trim).filter(|s| !s.is_empty()) {
+        body["system"] = json!(sys);
+    }
     Ok(ProviderRequest {
         url,
         headers: vec![],
         query: vec![],
-        json: json!({
-            "model": model,
-            "prompt": prompt,
-            "images": images,
-            "stream": false,
-            "format": schema,
-            "keep_alive": "2m",
-            "options": {
-                "temperature": 0.0,
-                "num_predict": num_predict,
-                "num_ctx": OLLAMA_NUM_CTX,
-            },
-        }),
+        json: body,
     })
 }
 
@@ -710,11 +751,12 @@ pub fn openai_request(
     schema: &Value,
     num_predict: i64,
 ) -> ProviderRequest {
-    openai_request_at(
+    openai_request_at_with_system(
         OPENAI_URL,
         true,
         model,
         api_key,
+        None,
         prompt,
         images,
         schema,
@@ -737,18 +779,65 @@ pub fn openai_request_at(
     schema: &Value,
     num_predict: i64,
 ) -> ProviderRequest {
-    let prompt = if strict {
-        prompt.to_string()
-    } else {
-        format!("{prompt}\n\nReply with one JSON object matching this schema:\n{schema}")
+    openai_request_at_with_system(
+        url,
+        strict,
+        model,
+        api_key,
+        None,
+        prompt,
+        images,
+        schema,
+        num_predict,
+    )
+}
+
+/// Like [`openai_request_at`], with an optional `system` prompt placed before
+/// the user message so local `llama-server` and cloud providers can reuse the
+/// static instruction KV-cache prefix across crops.
+#[allow(clippy::too_many_arguments)]
+pub fn openai_request_at_with_system(
+    url: &str,
+    strict: bool,
+    model: &str,
+    api_key: &str,
+    system: Option<&str>,
+    prompt: &str,
+    images: &[String],
+    schema: &Value,
+    num_predict: i64,
+) -> ProviderRequest {
+    let sys = system.map(str::trim).filter(|s| !s.is_empty());
+    let (system_text, user_text) = match sys {
+        Some(sys) => {
+            let sys_text = if strict {
+                sys.to_string()
+            } else {
+                format!("{sys}\n\nReply with one JSON object matching this schema:\n{schema}")
+            };
+            (Some(sys_text), prompt.to_string())
+        }
+        None => {
+            let user = if strict {
+                prompt.to_string()
+            } else {
+                format!("{prompt}\n\nReply with one JSON object matching this schema:\n{schema}")
+            };
+            (None, user)
+        }
     };
-    let mut content = vec![json!({"type": "text", "text": prompt})];
+    let mut content = vec![json!({"type": "text", "text": user_text})];
     for image in images {
         content.push(json!({
             "type": "image_url",
             "image_url": {"url": format!("data:image/jpeg;base64,{image}")},
         }));
     }
+    let mut messages = Vec::with_capacity(2);
+    if let Some(sys_text) = system_text {
+        messages.push(json!({"role": "system", "content": sys_text}));
+    }
+    messages.push(json!({"role": "user", "content": content}));
     // Strict structured outputs require every property listed as required
     // and additionalProperties set explicitly.
     let mut strict_schema = schema.clone();
@@ -787,7 +876,7 @@ pub fn openai_request_at(
         query: vec![],
         json: json!({
             "model": model,
-            "messages": [{"role": "user", "content": content}],
+            "messages": messages,
             "response_format": response_format,
             "max_tokens": num_predict,
             "temperature": 0.0,
@@ -1578,6 +1667,17 @@ pub fn anthropic_request(
     schema: &Value,
     num_predict: i64,
 ) -> ProviderRequest {
+    anthropic_request_with_system(settings, None, prompt, images, schema, num_predict)
+}
+
+pub fn anthropic_request_with_system(
+    settings: &Settings,
+    system: Option<&str>,
+    prompt: &str,
+    images: &[String],
+    schema: &Value,
+    num_predict: i64,
+) -> ProviderRequest {
     let mut content = vec![json!({"type": "text", "text": prompt})];
     for image in images {
         content.push(json!({
@@ -1587,21 +1687,25 @@ pub fn anthropic_request(
     }
     let mut headers = vec![("anthropic-version".into(), ANTHROPIC_VERSION.to_string())];
     headers.extend(anthropic_auth(settings));
+    let mut body = json!({
+        "model": settings.vlm_model,
+        "max_tokens": num_predict,
+        "tools": [{
+            "name": "describe_vehicle",
+            "description": "Record the extracted vehicle fields.",
+            "input_schema": schema,
+        }],
+        "tool_choice": {"type": "tool", "name": "describe_vehicle"},
+        "messages": [{"role": "user", "content": content}],
+    });
+    if let Some(sys) = system.map(str::trim).filter(|s| !s.is_empty()) {
+        body["system"] = json!(sys);
+    }
     ProviderRequest {
         url: ANTHROPIC_URL.into(),
         headers,
         query: vec![],
-        json: json!({
-            "model": settings.vlm_model,
-            "max_tokens": num_predict,
-            "tools": [{
-                "name": "describe_vehicle",
-                "description": "Record the extracted vehicle fields.",
-                "input_schema": schema,
-            }],
-            "tool_choice": {"type": "tool", "name": "describe_vehicle"},
-            "messages": [{"role": "user", "content": content}],
-        }),
+        json: body,
     }
 }
 
@@ -1612,9 +1716,36 @@ pub fn gemini_request(
     images: &[String],
     num_predict: i64,
 ) -> ProviderRequest {
+    gemini_request_with_system(model, api_key, None, prompt, images, num_predict)
+}
+
+pub fn gemini_request_with_system(
+    model: &str,
+    api_key: &str,
+    system: Option<&str>,
+    prompt: &str,
+    images: &[String],
+    num_predict: i64,
+) -> ProviderRequest {
     let mut parts = vec![json!({"text": prompt})];
     for image in images {
         parts.push(json!({"inline_data": {"mime_type": "image/jpeg", "data": image}}));
+    }
+    let mut body = json!({
+        "contents": [{"role": "user", "parts": parts}],
+        // Gemini's schema dialect is not the one Ollama/OpenAI use --
+        // nullable fields are "nullable": true rather than a
+        // ["string", "null"] union -- so the shared schema is not
+        // reusable here; responseMimeType alone still forces valid
+        // JSON, and the prompt spells out the wanted structure.
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": num_predict,
+            "responseMimeType": "application/json",
+        },
+    });
+    if let Some(sys) = system.map(str::trim).filter(|s| !s.is_empty()) {
+        body["systemInstruction"] = json!({"parts": [{"text": sys}]});
     }
     ProviderRequest {
         url: GEMINI_URL.replace("{model}", model),
@@ -1623,19 +1754,7 @@ pub fn gemini_request(
         // Anthropic above).
         headers: vec![("x-goog-api-key".into(), api_key.to_string())],
         query: vec![],
-        json: json!({
-            "contents": [{"role": "user", "parts": parts}],
-            // Gemini's schema dialect is not the one Ollama/OpenAI use --
-            // nullable fields are "nullable": true rather than a
-            // ["string", "null"] union -- so the shared schema is not
-            // reusable here; responseMimeType alone still forces valid
-            // JSON, and the prompt spells out the wanted structure.
-            "generationConfig": {
-                "temperature": 0.0,
-                "maxOutputTokens": num_predict,
-                "responseMimeType": "application/json",
-            },
-        }),
+        json: body,
     }
 }
 
@@ -1663,42 +1782,63 @@ pub fn build_request(
     schema: &Value,
     num_predict: i64,
 ) -> Result<ProviderRequest, VlmError> {
+    build_request_with_system(settings, None, prompt, images, schema, num_predict)
+}
+
+/// Like [`build_request`], carrying an optional `system` instruction prompt
+/// placed before the per-photo user turn for KV-cache prefix reuse.
+pub fn build_request_with_system(
+    settings: &Settings,
+    system: Option<&str>,
+    prompt: &str,
+    images: &[String],
+    schema: &Value,
+    num_predict: i64,
+) -> Result<ProviderRequest, VlmError> {
     let provider = if settings.vlm_provider.is_empty() {
         "ollama".to_string()
     } else {
         settings.vlm_provider.to_lowercase()
     };
     let mut request = match provider.as_str() {
-        "ollama" => ollama_request(
+        "ollama" => ollama_request_with_system(
             &settings.vlm_host,
             &settings.vlm_model,
+            system,
             prompt,
             images,
             schema,
             num_predict,
         )?,
-        "openai" => openai_request(
+        "openai" => openai_request_at_with_system(
+            OPENAI_URL,
+            true,
             &settings.vlm_model,
             &settings.vlm_api_key,
+            system,
             prompt,
             images,
             schema,
             num_predict,
         ),
-        "openrouter" => openai_request_at(
+        "openrouter" => openai_request_at_with_system(
             OPENROUTER_URL,
             false,
             &settings.vlm_model,
             &settings.vlm_api_key,
+            system,
             prompt,
             images,
             schema,
             num_predict,
         ),
-        "anthropic" => anthropic_request(settings, prompt, images, schema, num_predict),
-        "gemini" => gemini_request(
+        "anthropic" => {
+            anthropic_request_with_system(settings, system, prompt, images, schema, num_predict)
+        }
+        "gemini" => gemini_request_with_system(
             &settings.vlm_model,
             &settings.vlm_api_key,
+            system,
             prompt,
             images,
             num_predict,
@@ -1707,11 +1847,12 @@ pub fn build_request(
             // Both spellings are the Console (credits) endpoint. `opencode-go`
             // is only an alias from older settings; it never reaches the Go
             // subscription base, whose allowance is for coding assistants.
-            let mut request = openai_request_at(
+            let mut request = openai_request_at_with_system(
                 &opencode_chat_url(&settings.vlm_host)?,
                 false,
                 &settings.vlm_model,
                 &settings.vlm_api_key,
+                system,
                 prompt,
                 images,
                 schema,
@@ -1880,6 +2021,31 @@ impl VlmClient {
         num_predict: i64,
         repeat_penalty: Option<f64>,
     ) -> Result<Value, VlmError> {
+        self.call_with_system(
+            settings,
+            None,
+            prompt,
+            images,
+            schema,
+            num_predict,
+            repeat_penalty,
+        )
+    }
+
+    /// `call_with`, carrying an optional `system` prompt placed before the
+    /// per-photo user turn so local and cloud backends can reuse the cached
+    /// static instruction prefix across crops.
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_with_system(
+        &self,
+        settings: &Settings,
+        system: Option<&str>,
+        prompt: &str,
+        images: &[String],
+        schema: &Value,
+        num_predict: i64,
+        repeat_penalty: Option<f64>,
+    ) -> Result<Value, VlmError> {
         let enabled: Vec<_> = settings
             .vlm_services
             .iter()
@@ -1903,6 +2069,7 @@ impl VlmClient {
             }
             return self.call_one(
                 settings,
+                system,
                 prompt,
                 images,
                 schema,
@@ -1917,7 +2084,15 @@ impl VlmClient {
         let start = pick_service(&settings.vlm_strategy, &ids, held.as_deref(), &self.turn);
         let ask = |i: usize| {
             let one = for_service(settings, enabled[i]);
-            self.call_one(&one, prompt, images, schema, num_predict, repeat_penalty)
+            self.call_one(
+                &one,
+                system,
+                prompt,
+                images,
+                schema,
+                num_predict,
+                repeat_penalty,
+            )
         };
         let mut order = (start..ids.len()).chain(0..start);
         let first = ask(order.next().unwrap_or(0));
@@ -1940,9 +2115,11 @@ impl VlmClient {
         Err(last)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn call_one(
         &self,
         settings: &Settings,
+        system: Option<&str>,
         prompt: &str,
         images: &[String],
         schema: &Value,
@@ -1971,8 +2148,17 @@ impl VlmClient {
             } else {
                 &settings.vlm_model
             };
-            let mut req =
-                openai_request_at(&url, true, model, "", prompt, images, schema, num_predict);
+            let mut req = openai_request_at_with_system(
+                &url,
+                true,
+                model,
+                "",
+                system,
+                prompt,
+                images,
+                schema,
+                num_predict,
+            );
             req.headers.clear();
             if let Some(penalty) = repeat_penalty {
                 req.json["repeat_penalty"] = json!(penalty);
@@ -1989,9 +2175,10 @@ impl VlmClient {
             // waiting out.
             let pool = self.hosts.pool_for(settings.ollama_hosts());
             let host = pool.acquire();
-            let mut req = match ollama_request(
+            let mut req = match ollama_request_with_system(
                 &host,
                 &settings.vlm_model,
+                system,
                 prompt,
                 images,
                 schema,
@@ -2024,7 +2211,8 @@ impl VlmClient {
             pool.release(host);
             result?
         } else {
-            let req = build_request(settings, prompt, images, schema, num_predict)?;
+            let req =
+                build_request_with_system(settings, system, prompt, images, schema, num_predict)?;
             let who = display_name(&provider);
             send_with_retries(
                 &self.gate,
@@ -2623,22 +2811,23 @@ pub fn describe_with_reply(
     hints: &VlmHints,
 ) -> Result<(VehicleDescription, Value, u32), VlmError> {
     let payload_image = encode_for_model(image, settings.vlm_input_edge);
-    let prompt = vehicle_prompt(settings, is_bike, hints);
+    let system_prompt = vehicle_prompt(settings, is_bike, hints);
     let with_plate = wants_plate(settings, hints);
     let reply_schema = schema(with_plate);
-    let ask = |text: &str, penalty: Option<f64>| {
-        client.call_with(
+    let ask = |sys: &str, penalty: Option<f64>| {
+        client.call_with_system(
             settings,
-            text,
+            Some(sys),
+            VEHICLE_USER_PROMPT,
             std::slice::from_ref(&payload_image),
             &reply_schema,
             600,
             penalty,
         )
     };
-    let (parsed, attempts) = match ask(&prompt, None) {
+    let (parsed, attempts) = match ask(&system_prompt, None) {
         Ok(reply) => (reply, 1),
-        Err(VlmError::BadReply(_)) => match ask(&prompt, Some(1.1)) {
+        Err(VlmError::BadReply(_)) => match ask(&system_prompt, Some(1.1)) {
             Ok(reply) => (reply, 2),
             Err(err) => {
                 note_unless_fatal(client, settings, &err)?;
@@ -3822,5 +4011,76 @@ mod tests {
 
         assert_eq!(release_local_models(&settings), 1);
         assert!(released.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn describe_with_reply_sends_static_prompt_as_system_with_batch_and_ctx_on_ollama() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut buf).unwrap_or(0);
+                seen.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&seen).to_string();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let len = text
+                        .lines()
+                        .find_map(|l| {
+                            let l = l.to_ascii_lowercase();
+                            l.strip_prefix("content-length:")
+                                .map(|v| v.trim().to_string())
+                        })
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if n == 0 || seen.len() >= end + 4 + len {
+                        break;
+                    }
+                } else if n == 0 {
+                    break;
+                }
+            }
+            let raw = String::from_utf8_lossy(&seen).to_string();
+            let body = match raw.find("\r\n\r\n") {
+                Some(end) => raw[end + 4..].to_string(),
+                None => raw,
+            };
+            let reply = br#"{"response":"{\"number\":\"7\",\"number_location\":\"door\",\"numbers\":[],\"visible_text\":[],\"action\":[],\"make\":\"Porsche\",\"model\":\"911\",\"evidence\":\"badge\",\"colour\":\"white\",\"is_competition\":true,\"confidence\":0.9}"}"#;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                reply.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(reply);
+            body
+        });
+
+        let settings = Settings {
+            vlm_provider: "ollama".into(),
+            vlm_host: base,
+            vlm_model: "qwen3-vl:8b-instruct-q4_K_M".into(),
+            ..Settings::default()
+        };
+        let img = Rgb {
+            width: 4,
+            height: 4,
+            data: vec![128; 4 * 4 * 3],
+        };
+        let client = VlmClient::new(Arc::new(RealClock::default()));
+        let (vehicle, _, attempts) =
+            describe_with_reply(&client, &img, &settings, false, &VlmHints::default()).unwrap();
+        assert_eq!(attempts, 1);
+        assert_eq!(vehicle.race_number.as_deref(), Some("7"));
+
+        let sent: Value = serde_json::from_str(server.join().unwrap().trim()).unwrap();
+        assert_eq!(sent["prompt"], json!(VEHICLE_USER_PROMPT));
+        assert!(sent["system"]
+            .as_str()
+            .unwrap()
+            .contains("You are reading one competition car"));
+        assert_eq!(sent["options"]["num_ctx"], json!(4096));
+        assert_eq!(sent["options"]["num_batch"], json!(2048));
     }
 }

@@ -1,7 +1,8 @@
 use conrod_io::settings::Settings;
 use conrod_io::vlm::{
-    anthropic_auth, build_request, parse_anthropic_response, parse_gemini_response,
-    parse_ollama_response, parse_openai_response, schema, vehicle_prompt, VlmHints,
+    anthropic_auth, build_request, build_request_with_system, parse_anthropic_response,
+    parse_gemini_response, parse_ollama_response, parse_openai_response, schema, vehicle_prompt,
+    VlmHints, OLLAMA_MULTI_IMAGE_NUM_CTX, OLLAMA_NUM_BATCH, OLLAMA_NUM_CTX, VEHICLE_USER_PROMPT,
 };
 use serde_json::{json, Value};
 
@@ -85,9 +86,124 @@ fn ollama_request_caps_the_context_and_keeps_the_model_loaded() {
         600,
     )
     .unwrap();
-    assert_eq!(request.json["options"]["num_ctx"], json!(8192));
+    assert_eq!(request.json["options"]["num_ctx"], json!(OLLAMA_NUM_CTX));
+    assert_eq!(request.json["options"]["num_ctx"], json!(4096));
+    assert_eq!(
+        request.json["options"]["num_batch"],
+        json!(OLLAMA_NUM_BATCH)
+    );
+    assert_eq!(request.json["options"]["num_batch"], json!(2048));
     assert_eq!(request.json["keep_alive"], json!("2m"));
     assert_eq!(request.json["options"]["num_predict"], json!(600));
+    assert!(request.json.get("system").is_none());
+
+    let multi = build_request(
+        &settings_for("ollama"),
+        "describe burst",
+        &["img1".to_string(), "img2".to_string()],
+        &json!({"type": "object"}),
+        400,
+    )
+    .unwrap();
+    assert_eq!(
+        multi.json["options"]["num_ctx"],
+        json!(OLLAMA_MULTI_IMAGE_NUM_CTX)
+    );
+    assert_eq!(multi.json["options"]["num_ctx"], json!(8192));
+}
+
+#[test]
+fn system_prompt_splits_static_instructions_before_the_photo_across_providers() {
+    let images = vec!["b64img".to_string()];
+    let reply_schema =
+        json!({"type": "object", "properties": {"make": {"type": ["string", "null"]}}});
+    let sys = "Static vehicle instructions";
+
+    let ollama = build_request_with_system(
+        &settings_for("ollama"),
+        Some(sys),
+        VEHICLE_USER_PROMPT,
+        &images,
+        &reply_schema,
+        600,
+    )
+    .unwrap();
+    assert_eq!(ollama.json["system"], json!(sys));
+    assert_eq!(ollama.json["prompt"], json!(VEHICLE_USER_PROMPT));
+
+    let openai = build_request_with_system(
+        &settings_for("openai"),
+        Some(sys),
+        VEHICLE_USER_PROMPT,
+        &images,
+        &reply_schema,
+        600,
+    )
+    .unwrap();
+    assert_eq!(openai.json["messages"][0]["role"], json!("system"));
+    assert_eq!(openai.json["messages"][0]["content"], json!(sys));
+    assert_eq!(openai.json["messages"][1]["role"], json!("user"));
+    assert_eq!(
+        openai.json["messages"][1]["content"][0]["text"],
+        json!(VEHICLE_USER_PROMPT)
+    );
+    assert_eq!(
+        openai.json["messages"][1]["content"][1]["type"],
+        json!("image_url")
+    );
+
+    // Non-strict gateways (OpenRouter / OpenCode) append the schema to the
+    // cached system prompt instead of the per-photo user turn.
+    let openrouter = build_request_with_system(
+        &settings_for("openrouter"),
+        Some(sys),
+        VEHICLE_USER_PROMPT,
+        &images,
+        &reply_schema,
+        600,
+    )
+    .unwrap();
+    assert_eq!(openrouter.json["messages"][0]["role"], json!("system"));
+    let sys_content = openrouter.json["messages"][0]["content"].as_str().unwrap();
+    assert!(sys_content.starts_with(sys));
+    assert!(sys_content.contains("\"make\""));
+    assert_eq!(
+        openrouter.json["messages"][1]["content"][0]["text"],
+        json!(VEHICLE_USER_PROMPT)
+    );
+
+    let anthropic = build_request_with_system(
+        &settings_for("anthropic"),
+        Some(sys),
+        VEHICLE_USER_PROMPT,
+        &images,
+        &reply_schema,
+        600,
+    )
+    .unwrap();
+    assert_eq!(anthropic.json["system"], json!(sys));
+    assert_eq!(
+        anthropic.json["messages"][0]["content"][0]["text"],
+        json!(VEHICLE_USER_PROMPT)
+    );
+
+    let gemini = build_request_with_system(
+        &settings_for("gemini"),
+        Some(sys),
+        VEHICLE_USER_PROMPT,
+        &images,
+        &reply_schema,
+        600,
+    )
+    .unwrap();
+    assert_eq!(
+        gemini.json["systemInstruction"]["parts"][0]["text"],
+        json!(sys)
+    );
+    assert_eq!(
+        gemini.json["contents"][0]["parts"][0]["text"],
+        json!(VEHICLE_USER_PROMPT)
+    );
 }
 
 #[test]

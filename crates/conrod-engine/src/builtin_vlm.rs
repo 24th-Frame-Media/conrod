@@ -30,8 +30,16 @@ const IDLE_UNLOAD: Duration = Duration::from_secs(60);
 /// Maximum time to wait for `llama-server` to finish loading weights into VRAM.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// Context window for Qwen3-VL single-crop / multi-frame reads.
-const DEFAULT_CTX_SIZE: u32 = 8192;
+/// Context window for Qwen3-VL single-crop reads. Fits a 1568 px image
+/// (~2000 tokens), the ~500-token system prompt, and a 600-token reply with
+/// headroom while halving KV-cache VRAM compared to 8192.
+const DEFAULT_CTX_SIZE: u32 = 4096;
+
+/// Logical and physical prompt/image prefill batch sizes. Keeps a full image
+/// crop in a single batch and doubles llama-server's default 512 ubatch size
+/// for faster vision prefill.
+const DEFAULT_BATCH_SIZE: u32 = 2048;
+const DEFAULT_UBATCH_SIZE: u32 = 1024;
 
 /// Paths required to launch the built-in Qwen3-VL server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +95,10 @@ pub fn server_args(paths: &BuiltinPaths, port: u16) -> Vec<String> {
         port.to_string(),
         "--ctx-size".into(),
         DEFAULT_CTX_SIZE.to_string(),
+        "--batch-size".into(),
+        DEFAULT_BATCH_SIZE.to_string(),
+        "--ubatch-size".into(),
+        DEFAULT_UBATCH_SIZE.to_string(),
         "--cache-type-k".into(),
         "q8_0".into(),
         "--cache-type-v".into(),
@@ -329,7 +341,9 @@ mod tests {
             "--mmproj",
             "C:/models/mmproj-Qwen3VL-8B-Instruct-F16.gguf"
         ));
-        assert!(has_pair("--ctx-size", "8192"));
+        assert!(has_pair("--ctx-size", "4096"));
+        assert!(has_pair("--batch-size", "2048"));
+        assert!(has_pair("--ubatch-size", "1024"));
         assert!(has_pair("--cache-type-k", "q8_0"));
         assert!(has_pair("--cache-type-v", "q8_0"));
         assert!(has_pair("--gpu-layers", "999"));
