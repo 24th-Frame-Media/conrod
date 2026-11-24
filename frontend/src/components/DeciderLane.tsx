@@ -29,8 +29,8 @@ function Answer({ said }: { said: DeciderSaid }) {
  * pending checks in flight). Supports `hero` (solo side-by-side), `card` (vertical), and `tile`
  * (horizontal-split) layouts.
  */
-export function DeciderLane({ live, serving = null, layout = 'card' }: {
-  live: DeciderLive; serving?: string | null; layout?: 'hero' | 'card' | 'tile';
+export function DeciderLane({ live, serving = null, layout = 'card', paused = false }: {
+  live: DeciderLive; serving?: string | null; layout?: 'hero' | 'card' | 'tile'; paused?: boolean;
 }) {
   const current = live.current;
   const last = live.recent[0] ?? null;
@@ -45,8 +45,9 @@ export function DeciderLane({ live, serving = null, layout = 'card' }: {
   const says = last?.says ?? [];
   const answeredIds = new Set(says.map((s) => s.id));
   const pendingAsks = asking.filter((a) => !answeredIds.has(a.id));
-  const badge = busy ? 'LIVE' : waiting ? 'QUEUED' : unavailable ? 'OFF' : last ? 'DONE' : 'IDLE';
-  const cls = busy ? ' live' : last ? ' done' : ' idle';
+  const isPaused = paused && !unavailable;
+  const badge = isPaused ? 'PAUSED' : busy ? 'LIVE' : waiting ? 'QUEUED' : unavailable ? 'OFF' : last ? 'DONE' : 'IDLE';
+  const cls = isPaused ? ' paused' : busy ? ' live' : last ? ' done' : ' idle';
 
   const viewfinder = (
     <div className="id-view id-view-lane">
@@ -56,8 +57,8 @@ export function DeciderLane({ live, serving = null, layout = 'card' }: {
         : <span className="id-view-empty">{unavailable ? live.message : live.state === 'loading' ? 'Loading the model onto the GPU…' : 'Waiting for a frame…'}</span>}
       <span className="id-corner tl" aria-hidden="true" /><span className="id-corner tr" aria-hidden="true" />
       <span className="id-corner bl" aria-hidden="true" /><span className="id-corner br" aria-hidden="true" />
-      {busy && <span className="id-scanline" aria-hidden="true" />}
-      <span className={`id-badge${busy ? ' live' : ''}${waiting ? ' waiting' : ''}`}>{badge}</span>
+      {busy && !isPaused && <span className="id-scanline" aria-hidden="true" />}
+      <span className={`id-badge${isPaused ? ' paused' : busy ? ' live' : ''}${!isPaused && waiting ? ' waiting' : ''}`}>{badge}</span>
       {shown && <span className="id-file" title={shown.label}>{fileOf(shown.label)}</span>}
     </div>
   );
@@ -110,8 +111,8 @@ export function DeciderLane({ live, serving = null, layout = 'card' }: {
     <section className={`id-lane decider-lane ${layout}${cls}${unavailable ? ' off' : ''}`} aria-label="Decision model">
       <header className="id-lane-head">
         <span className="id-lane-name mono">DECIDER</span>
-        <span className={`id-lane-stage ${busy ? 'ing-stage busy' : 'ing-stage idle'}`}>{busy ? (live.state === 'loading' ? 'loading' : 'deciding') : serving ? 'ready' : deciderWord(live.state)}</span>
-        {busy && <i className="id-lane-dot" aria-hidden="true" />}
+        <span className={`id-lane-stage ${isPaused ? 'ing-stage paused' : busy ? 'ing-stage busy' : 'ing-stage idle'}`}>{isPaused ? 'paused' : busy ? (live.state === 'loading' ? 'loading' : 'deciding') : serving ? 'ready' : deciderWord(live.state)}</span>
+        {busy && !isPaused && <i className="id-lane-dot" aria-hidden="true" />}
       </header>
 
       {/* Very short screens (below 680 px) fold the card into one row. */}

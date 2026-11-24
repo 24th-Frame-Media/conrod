@@ -359,7 +359,7 @@ fn run_with(
                 };
                 // Between asks: a paused Decision stage parks here, so the call
                 // already in flight finishes and the worker then holds.
-                if !control.park_with(IDENTIFY_DECISION, stop, progress)
+                if !control.park_task(IDENTIFY_DECISION, stop, progress, task)
                     || control.is_skipped(IDENTIFY_DECISION)
                 {
                     break;
@@ -504,7 +504,7 @@ pub(crate) fn run_type_round(
                 break;
             }
             // Between asks: the pause takes effect here, never inside a call.
-            if !control.park_with(IDENTIFY_DECISION, stop, progress)
+            if !control.park_task(IDENTIFY_DECISION, stop, progress, task)
                 || control.is_skipped(IDENTIFY_DECISION)
             {
                 break;
@@ -578,7 +578,7 @@ fn auto_type_round(
         .take(TYPE_SAMPLE)
         .collect();
     let mut images = Vec::new();
-    if !control.park_with(IDENTIFY_DECISION, stop, progress)
+    if !control.park_task(IDENTIFY_DECISION, stop, progress, task)
         || control.is_skipped(IDENTIFY_DECISION)
     {
         return Ok(None);
@@ -735,7 +735,7 @@ fn peaks(
         }
         // Between asks: a paused Decision stage parks before comparing the next
         // burst; a judged burst was never planned.
-        if !control.park_with(IDENTIFY_DECISION, stop, progress)
+        if !control.park_task(IDENTIFY_DECISION, stop, progress, task)
             || control.is_skipped(IDENTIFY_DECISION)
         {
             break;

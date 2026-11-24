@@ -137,7 +137,10 @@ impl StageControl {
     /// false when the run was stopped while parked.
     pub fn park(&self, stage: &str, stop: &AtomicBool) -> bool {
         let mut inner = lock(&self.inner);
-        while inner.paused.contains(stage) && !stop.load(Ordering::Relaxed) {
+        while inner.paused.contains(stage)
+            && !inner.skipped.contains(stage)
+            && !stop.load(Ordering::Relaxed)
+        {
             inner = self
                 .wake
                 .wait_timeout(inner, std::time::Duration::from_millis(100))
@@ -166,6 +169,25 @@ impl StageControl {
         if let Some(p) = progress {
             p.resume_stage(stage);
         }
+        go
+    }
+
+    /// Like [`park_with`], also marking the parent [`Task`] paused while the
+    /// worker is parked so the header and activity menu reflect a paused
+    /// Decision stage right away.
+    pub fn park_task(
+        &self,
+        stage: &'static str,
+        stop: &AtomicBool,
+        progress: Option<&crate::progress::Progress>,
+        task: &conrod_core::tasks::Task,
+    ) -> bool {
+        if !self.is_paused(stage) {
+            return !stop.load(Ordering::Relaxed);
+        }
+        task.paused(true);
+        let go = self.park_with(stage, stop, progress);
+        task.paused(false);
         go
     }
 }
@@ -552,5 +574,30 @@ mod tests {
         )
         .unwrap();
         assert!(!control.cull_paused());
+    }
+
+    #[test]
+    fn park_task_marks_parent_task_paused_until_resumed() {
+        let hub = conrod_core::tasks::TaskHub::new();
+        let task = hub.start("Identifying album", 10);
+        let control = StageControl::new(1);
+        let stop = AtomicBool::new(false);
+        control.set_paused(IDENTIFY_DECISION, true);
+        std::thread::scope(|s| {
+            let worker = s.spawn(|| control.park_task(IDENTIFY_DECISION, &stop, None, &task));
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!(
+                hub.snapshot()[0].state,
+                conrod_core::tasks::State::Paused,
+                "a parked Decision stage reports paused on the Identifying task"
+            );
+            control.set_paused(IDENTIFY_DECISION, false);
+            assert!(worker.join().unwrap());
+        });
+        assert_eq!(
+            hub.snapshot()[0].state,
+            conrod_core::tasks::State::Running,
+            "resuming clears the paused state on the task"
+        );
     }
 }

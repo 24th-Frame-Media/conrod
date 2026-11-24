@@ -21,6 +21,7 @@ type Props = {
   decisionService?: string | null;
   run: Runner; onSettingsSaved: (s: Settings) => void;
   onPause: () => void; onResume: () => void; onCancel: () => void; onCancelOperation: (key: string) => void;
+  onPauseIdentify?: () => void; onResumeIdentify?: () => void;
   onReview: () => void; onLibrary: () => void;
   onVisionAction?: (id: VisionAction['id']) => void;
   onUnqueue?: (job: Job) => void;

@@ -51,6 +51,8 @@ export type IngestProps = {
   onSettingsSaved?: (s: Settings) => void;
   onPause?: () => void;
   onResume?: () => void;
+  onPauseIdentify?: () => void;
+  onResumeIdentify?: () => void;
   onCancel?: () => void;
   onCancelOperation: (key: string) => void;
   onReview: () => void;
@@ -122,7 +124,7 @@ export function ScanFailureBanner({ failure, onRetry, onLibrary }: { failure: Sc
  * just finished. The same screen shows a standalone identification run with only the vision stages.
  */
 export function IngestScreen({
-  mode, job, scan, identify, status, model, decisionService = null, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onCancel,
+  mode, job, scan, identify, status, model, decisionService = null, running = false, paused, identifyPaused, run, onSettingsSaved, onPause, onResume, onPauseIdentify, onResumeIdentify, onCancel,
   onCancelOperation, onVisionAction, onReview, onLibrary, queue = [], onUnqueue, scanError, runSnapshot, onRetryScan, onContinueIdentify,
   surface, onStageControl, onAcceptTypeSuggestion, onOpenShootSettings,
 }: IngestProps) {
@@ -306,6 +308,10 @@ export function IngestScreen({
     : activePhase?.name === 'peaks' ? 'Bursts'
       : activePhase?.name === 'moments' || !reads ? 'Moments'
         : subject.title;
+  const activeIdentifyStage = !identifying ? null
+    : activePhase?.name === 'ocr' ? { id: 'identify:ocr', label: 'OCR' }
+      : activePhase?.name === 'moments' || activePhase?.name === 'peaks' || !reads ? { id: 'identify:decision', label: 'decider' }
+        : { id: 'identify:vision', label: 'vision' };
 
   const detailCar = picked?.kind === 'car' ? displayItem(idLive, picked.id) : null;
   const detailFrame = picked?.kind === 'frame' ? p?.recent.find((f) => f.image_id === picked.id) ?? null : null;
@@ -342,6 +348,24 @@ export function IngestScreen({
           )}
           {live && (mode === 'identify' || identifying) && (
             <div className="id-actions">
+              {onPauseIdentify && onResumeIdentify && (
+                <button
+                  className="ghost"
+                  onClick={identifyPaused ? onResumeIdentify : onPauseIdentify}
+                  title={identifyPaused ? 'Resume OCR, decision model and vision.' : 'Pause after the current item finishes.'}
+                >
+                  {identifyPaused ? 'Resume' : 'Pause'}
+                </button>
+              )}
+              {onStageControl && activeIdentifyStage && phase !== 'starting' && (
+                <button
+                  className="ghost"
+                  onClick={() => onStageControl('stage_skip', activeIdentifyStage.id, { skip: true })}
+                  title={`Skip the rest of ${activeIdentifyStage.label} and move on to the next stage.`}
+                >
+                  Skip {activeIdentifyStage.label}
+                </button>
+              )}
               <button className="ghost danger" onClick={() => onCancelOperation(operation ?? `Identifying:${job.id}`)}>Stop identification</button>
             </div>
           )}
@@ -523,7 +547,7 @@ export function IngestScreen({
                       </div>
                     )}
                     <div className={`id-lanes ing-lanes ing-lanes-${gridMode}${visibleWorkerCount === 1 && gridMode !== 'hero' ? ' single' : ''}`}>
-                      {showDecider && deciderLive && <DeciderLane live={deciderLive} serving={decisionService} layout={deciderLayout} />}
+                      {showDecider && deciderLive && <DeciderLane live={deciderLive} serving={decisionService} layout={deciderLayout} paused={identifyPaused} />}
                       {showScan && picks.lanes.map((worker) => <ScanLane key={laneKey(worker)} worker={worker} paused={paused} recent={p?.recent ?? []} layout={laneLayout} />)}
                       {showVision && shownVisionLanes.map((lane) => (
                         <IdentifyLane key={`vision:${lane.worker}`} name={ocrPhase ? 'OCR' : 'VISION'} ocrOnly={ocrPhase} layout={laneLayout} worker={lane.worker} item={lane.item} live={lane.live} visionOff={visionOff} onVisionAction={onVisionAction} subject={subject}

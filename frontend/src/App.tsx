@@ -121,7 +121,12 @@ export function App() {
     status, jobs: eng.jobs, liveByJob: scanLive, hydrate: scanStatus, seed: scanError, jobId,
     settings: albumResolvedSettings, album: currentAlbum, identifyVram, decisionService, subject: surfaceSubject,
   }) as RunSnapshot, [status, eng.jobs, scanLive, scanStatus, scanError, jobId, albumResolvedSettings, currentAlbum, identifyVram, decisionService, surfaceSubject]);
-  const identifyPaused = status.tasks.some((task) => task.state === 'paused' && /^Identifying\b/.test(task.label));
+  const rawStagePause = albumSetting(currentAlbum, 'native_stage_pause', null);
+  const pausedIdentifyStages = Array.isArray(rawStagePause)
+    ? rawStagePause.filter((s): s is string => typeof s === 'string' && s.startsWith('identify:'))
+    : [];
+  const identifyPaused = status.tasks.some((task) => task.state === 'paused' && /^Identifying\b/.test(task.label))
+    || pausedIdentifyStages.length > 0;
   // Review stays open while its album scans: it shows the frames already measured, and the
   // pipeline actions (cull, identify, write) stay disabled by Review's own `busy` rule.
   const view: Page = page;
@@ -179,6 +184,16 @@ export function App() {
     await engine.stageControl(action, jobId, stage, extra);
     eng.setStatus(await engine.status());
     await eng.refreshJobs();
+  });
+  /** Pause or resume all Identify sub-stages (OCR, Decision, Vision) cleanly at their next ask boundary. */
+  const pauseIdentify = (paused: boolean) => void run(async () => {
+    if (jobId == null) return;
+    for (const stage of ['identify:ocr', 'identify:decision', 'identify:vision']) {
+      await engine.stageControl('stage_pause', jobId, stage, { paused });
+    }
+    eng.setStatus(await engine.status());
+    await eng.refreshJobs();
+    toast(paused ? 'Identification paused. Anything in flight will finish, then hold.' : 'Resuming identification.');
   });
   /** Accept a shoot-type suggestion: one click, never silent; only un-run Vision prompts change. */
   const acceptTypeSuggestion = (type: string) => void run(async () => {
@@ -295,7 +310,12 @@ export function App() {
   const identify = (id: number, scope?: Scope, onlyNew = false) => void run(async () => {
     setJobId(id);
     setPage('Identify');
+    // Clear any leftover identify stage pauses so a fresh/continued run starts moving right away.
+    for (const stage of ['identify:ocr', 'identify:decision', 'identify:vision']) {
+      await engine.stageControl('stage_pause', id, stage, { paused: false }).catch(() => undefined);
+    }
     await engine.identify(id, scope, onlyNew);
+    await eng.refreshJobs();
     toast('Identification started. The live trace is open.');
   });
   const write = (id: number, dryRun: boolean) => void run(async () => {
@@ -375,14 +395,17 @@ export function App() {
             model={vlmModelLabel(eng.settings)} decisionService={decisionService} scanError={scanError}
             onResumeJob={() => { if (jobId != null) void startScan({ jobId }); }}
             onRetryScan={() => { if (scanError?.args) void startScan(scanError.args); else if (jobId != null) void startScan({ jobId }); else actions.resume(); }}
-            onPause={actions.pause} onResume={actions.resume} onCancel={actions.stop} onCancelOperation={actions.cancel} onVisionAction={visionAction}
+            onPause={actions.pause} onResume={actions.resume}
+            onPauseIdentify={() => pauseIdentify(true)} onResumeIdentify={() => pauseIdentify(false)}
+            onCancel={actions.stop} onCancelOperation={actions.cancel} onVisionAction={visionAction}
             surface={runSnapshot.surface} onStageControl={stageControl} onAcceptTypeSuggestion={acceptTypeSuggestion} onOpenShootSettings={openShootSettings}
             onReview={() => setPage('Review')} onLibrary={() => setPage('Library')} />
         )}
         {view === 'Identify' && (
           <IdentifyScreen job={eng.jobs.find((j) => j.id === jobId)} live={jobId != null ? identifyLive[jobId] : undefined}
             status={status} model={vlmModelLabel(eng.settings)} decisionService={decisionService}
-            paused={identifyPaused} onCancel={actions.cancel} onVisionAction={visionAction} onReview={() => setPage('Review')}
+            paused={identifyPaused} onPause={() => pauseIdentify(true)} onResume={() => pauseIdentify(false)}
+            onStageControl={stageControl} onCancel={actions.cancel} onVisionAction={visionAction} onReview={() => setPage('Review')}
             onContinueIdentify={() => {
               if (jobId == null) return;
               const job = eng.jobs.find((j) => j.id === jobId);
