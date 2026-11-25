@@ -807,6 +807,8 @@ mod tests {
             thumb: conrod_vision::imageops::Rgb::new(1, 1, vec![0, 0, 0]),
             rating: 0.0,
             exposure: None,
+            census: Default::default(),
+            flaw: None,
             exif: Default::default(),
             lens: None,
             file_size: 0,

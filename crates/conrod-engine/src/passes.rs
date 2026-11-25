@@ -518,7 +518,7 @@ pub fn pick_of_pass(
     };
     let found = rows(
         conn,
-        &"SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, d.features, COALESCE(i.stars, d.stars, {FILE}, 0) AS by_hand, i.taken_at, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.set_id, i.dark_frame, i.exposure_verdict, i.eye_open_min, i.smile_max, i.buck_score, i.moments, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL AND COALESCE(i.copy_of,0)=0 ORDER BY i.id, d.id"
+        &"SELECT d.id, d.x1, d.y1, d.x2, d.y2, d.rating, d.sharpness, d.quality, d.group_key, d.cut_sides, d.framing_score, d.features, COALESCE(i.stars, d.stars, {FILE}, 0) AS by_hand, i.taken_at, COALESCE(d.cull_reason,'')<>'' AS culled, i.id AS image_id, i.burst_key, COALESCE(d.region_type,'vehicle') AS region, i.width, i.height, i.rating AS frame_rating, i.flaw, i.set_id, i.dark_frame, i.exposure_verdict, i.eye_open_min, i.smile_max, i.buck_score, i.moments, (COALESCE(d.region_type,'')='eye' AND EXISTS (SELECT 1 FROM detections f WHERE f.image_id=d.image_id AND f.region_type='face' AND COALESCE(f.cull_reason,'')=?2 AND (d.x1+d.x2)>=2*f.x1 AND (d.x1+d.x2)<=2*f.x2 AND (d.y1+d.y2)>=2*f.y1 AND (d.y1+d.y2)<=2*f.y2)) AS shut_eye FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?1 AND COALESCE(d.rejected,0)=0 AND COALESCE(d.bystander,0)=0 AND COALESCE(i.rejected,0)=0 AND i.burst_key IS NOT NULL AND COALESCE(i.copy_of,0)=0 ORDER BY i.id, d.id"
         .replace("{FILE}", file_rating),
         params![job, crate::EYES_CLOSED],
     )?;
@@ -615,6 +615,11 @@ pub fn pick_of_pass(
         let Some(score) = score.or_else(|| r["sharpness"].as_f64()) else {
             continue;
         };
+        let set_member = r["set_id"].as_i64().is_some();
+        // The frame's own fault (nothing in focus anywhere, blown or crushed):
+        // whatever its subjects read, it cannot be a keeper.
+        let flaw = frame_flaw(r["flaw"].as_str(), set_member);
+        let score = flaw.map_or(score, |f| score.min(f.cap()));
         let unit = (
             r["burst_key"].as_i64().unwrap_or_default(),
             r["group_key"].as_i64(),
@@ -638,7 +643,6 @@ pub fn pick_of_pass(
             }
             _ => 0.0,
         };
-        let set_member = r["set_id"].as_i64().is_some();
         // A bracket, focus stack or interval is meant to hold frames that look
         // wrong one by one: membership exempts it from the exposure and blur
         // cull, and from the exposure flag.
@@ -655,7 +659,8 @@ pub fn pick_of_pass(
                 // so it never wins a pass while an open-eyed frame competes.
                 culled: (!set_member && r["culled"].as_i64().unwrap_or(0) != 0)
                     || r["shut_eye"].as_i64().unwrap_or(0) != 0
-                    || (!set_member && !keeps_dark && dark),
+                    || (!set_member && !keeps_dark && dark)
+                    || flaw.is_some(),
                 // Only a truly dark frame loses here: a bright sky or a crushed
                 // shadow is a flag, not a ranking fault. The readiness motorsport
                 // case proved a clipped sky must not outrank sharpness.
@@ -695,7 +700,7 @@ pub fn pick_of_pass(
     // burst's ungrouped unit, rated by the frame.
     let spare = rows(
         conn,
-        &"SELECT id,burst_key,taken_at,COALESCE(stars,{FILE},0) AS by_hand,rating,sharpness,af_sharpness,af_x1,af_y1,af_x2,af_y2,width,height,set_id,dark_frame,exposure_verdict,eye_open_min,smile_max,buck_score,moments,(SELECT max(d.rating) FROM detections d WHERE d.image_id=images.id AND COALESCE(d.af_bystander,0)=1) AS parked FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 ORDER BY id"
+        &"SELECT id,burst_key,taken_at,COALESCE(stars,{FILE},0) AS by_hand,rating,flaw,sharpness,af_sharpness,af_x1,af_y1,af_x2,af_y2,width,height,set_id,dark_frame,exposure_verdict,eye_open_min,smile_max,buck_score,moments,(SELECT max(d.rating) FROM detections d WHERE d.image_id=images.id AND COALESCE(d.af_bystander,0)=1) AS parked FROM images WHERE job_id=? AND burst_key IS NOT NULL AND COALESCE(rejected,0)=0 AND COALESCE(copy_of,0)=0 ORDER BY id"
         .replace("{FILE}", &file_rating.replace("i.", "")),
         [job],
     )?;
@@ -725,6 +730,11 @@ pub fn pick_of_pass(
             score = score.max(af);
         }
         let set_member = r["set_id"].as_i64().is_some();
+        // The frame's own fault has the last word over the camera's rescue too.
+        let flaw = frame_flaw(r["flaw"].as_str(), set_member);
+        if let Some(flaw) = flaw {
+            score = score.min(flaw.cap());
+        }
         let dark = r["dark_frame"].as_i64().unwrap_or(0) != 0;
         let (width, height) = (
             r["width"].as_i64().unwrap_or_default(),
@@ -749,7 +759,7 @@ pub fn pick_of_pass(
                 on_frame: af_subject.is_none(),
                 af_subject: af_subject.is_some(),
                 by_hand: r["by_hand"].as_i64().unwrap_or(0),
-                culled: !set_member && !keeps_dark && dark,
+                culled: (!set_member && !keeps_dark && dark) || flaw.is_some(),
                 bright: set_member || keeps_dark || r["exposure_verdict"].as_str() != Some("dark"),
                 moment: moment_signal(r["moments"].as_str(), lanes).0,
                 peak: moment_signal(r["moments"].as_str(), lanes).1,
@@ -876,6 +886,15 @@ pub fn pick_of_pass(
     }))
 }
 
+/// The frame's own fault as the pick reads it (`images.flaw`). A keep-together
+/// set (bracket, focus stack, interval) is meant to hold frames that look wrong
+/// one by one, so its members are never faulted for exposure.
+fn frame_flaw(reason: Option<&str>, set_member: bool) -> Option<crate::flaw::Flaw> {
+    reason
+        .and_then(crate::flaw::Flaw::parse)
+        .filter(|flaw| !set_member || *flaw == crate::flaw::Flaw::Blurred)
+}
+
 /// A frame with no subject in a time burst where other frames have one is a shot
 /// the detector missed, not a detail shot: rating it on its sharpest patch gave
 /// almost every such frame a perfect score. A run of missed frames forms its own
@@ -948,6 +967,9 @@ pub(crate) fn rate_missed_frames(conn: &Connection, job: i64) -> Result<usize> {
         [job],
     )
     .map_err(err)?;
+    // The frame's own fault has the last word, over the camera's rescue and the
+    // time-burst rule alike (`flaw`).
+    crate::flaw::cap_ratings(conn, job)?;
     Ok(missed as usize)
 }
 

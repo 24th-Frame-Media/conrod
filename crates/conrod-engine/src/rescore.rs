@@ -176,7 +176,7 @@ pub(crate) fn remeasure_pixels(
     )?;
     let subjects = rows(
         &lock(&d.reader),
-        "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.cls FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
+        "SELECT d.id, d.image_id, d.x1, d.y1, d.x2, d.y2, COALESCE(d.region_type,'vehicle') AS region, d.cls, COALESCE(d.bystander,0) AS bystander FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=?",
         [job],
     )?;
     let mut by_image: HashMap<i64, Vec<&Value>> = HashMap::new();
@@ -247,8 +247,17 @@ pub(crate) fn remeasure_pixels(
                                 .map_err(err)?;
                             }
                             tx.execute(
-                                "UPDATE images SET sharpness=COALESCE(?,sharpness),sharpness_whole=?,pan_share=? WHERE id=?",
-                                params![m.sharpness, m.whole_raw, m.pan_share, id],
+                                "UPDATE images SET sharpness=COALESCE(?,sharpness),sharpness_whole=?,pan_share=?,detail_edges=?,white_clip=?,black_clip=?,shadow_clip=COALESCE(?,shadow_clip) WHERE id=?",
+                                params![
+                                    m.sharpness,
+                                    m.whole_raw,
+                                    m.pan_share,
+                                    m.census.detail_edges,
+                                    m.census.white_clip,
+                                    m.census.black_clip,
+                                    m.shadow_clip,
+                                    id
+                                ],
                             )
                             .map_err(err)?;
                             // A frame whose every stored subject was unmeasurable
@@ -484,6 +493,11 @@ struct Measures {
     /// The AF box's rating when it is the frame's subject; `None` when a
     /// detection holds it or it is unusable.
     af_sharpness: Option<f64>,
+    /// What the pixels add up to in absolute terms (`flaw::census`), read from
+    /// the same exposure subject the scan reads it on.
+    census: crate::flaw::Census,
+    /// The whole frame's crushed-shadow share, as the scan stores it.
+    shadow_clip: f64,
 }
 
 /// A frame's stored autofocus area, as fractions of the upright frame (the
@@ -668,6 +682,31 @@ fn measure_frame(
     let pan_share = panning
         .then(|| sharpness::frame_sharp_share(&grey))
         .flatten();
+    // The scan's own exposure subject: the focus area when it is the subject,
+    // else the largest vehicle or person the scan kept (a bystander never is).
+    let subject_box = crate::flaw::subject_box(
+        match (af_sharpness, af) {
+            (Some(_), Some(af)) => Some([
+                af.area[0] / fw as f64,
+                af.area[1] / fh as f64,
+                af.area[2] / fw as f64,
+                af.area[3] / fh as f64,
+            ]),
+            _ => None,
+        },
+        subjects
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s["region"].as_str().unwrap_or("vehicle"),
+                    "vehicle" | "person"
+                ) && s["bystander"].as_i64() != Some(1)
+            })
+            .map(|s| ["x1", "y1", "x2", "y2"].map(|k| s[k].as_f64().unwrap_or_default())),
+        (fw, fh),
+    );
+    let exposure = conrod_vision::exposure::measure(&image, subject_box);
+    let census = crate::flaw::census(&grey, Some(&exposure), subject_box);
     Ok(Measures {
         subjects: out,
         unmeasured,
@@ -676,6 +715,8 @@ fn measure_frame(
         pan_share,
         af_present,
         af_sharpness,
+        census,
+        shadow_clip: exposure.shadow_clip,
     })
 }
 fn write(d: &Desktop, batch: &[(i64, Outcome)]) -> Result<()> {
@@ -795,11 +836,15 @@ pub(crate) fn rate_frames(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
         af_sharpness: Option<f64>,
         /// Whether any vehicle or person of the frame is a held pan.
         panning: bool,
+        flaw: Option<crate::flaw::Flaw>,
         subjects: Vec<(String, [f64; 4], f64)>,
     }
+    // The frames' own faults first, from the numbers stored: the album's
+    // toggles and the preset may have changed since they were judged.
+    crate::flaw::refresh(&lock(&d.db), job, cfg)?;
     let found = rows(
         &lock(&d.reader),
-        "SELECT d.image_id, COALESCE(d.region_type,'vehicle') AS region, d.x1, d.y1, d.x2, d.y2, d.rating, d.panning, i.sharpness AS whole, i.pan_share, i.af_sharpness FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.bystander,0)=0 AND d.rating IS NOT NULL ORDER BY d.image_id, d.id",
+        "SELECT d.image_id, COALESCE(d.region_type,'vehicle') AS region, d.x1, d.y1, d.x2, d.y2, d.rating, d.panning, i.sharpness AS whole, i.pan_share, i.af_sharpness, i.flaw FROM detections d JOIN images i ON i.id=d.image_id WHERE i.job_id=? AND COALESCE(d.bystander,0)=0 AND d.rating IS NOT NULL ORDER BY d.image_id, d.id",
         [job],
     )?;
     let mut frames: std::collections::BTreeMap<i64, Frame> = std::collections::BTreeMap::new();
@@ -812,6 +857,7 @@ pub(crate) fn rate_frames(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
         frame.whole = r["whole"].as_f64();
         frame.pan_share = r["pan_share"].as_f64();
         frame.af_sharpness = r["af_sharpness"].as_f64();
+        frame.flaw = r["flaw"].as_str().and_then(crate::flaw::Flaw::parse);
         if matches!(region, "vehicle" | "person") && r["panning"].as_i64() == Some(1) {
             frame.panning = true;
         }
@@ -837,6 +883,9 @@ pub(crate) fn rate_frames(d: &Desktop, job: i64, cfg: &Settings) -> Result<()> {
             frame.panning,
             frame.pan_share,
             frame.af_sharpness,
+            // Judged by `flaw::refresh` above: a bracket member's exposure
+            // fault is already excused there.
+            frame.flaw,
         );
         tx.execute(
             "UPDATE images SET rating=? WHERE id=?",
@@ -1901,16 +1950,57 @@ mod tests {
                     ("eye", [1250, 600, 1350, 700]),
                 ],
             },
+            // A sharp car over a smooth, deliberately blurred background:
+            // detail anywhere in the frame is enough, the bokeh is no fault.
+            Fixture {
+                name: "vehicle-sharp-on-bokeh",
+                preset: "motorsport",
+                image: scene(|x, y| if inside(car, x, y) { crisp(x, y) } else { 128 }),
+                found: vec![(2, car)],
+                patches: vec![],
+            },
+            // Nothing in focus anywhere: smeared everywhere, no subject.
+            Fixture {
+                name: "frame-smeared-everywhere",
+                preset: "motorsport",
+                image: scene(smeared),
+                found: vec![],
+                patches: vec![],
+            },
+            // The whole frame at clipped white, and at clipped black.
+            Fixture {
+                name: "frame-blown-out",
+                preset: "motorsport",
+                image: scene(|_, _| 255),
+                found: vec![],
+                patches: vec![],
+            },
+            Fixture {
+                name: "frame-crushed",
+                preset: "motorsport",
+                image: scene(|_, _| 0),
+                found: vec![],
+                patches: vec![],
+            },
         ]
     }
 
     /// What a scan of `fixture` stores: the same functions `cull_frame` calls,
     /// in the same order, on the pixels the scan would decode from the file.
+    #[allow(clippy::type_complexity)]
     fn scanned(
         fixture: &Fixture,
         path: &std::path::Path,
         cfg: &Settings,
-    ) -> (Vec<crate::Subject>, f64, Option<f64>, Option<f64>) {
+    ) -> (
+        Vec<crate::Subject>,
+        f64,
+        Option<f64>,
+        Option<f64>,
+        crate::flaw::Census,
+        Option<crate::flaw::Flaw>,
+        f64,
+    ) {
         let frame = conrod_io::raw::read(path).unwrap();
         let image = Rgb::decode_jpeg(&frame.preview, 1)
             .unwrap()
@@ -1986,8 +2076,13 @@ mod tests {
         ) {
             subjects.extend(crate::rodeo_read(&grey, &found, cfg, &strictness).1);
         }
-        let whole = sharpness::measure(&grey, None, None);
-        let whole = whole.measured.then_some(whole.score);
+        // A frame with no subject is rated by `bare_frame`, as the scan does.
+        let whole = if subjects.is_empty() {
+            crate::bare_frame(&grey, &strictness).score
+        } else {
+            let whole = sharpness::measure(&grey, None, None);
+            whole.measured.then_some(whole.score)
+        };
         let panning = subjects
             .iter()
             .any(|s| matches!(s.region_type, "vehicle" | "person") && s.panning);
@@ -1998,8 +2093,31 @@ mod tests {
             .iter()
             .map(|s| (s.region_type, s.bbox, s.rating))
             .collect();
-        let rating = crate::final_frame_rating(&cfg.lanes(), &rated, whole, panning, share, None);
-        (subjects, rating, whole, share)
+        let boxes = subjects
+            .iter()
+            .filter(|s| !s.bystander && s.region_type != "face" && s.region_type != "eye")
+            .map(|s| s.bbox);
+        let subject_box = crate::flaw::subject_box(None, boxes, (grey.width, grey.height));
+        let exposure = conrod_vision::exposure::measure(&image, subject_box);
+        let census = crate::flaw::census(&grey, Some(&exposure), subject_box);
+        let flaw = crate::flaw::judge(
+            &census,
+            Some(exposure.shadow_clip),
+            cfg,
+            &preset.policy(),
+            false,
+        );
+        let rating =
+            crate::final_frame_rating(&cfg.lanes(), &rated, whole, panning, share, None, flaw);
+        (
+            subjects,
+            rating,
+            whole,
+            share,
+            census,
+            flaw,
+            exposure.shadow_clip,
+        )
     }
 
     #[test]
@@ -2016,14 +2134,29 @@ mod tests {
             let path = lib.root.join(&name);
             crate::desktop::save_jpeg(&fixture.image, &path).unwrap();
             let image = lib.frame(&name, Some(1));
-            let (subjects, rating, whole, share) = scanned(&fixture, &path, &cfg);
-            assert!(!subjects.is_empty(), "{}: nothing scanned", fixture.name);
+            let (subjects, rating, whole, share, census, flaw, shadow) =
+                scanned(&fixture, &path, &cfg);
+            assert!(
+                !subjects.is_empty() || (fixture.found.is_empty() && fixture.patches.is_empty()),
+                "{}: nothing scanned",
+                fixture.name
+            );
             for s in &subjects {
                 crate::desktop::insert_subject(&lib.db(), image, s).unwrap();
             }
             lib.sql(
-                "UPDATE images SET width=3000,height=2000,sharpness=?,rating=?,pan_share=? WHERE id=?",
-                params![whole, rating, share, image],
+                "UPDATE images SET width=3000,height=2000,sharpness=?,rating=?,pan_share=?,detail_edges=?,white_clip=?,black_clip=?,shadow_clip=?,flaw=? WHERE id=?",
+                params![
+                    whole,
+                    rating,
+                    share,
+                    census.detail_edges,
+                    census.white_clip,
+                    census.black_clip,
+                    shadow,
+                    flaw.map(|f| f.reason()),
+                    image
+                ],
             );
             let stored = |lib: &Lib| -> Vec<(f64, String, i64)> {
                 let db = lib.db();
@@ -2062,6 +2195,23 @@ mod tests {
                 "{}: scan rated the frame {frame_before}, rescore {frame_after}",
                 fixture.name
             );
+            // The frame's own fault is one rule: the scan's verdict is the
+            // re-score's, and a flawed frame is capped by it.
+            let flaw_after: Option<String> = lib.one("SELECT flaw FROM images WHERE id=?", [image]);
+            assert_eq!(
+                flaw_after.as_deref(),
+                flaw.map(|f| f.reason()),
+                "{}: flaw",
+                fixture.name
+            );
+            if let Some(flaw) = flaw {
+                assert!(
+                    frame_after <= flaw.cap() + 1e-9,
+                    "{}: a {} frame is rated {frame_after}",
+                    fixture.name,
+                    flaw.reason()
+                );
+            }
             // The fixtures must mean what they say.
             match fixture.name {
                 "pan" => {
@@ -2081,6 +2231,16 @@ mod tests {
                 }
                 "portrait" => assert_eq!(subjects.len(), 4, "person, face and two eyes"),
                 "vehicle-sharp" => assert!(before[0].0 > 0.7, "{before:?}"),
+                "vehicle-sharp-on-bokeh" => {
+                    assert!(flaw.is_none(), "a sharp car on smooth bokeh is no fault");
+                    assert!(before[0].0 > 0.7, "{before:?}");
+                }
+                "frame-smeared-everywhere" => {
+                    assert_eq!(flaw, Some(crate::flaw::Flaw::Blurred), "{census:?}");
+                    assert!(frame_after < sharpness::KEEPER_MIN_RATING);
+                }
+                "frame-blown-out" => assert_eq!(flaw, Some(crate::flaw::Flaw::Overexposed)),
+                "frame-crushed" => assert_eq!(flaw, Some(crate::flaw::Flaw::Underexposed)),
                 "vehicle-smeared-over-a-sharp-banner" => {
                     assert!(before[0].0 < 0.5, "a smeared car is soft: {before:?}")
                 }

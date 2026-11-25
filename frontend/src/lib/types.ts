@@ -22,6 +22,8 @@ export type Frame = {
   highlight_clip?: number | null;
   shadow_clip?: number | null;
   dark_frame?: number | null;
+  /** The frame's own fault: nothing in it in focus, or blown / crushed beyond recovery. Caps its rating. */
+  flaw?: 'blurred' | 'overexposed' | 'underexposed' | null;
   /** Level, only where the preset asks: property, interiors, landscape. */
   tilt_deg?: number | null;
   converge_deg?: number | null;

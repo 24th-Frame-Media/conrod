@@ -258,6 +258,16 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("images", "highlight_clip", "REAL"),
     ("images", "shadow_clip", "REAL"),
     ("images", "dark_frame", "INTEGER"),
+    // What the frame holds in absolute terms, measured once from the pixels and
+    // judged at rating time (`flaw`): the strong edge pixels anywhere in it, and
+    // the shares of clipped white and clipped black over the subject (or the
+    // whole frame). NULL until a scan or re-score has read the frame.
+    ("images", "detail_edges", "INTEGER"),
+    ("images", "white_clip", "REAL"),
+    ("images", "black_clip", "REAL"),
+    // The frame's own cull reason: `blurred` (nothing in it is in focus),
+    // `overexposed` or `underexposed`. NULL for a frame with no such fault.
+    ("images", "flaw", "TEXT"),
     // Level: property, interiors, landscape. Flag only.
     ("images", "tilt_deg", "REAL"),
     ("images", "converge_deg", "REAL"),

@@ -587,6 +587,9 @@ pub struct Settings {
     pub auto_reject_below_stars: i64,
     pub import_existing_ratings: bool,
     pub cull_blurred: bool,
+    /// Rate and cull a frame blown out or crushed beyond what a RAW can give
+    /// back (`flaw`). Presets that shoot in the dark or in high key are exempt.
+    pub cull_exposure: bool,
     pub mark_burst_picks: bool,
     pub pick_label: String,
     pub use_known_vehicles: bool,
@@ -791,6 +794,7 @@ impl Default for Settings {
             auto_reject_below_stars: 2,
             import_existing_ratings: true,
             cull_blurred: true,
+            cull_exposure: true,
             mark_burst_picks: true,
             pick_label: "Blue".into(),
             use_known_vehicles: true,

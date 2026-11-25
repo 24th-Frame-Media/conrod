@@ -82,6 +82,14 @@ pub const SHADOW_CLIP: f64 = 0.35;
 
 /// ...which "underexposed overall" means: mean luma below this (0..1).
 pub const SHADOW_MEAN: f64 = 0.15;
+/// A cell is clipped white when every channel of its whole 2x2 block is at or
+/// above this (of 255): the preview carries no tone, and no colour, there. The
+/// encoder's own top is 255, so this sits two levels under it for rounding.
+pub const WHITE_LEVEL: u8 = 253;
+/// A cell is clipped black when every channel of its whole 2x2 block is at or
+/// below this (of 255): under the sensor's noise floor, so nothing is left to
+/// lift.
+pub const BLACK_LEVEL: u8 = 6;
 
 /// What the frame's exposure looks like. See [`measure`].
 #[derive(Debug, Clone, PartialEq)]
@@ -102,6 +110,14 @@ pub struct Exposure {
     pub window_clip: f64,
     /// Clipping inside the subject box, when one was given.
     pub subject_clip: Option<f64>,
+    /// Share of the judged region (the subject box when one was given and
+    /// fits the frame, else the whole frame) at clipped white
+    /// ([`WHITE_LEVEL`]): detail the preview cannot give back.
+    pub white_clip: f64,
+    /// Share of the judged region at clipped black ([`BLACK_LEVEL`]).
+    pub black_clip: f64,
+    /// Whether the two shares above were read inside a subject box.
+    pub clip_on_subject: bool,
     /// Mean below [`DARK_MEAN`].
     pub dark_frame: bool,
     /// `"ok"`, `"highlights"`, `"shadows"` or `"dark"`.
@@ -118,6 +134,9 @@ impl Exposure {
             sky_clip: None,
             window_clip: 0.0,
             subject_clip: None,
+            white_clip: 0.0,
+            black_clip: 1.0,
+            clip_on_subject: false,
             dark_frame: true,
             verdict: "dark",
         }
@@ -169,6 +188,8 @@ pub fn measure(rgb: &Rgb, subject: Option<[f64; 4]>) -> Exposure {
         "ok"
     };
 
+    let (white_clip, black_clip, clip_on_subject) = region_clips(&cells, subject);
+
     Exposure {
         mean,
         highlight_clip,
@@ -176,9 +197,44 @@ pub fn measure(rgb: &Rgb, subject: Option<[f64; 4]>) -> Exposure {
         sky_clip,
         window_clip,
         subject_clip,
+        white_clip,
+        black_clip,
+        clip_on_subject,
         dark_frame,
         verdict,
     }
+}
+
+/// The shares of clipped white and clipped black cells inside the subject box,
+/// or over the whole frame when there is no box (or it misses the frame), and
+/// whether a box was used.
+fn region_clips(cells: &Cells, subject: Option<[f64; 4]>) -> (f64, f64, bool) {
+    let clamp = |v: f64, n: usize| (v * n as f64).round().clamp(0.0, n as f64) as usize;
+    let (x0, x1, y0, y1, on_subject) = match subject {
+        Some(b)
+            if clamp(b[0], cells.width) < clamp(b[2], cells.width)
+                && clamp(b[1], cells.height) < clamp(b[3], cells.height) =>
+        {
+            (
+                clamp(b[0], cells.width),
+                clamp(b[2], cells.width),
+                clamp(b[1], cells.height),
+                clamp(b[3], cells.height),
+                true,
+            )
+        }
+        _ => (0, cells.width, 0, cells.height, false),
+    };
+    let total = ((x1 - x0) * (y1 - y0)).max(1) as f64;
+    let (mut white, mut black) = (0usize, 0usize);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let i = cells.at(x, y);
+            white += usize::from(cells.white[i]);
+            black += usize::from(cells.black[i]);
+        }
+    }
+    (white as f64 / total, black as f64 / total, on_subject)
 }
 
 /// The sampling grid: the frame's aspect at [`WORK_EDGE`], or the frame itself
@@ -197,6 +253,10 @@ struct Cells {
     /// large over detail, near zero over a clear sky.
     texture: Vec<f32>,
     blown: Vec<bool>,
+    /// Every channel of the block at or above [`WHITE_LEVEL`].
+    white: Vec<bool>,
+    /// Every channel of the block at or below [`BLACK_LEVEL`].
+    black: Vec<bool>,
     width: usize,
     height: usize,
 }
@@ -211,27 +271,34 @@ impl Cells {
         let (cw, ch) = (w as f64 / gw as f64, h as f64 / gh as f64);
         let mut lumas = Vec::with_capacity(gw * gh);
         let mut blown = Vec::with_capacity(gw * gh);
+        let mut white = Vec::with_capacity(gw * gh);
+        let mut black = Vec::with_capacity(gw * gh);
         for gy in 0..gh {
             let y0 = (((gy as f64 + 0.5) * ch) as usize).min(h.saturating_sub(2));
             let y1 = (y0 + 1).min(h - 1);
             for gx in 0..gw {
                 let x0 = (((gx as f64 + 0.5) * cw) as usize).min(w.saturating_sub(2));
                 let x1 = (x0 + 1).min(w - 1);
-                let (mut sum, mut peak) = (0u32, 0u8);
+                let (mut sum, mut peak, mut floor) = (0u32, 0u8, 255u8);
                 for (x, y) in [(x0, y0), (x1, y0), (x0, y1), (x1, y1)] {
                     let at = (y * w + x) * 3;
                     let (r, g, b) = (rgb.data[at], rgb.data[at + 1], rgb.data[at + 2]);
                     peak = peak.max(r).max(g).max(b);
+                    floor = floor.min(r).min(g).min(b);
                     sum += u32::from(luma(r, g, b));
                 }
                 lumas.push(sum as f32 / (4.0 * 255.0));
                 blown.push(peak >= HIGHLIGHT_LEVEL);
+                white.push(floor >= WHITE_LEVEL);
+                black.push(peak <= BLACK_LEVEL);
             }
         }
         let mut cells = Cells {
             luma: lumas,
             texture: Vec::new(),
             blown,
+            white,
+            black,
             width: gw,
             height: gh,
         };

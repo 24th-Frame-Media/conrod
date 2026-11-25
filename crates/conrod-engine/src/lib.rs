@@ -128,6 +128,7 @@ mod edgetest;
 pub mod edits;
 #[cfg(test)]
 mod evaltest;
+pub mod flaw;
 pub mod gpu;
 pub mod housekeeping;
 pub mod identify_live;
@@ -269,6 +270,12 @@ pub struct FrameResult {
     pub rating: f64,
     /// Measured exposure: the verdict is a flag, `dark_frame` the only cull.
     pub exposure: Option<exposure::Exposure>,
+    /// What the pixels add up to in absolute terms: strong edges anywhere, and
+    /// the clipped shares of the subject (see `flaw`).
+    pub census: flaw::Census,
+    /// The frame's own fault, from the census, the preset and the album's
+    /// toggles: it caps `rating` and is stored as `images.flaw`.
+    pub flaw: Option<flaw::Flaw>,
     /// EXIF exposure settings, so a regroup can find keep-together sets.
     pub exif: raw::Exposure,
     /// The lens as the file names it, when it names one.
@@ -1044,6 +1051,10 @@ pub(crate) fn pan_capped(rating: f64, panning: bool, share: Option<f64>) -> f64 
 /// pan's rating capped by how much of the frame is sharp, then the camera's
 /// focus area rescuing it (never lowering it). `subjects` are the frame's
 /// non-bystander `(region_type, bbox, rating)`.
+///
+/// The frame's own fault (`flaw`: nothing in it in focus, or blown or crushed
+/// beyond recovery) has the last word: it caps the rating whatever rated the
+/// frame, the detector's subjects, the camera's focus area or the whole frame.
 pub(crate) fn final_frame_rating(
     lanes: &conrod_core::profile::Lanes,
     subjects: &[(&str, [f64; 4], f64)],
@@ -1051,11 +1062,13 @@ pub(crate) fn final_frame_rating(
     panning: bool,
     pan_share: Option<f64>,
     af_sharpness: Option<f64>,
+    flaw: Option<flaw::Flaw>,
 ) -> f64 {
-    afsubject::rescue(
+    let rating = afsubject::rescue(
         pan_capped(frame_rating(lanes, subjects, whole), panning, pan_share),
         af_sharpness,
-    )
+    );
+    flaw.map_or(rating, |flaw| rating.min(flaw.cap()))
 }
 
 /// What rating one detection needs to know about its frame.
@@ -1409,6 +1422,36 @@ pub fn cull_frame_live(
         .filter(|s| !s.bystander)
         .map(|s| (s.region_type, s.bbox, s.rating))
         .collect();
+    // Exposure on the main subject, so a backlit rider's clipped whites are
+    // told from a blown sky. A frame the focus area rates is of that area.
+    let subject_box = flaw::subject_box(
+        match (af_sharpness, af) {
+            (Some(_), Some(af)) => Some([
+                af.area[0] / fw as f64,
+                af.area[1] / fh as f64,
+                af.area[2] / fw as f64,
+                af.area[3] / fh as f64,
+            ]),
+            _ => None,
+        },
+        subjects
+            .iter()
+            .filter(|s| !s.bystander && s.region_type != "face" && s.region_type != "eye")
+            .map(|s| s.bbox),
+        (fw, fh),
+    );
+    let exposure = Some(exposure::measure(&image, subject_box));
+    // The frame's own fault is judged from the same numbers a re-score stores
+    // and re-reads (`flaw`), so nothing in focus anywhere, or a blown or
+    // crushed frame, cannot be rated high by any of the paths above.
+    let census = flaw::census(&grey, exposure.as_ref(), subject_box);
+    let frame_flaw = flaw::judge(
+        &census,
+        exposure.as_ref().map(|e| e.shadow_clip),
+        settings,
+        &policy,
+        false,
+    );
     let rating = final_frame_rating(
         &settings.lanes(),
         &rated,
@@ -1416,6 +1459,7 @@ pub fn cull_frame_live(
         detected_panning,
         share_measured,
         af_sharpness,
+        frame_flaw,
     );
     // A pan's frame rating reads the picture, not the car; the subjects keep
     // their own ratings, which is what picks the keeper of a burst. A frame the
@@ -1431,32 +1475,6 @@ pub fn cull_frame_live(
         verdict: sharpness::verdict_for(rating, settings.sharp_at, settings.blurred_below),
         panning,
     });
-    // Exposure on the main subject, so a backlit rider's clipped whites are
-    // told from a blown sky. A frame the focus area rates is of that area.
-    let subject_box = match (af_sharpness, af) {
-        (Some(_), Some(af)) => Some([
-            af.area[0] / fw as f64,
-            af.area[1] / fh as f64,
-            af.area[2] / fw as f64,
-            af.area[3] / fh as f64,
-        ]),
-        _ => subjects
-            .iter()
-            .filter(|s| !s.bystander && s.region_type != "face" && s.region_type != "eye")
-            .max_by(|a, b| {
-                let area = |s: &Subject| (s.bbox[2] - s.bbox[0]) * (s.bbox[3] - s.bbox[1]);
-                area(a).total_cmp(&area(b))
-            })
-            .map(|s| {
-                [
-                    s.bbox[0].max(0.0) / fw as f64,
-                    s.bbox[1].max(0.0) / fh as f64,
-                    (s.bbox[2].min(fw as f64)) / fw as f64,
-                    (s.bbox[3].min(fh as f64)) / fh as f64,
-                ]
-            }),
-    };
-    let exposure = Some(exposure::measure(&image, subject_box));
     let (lens, file_size) = source_details(path, &frame);
     Ok(FrameResult {
         path: path.to_path_buf(),
@@ -1469,6 +1487,8 @@ pub fn cull_frame_live(
         thumb,
         rating,
         exposure,
+        census,
+        flaw: frame_flaw,
         exif: frame.exposure.clone(),
         lens,
         file_size,

@@ -136,6 +136,7 @@ export default {
     "blur": "strict",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "portrait-group": {
@@ -268,6 +269,7 @@ export default {
     "blur": "strict",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "portrait-couple": {
@@ -405,6 +407,7 @@ export default {
     "blur": "strict",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "portrait-pets": {
@@ -537,6 +540,7 @@ export default {
     "blur": "strict",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "motorsport": {
@@ -704,6 +708,7 @@ export default {
     "blur": "critical",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "motorsport-burnouts": {
@@ -846,6 +851,7 @@ export default {
     "blur": "lenient",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "motorsport-track": {
@@ -1003,6 +1009,7 @@ export default {
     "blur": "critical",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "motorsport-rally": {
@@ -1155,6 +1162,7 @@ export default {
     "blur": "lenient",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "motorsport-meet": {
@@ -1297,6 +1305,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "event": {
@@ -1434,6 +1443,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "event-shows": {
@@ -1576,6 +1586,7 @@ export default {
     "blur": "lenient",
     "levelCheck": false,
     "darkOk": true,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "event-parties": {
@@ -1723,6 +1734,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "mix": {
@@ -1870,6 +1882,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "sport-field": {
@@ -2012,6 +2025,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "sport-court": {
@@ -2154,6 +2168,7 @@ export default {
     "blur": "strict",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "sport-rodeo": {
@@ -2291,6 +2306,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "sport-equestrian": {
@@ -2428,6 +2444,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "sport-cycling": {
@@ -2570,6 +2587,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "sport-action": {
@@ -2712,6 +2730,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "property-listing": {
@@ -2828,6 +2847,7 @@ export default {
     "blur": "strict",
     "levelCheck": true,
     "darkOk": false,
+    "highKeyOk": true,
     "deliverMost": false
   },
   "property-report": {
@@ -2944,6 +2964,7 @@ export default {
     "blur": "strict",
     "levelCheck": true,
     "darkOk": false,
+    "highKeyOk": true,
     "deliverMost": true
   },
   "auto-dealer": {
@@ -3060,6 +3081,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": true,
     "deliverMost": false
   },
   "wedding": {
@@ -3217,6 +3239,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": true,
     "deliverMost": false
   },
   "concert": {
@@ -3359,6 +3382,7 @@ export default {
     "blur": "lenient",
     "levelCheck": false,
     "darkOk": true,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "wildlife-birds": {
@@ -3501,6 +3525,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "landscape": {
@@ -3628,6 +3653,7 @@ export default {
     "blur": "strict",
     "levelCheck": true,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": true
   },
   "astro": {
@@ -3760,6 +3786,7 @@ export default {
     "blur": "lenient",
     "levelCheck": false,
     "darkOk": true,
+    "highKeyOk": false,
     "deliverMost": false
   },
   "aviation": {
@@ -3907,6 +3934,7 @@ export default {
     "blur": "moderate",
     "levelCheck": false,
     "darkOk": false,
+    "highKeyOk": false,
     "deliverMost": false
   }
 };
