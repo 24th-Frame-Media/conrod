@@ -247,7 +247,7 @@ export function Viewer({ rv, run, showBoxes, onToggleBoxes, onClose, stack, keep
               title="Keeper (P)"
               onClick={() => void mark(frame.picked ? { picked: false } : { picked: true, rejected: false })}
             >
-              {frame.picked && <Icon name="check" size={12} />}Keeper
+              {frame.picked ? <Icon name="check" size={12} /> : null}Keeper
             </button>
             <button
               className={`ghost danger cut${frameExcluded(frame, dets) ? ' on' : ''}`}
